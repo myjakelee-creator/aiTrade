@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>StockBoard v0.2.0 Sample</title>
+<style>
+  :root{
+    --bg:#f3f6f8; --panel:#ffffff; --line:#c8d0d8; --head:#e7edf3;
+    --text:#17202a; --muted:#5b6670; --red:#d71920; --blue:#1266d6;
+    --green:#18a558; --yellow:#f4c430; --orange:#f08a24;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);font-family:Malgun Gothic,Arial,sans-serif;color:var(--text);}
+  .window{width:960px;height:1040px;margin:10px auto;border:1px solid #9aa8b5;background:#fff;box-shadow:0 2px 12px #999;overflow:hidden}
+  .title{height:30px;background:linear-gradient(#dfe7ee,#cbd6df);display:flex;align-items:center;padding:0 10px;font-weight:700;color:#19324a}
+  .topbar{display:grid;grid-template-columns:170px 70px 70px 70px 120px 105px 150px 1fr;align-items:center;height:42px;border-bottom:1px solid var(--line);font-size:18px;font-weight:700}
+  .topbar>div{height:100%;display:flex;align-items:center;justify-content:center;border-right:1px solid var(--line)}
+  .lamp{display:inline-block;width:17px;height:17px;border-radius:50%;margin-left:7px;background:var(--green);box-shadow:0 0 7px var(--green)}
+  .speed{color:#b8860b}.market-open{color:#168000}.focus-name{color:var(--red)}.momentum{color:#b8860b;font-size:17px}
+  .grid{width:100%;border-collapse:collapse;table-layout:fixed}
+  th,td{border:1px solid var(--line);padding:4px 5px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  th{background:var(--head);font-weight:800;color:#263747}
+  .section{height:26px;background:#f8fbff;border-top:2px solid #aab7c4;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 9px;font-weight:800}
+  .sec-orange{color:#d46b00}.sec-blue{color:#1f65c2}.sec-green{color:#0d7f3f}
+  .red{color:var(--red)}.blue{color:var(--blue)}.plus{color:var(--red)}.minus{color:var(--blue)}
+  .grade{display:inline-block;border-radius:4px;color:#fff;padding:2px 7px;font-weight:900}
+  .a{background:#d71920}.b{background:#f08a24}.c{background:#f4c430;color:#111}.d{background:#1266d6}
+  .small{font-size:13px}.market td{font-size:17px;font-weight:700}
+  .us td{font-size:17px;font-weight:800}
+  .board td{font-size:15px;height:34px}.board th{font-size:14px}
+  .candle{height:22px;position:relative;background:linear-gradient(90deg,#eef3f8,#fff);border-radius:3px}
+  .candle .bar{position:absolute;left:38%;top:4px;width:20%;height:14px;background:#d71920;border:1px solid #8a0000}
+  .candle .wick{position:absolute;left:48%;top:1px;width:2px;height:20px;background:#333}
+  .candle .open{position:absolute;left:24%;top:6px;height:2px;width:52%;background:#111}
+  .candle .vwap{position:absolute;left:12%;top:10px;height:2px;width:76%;background:#f4c430}
+  .candle .prevc{position:absolute;left:8%;top:14px;height:2px;width:80%;background:#18a558}
+  .candle .prevh{position:absolute;left:4%;top:2px;height:2px;width:90%;background:#d71920}
+  .candle .prevl{position:absolute;left:4%;top:19px;height:2px;width:90%;background:#1266d6}
+  .note{text-align:left!important;font-size:13px}
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="title">▣ StockBoard v0.2.0 Sample — 주간 테마 / 보기용 가상 데이터</div>
+
+  <div class="topbar">
+    <div>2025/08/17 (수) 14:05:17</div>
+    <div>인 <span class="lamp"></span></div>
+    <div>레 <span class="lamp"></span></div>
+    <div>판 <span class="lamp"></span></div>
+    <div>수신속도 <span class="speed">&nbsp;0.21초</span></div>
+    <div>장구분 <span class="market-open">&nbsp;정규장</span></div>
+    <div>종목명 <span class="focus-name">&nbsp;삼성전기</span></div>
+    <div class="momentum">VWAP돌파 + 시가위 + 전고돌파</div>
+  </div>
+
+  <table class="grid market">
+    <colgroup>
+      <col style="width:11%"><col style="width:13%"><col style="width:10%"><col style="width:14%">
+      <col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:12%">
+    </colgroup>
+    <tr><th>시장</th><th>지수</th><th>등락률</th><th>상승 / 하락</th><th>외선(억)</th><th>외인(억)</th><th>기관(억)</th><th>프로(억)</th><th>외달(억)</th></tr>
+    <tr><td class="blue">KOSPI</td><td>3,250.00</td><td class="plus">+1.23%</td><td><span class="plus">720</span> / <span class="blue">180</span></td><td class="plus">+5,200</td><td class="plus">+2,300</td><td class="minus">-800</td><td class="plus">+1,250</td><td class="plus">+8,600</td></tr>
+    <tr><td class="blue">KOSDAQ</td><td>1,035.00</td><td class="plus">+0.82%</td><td><span class="plus">980</span> / <span class="blue">520</span></td><td class="plus">+1,300</td><td class="plus">+500</td><td class="minus">-120</td><td class="plus">+450</td><td class="plus">+1,800</td></tr>
+  </table>
+
+  <table class="grid us">
+    <colgroup><col style="width:14%"><col style="width:14%"><col style="width:14%"><col style="width:14%"><col style="width:14%"><col style="width:14%"><col style="width:16%"></colgroup>
+    <tr><th colspan="7">미국시장 패널</th></tr>
+    <tr><th>나스닥</th><th>QQQ</th><th>SMH</th><th>IBB</th><th>LIT</th><th>BOTZ</th><th>한국장 영향</th></tr>
+    <tr><td class="plus">+1.85%</td><td class="plus">+1.72%</td><td class="plus">+2.25%</td><td class="plus">+0.55%</td><td class="minus">-1.25%</td><td class="plus">+0.82%</td><td class="plus">반도체 우호</td></tr>
+  </table>
+
+  <div class="section sec-orange"><span>▶ 이상종목 전광판 — 등락율 상위 5종목</span><span>14:05:17</span></div>
+  <table class="grid board">
+    <colgroup>
+      <col style="width:4.5%"><col style="width:4.5%"><col style="width:6%"><col style="width:10%"><col style="width:7.5%"><col style="width:7%">
+      <col style="width:7%"><col style="width:11%"><col style="width:6%"><col style="width:7%"><col style="width:7%"><col style="width:7%">
+      <col style="width:7%"><col style="width:6%"><col style="width:12.5%">
+    </colgroup>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락율</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>1분강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
+    <tr><td>1</td><td>82</td><td><span class="grade a">A92</span></td><td>삼성전기</td><td>168,300</td><td class="plus">+8.25%</td><td>2,350</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>0.72</td><td class="plus">185</td><td class="plus">148</td><td class="plus">+18</td><td class="plus">+350</td><td class="plus">+SS</td><td class="note">VWAP돌파 + 시가위 + 전고돌파</td></tr>
+    <tr><td>2</td><td>17</td><td><span class="grade b">A88</span></td><td>한화오션</td><td>43,200</td><td class="plus">+7.92%</td><td>4,856</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.85</td><td class="plus">248</td><td class="plus">176</td><td class="plus">+52</td><td class="plus">+185</td><td class="plus">+S</td><td class="note">거래대금 급증 + 큰손 유입</td></tr>
+    <tr><td>3</td><td>24</td><td><span class="grade b">B84</span></td><td>두산에너빌리티</td><td>25,700</td><td class="plus">+6.81%</td><td>3,218</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.47</td><td class="plus">221</td><td class="plus">164</td><td class="plus">+31</td><td class="plus">+92</td><td class="plus">+A</td><td class="note">돌파 직전 + 강한 매수세</td></tr>
+    <tr><td>4</td><td>9</td><td><span class="grade c">B79</span></td><td>알테오젠</td><td>318,000</td><td class="plus">+5.42%</td><td>2,942</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.28</td><td class="plus">198</td><td class="plus">152</td><td class="plus">+18</td><td class="plus">+48</td><td class="plus">+B</td><td class="note">눌림 후 재상승 시도</td></tr>
+    <tr><td>5</td><td>31</td><td><span class="grade c">B75</span></td><td>현대차</td><td>286,000</td><td class="plus">+4.21%</td><td>5,130</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.29</td><td class="plus">202</td><td class="plus">151</td><td class="plus">+26</td><td class="plus">+89</td><td class="plus">+A</td><td class="note">기관 유입 + 신고가 접근</td></tr>
+  </table>
+
+  <div class="section sec-blue"><span>▶ 하단 : 거래대금 순위 상위 100종목</span><span>14:05:17</span></div>
+  <table class="grid board">
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락율</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>1분강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
+    <tr><td>1</td><td>3</td><td><span class="grade a">A95</span></td><td>삼성전자</td><td>82,400</td><td class="plus">+2.96%</td><td>8,921</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.38</td><td class="plus">185</td><td class="plus">142</td><td class="plus">+74</td><td class="plus">+321</td><td class="plus">+S</td><td class="note">대금 1위 + 외인/기관 동반</td></tr>
+    <tr><td>2</td><td>1</td><td><span class="grade b">A88</span></td><td>SK하이닉스</td><td>238,500</td><td class="plus">+1.83%</td><td>7,642</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.12</td><td class="plus">166</td><td class="plus">137</td><td class="plus">+41</td><td class="plus">+213</td><td class="plus">+A</td><td class="note">주도 유지, 수급 안정</td></tr>
+    <tr><td>3</td><td>12</td><td><span class="grade b">B83</span></td><td>현대차</td><td>286,000</td><td class="plus">+4.21%</td><td>5,130</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.29</td><td class="plus">201</td><td class="plus">150</td><td class="plus">+26</td><td class="plus">+89</td><td class="plus">+A</td><td class="note">신고가 접근, 기관 유입</td></tr>
+    <tr><td>4</td><td>18</td><td><span class="grade c">B75</span></td><td>셀트리온</td><td>194,300</td><td class="plus">+3.15%</td><td>3,884</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>0.98</td><td class="plus">144</td><td class="plus">128</td><td class="plus">+9</td><td class="plus">+37</td><td>+B</td><td class="note">바이오 순환매</td></tr>
+    <tr><td>5</td><td>44</td><td><span class="grade c">B71</span></td><td>포스코DX</td><td>51,200</td><td class="plus">+5.63%</td><td>2,761</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.55</td><td class="plus">218</td><td class="plus">159</td><td class="plus">+12</td><td class="plus">+25</td><td>+B</td><td class="note">급등 후 강도 유지</td></tr>
+    <tr><td>6</td><td>2</td><td><span class="grade b">B80</span></td><td>LG에너지솔루션</td><td>375,000</td><td class="plus">+1.62%</td><td>2,432</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.06</td><td class="plus">152</td><td class="plus">129</td><td class="plus">+7</td><td class="plus">+31</td><td>+B</td><td class="note">2차전지 섹터 강세</td></tr>
+    <tr><td>7</td><td>33</td><td><span class="grade d">C61</span></td><td>카카오</td><td>55,700</td><td class="minus">-1.24%</td><td>1,892</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>0.87</td><td class="minus">98</td><td class="minus">102</td><td class="minus">-3</td><td class="minus">-12</td><td>-C</td><td class="note">단기 조정 구간</td></tr>
+  </table>
+</div>
+</body>
+</html>

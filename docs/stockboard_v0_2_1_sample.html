@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>StockBoard v0.2.1 Sample</title>
+<style>
+  :root{
+    --bg:#f3f6f8; --panel:#ffffff; --line:#c8d0d8; --head:#e7edf3;
+    --text:#17202a; --red:#d71920; --blue:#1266d6; --green:#18a558;
+    --yellow:#f4c430; --orange:#f08a24;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;overflow:hidden}
+  body{margin:0;background:var(--bg);font-family:Malgun Gothic,Arial,sans-serif;color:var(--text);}
+  .window{
+    width:96vw; min-width:0; max-width:1600px; height:calc(100vh - 20px);
+    overflow:auto; margin:10px auto; border:1px solid #9aa8b5; background:#fff; box-shadow:0 2px 12px #999;
+  }
+  .title{height:30px;background:linear-gradient(#dfe7ee,#cbd6df);display:flex;align-items:center;padding:0 10px;font-weight:700;color:#19324a}
+  .topbar{display:grid;grid-template-columns:200px 48px 48px 48px 120px 64px 78px 220px;align-items:center;justify-content:start;height:42px;border-bottom:1px solid var(--line);font-size:14px;font-weight:700;min-width:826px}
+  .topbar>div:nth-child(2),.topbar>div:nth-child(3),.topbar>div:nth-child(4){padding:0 5px}
+  .topbar>div{height:100%;min-width:0;padding:0 10px;display:flex;align-items:center;justify-content:center;border-right:1px solid var(--line);white-space:nowrap;overflow:hidden}
+  .topbar>div:first-child,.topbar>div:last-child{justify-content:flex-start}
+  .lamp{display:inline-block;width:17px;height:17px;border-radius:50%;margin-left:7px;background:var(--green);box-shadow:0 0 7px var(--green)}
+  .speed{color:#b8860b}.market-open{color:#168000}.focus-name{color:var(--red)}.momentum{color:#b8860b;font-size:14px}
+  .grid{width:100%;border-collapse:collapse;table-layout:auto;min-width:1150px}
+  th,td{border:1px solid var(--line);padding:4px 6px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  th{background:var(--head);font-weight:800;color:#263747}
+  .section{height:26px;background:#f8fbff;border-top:2px solid #aab7c4;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 9px;font-weight:800;white-space:nowrap}
+  .sec-orange{color:#d46b00}.sec-blue{color:#1f65c2}
+  .red{color:var(--red)}.blue{color:var(--blue)}.plus{color:var(--red)}.minus{color:var(--blue)}
+  .grade{display:inline-block;border-radius:4px;color:#fff;padding:2px 7px;font-weight:900}
+  .a{background:#d71920}.b{background:#f08a24}.c{background:#f4c430;color:#111}.d{background:#1266d6}
+  .market th{font-size:13px}.market td{font-size:14px;font-weight:700}
+  .us td{font-size:14px;font-weight:800;background:var(--head)}
+  .us td span{margin-left:8px}
+  .board td{font-size:14px;height:34px;font-weight:700}.board th{font-size:13px;font-weight:800}
+  .candle{height:22px;min-width:120px;position:relative;background:linear-gradient(90deg,#eef3f8,#fff);border-radius:3px}
+  .candle .bar{position:absolute;left:36%;top:6px;width:28%;height:10px;background:#d71920;border:1px solid #8a0000;z-index:3}
+  .candle .wick{position:absolute;left:24%;top:10px;width:52%;height:2px;background:#333;z-index:2}
+  .candle .open{position:absolute;left:28%;top:18%;width:2px;height:64%;background:#111}
+  .candle .vwap{position:absolute;left:45%;top:10%;width:2px;height:80%;background:#f4c430}
+  .candle .prevc{position:absolute;left:62%;top:14%;width:2px;height:72%;background:#18a558}
+  .candle .prevh{position:absolute;left:8%;top:4%;width:2px;height:92%;background:#d71920}
+  .candle .prevl{position:absolute;left:86%;top:4%;width:2px;height:92%;background:#1266d6}
+  .note{text-align:left!important;font-size:12px;min-width:210px}
+  .enhanced-board .stock-name{cursor:help;text-decoration:underline dotted #7b8a97;text-underline-offset:3px}
+  .enhanced-board .ohlc-chart{--low:12%;--high:88%;--open:36%;--close:63%;--body-left:36%;--body-right:37%;--vwap:52%;--prev-high:79%;--prev-close:44%;--prev-low:24%;position:relative;width:130px;height:24px;margin:auto;background:linear-gradient(90deg,#eef3f8,#fff);border-radius:3px;overflow:hidden}
+  .enhanced-board .ohlc-range{position:absolute;left:var(--low);right:calc(100% - var(--high));top:11px;height:2px;background:#263747}
+  .enhanced-board .ohlc-body{position:absolute;left:var(--body-left);right:var(--body-right);top:7px;height:10px;background:#d71920;border:1px solid #8a0000;z-index:3}
+  .enhanced-board .ohlc-down{--open:63%;--close:36%}
+  .enhanced-board .ohlc-down .ohlc-body{background:#1266d6;border-color:#073f91}
+  .enhanced-board .ohlc-open,.enhanced-board .ohlc-close{position:absolute;top:5px;width:2px;height:14px;background:#17202a;z-index:4}
+  .enhanced-board .ohlc-open{left:var(--open)}.enhanced-board .ohlc-close{left:var(--close)}
+  .enhanced-board .ohlc-level{position:absolute;top:2px;width:2px;height:20px;opacity:.9}
+  .enhanced-board .ohlc-vwap{left:var(--vwap);background:#d3a900}
+  .enhanced-board .ohlc-prev-high{left:var(--prev-high);background:var(--red)}
+  .enhanced-board .ohlc-prev-close{left:var(--prev-close);background:var(--green)}
+  .enhanced-board .ohlc-prev-low{left:var(--prev-low);background:var(--blue)}
+  .enhanced-board .metric{position:relative;display:flex;align-items:center;justify-content:center;min-width:105px;height:26px;overflow:hidden;background:#e5e9ed;border:1px solid #c5cdd4;border-radius:2px}
+  .enhanced-board .metric-track{position:absolute;inset:0;width:100%;height:100%;overflow:hidden}
+  .enhanced-board .metric-fill{display:block;width:var(--bar-width);height:100%;background:var(--bar-color)}
+  .enhanced-board .metric-value{position:relative;z-index:2;width:100%;text-align:center;font-variant-numeric:tabular-nums;text-shadow:0 0 2px #fff,0 0 2px #fff;pointer-events:none}
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="title">▣ StockBoard v0.2.1 Sample</div>
+
+  <div class="topbar">
+    <div>2025/08/17 (수) 14:05:17</div>
+    <div>I <span class="lamp"></span></div>
+    <div>R <span class="lamp"></span></div>
+    <div>B <span class="lamp"></span></div>
+    <div>수신속도 <span class="speed">&nbsp;0.21초</span></div>
+    <div><span class="market-open">정규장</span></div>
+    <div><span class="focus-name">삼성전기</span></div>
+    <div class="momentum">VWAP돌파 + 시가위 + 전고돌파</div>
+  </div>
+
+  <table class="grid us">
+    <tr>
+      <td>나스닥 <span class="plus">+1.85%</span></td>
+      <td>QQQ <span class="plus">+1.72%</span></td>
+      <td>SMH <span class="plus">+2.25%</span></td>
+      <td>IBB <span class="plus">+0.55%</span></td>
+      <td>LIT <span class="minus">-1.25%</span></td>
+      <td>BOTZ <span class="plus">+0.82%</span></td>
+      <td>한국장 영향 <span class="plus">반도체 우호</span></td>
+    </tr>
+  </table>
+
+  <table class="grid market">
+    <tr><th>시장</th><th>지수</th><th>등락률</th><th>상승/하락</th><th>외선(억)</th><th>외인(억)</th><th>기관(억)</th><th>프로(억)</th><th>외달(억)</th><th>분위기</th></tr>
+    <tr><td class="blue">KOSPI</td><td>3,250</td><td class="plus">+1.23</td><td><span class="plus">720(↑4)</span>/<span class="blue">180(↓0)</span></td><td class="plus">+5,200</td><td class="plus">+2,300</td><td class="minus">-800</td><td class="plus">+1,250</td><td class="plus">+8,600</td><td class="plus">92 폭등장</td></tr>
+    <tr><td class="blue">KOSDAQ</td><td>1,035</td><td class="minus">-0.45</td><td><span class="plus">430(↑7)</span>/<span class="blue">980(↓1)</span></td><td class="minus">-1,800</td><td class="minus">-500</td><td class="plus">+120</td><td class="minus">-450</td><td class="minus">-2,100</td><td class="minus">28 약세장</td></tr>
+  </table>
+
+  <div class="section sec-orange">▶ 유력 후보 상위 5종목</div>
+  <table class="grid board enhanced-board" id="candidate-board">
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락율</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>1분강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
+    <tr><td>1</td><td>82</td><td><span class="grade a">A92</span></td><td>삼성전기</td><td>168,300</td><td class="plus">+8.25%</td><td>2,350</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>0.72</td><td class="plus">185</td><td class="plus">148</td><td class="plus">+18</td><td class="plus">+350</td><td class="plus">+SS</td><td class="note">VWAP돌파 + 시가위 + 전고돌파</td></tr>
+    <tr><td>2</td><td>17</td><td><span class="grade a">A90</span></td><td>한화오션</td><td>43,200</td><td class="plus">+7.92%</td><td>4,856</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.85</td><td class="plus">248</td><td class="plus">176</td><td class="plus">+52</td><td class="plus">+185</td><td class="plus">+S</td><td class="note">거래대금 급증 + 큰손 유입</td></tr>
+    <tr><td>3</td><td>24</td><td><span class="grade b">A88</span></td><td>두산에너빌리티</td><td>25,700</td><td class="plus">+6.81%</td><td>3,218</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.47</td><td class="plus">221</td><td class="plus">164</td><td class="plus">+31</td><td class="plus">+92</td><td class="plus">+A</td><td class="note">돌파 직전 + 강한 매수세</td></tr>
+    <tr><td>4</td><td>9</td><td><span class="grade b">B84</span></td><td>알테오젠</td><td>318,000</td><td class="plus">+5.42%</td><td>2,942</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.28</td><td class="plus">198</td><td class="plus">152</td><td class="plus">+18</td><td class="plus">+48</td><td class="plus">+B</td><td class="note">눌림 후 재상승 시도</td></tr>
+    <tr><td>5</td><td>31</td><td><span class="grade b">B81</span></td><td>현대차</td><td>286,000</td><td class="plus">+4.21%</td><td>5,130</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.29</td><td class="plus">202</td><td class="plus">151</td><td class="plus">+26</td><td class="plus">+89</td><td class="plus">+A</td><td class="note">기관 유입 + 신고가 접근</td></tr>
+  </table>
+
+  <div class="section sec-blue">▶ 거래대금 상위 100종목</div>
+  <table class="grid board enhanced-board" id="trading-board">
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락율</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>1분강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
+    <tr><td>1</td><td>3</td><td><span class="grade a">A95</span></td><td>삼성전자</td><td>82,400</td><td class="plus">+2.96%</td><td>8,921</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.38</td><td class="plus">185</td><td class="plus">142</td><td class="plus">+74</td><td class="plus">+321</td><td class="plus">+S</td><td class="note">대금 1위 + 외인/기관 동반</td></tr>
+    <tr><td>2</td><td>1</td><td><span class="grade b">A88</span></td><td>SK하이닉스</td><td>238,500</td><td class="plus">+1.83%</td><td>7,642</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.12</td><td class="plus">166</td><td class="plus">137</td><td class="plus">+41</td><td class="plus">+213</td><td class="plus">+A</td><td class="note">주도 유지, 수급 안정</td></tr>
+    <tr><td>3</td><td>12</td><td><span class="grade b">B83</span></td><td>현대차</td><td>286,000</td><td class="plus">+4.21%</td><td>5,130</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.29</td><td class="plus">201</td><td class="plus">150</td><td class="plus">+26</td><td class="plus">+89</td><td class="plus">+A</td><td class="note">신고가 접근, 기관 유입</td></tr>
+    <tr><td>4</td><td>18</td><td><span class="grade c">B75</span></td><td>셀트리온</td><td>194,300</td><td class="plus">+3.15%</td><td>3,884</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>0.98</td><td class="plus">144</td><td class="plus">128</td><td class="plus">+9</td><td class="plus">+37</td><td>+B</td><td class="note">바이오 순환매</td></tr>
+    <tr><td>5</td><td>44</td><td><span class="grade c">B71</span></td><td>포스코DX</td><td>51,200</td><td class="plus">+5.63%</td><td>2,761</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.55</td><td class="plus">218</td><td class="plus">159</td><td class="plus">+12</td><td class="plus">+25</td><td>+B</td><td class="note">급등 후 강도 유지</td></tr>
+    <tr><td>6</td><td>2</td><td><span class="grade b">B80</span></td><td>LG에너지솔루션</td><td>375,000</td><td class="plus">+1.62%</td><td>2,432</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.06</td><td class="plus">152</td><td class="plus">129</td><td class="plus">+7</td><td class="plus">+31</td><td>+B</td><td class="note">2차전지 섹터 강세</td></tr>
+    <tr><td>7</td><td>33</td><td><span class="grade d">C61</span></td><td>카카오</td><td>55,700</td><td class="minus">-1.24%</td><td>1,892</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>0.87</td><td class="minus">98</td><td class="minus">102</td><td class="minus">-3</td><td class="minus">-12</td><td>-C</td><td class="note">단기 조정 구간</td></tr>
+    <tr><td>8</td><td>7</td><td><span class="grade b">B79</span></td><td>기아</td><td>126,800</td><td class="plus">+2.18%</td><td>1,744</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.18</td><td class="plus">157</td><td class="plus">133</td><td class="plus">+15</td><td class="plus">+42</td><td class="plus">+B</td><td class="note">자동차 수급 동반 강세</td></tr>
+    <tr><td>9</td><td>21</td><td><span class="grade c">B74</span></td><td>NAVER</td><td>214,500</td><td class="plus">+1.42%</td><td>1,638</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.04</td><td class="plus">139</td><td class="plus">125</td><td class="plus">+11</td><td class="plus">+28</td><td class="plus">+B</td><td class="note">플랫폼주 반등 시도</td></tr>
+    <tr><td>10</td><td>6</td><td><span class="grade b">B78</span></td><td>한화에어로스페이스</td><td>352,000</td><td class="plus">+3.76%</td><td>1,572</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.36</td><td class="plus">181</td><td class="plus">147</td><td class="plus">+23</td><td class="plus">+61</td><td class="plus">+A</td><td class="note">방산 모멘텀 재부각</td></tr>
+    <tr><td>11</td><td>15</td><td><span class="grade c">B72</span></td><td>삼성SDI</td><td>412,500</td><td class="minus">-0.58%</td><td>1,486</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>0.94</td><td class="minus">112</td><td class="minus">108</td><td class="minus">-6</td><td class="minus">-18</td><td>-B</td><td class="note">배터리주 숨 고르기</td></tr>
+    <tr><td>12</td><td>28</td><td><span class="grade c">B70</span></td><td>KB금융</td><td>89,600</td><td class="plus">+1.09%</td><td>1,394</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.11</td><td class="plus">146</td><td class="plus">130</td><td class="plus">+19</td><td class="plus">+35</td><td class="plus">+B</td><td class="note">금융주 외인 매수 유입</td></tr>
+    <tr><td>13</td><td>11</td><td><span class="grade b">B77</span></td><td>HD현대일렉트릭</td><td>328,500</td><td class="plus">+4.08%</td><td>1,327</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.43</td><td class="plus">193</td><td class="plus">154</td><td class="plus">+27</td><td class="plus">+74</td><td class="plus">+A</td><td class="note">전력기기 강세 지속</td></tr>
+    <tr><td>14</td><td>39</td><td><span class="grade d">C65</span></td><td>신한지주</td><td>57,300</td><td class="minus">-0.35%</td><td>1,245</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>0.96</td><td class="minus">108</td><td class="minus">105</td><td class="plus">+4</td><td class="minus">-9</td><td>-C</td><td class="note">박스권 상단 매물 소화</td></tr>
+    <tr><td>15</td><td>25</td><td><span class="grade c">B73</span></td><td>POSCO홀딩스</td><td>378,000</td><td class="plus">+1.21%</td><td>1,186</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.08</td><td class="plus">137</td><td class="plus">124</td><td class="plus">+8</td><td class="plus">+22</td><td class="plus">+B</td><td class="note">철강주 저점 매수세</td></tr>
+    <tr><td>16</td><td>8</td><td><span class="grade b">B76</span></td><td>두산로보틱스</td><td>91,400</td><td class="plus">+3.04%</td><td>1,108</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.31</td><td class="plus">174</td><td class="plus">145</td><td class="plus">+13</td><td class="plus">+47</td><td class="plus">+A</td><td class="note">로봇 테마 거래 증가</td></tr>
+    <tr><td>17</td><td>52</td><td><span class="grade d">C63</span></td><td>에코프로비엠</td><td>184,200</td><td class="minus">-1.07%</td><td>1,026</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>0.89</td><td class="minus">101</td><td class="minus">103</td><td class="minus">-11</td><td class="minus">-26</td><td>-C</td><td class="note">이차전지 매물 출회</td></tr>
+    <tr><td>18</td><td>19</td><td><span class="grade c">B69</span></td><td>한국전력</td><td>23,850</td><td class="plus">+0.85%</td><td>972</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.02</td><td class="plus">128</td><td class="plus">119</td><td class="plus">+16</td><td class="plus">+24</td><td class="plus">+B</td><td class="note">실적 개선 기대 반영</td></tr>
+    <tr><td>19</td><td>36</td><td><span class="grade d">C60</span></td><td>LG화학</td><td>342,500</td><td class="minus">-0.92%</td><td>914</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>0.91</td><td class="minus">106</td><td class="minus">104</td><td class="minus">-8</td><td class="minus">-21</td><td>-C</td><td class="note">화학 업종 약세 흐름</td></tr>
+    <tr><td>20</td><td>14</td><td><span class="grade c">B68</span></td><td>현대로템</td><td>48,750</td><td class="plus">+2.52%</td><td>861</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.22</td><td class="plus">163</td><td class="plus">138</td><td class="plus">+17</td><td class="plus">+39</td><td class="plus">+B</td><td class="note">철도·방산 수급 유입</td></tr>
+  </table>
+</div>
+<script>
+  const board = document.getElementById('trading-board');
+  const candidateBoard = document.getElementById('candidate-board');
+  const boardHeader = `
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락율</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>1분강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>`;
+  board.innerHTML = `${boardHeader}<tr><td colspan="15">CSV 샘플 데이터를 불러오는 중입니다.</td></tr>`;
+
+  function parseCsvLine(line) {
+    const values = [];
+    let value = '';
+    let quoted = false;
+
+    for (let i = 0; i < line.length; i += 1) {
+      const char = line[i];
+      if (char === '"' && quoted && line[i + 1] === '"') {
+        value += '"';
+        i += 1;
+      } else if (char === '"') {
+        quoted = !quoted;
+      } else if (char === ',' && !quoted) {
+        values.push(value);
+        value = '';
+      } else {
+        value += char;
+      }
+    }
+    values.push(value);
+    return values;
+  }
+
+  function parseCsv(text) {
+    const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(line => line.trim());
+    const headers = parseCsvLine(lines[0]);
+    return lines.slice(1).map(line => {
+      const values = parseCsvLine(line);
+      return Object.fromEntries(headers.map((header, index) => [header, values[index] || '']));
+    });
+  }
+
+  function seededRandom(seedText) {
+    let seed = 2166136261;
+    for (const char of seedText) {
+      seed ^= char.charCodeAt(0);
+      seed = Math.imul(seed, 16777619);
+    }
+    return () => {
+      seed += 0x6D2B79F5;
+      let value = seed;
+      value = Math.imul(value ^ (value >>> 15), value | 1);
+      value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+      return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, char => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[char]);
+  }
+
+  function signed(value) {
+    return `${value > 0 ? '+' : ''}${value.toLocaleString('ko-KR')}`;
+  }
+
+  function createSample(stock) {
+    const code = stock['종목코드'];
+    const name = stock['종목명'];
+    const random = seededRandom(`${code}:${name}`);
+    const previousRank = Math.round(1 + random() * 99);
+    const price = Math.round((5000 + random() * 495000) / 50) * 50;
+    const change = Number((-5 + random() * 12).toFixed(2));
+    const amount = Math.round(100 + random() * 9900);
+    const execution = Math.round(60 + random() * 180);
+    const minuteStrength = Math.round(60 + random() * 180);
+    const balanceRatio = (0.5 + random() * 1.5).toFixed(2);
+    const foreign = Math.round(-300 + random() * 600);
+    const program = Math.round(-500 + random() * 1000);
+    const score = Math.round(60 + random() * 36);
+    const gradeClass = score >= 90 ? 'a' : score >= 80 ? 'b' : score >= 70 ? 'c' : 'd';
+    const grade = `${score >= 85 ? 'A' : score >= 70 ? 'B' : 'C'}${score}`;
+    const whale = execution >= 190 ? '+S' : execution >= 150 ? '+A' : execution >= 110 ? '+B' : '-C';
+    const notes = ['거래대금 유입', '체결강도 상승', 'VWAP 부근', '수급 관찰', '단기 모멘텀', '변동성 확대'];
+    const balanceValue = Number(balanceRatio);
+    const balanceColor = balanceValue > 1.05 ? '#d71920' : balanceValue < 0.95 ? '#1266d6' : '#7f8c8d';
+
+    return {
+      code, name, previousRank, price, change, amount, foreign, program, score, gradeClass, grade, whale,
+      balanceMetric: {
+        value: balanceRatio,
+        barWidth: Math.min(100, Math.round((balanceValue / 2) * 100)),
+        color: balanceColor
+      },
+      minuteMetric: {
+        value: minuteStrength,
+        barWidth: Math.min(100, Math.round((minuteStrength / 250) * 100)),
+        color: minuteStrength >= 100 ? '#d71920' : '#1266d6'
+      },
+      executionMetric: {
+        value: execution,
+        barWidth: Math.min(100, Math.round((execution / 250) * 100)),
+        color: execution >= 100 ? '#d71920' : '#1266d6'
+      },
+      note: notes[Math.floor(random() * notes.length)]
+    };
+  }
+
+  function ohlcMarkup(isPrimarySample = false, direction = 'up') {
+    return `<div class="ohlc-chart ohlc-${direction}${isPrimarySample ? ' is-primary-sample' : ''}" role="img" aria-label="당일 저가-고가, 시가-현재가, VWAP, 전일 고가, 종가, 저가 표시 영역" data-open="" data-high="" data-low="" data-current="" data-vwap="" data-prev-high="" data-prev-close="" data-prev-low="">
+      <i class="ohlc-range" title="당일 저가-고가"></i>
+      <i class="ohlc-body" title="당일 시가-현재가"></i>
+      <i class="ohlc-open" title="당일 시가"></i>
+      <i class="ohlc-close" title="현재가"></i>
+      <i class="ohlc-level ohlc-vwap" title="VWAP"></i>
+      <i class="ohlc-level ohlc-prev-high" title="전일 고가"></i>
+      <i class="ohlc-level ohlc-prev-close" title="전일 종가"></i>
+      <i class="ohlc-level ohlc-prev-low" title="전일 저가"></i>
+    </div>`;
+  }
+
+  function metricMarkup(label, metric) {
+    return `<div class="metric" title="${escapeHtml(label)} ${escapeHtml(metric.value)}" style="--bar-width:${metric.barWidth}%;--bar-color:${metric.color}">
+      <span class="metric-track"><i class="metric-fill"></i></span>
+      <span class="metric-value">${metric.value}</span>
+    </div>`;
+  }
+
+  function enhanceCandidateBoard() {
+    const presentation = [
+      { code: '009150', balance: { value: '0.72', barWidth: 36, color: '#1266d6' }, minute: { value: 185, barWidth: 74, color: '#d71920' }, daily: { value: 148, barWidth: 59, color: '#d71920' } },
+      { code: '042660', balance: { value: '1.85', barWidth: 93, color: '#d71920' }, minute: { value: 248, barWidth: 99, color: '#d71920' }, daily: { value: 176, barWidth: 70, color: '#d71920' } },
+      { code: '034020', balance: { value: '1.47', barWidth: 74, color: '#d71920' }, minute: { value: 221, barWidth: 88, color: '#d71920' }, daily: { value: 164, barWidth: 66, color: '#d71920' } },
+      { code: '196170', balance: { value: '1.28', barWidth: 64, color: '#d71920' }, minute: { value: 198, barWidth: 79, color: '#d71920' }, daily: { value: 152, barWidth: 61, color: '#d71920' } },
+      { code: '005380', balance: { value: '1.29', barWidth: 65, color: '#d71920' }, minute: { value: 202, barWidth: 81, color: '#d71920' }, daily: { value: 151, barWidth: 60, color: '#d71920' } }
+    ];
+
+    Array.from(candidateBoard.rows).slice(1).forEach((row, index) => {
+      const sample = presentation[index];
+      const nameCell = row.cells[3];
+      nameCell.classList.add('stock-name');
+      nameCell.title = `종목코드: ${sample.code}`;
+      row.cells[7].innerHTML = ohlcMarkup();
+      row.cells[8].innerHTML = metricMarkup('잔량비', sample.balance);
+      row.cells[9].innerHTML = metricMarkup('1분강도', sample.minute);
+      row.cells[10].innerHTML = metricMarkup('당일강도', sample.daily);
+    });
+  }
+
+  function renderBoard(stocks) {
+    const samples = stocks.slice(0, 100).map(createSample).sort((a, b) => b.amount - a.amount);
+    const rows = samples.map((sample, index) => {
+      const directionClass = sample.change >= 0 ? 'plus' : 'minus';
+      const whaleClass = sample.whale.startsWith('+') ? 'plus' : 'minus';
+      return `<tr>
+        <td>${index + 1}</td>
+        <td>${sample.previousRank}</td>
+        <td><span class="grade ${sample.gradeClass}">${sample.grade}</span></td>
+        <td class="stock-name" title="종목코드: ${escapeHtml(sample.code)}">${escapeHtml(sample.name)}</td>
+        <td>${sample.price.toLocaleString('ko-KR')}</td>
+        <td class="${directionClass}">${signed(sample.change)}%</td>
+        <td>${sample.amount.toLocaleString('ko-KR')}</td>
+        <td>${ohlcMarkup(index === 0, sample.change >= 0 ? 'up' : 'down')}</td>
+        <td>${metricMarkup('잔량비', sample.balanceMetric)}</td>
+        <td>${metricMarkup('1분강도', sample.minuteMetric)}</td>
+        <td>${metricMarkup('당일강도', sample.executionMetric)}</td>
+        <td class="${sample.foreign >= 0 ? 'plus' : 'minus'}">${signed(sample.foreign)}</td>
+        <td class="${sample.program >= 0 ? 'plus' : 'minus'}">${signed(sample.program)}</td>
+        <td class="${whaleClass}">${sample.whale}</td>
+        <td class="note">${sample.note}</td>
+      </tr>`;
+    }).join('');
+    board.innerHTML = boardHeader + rows;
+  }
+
+  enhanceCandidateBoard();
+
+  fetch('./traddable_stock_master.csv', { cache: 'no-store' })
+    .then(response => {
+      if (!response.ok) throw new Error(`CSV load failed: ${response.status}`);
+      return response.text();
+    })
+    .then(text => renderBoard(parseCsv(text)))
+    .catch(error => {
+      console.error(error);
+      board.innerHTML = `${boardHeader}<tr><td colspan="15">CSV를 불러오지 못했습니다. 로컬 웹 서버에서 이 HTML을 열어 주세요.</td></tr>`;
+    });
+</script>
+</body>
+</html>
