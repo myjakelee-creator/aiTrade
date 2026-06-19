@@ -129,9 +129,12 @@
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락율</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>1분강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>`;
   board.innerHTML = `${boardHeader}<tr><td colspan="15">거래 가능 종목 마스터를 불러오는 중입니다.</td></tr>`;
   const top100State = {
-    tradableByCode: new Map(),
+    masterSet: new Set(),
+    masterNameByCode: new Map(),
+    rowByCode: new Map(),
     masterReady: false,
-    pendingRows: null
+    pendingRows: null,
+    apiError: null
   };
 
   function parseCsvLine(line) {
@@ -172,9 +175,13 @@
     })[char]);
   }
 
-  function normalizeStockCode(value) {
-    const code = String(value ?? '').trim().toUpperCase().replace(/^A(?=[0-9A-Z]{6}$)/, '');
-    return /^\d+$/.test(code) ? code.padStart(6, '0') : code;
+  function normalizeCode(value) {
+    const code = String(value ?? '')
+      .trim()
+      .toUpperCase()
+      .replace(/_AL$/, '')
+      .replace(/^A(?=\d{6}$)/, '');
+    return /^\d{6}$/.test(code) ? code : '';
   }
 
   function displayValue(value, suffix = '') {
@@ -273,16 +280,16 @@
 
   function normalizeRankingRow(row, masterName) {
     const gradeClass = String(firstValue(row, ['grade_class', 'grade_tone']) || 'd').toLowerCase();
-    const candle = candleView(firstValue(row, ['mini_daily_candle']));
+    const candle = candleView(firstValue(row, ['ohlc', 'mini_daily_candle']));
     const changeRate = firstValue(row, ['change_rate', '등락률', '등락율']);
-    const foreign = firstValue(row, ['foreign_sum_eok', '외합(억)']);
-    const program = firstValue(row, ['program_eok', '프로(억)', '프(억)']);
-    const bigHand = firstValue(row, ['big_hand_index', '큰손']);
+    const foreign = firstValue(row, ['foreign_sum', 'foreign_sum_eok', '외합(억)']);
+    const program = firstValue(row, ['program_net', 'program_eok', '프로(억)', '프(억)']);
+    const bigHand = firstValue(row, ['big_hand', 'big_hand_index', '큰손']);
     return {
-      code: normalizeStockCode(firstValue(row, ['stock_code', '종목코드', 'code'])),
+      code: normalizeCode(firstValue(row, ['stock_code', '종목코드', 'code'])),
       rank: displayValue(firstValue(row, ['rank', '현재순위', '순위'])),
       previousRank: displayValue(firstValue(row, ['prev_rank', '전일순위', '전일'])),
-      grade: displayValue(firstValue(row, ['grade_score', '등급'])),
+      grade: displayValue(firstValue(row, ['grade', 'grade_score', '등급'])),
       gradeClass: ['a', 'b', 'c', 'd'].includes(gradeClass) ? gradeClass : 'd',
       name: displayValue(firstValue(row, ['stock_name', '종목명']) || masterName),
       price: displayValue(firstValue(row, ['price', '현재가'])),
@@ -290,7 +297,7 @@
       changeClass: toneClass(firstValue(row, ['change_tone']), changeRate),
       amount: displayValue(firstValue(row, ['trade_value_eok', '거래대금(억)', '거래대금_억'])),
       candle,
-      balanceMetric: metricView(firstValue(row, ['orderbook_ratio', '잔량비']), firstValue(row, ['orderbook_ratio_display'])),
+      balanceMetric: metricView(firstValue(row, ['bid_ask_ratio', 'orderbook_ratio', '잔량비']), firstValue(row, ['orderbook_ratio_display'])),
       minuteMetric: metricView(firstValue(row, ['strength_1m', '1분강도']), firstValue(row, ['strength_1m_display'])),
       dailyMetric: metricView(firstValue(row, ['strength_day', '당일강도']), firstValue(row, ['strength_day_display'])),
       foreign: displayValue(foreign),
@@ -299,37 +306,80 @@
       programClass: toneClass(firstValue(row, ['program_tone']), program),
       bigHand: displayValue(bigHand),
       bigHandClass: toneClass(firstValue(row, ['big_hand_tone']), bigHand),
-      note: displayValue(firstValue(row, ['momentum_text', '모멘텀']))
+      note: displayValue(firstValue(row, ['momentum', 'momentum_text', '모멘텀']))
     };
+  }
+
+  function showBoardMessage(message) {
+    top100State.rowByCode.clear();
+    board.innerHTML = `${boardHeader}<tr><td colspan="15">${escapeHtml(message)}</td></tr>`;
+  }
+
+  function setCell(cell, html, className = '', title = '') {
+    if (cell.dataset.renderedHtml !== html) {
+      cell.innerHTML = html;
+      cell.dataset.renderedHtml = html;
+    }
+    if (cell.className !== className) cell.className = className;
+    if (cell.title !== title) cell.title = title;
+  }
+
+  function updateBoardRow(tableRow, row) {
+    const grade = row.grade === '-' ? '-' : `<span class="grade ${row.gradeClass}">${escapeHtml(row.grade)}</span>`;
+    const candle = row.candle ? ohlcMarkup(row.candle.direction, row.candle.positions) : '-';
+    const cells = tableRow.cells;
+    setCell(cells[0], escapeHtml(row.rank));
+    setCell(cells[1], escapeHtml(row.previousRank));
+    setCell(cells[2], grade);
+    setCell(cells[3], escapeHtml(row.name), 'stock-name', `종목코드: ${row.code}`);
+    setCell(cells[4], escapeHtml(row.price));
+    setCell(cells[5], escapeHtml(row.changeRate), row.changeClass);
+    setCell(cells[6], escapeHtml(row.amount));
+    setCell(cells[7], candle);
+    setCell(cells[8], metricMarkup('잔량비', row.balanceMetric));
+    setCell(cells[9], metricMarkup('1분강도', row.minuteMetric));
+    setCell(cells[10], metricMarkup('당일강도', row.dailyMetric));
+    setCell(cells[11], escapeHtml(row.foreign), row.foreignClass);
+    setCell(cells[12], escapeHtml(row.program), row.programClass);
+    setCell(cells[13], escapeHtml(row.bigHand), row.bigHandClass);
+    setCell(cells[14], escapeHtml(row.note), 'note');
+  }
+
+  function createBoardRow(row) {
+    const tableRow = document.createElement('tr');
+    tableRow.dataset.stockCode = row.code;
+    for (let index = 0; index < 15; index += 1) tableRow.insertCell();
+    updateBoardRow(tableRow, row);
+    return tableRow;
   }
 
   function renderBoard(rows) {
     if (!rows.length) {
-      board.innerHTML = `${boardHeader}<tr><td colspan="15">표시할 거래대금 순위 종목이 없습니다.</td></tr>`;
+      showBoardMessage('표시할 거래대금 순위 종목이 없습니다.');
       return;
     }
-    const markup = rows.map(row => {
-      const grade = row.grade === '-' ? '-' : `<span class="grade ${row.gradeClass}">${escapeHtml(row.grade)}</span>`;
-      const candle = row.candle ? ohlcMarkup(row.candle.direction, row.candle.positions) : '-';
-      return `<tr>
-        <td>${escapeHtml(row.rank)}</td>
-        <td>${escapeHtml(row.previousRank)}</td>
-        <td>${grade}</td>
-        <td class="stock-name" title="종목코드: ${escapeHtml(row.code)}">${escapeHtml(row.name)}</td>
-        <td>${escapeHtml(row.price)}</td>
-        <td class="${row.changeClass}">${escapeHtml(row.changeRate)}</td>
-        <td>${escapeHtml(row.amount)}</td>
-        <td>${candle}</td>
-        <td>${metricMarkup('잔량비', row.balanceMetric)}</td>
-        <td>${metricMarkup('1분강도', row.minuteMetric)}</td>
-        <td>${metricMarkup('당일강도', row.dailyMetric)}</td>
-        <td class="${row.foreignClass}">${escapeHtml(row.foreign)}</td>
-        <td class="${row.programClass}">${escapeHtml(row.program)}</td>
-        <td class="${row.bigHandClass}">${escapeHtml(row.bigHand)}</td>
-        <td class="note">${escapeHtml(row.note)}</td>
-      </tr>`;
-    }).join('');
-    board.innerHTML = boardHeader + markup;
+
+    if (!top100State.rowByCode.size) board.innerHTML = boardHeader;
+    const activeCodes = new Set(rows.map(row => row.code));
+    for (const [code, tableRow] of top100State.rowByCode) {
+      if (!activeCodes.has(code)) {
+        tableRow.remove();
+        top100State.rowByCode.delete(code);
+      }
+    }
+
+    const tableBody = board.tBodies[0];
+    rows.forEach((row, index) => {
+      let tableRow = top100State.rowByCode.get(row.code);
+      if (!tableRow) {
+        tableRow = createBoardRow(row);
+        top100State.rowByCode.set(row.code, tableRow);
+      } else {
+        updateBoardRow(tableRow, row);
+      }
+      const expectedRow = tableBody.rows[index + 1];
+      if (expectedRow !== tableRow) tableBody.insertBefore(tableRow, expectedRow || null);
+    });
   }
 
   function applyRankingRows(inputRows) {
@@ -337,10 +387,10 @@
     const filtered = [];
     for (const sourceRow of inputRows) {
       if (!sourceRow || typeof sourceRow !== 'object') continue;
-      const code = normalizeStockCode(firstValue(sourceRow, ['stock_code', '종목코드', 'code']));
-      if (!code || seen.has(code) || !top100State.tradableByCode.has(code)) continue;
+      const code = normalizeCode(firstValue(sourceRow, ['stock_code', '종목코드', 'code']));
+      if (!code || seen.has(code) || !top100State.masterSet.has(code)) continue;
       seen.add(code);
-      filtered.push(normalizeRankingRow({ ...sourceRow, stock_code: code }, top100State.tradableByCode.get(code)));
+      filtered.push(normalizeRankingRow({ ...sourceRow, stock_code: code }, top100State.masterNameByCode.get(code)));
       if (filtered.length === 100) break;
     }
     renderBoard(filtered);
@@ -366,7 +416,8 @@
     status() {
       return {
         masterReady: top100State.masterReady,
-        tradableCount: top100State.tradableByCode.size,
+        tradableCount: top100State.masterSet.size,
+        renderedCount: top100State.rowByCode.size,
         hasPendingRows: top100State.pendingRows !== null
       };
     }
@@ -379,12 +430,15 @@
     })
     .then(text => {
       const masterRows = parseCsv(text);
-      top100State.tradableByCode = new Map(masterRows
-        .map(row => [normalizeStockCode(row['종목코드']), row['종목명']])
+      top100State.masterNameByCode = new Map(masterRows
+        .map(row => [normalizeCode(row['종목코드']), row['종목명']])
         .filter(([code]) => code));
+      top100State.masterSet = new Set(top100State.masterNameByCode.keys());
       top100State.masterReady = true;
       if (top100State.pendingRows !== null) {
         applyRankingRows(top100State.pendingRows);
+      } else if (top100State.apiError) {
+        showBoardMessage('키움 거래대금 순위 조회 결과를 불러오지 못했습니다.');
       } else {
         board.innerHTML = `${boardHeader}<tr><td colspan="15">키움 거래대금 순위 조회 결과를 기다리는 중입니다.</td></tr>`;
       }
@@ -392,6 +446,20 @@
     .catch(error => {
       console.error(error);
       board.innerHTML = `${boardHeader}<tr><td colspan="15">거래 가능 종목 마스터를 불러오지 못했습니다.</td></tr>`;
+    });
+
+  fetch('/api/top100', { cache: 'no-store' })
+    .then(response => {
+      if (!response.ok) throw new Error(`TOP100 load failed: ${response.status}`);
+      return response.json();
+    })
+    .then(rows => window.StockBoardTop100.update(rows))
+    .catch(error => {
+      console.error(error);
+      top100State.apiError = error;
+      if (top100State.masterReady) {
+        showBoardMessage('키움 거래대금 순위 조회 결과를 불러오지 못했습니다.');
+      }
     });
 </script>
 </body>
