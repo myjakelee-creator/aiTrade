@@ -28,30 +28,61 @@
   .section{height:26px;background:#f8fbff;border-top:2px solid #aab7c4;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 9px;font-weight:800;white-space:nowrap}
   .sec-orange{color:#d46b00}.sec-blue{color:#1f65c2}
   .blue{color:var(--blue)}.plus{color:var(--red)}.minus{color:var(--blue)}
+  .foreign-zero{color:#7f8c8d}
   .grade{display:inline-block;border-radius:4px;color:#fff;padding:2px 7px;font-weight:900}
   .a{background:#d71920}.b{background:#f08a24}.c{background:#f4c430;color:#111}.d{background:#1266d6}
+  .market{width:auto;min-width:0;max-width:100%;table-layout:auto}
+  .market th,.market td{padding-left:8px;padding-right:8px;white-space:nowrap}
   .market th{font-size:13px}.market td{font-size:14px;font-weight:700}
+  .us{width:auto;min-width:0;max-width:100%;table-layout:auto}
   .us td{font-size:14px;font-weight:800;background:var(--head)}
   .us td span{margin-left:8px}
+  .us-impact-cell{max-width:180px}
+  .us-impact-value{display:inline-block;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
+  .market-temperature-header{min-width:92px}
+  .market-temperature-cell{width:120px;min-width:92px;max-width:140px;padding-top:4px;padding-bottom:4px}
+  .market-temperature-bar{display:flex;width:100%;height:7px;overflow:hidden;border:1px solid #b7c1ca;border-radius:4px;background:#e3e8ec}
+  .market-temperature-a{background:#d71920}.market-temperature-b{background:#f08a24}.market-temperature-c{background:#f4c430}.market-temperature-d{background:#1266d6}
   .board td{font-size:14px;height:34px;font-weight:700}.board th{font-size:13px;font-weight:800}
+  .enhanced-board td:nth-child(3){text-align:center;vertical-align:middle}
   .note{text-align:left!important;font-size:12px;min-width:210px}
+  #trading-board,#candidate-board{table-layout:fixed;min-width:0}
+  #trading-board th,#candidate-board th{position:relative;overflow:visible}
+  #trading-board .column-label,#candidate-board .column-label{display:block;overflow:hidden;text-overflow:ellipsis}
+  #trading-board .column-resizer,#candidate-board .column-resizer{position:absolute;top:0;right:-4px;width:8px;height:100%;z-index:5;cursor:col-resize;touch-action:none;user-select:none}
+  #trading-board .metric{min-width:0}
+  #trading-board .note{min-width:0}
+  #trading-board .rank-cell{text-align:center}
+  #trading-board .stock-name{text-align:left}
+  #trading-board .number-cell{text-align:right;font-variant-numeric:tabular-nums}
+  .enhanced-board .flow-number{text-align:right;font-variant-numeric:tabular-nums}
+  .flow-zero{color:#7f8c8d}
+  body.column-resizing{cursor:col-resize;user-select:none}
   .enhanced-board .stock-name{cursor:help;text-decoration:underline dotted #7b8a97;text-underline-offset:3px}
-  .enhanced-board .ohlc-chart{--low:12%;--high:88%;--open:36%;--close:63%;--body-left:36%;--body-right:37%;--vwap:52%;--prev-high:79%;--prev-close:44%;--prev-low:24%;position:relative;width:130px;height:24px;margin:auto;background:linear-gradient(90deg,#eef3f8,#fff);border-radius:3px;overflow:hidden}
-  .enhanced-board .ohlc-range{position:absolute;left:var(--low);right:calc(100% - var(--high));top:11px;height:2px;background:#263747}
-  .enhanced-board .ohlc-body{position:absolute;left:var(--body-left);right:var(--body-right);top:7px;height:10px;background:#d71920;border:1px solid #8a0000;z-index:3}
-  .enhanced-board .ohlc-down{--open:63%;--close:36%}
-  .enhanced-board .ohlc-down .ohlc-body{background:#1266d6;border-color:#073f91}
-  .enhanced-board .ohlc-open,.enhanced-board .ohlc-close{position:absolute;top:5px;width:2px;height:14px;background:#17202a;z-index:4}
-  .enhanced-board .ohlc-open{left:var(--open)}.enhanced-board .ohlc-close{left:var(--close)}
-  .enhanced-board .ohlc-level{position:absolute;top:2px;width:2px;height:20px;opacity:.9}
-  .enhanced-board .ohlc-vwap{left:var(--vwap);background:#d3a900}
-  .enhanced-board .ohlc-prev-high{left:var(--prev-high);background:var(--red)}
-  .enhanced-board .ohlc-prev-close{left:var(--prev-close);background:var(--green)}
-  .enhanced-board .ohlc-prev-low{left:var(--prev-low);background:var(--blue)}
+  .enhanced-board .ohlc-chart{position:relative;width:100%;min-width:0;height:24px;margin:auto;background:linear-gradient(90deg,#eef3f8,#fff);border-radius:3px;overflow:hidden}
+  .enhanced-board .ohlc-range{position:absolute;left:var(--low);right:calc(100% - var(--high));top:11px;height:2px;background:#17202a;z-index:1}
+  .enhanced-board .ohlc-body{position:absolute;left:var(--body-left);right:var(--body-right);top:5px;min-width:2px;min-height:14px;height:14px;background:var(--red);border:1px solid #cf666d;z-index:2}
+  .enhanced-board .ohlc-down .ohlc-body{background:var(--blue);border-color:#5f8fd7}
+  .enhanced-board .ohlc-doji .ohlc-body{background:#d9dee3;border-color:#89939c}
+  .enhanced-board .ohlc-open{position:absolute;left:var(--open);top:4px;width:3px;height:16px;background:#17202a;z-index:4}
+  .enhanced-board .ohlc-level{position:absolute;top:2px;width:2px;height:20px;opacity:1}
+  .enhanced-board .ohlc-vwap{left:var(--vwap);background:#d3a900;z-index:8}
+  .enhanced-board .ohlc-prev-high{left:var(--prev-high);background:var(--red);z-index:7}
+  .enhanced-board .ohlc-prev-close{left:var(--prev-close);background:var(--green);z-index:6}
+  .enhanced-board .ohlc-prev-low{left:var(--prev-low);background:var(--blue);z-index:5}
   .enhanced-board .metric{position:relative;display:flex;align-items:center;justify-content:center;min-width:105px;height:26px;overflow:hidden;background:#e5e9ed;border:1px solid #c5cdd4;border-radius:2px}
   .enhanced-board .metric-track{position:absolute;inset:0;width:100%;height:100%;overflow:hidden}
   .enhanced-board .metric-fill{display:block;width:var(--bar-width);height:100%;background:var(--bar-color)}
   .enhanced-board .metric-value{position:relative;z-index:2;width:100%;text-align:center;font-variant-numeric:tabular-nums;text-shadow:0 0 2px #fff,0 0 2px #fff;pointer-events:none}
+  .enhanced-board .balance-cell{padding:2px}
+  .enhanced-board .balance-box{position:relative;width:100%;height:28px;overflow:hidden;background:#edf1f4;border:1px solid #c5cdd4;border-radius:2px}
+  .enhanced-board .balance-side{position:absolute;top:4px;bottom:4px;opacity:.88}
+  .enhanced-board .balance-side-blue{left:0;width:var(--blue-width);background:var(--blue)}
+  .enhanced-board .balance-side-red{right:0;width:var(--red-width);background:var(--red)}
+  .enhanced-board .balance-meeting{position:absolute;z-index:1;left:var(--blue-width);top:1px;bottom:1px;width:2px;background:#5f676e;transform:translateX(-1px)}
+  #candidate-board .stock-name{text-align:left}
+  #candidate-board td:nth-child(5),#candidate-board td:nth-child(6),#candidate-board td:nth-child(7){text-align:right;font-variant-numeric:tabular-nums}
+  #candidate-board .note{min-width:0}
 </style>
 </head>
 <body>
@@ -77,24 +108,29 @@
       <td>IBB <span class="plus">+0.55%</span></td>
       <td>LIT <span class="minus">-1.25%</span></td>
       <td>BOTZ <span class="plus">+0.82%</span></td>
-      <td>한국장 영향 <span class="plus">반도체 우호</span></td>
+      <td class="us-impact-cell">미국장 영향 <span class="us-impact-value" id="us-market-impact-value">반도체 우호</span></td>
     </tr>
   </table>
 
   <table class="grid market">
-    <tr><th>시장</th><th>지수</th><th>등락률</th><th>상승/하락</th><th>외선(억)</th><th>외인(억)</th><th>기관(억)</th><th>프로(억)</th><th>외달(억)</th><th>분위기</th></tr>
-    <tr><td class="blue">KOSPI</td><td>3,250</td><td class="plus">+1.23</td><td><span class="plus">720(↑4)</span>/<span class="blue">180(↓0)</span></td><td class="plus">+5,200</td><td class="plus">+2,300</td><td class="minus">-800</td><td class="plus">+1,250</td><td class="plus">+8,600</td><td class="plus">92 폭등장</td></tr>
-    <tr><td class="blue">KOSDAQ</td><td>1,035</td><td class="minus">-0.45</td><td><span class="plus">430(↑7)</span>/<span class="blue">980(↓1)</span></td><td class="minus">-1,800</td><td class="minus">-500</td><td class="plus">+120</td><td class="minus">-450</td><td class="minus">-2,100</td><td class="minus">28 약세장</td></tr>
+    <tr><th>시장</th><th>지수</th><th>등락률</th><th>상승/하락</th><th>외선(억)</th><th>외인(억)</th><th>기관(억)</th><th>프로(억)</th><th>외달(억)</th><th>분위기</th><th class="market-temperature-header" id="market-temperature-header">시장체온</th></tr>
+    <tr><td class="blue">KOSPI</td><td>3,250</td><td class="plus">+1.23</td><td><span class="plus">720(↑4)</span>/<span class="blue">180(↓0)</span></td><td class="plus">+5,200</td><td class="plus">+2,300</td><td class="minus">-800</td><td class="plus">+1,250</td><td class="plus">+8,600</td><td class="plus">92 폭등장</td><td class="market-temperature-cell"><div class="market-temperature-bar" aria-label="KOSPI 등급분포">
+        <span class="market-temperature-a" id="market-kospi-a"></span>
+        <span class="market-temperature-b" id="market-kospi-b"></span>
+        <span class="market-temperature-c" id="market-kospi-c"></span>
+        <span class="market-temperature-d" id="market-kospi-d"></span>
+      </div></td></tr>
+    <tr><td class="blue">KOSDAQ</td><td>1,035</td><td class="minus">-0.45</td><td><span class="plus">430(↑7)</span>/<span class="blue">980(↓1)</span></td><td class="minus">-1,800</td><td class="minus">-500</td><td class="plus">+120</td><td class="minus">-450</td><td class="minus">-2,100</td><td class="minus">28 약세장</td><td class="market-temperature-cell"><div class="market-temperature-bar" aria-label="KOSDAQ 등급분포">
+        <span class="market-temperature-a" id="market-kosdaq-a"></span>
+        <span class="market-temperature-b" id="market-kosdaq-b"></span>
+        <span class="market-temperature-c" id="market-kosdaq-c"></span>
+        <span class="market-temperature-d" id="market-kosdaq-d"></span>
+      </div></td></tr>
   </table>
 
   <div class="section sec-orange">▶ 유력 후보 상위 5종목</div>
   <table class="grid board enhanced-board" id="candidate-board">
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락율</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>1분강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
-    <tr><td>1</td><td>82</td><td><span class="grade a">A92</span></td><td>삼성전기</td><td>168,300</td><td class="plus">+8.25%</td><td>2,350</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>0.72</td><td class="plus">185</td><td class="plus">148</td><td class="plus">+18</td><td class="plus">+350</td><td class="plus">+SS</td><td class="note">VWAP돌파 + 시가위 + 전고돌파</td></tr>
-    <tr><td>2</td><td>17</td><td><span class="grade a">A90</span></td><td>한화오션</td><td>43,200</td><td class="plus">+7.92%</td><td>4,856</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.85</td><td class="plus">248</td><td class="plus">176</td><td class="plus">+52</td><td class="plus">+185</td><td class="plus">+S</td><td class="note">거래대금 급증 + 큰손 유입</td></tr>
-    <tr><td>3</td><td>24</td><td><span class="grade b">A88</span></td><td>두산에너빌리티</td><td>25,700</td><td class="plus">+6.81%</td><td>3,218</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.47</td><td class="plus">221</td><td class="plus">164</td><td class="plus">+31</td><td class="plus">+92</td><td class="plus">+A</td><td class="note">돌파 직전 + 강한 매수세</td></tr>
-    <tr><td>4</td><td>9</td><td><span class="grade b">B84</span></td><td>알테오젠</td><td>318,000</td><td class="plus">+5.42%</td><td>2,942</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.28</td><td class="plus">198</td><td class="plus">152</td><td class="plus">+18</td><td class="plus">+48</td><td class="plus">+B</td><td class="note">눌림 후 재상승 시도</td></tr>
-    <tr><td>5</td><td>31</td><td><span class="grade b">B81</span></td><td>현대차</td><td>286,000</td><td class="plus">+4.21%</td><td>5,130</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.29</td><td class="plus">202</td><td class="plus">151</td><td class="plus">+26</td><td class="plus">+89</td><td class="plus">+A</td><td class="note">기관 유입 + 신고가 접근</td></tr>
   </table>
 
   <div class="section sec-blue">▶ 거래대금 상위 100종목</div>
@@ -125,16 +161,169 @@
 <script>
   const board = document.getElementById('trading-board');
   const candidateBoard = document.getElementById('candidate-board');
-  const boardHeader = `
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락율</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>1분강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>`;
+  const marketTable = document.querySelector('.market');
+  const marketTemperatureHeader = document.getElementById('market-temperature-header');
+  const usMarketImpactValue = document.getElementById('us-market-impact-value');
+  // Temporary UI-only fallback until a real US market impact value is supplied.
+  const usMarketImpactFallback = '반도체 우호';
+  const marketTemperatureBars = {
+    kospi: {
+      a: document.getElementById('market-kospi-a'),
+      b: document.getElementById('market-kospi-b'),
+      c: document.getElementById('market-kospi-c'),
+      d: document.getElementById('market-kospi-d')
+    },
+    kosdaq: {
+      a: document.getElementById('market-kosdaq-a'),
+      b: document.getElementById('market-kosdaq-b'),
+      c: document.getElementById('market-kosdaq-c'),
+      d: document.getElementById('market-kosdaq-d')
+    }
+  };
+  const columnWidthStorageKey = 'stockboard.tradingBoard.columnWidths.v1';
+  const candleModeStorageKey = 'stockboard.candleMode.v1';
+  const candleModes = new Set(['full', 'proportional']);
+
+  function loadCandleMode() {
+    try {
+      const savedMode = localStorage.getItem(candleModeStorageKey);
+      return candleModes.has(savedMode) ? savedMode : 'full';
+    } catch (error) {
+      return 'full';
+    }
+  }
+
+  function saveCandleMode(mode) {
+    try {
+      localStorage.setItem(candleModeStorageKey, mode);
+    } catch (error) {
+      console.warn('Candle mode could not be saved.', error);
+    }
+  }
+  const boardColumns = [
+    { label: '순위', defaultWidth: 36, minWidth: 30 },
+    { label: '전일', defaultWidth: 46, minWidth: 36 },
+    { label: '등급', defaultWidth: 54, minWidth: 48 },
+    { label: '종목명', defaultWidth: 125, minWidth: 95 },
+    { label: '현재가', defaultWidth: 80, minWidth: 68 },
+    { label: '등락율', defaultWidth: 64, minWidth: 56 },
+    { label: '금액(억)', defaultWidth: 82, minWidth: 68 },
+    { label: '일봉', defaultWidth: 86, minWidth: 70 },
+    { label: '잔량비', defaultWidth: 56, minWidth: 48 },
+    { label: '1분강도', defaultWidth: 56, minWidth: 48 },
+    { label: '당일강도', defaultWidth: 56, minWidth: 48 },
+    { label: '외합(억)', defaultWidth: 64, minWidth: 54 },
+    { label: '프로(억)', defaultWidth: 64, minWidth: 54 },
+    { label: '큰손', defaultWidth: 56, minWidth: 48 },
+    { label: '모멘텀', defaultWidth: 90, minWidth: 70 }
+  ];
+
+  function loadColumnWidths() {
+    try {
+      const savedWidths = JSON.parse(localStorage.getItem(columnWidthStorageKey));
+      if (!Array.isArray(savedWidths) || savedWidths.length !== boardColumns.length) return null;
+      const widths = savedWidths.map(Number);
+      if (!widths.every(width => Number.isFinite(width) && width > 0 && width <= 2000)) return null;
+      const normalizedWidths = widths.map((width, index) =>
+        Math.max(boardColumns[index].minWidth, Math.round(width))
+      );
+      normalizedWidths[9] = normalizedWidths[8];
+      normalizedWidths[10] = normalizedWidths[8];
+      return normalizedWidths;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  let boardColumnWidths = loadColumnWidths()
+    || boardColumns.map(column => column.defaultWidth);
+  const columnGroupMarkup = `<colgroup>${boardColumns.map((column, index) =>
+    `<col style="width:var(--trading-column-${index}-width)">`).join('')}</colgroup>`;
+  const boardHeader = `${columnGroupMarkup}<tr>${boardColumns.map((column, index) =>
+      `<th><span class="column-label">${column.label}</span><span class="column-resizer" data-column-index="${index}" aria-hidden="true"></span></th>`).join('')}</tr>`;
   board.innerHTML = `${boardHeader}<tr><td colspan="15">거래 가능 종목 마스터를 불러오는 중입니다.</td></tr>`;
+  candidateBoard.innerHTML = boardHeader;
+
+  function applyColumnWidths() {
+    const tables = [board, candidateBoard];
+    const totalWidth = boardColumnWidths.reduce((total, width) => total + width, 0);
+    tables.forEach(table => {
+      boardColumnWidths.forEach((width, index) => {
+        table.style.setProperty(`--trading-column-${index}-width`, `${width}px`);
+      });
+      table.style.width = `${totalWidth}px`;
+    });
+    marketTable.style.maxWidth = `${totalWidth}px`;
+  }
+
+  function saveColumnWidths() {
+    try {
+      localStorage.setItem(columnWidthStorageKey, JSON.stringify(boardColumnWidths));
+    } catch (error) {
+      console.warn('Column widths could not be saved.', error);
+    }
+  }
+
+  applyColumnWidths();
+  let columnResize = null;
+  function startColumnResize(event) {
+    const table = event.currentTarget;
+    const resizer = event.target.closest('.column-resizer');
+    if (!resizer || !table.contains(resizer)) return;
+    const columnIndex = Number(resizer.dataset.columnIndex);
+    if (!Number.isInteger(columnIndex) || !boardColumns[columnIndex]) return;
+    columnResize = {
+      pointerId: event.pointerId,
+      columnIndex,
+      startX: event.clientX,
+      startWidth: boardColumnWidths[columnIndex]
+    };
+    document.body.classList.add('column-resizing');
+    event.preventDefault();
+  }
+
+  [board, candidateBoard].forEach(table => {
+    table.addEventListener('pointerdown', startColumnResize);
+  });
+
+  window.addEventListener('pointermove', event => {
+    if (!columnResize || event.pointerId !== columnResize.pointerId) return;
+    const { columnIndex, startX, startWidth } = columnResize;
+    const width = Math.max(
+      boardColumns[columnIndex].minWidth,
+      Math.round(startWidth + event.clientX - startX)
+    );
+    if (width === boardColumnWidths[columnIndex]) return;
+    boardColumnWidths[columnIndex] = width;
+    const totalWidth = boardColumnWidths.reduce((total, value) => total + value, 0);
+    [board, candidateBoard].forEach(table => {
+      table.style.setProperty(`--trading-column-${columnIndex}-width`, `${width}px`);
+      table.style.width = `${totalWidth}px`;
+    });
+    marketTable.style.maxWidth = `${totalWidth}px`;
+  });
+
+  function finishColumnResize(event) {
+    if (!columnResize || event.pointerId !== columnResize.pointerId) return;
+    columnResize = null;
+    document.body.classList.remove('column-resizing');
+    saveColumnWidths();
+  }
+
+  window.addEventListener('pointerup', finishColumnResize);
+  window.addEventListener('pointercancel', finishColumnResize);
   const top100State = {
     masterSet: new Set(),
     masterNameByCode: new Map(),
     rowByCode: new Map(),
+    candidateRowByCode: new Map(),
     masterReady: false,
     pendingRows: null,
-    apiError: null
+    apiError: null,
+    renderedRows: [],
+    candidateRows: [],
+    candleMode: loadCandleMode(),
+    candleDomain: null
   };
 
   function parseCsvLine(line) {
@@ -190,6 +379,50 @@
     return suffix && !text.endsWith(suffix) ? `${text}${suffix}` : text;
   }
 
+  function formatInteger(value) {
+    if (value === null || value === undefined || value === '') return '-';
+    const number = Number(String(value).replace(/,/g, ''));
+    return Number.isFinite(number) ? Math.trunc(number).toLocaleString('en-US') : displayValue(value);
+  }
+
+  function foreignSumView(value) {
+    const number = Number(String(value).replace(/,/g, ''));
+    if (!Number.isFinite(number)) {
+      return {
+        display: '-',
+        className: '',
+        tooltip: ['외합(억) : -', '외국계 창구 순매수합', '외국인 순매수 실시간 대체값'].join('\n')
+      };
+    }
+    const integer = Math.trunc(number);
+    const formatted = Math.abs(integer).toLocaleString('en-US');
+    const display = integer > 0 ? `+${formatted}` : integer < 0 ? `-${formatted}` : '0';
+    return {
+      display,
+      className: integer > 0 ? 'plus' : integer < 0 ? 'minus' : 'foreign-zero',
+      tooltip: [`외합(억) : ${display}`, '외국계 창구 순매수합', '외국인 순매수 실시간 대체값'].join('\n')
+    };
+  }
+
+  function signedFlowView(value, label, description) {
+    const number = Number(String(value).replace(/,/g, ''));
+    if (!Number.isFinite(number)) {
+      return {
+        display: '-',
+        className: '',
+        tooltip: [`${label} : -`, description].join('\n')
+      };
+    }
+    const integer = Math.trunc(number);
+    const formatted = Math.abs(integer).toLocaleString('en-US');
+    const display = integer > 0 ? `+${formatted}` : integer < 0 ? `-${formatted}` : '0';
+    return {
+      display,
+      className: integer > 0 ? 'plus' : integer < 0 ? 'minus' : 'flow-zero',
+      tooltip: [`${label} : ${display}`, description].join('\n')
+    };
+  }
+
   function toneClass(tone, value) {
     if (tone === 'plus' || tone === 'up' || tone === 'positive') return 'plus';
     if (tone === 'minus' || tone === 'down' || tone === 'negative') return 'minus';
@@ -208,37 +441,175 @@
     };
   }
 
-  function candleView(value) {
-    const fields = ['low_pct', 'high_pct', 'open_pct', 'current_pct', 'body_left_pct', 'body_right_inset_pct', 'vwap_pct', 'prev_high_pct', 'prev_close_pct', 'prev_low_pct'];
-    if (!value || !fields.every(field => Number.isFinite(Number(value[field])))) return null;
+  function balanceView(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(value);
+    if (!Number.isFinite(number) || number <= 0) return null;
+    const clamped = Math.max(0.1, Math.min(10, number));
+    const position = (Math.log10(clamped) + 1) / 2;
+    const display = number.toFixed(2);
+    const status = number === 1
+      ? '매수/매도 균형'
+      : number < 1
+        ? number <= 0.5 ? '매도 압도' : '매도 우세'
+        : number >= 2 ? '매수 압도' : '매수 우세';
+    const tooltipLines = [`잔량비 : ${display}`, status];
+    if (number !== 1) {
+      const differencePercent = Math.round((number - 1) * 100);
+      tooltipLines.push(`기준 1 대비 ${differencePercent > 0 ? '+' : ''}${differencePercent}%`);
+    }
+    // Buy/sell order quantities can be appended here when the REST data provides them.
     return {
-      direction: value.direction === 'down' ? 'down' : 'up',
-      positions: Object.fromEntries(fields.map(field => [field, Math.max(0, Math.min(100, Number(value[field])))]))
+      value: display,
+      blueWidth: (1 - position) * 100,
+      redWidth: position * 100,
+      tooltip: tooltipLines.join('\n')
     };
   }
 
-  function ohlcMarkup(direction = 'up', positions = null) {
-    const style = positions ? [
-      `--low:${positions.low_pct}%`,
-      `--high:${positions.high_pct}%`,
-      `--open:${positions.open_pct}%`,
-      `--close:${positions.current_pct}%`,
-      `--body-left:${positions.body_left_pct}%`,
-      `--body-right:${positions.body_right_inset_pct}%`,
-      `--vwap:${positions.vwap_pct}%`,
-      `--prev-high:${positions.prev_high_pct}%`,
-      `--prev-close:${positions.prev_close_pct}%`,
-      `--prev-low:${positions.prev_low_pct}%`
-    ].join(';') : '';
-    return `<div class="ohlc-chart ohlc-${direction}"${style ? ` style="${style}"` : ''} role="img" aria-label="당일 저가-고가, 시가-현재가, VWAP, 전일 고가, 종가, 저가 표시 영역" data-open="" data-high="" data-low="" data-current="" data-vwap="" data-prev-high="" data-prev-close="" data-prev-low="">
-      <i class="ohlc-range" title="당일 저가-고가"></i>
-      <i class="ohlc-body" title="당일 시가-현재가"></i>
-      <i class="ohlc-open" title="당일 시가"></i>
-      <i class="ohlc-close" title="현재가"></i>
-      <i class="ohlc-level ohlc-vwap" title="VWAP"></i>
-      <i class="ohlc-level ohlc-prev-high" title="전일 고가"></i>
-      <i class="ohlc-level ohlc-prev-close" title="전일 종가"></i>
-      <i class="ohlc-level ohlc-prev-low" title="전일 저가"></i>
+  function minuteStrengthPosition(value) {
+    // Hypothesis scale: recalibrate the 300/500/900 maximum threshold after Replay analysis.
+    const strength = Math.max(0, value);
+    const buyShare = strength / (strength + 100);
+    return Math.max(0, Math.min(1, (buyShare - 0.1) / 0.8)) * 100;
+  }
+
+  function minuteStrengthView(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(value);
+    if (!Number.isFinite(number)) return null;
+    const redWidth = minuteStrengthPosition(number);
+    const difference = Math.round(number - 100);
+    const status = number < 100 ? '매도 우세' : number > 100 ? '매수 우세' : '균형';
+    const differenceText = difference > 0 ? `+${difference}` : String(difference);
+    return {
+      blueWidth: 100 - redWidth,
+      redWidth,
+      tooltip: [`1분강도 : ${number}`, status, `100 기준 ${differenceText}`].join('\n')
+    };
+  }
+
+  function dailyStrengthView(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(value);
+    if (!Number.isFinite(number)) return null;
+    const redWidth = minuteStrengthPosition(number);
+    const difference = Math.round(number - 100);
+    const status = number < 100 ? '매도 우세' : number > 100 ? '매수 우세' : '균형';
+    const differenceText = difference > 0 ? `+${difference}` : String(difference);
+    return {
+      blueWidth: 100 - redWidth,
+      redWidth,
+      tooltip: [`당일강도 : ${number}`, status, `100 기준 ${differenceText}`].join('\n')
+    };
+  }
+
+  function candleView(value) {
+    if (!value || typeof value !== 'object') return null;
+    const toPrice = input => {
+      if (input === null || input === undefined || input === '') return null;
+      const number = Number(String(input).replace(/,/g, ''));
+      return Number.isFinite(number) ? number : null;
+    };
+    const prices = {
+      open: toPrice(value.open),
+      high: toPrice(value.high),
+      low: toPrice(value.low),
+      close: toPrice(firstValue(value, ['close', 'price'])),
+      vwap: toPrice(value.vwap),
+      prevHigh: toPrice(value.prev_high),
+      prevClose: toPrice(value.prev_close),
+      prevLow: toPrice(value.prev_low)
+    };
+    const requiredPrices = [prices.open, prices.high, prices.low, prices.close];
+    if (requiredPrices.some(price => price === null) || prices.high < prices.low) return null;
+    return {
+      direction: prices.close === prices.open ? 'doji' : prices.close < prices.open ? 'down' : 'up',
+      prices
+    };
+  }
+
+  function candleDomain(rows) {
+    const maxMoves = rows.slice(0, 100)
+      .map(row => row.candle)
+      .filter(candle => candle && Number.isFinite(candle.prices.open) && candle.prices.open !== 0)
+      .flatMap(candle => {
+        const { open, high, low } = candle.prices;
+        return [Math.abs((high - open) / open), Math.abs((low - open) / open)];
+      })
+      .filter(Number.isFinite);
+    return maxMoves.length ? { maxAbsMove: Math.max(...maxMoves) } : null;
+  }
+
+  function candlePositions(candle, sharedDomain) {
+    if (!candle) return null;
+    const { prices } = candle;
+    const proportional = top100State.candleMode === 'proportional' && sharedDomain;
+    let position;
+    let inDomain;
+    if (proportional) {
+      const { maxAbsMove } = sharedDomain;
+      if (!Number.isFinite(prices.open) || prices.open === 0 || !Number.isFinite(maxAbsMove)) return null;
+      position = price => {
+        if (!Number.isFinite(price)) return null;
+        if (maxAbsMove === 0) return 50;
+        const moveFromOpen = (price - prices.open) / prices.open;
+        return 50 + (moveFromOpen / maxAbsMove) * 50;
+      };
+      inDomain = price => {
+        const pricePosition = position(price);
+        return Number.isFinite(pricePosition) && pricePosition >= 0 && pricePosition <= 100;
+      };
+    } else {
+      const domain = { low: prices.low, high: prices.high };
+      if (!Number.isFinite(domain.low) || !Number.isFinite(domain.high) || domain.high < domain.low) return null;
+      position = price => domain.high === domain.low
+        ? 50
+        : ((price - domain.low) / (domain.high - domain.low)) * 100;
+      inDomain = price => Number.isFinite(price) && price >= domain.low && price <= domain.high;
+    }
+    const openPosition = position(prices.open);
+    const closePosition = position(prices.close);
+    return {
+      low: position(prices.low),
+      high: position(prices.high),
+      open: openPosition,
+      bodyLeft: Math.min(openPosition, closePosition),
+      bodyRight: 100 - Math.max(openPosition, closePosition),
+      levels: {
+        vwap: inDomain(prices.vwap) ? position(prices.vwap) : null,
+        prevHigh: inDomain(prices.prevHigh) ? position(prices.prevHigh) : null,
+        prevClose: inDomain(prices.prevClose) ? position(prices.prevClose) : null,
+        prevLow: inDomain(prices.prevLow) ? position(prices.prevLow) : null
+      }
+    };
+  }
+
+  function ohlcLevelMarkup(className, label, price, position) {
+    if (!Number.isFinite(position)) return '';
+    return `<i class="ohlc-level ${className}" style="left:${position}%" title="${label} ${escapeHtml(price)}"></i>`;
+  }
+
+  function ohlcMarkup(candle, sharedDomain = top100State.candleDomain) {
+    if (!candle) return '-';
+    const { direction, prices } = candle;
+    const positions = candlePositions(candle, sharedDomain);
+    if (!positions) return '-';
+    const style = [
+      `--low:${positions.low}%`,
+      `--high:${positions.high}%`,
+      `--open:${positions.open}%`,
+      `--body-left:${positions.bodyLeft}%`,
+      `--body-right:${positions.bodyRight}%`
+    ].join(';');
+    return `<div class="ohlc-chart ohlc-${direction}" style="${style}" role="img" aria-label="당일 저가-고가, 시가-종가, VWAP, 전일 고가, 종가, 저가 표시 영역" data-candle-mode="${top100State.candleMode}" data-open="${escapeHtml(prices.open)}" data-high="${escapeHtml(prices.high)}" data-low="${escapeHtml(prices.low)}" data-close="${escapeHtml(prices.close)}" data-vwap="${escapeHtml(prices.vwap)}" data-prev-high="${escapeHtml(prices.prevHigh)}" data-prev-close="${escapeHtml(prices.prevClose)}" data-prev-low="${escapeHtml(prices.prevLow)}">
+      <i class="ohlc-range" title="당일 저가 ${escapeHtml(prices.low)} / 고가 ${escapeHtml(prices.high)}"></i>
+      <i class="ohlc-body" title="시가 ${escapeHtml(prices.open)} / 종가 ${escapeHtml(prices.close)}"></i>
+      <i class="ohlc-open" title="시가 ${escapeHtml(prices.open)}"></i>
+      ${ohlcLevelMarkup('ohlc-vwap', 'VWAP', prices.vwap, positions.levels.vwap)}
+      ${ohlcLevelMarkup('ohlc-prev-high', '전일 고가', prices.prevHigh, positions.levels.prevHigh)}
+      ${ohlcLevelMarkup('ohlc-prev-close', '전일 종가', prices.prevClose, positions.levels.prevClose)}
+      ${ohlcLevelMarkup('ohlc-prev-low', '전일 저가', prices.prevLow, positions.levels.prevLow)}
     </div>`;
   }
 
@@ -250,25 +621,31 @@
     </div>`;
   }
 
-  function enhanceCandidateBoard() {
-    const presentation = [
-      { code: '009150', balance: { value: '0.72', barWidth: 36, color: '#1266d6' }, minute: { value: 185, barWidth: 74, color: '#d71920' }, daily: { value: 148, barWidth: 59, color: '#d71920' } },
-      { code: '042660', balance: { value: '1.85', barWidth: 93, color: '#d71920' }, minute: { value: 248, barWidth: 99, color: '#d71920' }, daily: { value: 176, barWidth: 70, color: '#d71920' } },
-      { code: '034020', balance: { value: '1.47', barWidth: 74, color: '#d71920' }, minute: { value: 221, barWidth: 88, color: '#d71920' }, daily: { value: 164, barWidth: 66, color: '#d71920' } },
-      { code: '196170', balance: { value: '1.28', barWidth: 64, color: '#d71920' }, minute: { value: 198, barWidth: 79, color: '#d71920' }, daily: { value: 152, barWidth: 61, color: '#d71920' } },
-      { code: '005380', balance: { value: '1.29', barWidth: 65, color: '#d71920' }, minute: { value: 202, barWidth: 81, color: '#d71920' }, daily: { value: 151, barWidth: 60, color: '#d71920' } }
-    ];
+  function balanceMarkup(balance) {
+    if (!balance) return '-';
+    return `<div class="balance-box" title="${escapeHtml(balance.tooltip)}" role="img" aria-label="${escapeHtml(balance.tooltip)}" style="--blue-width:${balance.blueWidth}%;--red-width:${balance.redWidth}%">
+      <span class="balance-side balance-side-blue"></span>
+      <span class="balance-side balance-side-red"></span>
+      <span class="balance-meeting"></span>
+    </div>`;
+  }
 
-    Array.from(candidateBoard.rows).slice(1).forEach((row, index) => {
-      const sample = presentation[index];
-      const nameCell = row.cells[3];
-      nameCell.classList.add('stock-name');
-      nameCell.title = `종목코드: ${sample.code}`;
-      row.cells[7].innerHTML = ohlcMarkup();
-      row.cells[8].innerHTML = metricMarkup('잔량비', sample.balance);
-      row.cells[9].innerHTML = metricMarkup('1분강도', sample.minute);
-      row.cells[10].innerHTML = metricMarkup('당일강도', sample.daily);
-    });
+  function minuteStrengthMarkup(strength) {
+    if (!strength) return '-';
+    return `<div class="balance-box" title="${escapeHtml(strength.tooltip)}" role="img" aria-label="${escapeHtml(strength.tooltip)}" style="--blue-width:${strength.blueWidth}%;--red-width:${strength.redWidth}%">
+      <span class="balance-side balance-side-blue"></span>
+      <span class="balance-side balance-side-red"></span>
+      <span class="balance-meeting"></span>
+    </div>`;
+  }
+
+  function dailyStrengthMarkup(strength) {
+    if (!strength) return '-';
+    return `<div class="balance-box" title="${escapeHtml(strength.tooltip)}" role="img" aria-label="${escapeHtml(strength.tooltip)}" style="--blue-width:${strength.blueWidth}%;--red-width:${strength.redWidth}%">
+      <span class="balance-side balance-side-blue"></span>
+      <span class="balance-side balance-side-red"></span>
+      <span class="balance-meeting"></span>
+    </div>`;
   }
 
   function firstValue(row, keys) {
@@ -278,34 +655,212 @@
     return null;
   }
 
-  function normalizeRankingRow(row, masterName) {
-    const gradeClass = String(firstValue(row, ['grade_class', 'grade_tone']) || 'd').toLowerCase();
-    const candle = candleView(firstValue(row, ['ohlc', 'mini_daily_candle']));
+  function rankMovementView(previousRankValue, originalRankValue) {
+    const hasPreviousRank = previousRankValue !== null && previousRankValue !== undefined && previousRankValue !== '';
+    const hasOriginalRank = originalRankValue !== null && originalRankValue !== undefined && originalRankValue !== '';
+    const previousRank = Number(previousRankValue);
+    const originalRank = Number(originalRankValue);
+    if (!hasPreviousRank || !hasOriginalRank || !Number.isFinite(previousRank) || !Number.isFinite(originalRank)) {
+      return { display: '-', className: '', tooltip: '' };
+    }
+    const difference = previousRank - originalRank;
+    return {
+      display: `${difference >= 0 ? '↑' : '↓'}${Math.abs(difference)}`,
+      className: difference > 0 ? 'plus' : difference < 0 ? 'minus' : '',
+      tooltip: `전일순위 : ${previousRank}\n원순위 : ${originalRank}`
+    };
+  }
+
+  function stockMarketGroup(row) {
+    const value = firstValue(row, ['market_type', 'market', 'market_name', 'mrkt_tp']);
+    if (value === null) return '';
+    const market = String(value).trim().toUpperCase();
+    if (market.includes('KOSDAQ') || market.includes('코스닥') || market === '10' || market === '101') return 'kosdaq';
+    if (market.includes('KOSPI') || market.includes('코스피') || market === '0' || market === '001') return 'kospi';
+    return '';
+  }
+
+  // Temporary sample values for visually checking the balance-ratio UI only.
+  const balanceFallbackValues = [0.2, 0.5, 0.72, 1.0, 1.28, 1.85, 3.0, 5.0];
+  // Temporary sample values for visually checking the 1-minute strength UI only.
+  const minuteStrengthFallbackValues = [50, 80, 100, 120, 150, 185, 220, 280];
+  // Temporary sample values for visually checking the daily strength UI only.
+  const dailyStrengthFallbackValues = [70, 90, 100, 120, 150, 180, 220, 260];
+  // Temporary sample values for visually checking the foreign-broker sum UI only.
+  const foreignSumFallbackValues = [520, 180, -35, 0, 1240, -520, 80, 320];
+  // Temporary sample values for visually checking the program-net UI only.
+  const programFallbackValues = [350, 185, 92, 48, 89, -120, 55, 280];
+  // Temporary sample values for visually checking the big-hand score UI only.
+  const bigHandFallbackValues = [18, 52, 31, 18, 26, -8, 45, 120];
+  // Temporary sample values for candidate momentum UI only; never apply these to TOP100 rows.
+  const candidateMomentumFallbackValues = [
+    'VWAP돌파 + 전고접근',
+    '대금급증 + 큰손유입',
+    '돌파직전 + 강한매수세',
+    '눌림후재상승',
+    '기관유입 + 신고가접근'
+  ];
+
+  function isCandidateFlag(value) {
+    if (value === true || value === 1) return true;
+    return ['1', 'true', 'y', 'yes'].includes(String(value ?? '').trim().toLowerCase());
+  }
+
+  function candidateScoreNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function selectCandidateRows(rows) {
+    const indexedRows = rows.map((row, index) => ({ row, index }));
+    const hasCandidate = indexedRows.some(item => isCandidateFlag(item.row.isCandidate));
+    const hasCandidateScore = indexedRows.some(
+      item => candidateScoreNumber(item.row.candidateScore) !== null
+    );
+    const hasGradeScore = indexedRows.some(
+      item => candidateScoreNumber(item.row.gradeScore) !== null
+    );
+    if (!hasCandidate && !hasCandidateScore && !hasGradeScore) return rows.slice(0, 5);
+
+    return indexedRows
+      .sort((left, right) => {
+        if (hasCandidate) {
+          const flagDifference = Number(isCandidateFlag(right.row.isCandidate))
+            - Number(isCandidateFlag(left.row.isCandidate));
+          if (flagDifference) return flagDifference;
+        }
+        if (hasCandidateScore) {
+          const scoreDifference = (candidateScoreNumber(right.row.candidateScore) ?? -Infinity)
+            - (candidateScoreNumber(left.row.candidateScore) ?? -Infinity);
+          if (scoreDifference) return scoreDifference;
+        }
+        if (hasGradeScore) {
+          const gradeDifference = (candidateScoreNumber(right.row.gradeScore) ?? -Infinity)
+            - (candidateScoreNumber(left.row.gradeScore) ?? -Infinity);
+          if (gradeDifference) return gradeDifference;
+        }
+        return left.index - right.index;
+      })
+      .slice(0, 5)
+      .map(item => item.row);
+  }
+  // Temporary sample values for visually checking TOP100 grade badges only.
+  const gradeFallbackValues = ['A92', 'B74', 'A88', 'C61', 'B81', 'D42', 'A90', 'C55', 'B68', 'A95'];
+  // Temporary UI-only OHLC patterns. Real OHLC data always takes priority.
+  const candleFallbackPatterns = [
+    { open: .97, high: 1.04, low: .95, close: 1.02, vwap: .99, prevHigh: 1.03, prevClose: .98, prevLow: .94 },
+    { open: 1.03, high: 1.05, low: .94, close: .97, vwap: 1.00, prevHigh: 1.06, prevClose: 1.01, prevLow: .96 },
+    { open: .94, high: 1.06, low: .93, close: 1.05, vwap: .99, prevHigh: 1.04, prevClose: .96, prevLow: .92 },
+    { open: 1.06, high: 1.07, low: .92, close: .93, vwap: 1.01, prevHigh: 1.08, prevClose: 1.04, prevLow: .95 },
+    { open: 1.00, high: 1.04, low: .96, close: 1.00, vwap: 1.00, prevHigh: 1.03, prevClose: .99, prevLow: .95 },
+    { open: .98, high: 1.05, low: .96, close: 1.03, vwap: .99, prevHigh: 1.06, prevClose: 1.01, prevLow: .95 },
+    { open: 1.02, high: 1.04, low: .94, close: .97, vwap: 1.01, prevHigh: 1.05, prevClose: 1.00, prevLow: .93 },
+    { open: .99, high: 1.03, low: .97, close: 1.01, vwap: 1.00, prevHigh: 1.04, prevClose: .98, prevLow: .96 }
+  ];
+
+  function fallbackCandle(priceValue, fallbackIndex) {
+    const price = Number(String(priceValue ?? '').replace(/,/g, ''));
+    const base = Number.isFinite(price) && price > 0 ? price : 100;
+    const pattern = candleFallbackPatterns[fallbackIndex % candleFallbackPatterns.length];
+    return candleView({
+      open: base * pattern.open,
+      high: base * pattern.high,
+      low: base * pattern.low,
+      close: base * pattern.close,
+      vwap: base * pattern.vwap,
+      prev_high: base * pattern.prevHigh,
+      prev_close: base * pattern.prevClose,
+      prev_low: base * pattern.prevLow
+    });
+  }
+  // Temporary UI-only distributions until TOP100 rows include KOSPI/KOSDAQ identifiers.
+  const marketDistributionFallback = {
+    kospi: { a: 40, b: 30, c: 20, d: 10 },
+    kosdaq: { a: 20, b: 30, c: 30, d: 20 }
+  };
+
+  function normalizeRankingRow(row, masterName, fallbackIndex) {
+    const gradeValue = firstValue(row, ['grade', 'grade_score', '등급']);
+    const effectiveGradeValue = gradeValue !== null
+      ? gradeValue
+      : gradeFallbackValues[fallbackIndex % gradeFallbackValues.length];
+    const explicitGradeClass = String(firstValue(row, ['grade_class', 'grade_tone']) || '').toLowerCase();
+    const inferredGradeClass = String(effectiveGradeValue).trim().charAt(0).toLowerCase();
+    const gradeClass = ['a', 'b', 'c', 'd'].includes(explicitGradeClass)
+      ? explicitGradeClass
+      : ['a', 'b', 'c', 'd'].includes(inferredGradeClass) ? inferredGradeClass : 'd';
+    const candleSource = firstValue(row, ['ohlc', 'mini_daily_candle']);
+    const actualCandle = candleView(candleSource) || candleView(row);
+    const candle = actualCandle || fallbackCandle(firstValue(row, ['price', '현재가']), fallbackIndex);
     const changeRate = firstValue(row, ['change_rate', '등락률', '등락율']);
-    const foreign = firstValue(row, ['foreign_sum', 'foreign_sum_eok', '외합(억)']);
-    const program = firstValue(row, ['program_net', 'program_eok', '프로(억)', '프(억)']);
-    const bigHand = firstValue(row, ['big_hand', 'big_hand_index', '큰손']);
+    const balanceValue = firstValue(row, ['bid_ask_ratio', 'orderbook_ratio', '잔량비']);
+    const effectiveBalanceValue = balanceValue !== null
+      ? balanceValue
+      : balanceFallbackValues[fallbackIndex % balanceFallbackValues.length];
+    const minuteStrengthValue = firstValue(row, ['strength_1m', '1분강도']);
+    const effectiveMinuteStrengthValue = minuteStrengthValue !== null
+      ? minuteStrengthValue
+      : minuteStrengthFallbackValues[fallbackIndex % minuteStrengthFallbackValues.length];
+    const dailyStrengthValue = firstValue(row, ['strength_day', '당일강도']);
+    const effectiveDailyStrengthValue = dailyStrengthValue !== null
+      ? dailyStrengthValue
+      : dailyStrengthFallbackValues[fallbackIndex % dailyStrengthFallbackValues.length];
+    const foreignValue = firstValue(row, [
+      'foreign_sum',
+      'foreign_broker_sum',
+      'foreign_window_sum',
+      'foreign_net_proxy',
+      'foreign_sum_eok',
+      '외합(억)'
+    ]);
+    const effectiveForeignValue = foreignValue !== null
+      ? foreignValue
+      : foreignSumFallbackValues[fallbackIndex % foreignSumFallbackValues.length];
+    const foreign = foreignSumView(effectiveForeignValue);
+    const programValue = firstValue(row, ['program_net', 'program_sum', 'program_net_eok', '프로(억)']);
+    const effectiveProgramValue = programValue !== null
+      ? programValue
+      : programFallbackValues[fallbackIndex % programFallbackValues.length];
+    const program = signedFlowView(effectiveProgramValue, '프로(억)', '프로그램 순매수 합');
+    const bigHandValue = firstValue(row, ['whale_score', 'big_hand', 'big_buy_score', 'big_money_score', '큰손']);
+    const effectiveBigHandValue = bigHandValue !== null
+      ? bigHandValue
+      : bigHandFallbackValues[fallbackIndex % bigHandFallbackValues.length];
+    const bigHand = signedFlowView(effectiveBigHandValue, '큰손', '큰손 순매수 우위');
+    const previousRankValue = firstValue(row, ['prev_rank', '전일순위', '전일']);
+    const originalRankValue = firstValue(row, ['original_rank', 'rank']);
+    const rankMovement = rankMovementView(previousRankValue, originalRankValue);
     return {
       code: normalizeCode(firstValue(row, ['stock_code', '종목코드', 'code'])),
+      marketGroup: stockMarketGroup(row),
+      isCandidate: firstValue(row, ['is_candidate', 'candidate']),
+      candidateScore: firstValue(row, ['candidate_score']),
+      gradeScore: firstValue(row, ['grade_score']),
       rank: displayValue(firstValue(row, ['rank', '현재순위', '순위'])),
-      previousRank: displayValue(firstValue(row, ['prev_rank', '전일순위', '전일'])),
-      grade: displayValue(firstValue(row, ['grade', 'grade_score', '등급'])),
-      gradeClass: ['a', 'b', 'c', 'd'].includes(gradeClass) ? gradeClass : 'd',
+      previousRank: rankMovement.display,
+      rankMovementClass: rankMovement.className,
+      rankTooltip: rankMovement.tooltip,
+      grade: displayValue(effectiveGradeValue),
+      gradeClass,
       name: displayValue(firstValue(row, ['stock_name', '종목명']) || masterName),
-      price: displayValue(firstValue(row, ['price', '현재가'])),
+      price: formatInteger(firstValue(row, ['price', '현재가'])),
       changeRate: displayValue(changeRate, '%'),
       changeClass: toneClass(firstValue(row, ['change_tone']), changeRate),
-      amount: displayValue(firstValue(row, ['trade_value_eok', '거래대금(억)', '거래대금_억'])),
+      amount: formatInteger(firstValue(row, ['trade_value_eok', '거래대금(억)', '거래대금_억'])),
       candle,
-      balanceMetric: metricView(firstValue(row, ['bid_ask_ratio', 'orderbook_ratio', '잔량비']), firstValue(row, ['orderbook_ratio_display'])),
-      minuteMetric: metricView(firstValue(row, ['strength_1m', '1분강도']), firstValue(row, ['strength_1m_display'])),
-      dailyMetric: metricView(firstValue(row, ['strength_day', '당일강도']), firstValue(row, ['strength_day_display'])),
-      foreign: displayValue(foreign),
-      foreignClass: toneClass(firstValue(row, ['foreign_tone']), foreign),
-      program: displayValue(program),
-      programClass: toneClass(firstValue(row, ['program_tone']), program),
-      bigHand: displayValue(bigHand),
-      bigHandClass: toneClass(firstValue(row, ['big_hand_tone']), bigHand),
+      balanceForce: balanceView(effectiveBalanceValue),
+      minuteForce: minuteStrengthView(effectiveMinuteStrengthValue),
+      dailyForce: dailyStrengthView(effectiveDailyStrengthValue),
+      foreign: foreign.display,
+      foreignClass: foreign.className,
+      foreignTooltip: foreign.tooltip,
+      program: program.display,
+      programClass: program.className,
+      programTooltip: program.tooltip,
+      bigHand: bigHand.display,
+      bigHandClass: bigHand.className,
+      bigHandTooltip: bigHand.tooltip,
       note: displayValue(firstValue(row, ['momentum', 'momentum_text', '모멘텀']))
     };
   }
@@ -326,22 +881,22 @@
 
   function updateBoardRow(tableRow, row) {
     const grade = row.grade === '-' ? '-' : `<span class="grade ${row.gradeClass}">${escapeHtml(row.grade)}</span>`;
-    const candle = row.candle ? ohlcMarkup(row.candle.direction, row.candle.positions) : '-';
+    const candle = ohlcMarkup(row.candle);
     const cells = tableRow.cells;
-    setCell(cells[0], escapeHtml(row.rank));
-    setCell(cells[1], escapeHtml(row.previousRank));
+    setCell(cells[0], escapeHtml(row.rank), 'rank-cell');
+    setCell(cells[1], escapeHtml(row.previousRank), `rank-cell ${row.rankMovementClass}`.trim(), row.rankTooltip);
     setCell(cells[2], grade);
     setCell(cells[3], escapeHtml(row.name), 'stock-name', `종목코드: ${row.code}`);
-    setCell(cells[4], escapeHtml(row.price));
-    setCell(cells[5], escapeHtml(row.changeRate), row.changeClass);
-    setCell(cells[6], escapeHtml(row.amount));
+    setCell(cells[4], escapeHtml(row.price), 'number-cell');
+    setCell(cells[5], escapeHtml(row.changeRate), `number-cell ${row.changeClass}`.trim());
+    setCell(cells[6], escapeHtml(row.amount), 'number-cell');
     setCell(cells[7], candle);
-    setCell(cells[8], metricMarkup('잔량비', row.balanceMetric));
-    setCell(cells[9], metricMarkup('1분강도', row.minuteMetric));
-    setCell(cells[10], metricMarkup('당일강도', row.dailyMetric));
-    setCell(cells[11], escapeHtml(row.foreign), row.foreignClass);
-    setCell(cells[12], escapeHtml(row.program), row.programClass);
-    setCell(cells[13], escapeHtml(row.bigHand), row.bigHandClass);
+    setCell(cells[8], balanceMarkup(row.balanceForce), 'balance-cell');
+    setCell(cells[9], minuteStrengthMarkup(row.minuteForce), 'balance-cell');
+    setCell(cells[10], dailyStrengthMarkup(row.dailyForce), 'balance-cell');
+    setCell(cells[11], escapeHtml(row.foreign), `flow-number ${row.foreignClass}`.trim(), row.foreignTooltip);
+    setCell(cells[12], escapeHtml(row.program), `flow-number ${row.programClass}`.trim(), row.programTooltip);
+    setCell(cells[13], escapeHtml(row.bigHand), `flow-number ${row.bigHandClass}`.trim(), row.bigHandTooltip);
     setCell(cells[14], escapeHtml(row.note), 'note');
   }
 
@@ -353,7 +908,92 @@
     return tableRow;
   }
 
+  function updateCandidateRow(tableRow, row, index) {
+    updateBoardRow(tableRow, row);
+    const momentum = row.note && row.note !== '-'
+      ? row.note
+      : candidateMomentumFallbackValues[index % candidateMomentumFallbackValues.length];
+    setCell(tableRow.cells[14], escapeHtml(momentum), 'note');
+  }
+
+  function renderCandidateBoard(rows) {
+    const candidates = selectCandidateRows(rows);
+    top100State.candidateRows = candidates;
+    const activeCodes = new Set(candidates.map(row => row.code));
+    for (const [code, tableRow] of top100State.candidateRowByCode) {
+      if (!activeCodes.has(code)) {
+        tableRow.remove();
+        top100State.candidateRowByCode.delete(code);
+      }
+    }
+
+    const tableBody = candidateBoard.tBodies[0];
+    candidates.forEach((row, index) => {
+      let tableRow = top100State.candidateRowByCode.get(row.code);
+      if (!tableRow) {
+        tableRow = document.createElement('tr');
+        tableRow.dataset.stockCode = row.code;
+        for (let cellIndex = 0; cellIndex < 15; cellIndex += 1) tableRow.insertCell();
+        top100State.candidateRowByCode.set(row.code, tableRow);
+      }
+      updateCandidateRow(tableRow, row, index);
+      const expectedRow = tableBody.rows[index + 1];
+      if (expectedRow !== tableRow) tableBody.insertBefore(tableRow, expectedRow || null);
+    });
+  }
+
+  function updateCandidateCandleCells() {
+    top100State.candidateRows.forEach(row => {
+      const tableRow = top100State.candidateRowByCode.get(row.code);
+      if (tableRow) setCell(tableRow.cells[7], ohlcMarkup(row.candle));
+    });
+  }
+
+  function updateVisibleCandleCells() {
+    top100State.renderedRows.forEach(row => {
+      const tableRow = top100State.rowByCode.get(row.code);
+      if (tableRow) setCell(tableRow.cells[7], ohlcMarkup(row.candle));
+    });
+    updateCandidateCandleCells();
+  }
+
+  function toggleCandleMode() {
+    top100State.candleMode = top100State.candleMode === 'full' ? 'proportional' : 'full';
+    saveCandleMode(top100State.candleMode);
+    updateVisibleCandleCells();
+  }
+
+  function updateMarketTemperature(rows) {
+    const counts = { a: 0, b: 0, c: 0, d: 0 };
+    const marketCounts = {
+      kospi: { a: 0, b: 0, c: 0, d: 0 },
+      kosdaq: { a: 0, b: 0, c: 0, d: 0 }
+    };
+    let classifiedRows = 0;
+    rows.slice(0, 100).forEach(row => {
+      if (Object.hasOwn(counts, row.gradeClass)) counts[row.gradeClass] += 1;
+      if (Object.hasOwn(marketCounts, row.marketGroup) && Object.hasOwn(counts, row.gradeClass)) {
+        marketCounts[row.marketGroup][row.gradeClass] += 1;
+        classifiedRows += 1;
+      }
+    });
+    const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+    const weightedTotal = counts.a * 100 + counts.b * 70 + counts.c * 40 + counts.d * 10;
+    marketTemperatureHeader.dataset.temperature = total ? String(Math.round(weightedTotal / total)) : '';
+    const distributions = classifiedRows ? marketCounts : marketDistributionFallback;
+    Object.entries(distributions).forEach(([market, distribution]) => {
+      const marketTotal = Object.values(distribution).reduce((sum, count) => sum + count, 0);
+      Object.entries(marketTemperatureBars[market]).forEach(([grade, bar]) => {
+        bar.style.width = `${marketTotal ? (distribution[grade] / marketTotal) * 100 : 0}%`;
+      });
+    });
+  }
+
   function renderBoard(rows) {
+    updateMarketTemperature(rows);
+    top100State.renderedRows = rows.slice();
+    top100State.candleDomain = candleDomain(rows);
+    renderCandidateBoard(rows);
     if (!rows.length) {
       showBoardMessage('표시할 거래대금 순위 종목이 없습니다.');
       return;
@@ -390,18 +1030,49 @@
       const code = normalizeCode(firstValue(sourceRow, ['stock_code', '종목코드', 'code']));
       if (!code || seen.has(code) || !top100State.masterSet.has(code)) continue;
       seen.add(code);
-      filtered.push(normalizeRankingRow({ ...sourceRow, stock_code: code }, top100State.masterNameByCode.get(code)));
-      if (filtered.length === 100) break;
+      filtered.push(normalizeRankingRow(
+        { ...sourceRow, stock_code: code },
+        top100State.masterNameByCode.get(code),
+        filtered.length
+      ));
     }
     renderBoard(filtered);
     return { received: inputRows.length, displayed: filtered.length };
   }
 
-  enhanceCandidateBoard();
+  document.addEventListener('keydown', event => {
+    if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return;
+    const target = event.target;
+    if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"]')) return;
+    if (event.key.toLowerCase() !== 'c') return;
+    toggleCandleMode();
+  });
+
+  function updateUSMarketImpact(value) {
+    const impact = value === null || value === undefined || String(value).trim() === ''
+      ? usMarketImpactFallback
+      : String(value).trim();
+    usMarketImpactValue.textContent = impact;
+    return impact;
+  }
+
+  function findUSMarketImpact(rows) {
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue;
+      const impact = firstValue(row, ['us_impact', 'us_market_impact']);
+      if (impact !== null) return impact;
+    }
+    return null;
+  }
+
+  window.StockBoardUSImpact = Object.freeze({
+    update: updateUSMarketImpact
+  });
 
   window.StockBoardTop100 = Object.freeze({
     update(rows) {
       if (!Array.isArray(rows)) throw new TypeError('StockBoardTop100.update(rows)는 배열을 받아야 합니다.');
+      window.StockBoardUSImpact.update(findUSMarketImpact(rows));
       top100State.pendingRows = rows.slice();
       if (!top100State.masterReady) {
         board.innerHTML = `${boardHeader}<tr><td colspan="15">종목 마스터 준비 후 거래대금 순위를 표시합니다.</td></tr>`;

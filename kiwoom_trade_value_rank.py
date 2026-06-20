@@ -2,6 +2,8 @@ import csv
 import json
 import os
 import sys
+import time
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -13,10 +15,17 @@ API_BASE_URL = os.getenv("KIWOOM_API_BASE_URL", "https://api.kiwoom.com").rstrip
 DOCS_DIR = Path(__file__).resolve().parent / "docs"
 HOST = os.getenv("KIWOOM_HOST", "127.0.0.1")
 PORT = int(os.getenv("KIWOOM_PORT", "8000"))
+KST = timezone(timedelta(hours=9))
+# ka90004 netprps_prica is provisionally treated as KRW millions: 100 million KRW per eok.
+PROGRAM_NET_EOK_DIVISOR_TEXT = os.getenv("KIWOOM_PROGRAM_NET_EOK_DIVISOR", "100")
+PROGRAM_NET_ENABLED_TEXT = os.getenv("KIWOOM_PROGRAM_NET_ENABLED", "0")
+OHLC_LIMIT_TEXT = os.getenv("KIWOOM_OHLC_LIMIT", "20")
+REQUEST_SLEEP_SEC_TEXT = os.getenv("KIWOOM_REQUEST_SLEEP_SEC", "0.25")
 
 OUTPUT_KEYS = (
     "stock_code",
     "rank",
+    "original_rank",
     "prev_rank",
     "grade",
     "stock_name",
@@ -34,6 +43,13 @@ OUTPUT_KEYS = (
 )
 
 
+class KiwoomAPIError(RuntimeError):
+    def __init__(self, status_code, detail):
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(f"Kiwoom API HTTP {status_code}: {detail}")
+
+
 def _post_json(path, payload, headers=None, return_headers=False):
     request_headers = {"Content-Type": "application/json;charset=UTF-8"}
     request_headers.update(headers or {})
@@ -49,7 +65,7 @@ def _post_json(path, payload, headers=None, return_headers=False):
             return (body, response.headers) if return_headers else body
     except HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Kiwoom API HTTP {error.code}: {detail}") from error
+        raise KiwoomAPIError(error.code, detail) from error
     except (URLError, TimeoutError) as error:
         raise RuntimeError(f"Kiwoom API request failed: {error}") from error
 
@@ -122,6 +138,67 @@ def _trade_value_eok(value):
     return int(eok) if eok == eok.to_integral() else float(eok)
 
 
+def _program_net_eok_divisor():
+    try:
+        divisor = Decimal(PROGRAM_NET_EOK_DIVISOR_TEXT)
+    except InvalidOperation as error:
+        raise RuntimeError(
+            "KIWOOM_PROGRAM_NET_EOK_DIVISOR must be a positive number"
+        ) from error
+    if not divisor.is_finite() or divisor <= 0:
+        raise RuntimeError("KIWOOM_PROGRAM_NET_EOK_DIVISOR must be a positive number")
+    return divisor
+
+
+def _program_net_eok(value, divisor):
+    number = _clean_number(value)
+    if not isinstance(number, (int, float)):
+        return None
+    eok = Decimal(str(number)) / divisor
+    return int(eok) if eok == eok.to_integral() else float(eok)
+
+
+def _query_date():
+    query_date = os.getenv("KIWOOM_QUERY_DATE")
+    if query_date:
+        query_date = query_date.strip()
+    else:
+        query_date = datetime.now(KST).strftime("%Y%m%d")
+    if len(query_date) != 8 or not query_date.isdigit():
+        raise RuntimeError("KIWOOM_QUERY_DATE must use YYYYMMDD format")
+    try:
+        datetime.strptime(query_date, "%Y%m%d")
+    except ValueError as error:
+        raise RuntimeError("KIWOOM_QUERY_DATE must be a valid YYYYMMDD date") from error
+    return query_date
+
+
+def _program_net_enabled():
+    return PROGRAM_NET_ENABLED_TEXT.strip() == "1"
+
+
+def _ohlc_limit():
+    try:
+        limit = int(OHLC_LIMIT_TEXT)
+    except ValueError as error:
+        raise RuntimeError("KIWOOM_OHLC_LIMIT must be a non-negative integer") from error
+    if limit < 0:
+        raise RuntimeError("KIWOOM_OHLC_LIMIT must be a non-negative integer")
+    return limit
+
+
+def _request_sleep_sec():
+    try:
+        seconds = Decimal(REQUEST_SLEEP_SEC_TEXT)
+    except InvalidOperation as error:
+        raise RuntimeError(
+            "KIWOOM_REQUEST_SLEEP_SEC must be a non-negative number"
+        ) from error
+    if not seconds.is_finite() or seconds < 0:
+        raise RuntimeError("KIWOOM_REQUEST_SLEEP_SEC must be a non-negative number")
+    return float(seconds)
+
+
 def _normalize_row(row):
     normalized = dict.fromkeys(OUTPUT_KEYS)
     normalized.update(
@@ -137,6 +214,7 @@ def _normalize_row(row):
             ),
         }
     )
+    normalized["original_rank"] = normalized["rank"]
     return normalized
 
 
@@ -198,6 +276,277 @@ def fetch_trade_value_top100(access_token):
     return rows, page_counts
 
 
+def fetch_program_net(access_token, query_date):
+    """Fetch ka90004 for KOSPI/KOSDAQ and map stock codes to program net eok."""
+    divisor = _program_net_eok_divisor()
+    program_net_by_code = {}
+    market_stats = []
+    raw_samples = []
+    converted_samples = []
+
+    for market_name, market_type in (("KOSPI", "P00101"), ("KOSDAQ", "P10102")):
+        continuation = "N"
+        next_key = ""
+        seen_next_keys = set()
+        page_count = 0
+        row_count = 0
+
+        while True:
+            response, response_headers = _post_json(
+                "/api/dostk/stkinfo",
+                {
+                    "dt": query_date,
+                    "mrkt_tp": market_type,
+                    "stex_tp": "3",
+                },
+                {
+                    "Authorization": f"Bearer {access_token}",
+                    "api-id": "ka90004",
+                    "cont-yn": continuation,
+                    "next-key": next_key,
+                },
+                return_headers=True,
+            )
+            raw_rows = _first(
+                response,
+                "stk_prm_trde_prst",
+                "stock_program_trade_status",
+                "output",
+            )
+            if not isinstance(raw_rows, list):
+                raise RuntimeError(f"Unexpected ka90004 response: {response}")
+
+            page_count += 1
+            page_rows = [row for row in raw_rows if isinstance(row, dict)]
+            row_count += len(page_rows)
+            for row in page_rows:
+                stock_code = _stock_code(_first(row, "stk_cd", "stock_code", "종목코드"))
+                raw_value = _first(
+                    row,
+                    "netprps_prica",
+                    "program_net",
+                    "프로그램순매수대금",
+                )
+                converted_value = _program_net_eok(raw_value, divisor)
+                if stock_code and converted_value is not None:
+                    program_net_by_code[stock_code] = converted_value
+                    if len(raw_samples) < 10:
+                        raw_samples.append(
+                            {"stock_code": stock_code, "netprps_prica": raw_value}
+                        )
+                        converted_samples.append(
+                            {"stock_code": stock_code, "program_net": converted_value}
+                        )
+
+            continuation = response_headers.get("cont-yn", "").upper()
+            next_key = response_headers.get("next-key", "")
+            if continuation != "Y" or not next_key:
+                break
+            if next_key in seen_next_keys:
+                raise RuntimeError(f"Repeated ka90004 next-key for {market_name}: {next_key}")
+            seen_next_keys.add(next_key)
+
+        market_stats.append(
+            {"market": market_name, "pages": page_count, "rows": row_count}
+        )
+
+    return {
+        "values": program_net_by_code,
+        "market_stats": market_stats,
+        "raw_samples": raw_samples,
+        "converted_samples": converted_samples,
+        "divisor": divisor,
+    }
+
+
+def _ohlc_price(value):
+    number = _clean_number(value)
+    return abs(number) if isinstance(number, (int, float)) else None
+
+
+def _daily_row_date(row):
+    value = _first(row, "date", "dt", "일자")
+    if value in (None, ""):
+        return None
+    digits = "".join(character for character in str(value) if character.isdigit())
+    return digits if len(digits) == 8 else None
+
+
+def _select_daily_rows(rows, query_date):
+    eligible_rows = sorted(
+        (
+            (row_date, row)
+            for row in rows
+            if isinstance(row, dict)
+            and (row_date := _daily_row_date(row))
+            and row_date <= query_date
+        ),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    if not eligible_rows:
+        return None, None
+
+    current_date, current_row = eligible_rows[0]
+    previous_row = next(
+        (
+            row
+            for row_date, row in eligible_rows[1:]
+            if row_date < current_date
+        ),
+        None,
+    )
+    return current_row, previous_row
+
+
+def _build_ohlc(current_row, previous_row):
+    if not current_row or not previous_row:
+        return None, None
+
+    prices = {
+        "open": _ohlc_price(_first(current_row, "open_pric", "open")),
+        "high": _ohlc_price(_first(current_row, "high_pric", "high")),
+        "low": _ohlc_price(_first(current_row, "low_pric", "low")),
+        "close": _ohlc_price(_first(current_row, "close_pric", "close")),
+        "prev_high": _ohlc_price(_first(previous_row, "high_pric", "high")),
+        "prev_close": _ohlc_price(_first(previous_row, "close_pric", "close")),
+        "prev_low": _ohlc_price(_first(previous_row, "low_pric", "low")),
+    }
+    if any(value is None for value in prices.values()):
+        return None, None
+    if prices["high"] < prices["low"] or prices["prev_high"] < prices["prev_low"]:
+        return None, None
+
+    amount_million = _clean_number(_first(current_row, "amt_mn", "trade_value_mn"))
+    trade_quantity = _clean_number(_first(current_row, "trde_qty", "trade_quantity"))
+    vwap_candidate = None
+    if (
+        isinstance(amount_million, (int, float))
+        and isinstance(trade_quantity, (int, float))
+        and trade_quantity > 0
+    ):
+        vwap_decimal = (
+            Decimal(str(amount_million)) * Decimal("1000000")
+        ) / Decimal(str(trade_quantity))
+        vwap_candidate = float(vwap_decimal)
+
+    vwap = (
+        round(vwap_candidate, 2)
+        if vwap_candidate is not None
+        and prices["low"] <= vwap_candidate <= prices["high"]
+        else None
+    )
+    ohlc = {
+        "open": prices["open"],
+        "high": prices["high"],
+        "low": prices["low"],
+        "close": prices["close"],
+        "vwap": vwap,
+        "prev_high": prices["prev_high"],
+        "prev_close": prices["prev_close"],
+        "prev_low": prices["prev_low"],
+        "trading_date": _daily_row_date(current_row),
+    }
+    return ohlc, {
+        "amt_mn": amount_million,
+        "trde_qty": trade_quantity,
+        "calculated_vwap": round(vwap_candidate, 2)
+        if vwap_candidate is not None
+        else None,
+        "accepted_vwap": vwap,
+    }
+
+
+def _ohlc_row_sample(row):
+    if not row:
+        return None
+    return {
+        "date": _first(row, "date", "dt", "일자"),
+        "open_pric": _first(row, "open_pric", "open"),
+        "high_pric": _first(row, "high_pric", "high"),
+        "low_pric": _first(row, "low_pric", "low"),
+        "close_pric": _first(row, "close_pric", "close"),
+        "amt_mn": _first(row, "amt_mn", "trade_value_mn"),
+        "trde_qty": _first(row, "trde_qty", "trade_quantity"),
+    }
+
+
+def fetch_ohlc(access_token, rows, query_date, limit, sleep_seconds):
+    """Attach ka10086 OHLC to a limited number of rows without trading actions."""
+    raw_samples = []
+    converted_samples = []
+    vwap_samples = []
+    joined_count = 0
+    rate_limit = None
+    target_rows = rows[:limit]
+
+    for position, row in enumerate(target_rows, start=1):
+        if position > 1 and sleep_seconds:
+            time.sleep(sleep_seconds)
+        stock_code = row["stock_code"]
+        try:
+            response = _post_json(
+                "/api/dostk/mrkcond",
+                {
+                    "stk_cd": stock_code,
+                    "qry_dt": query_date,
+                    "indc_tp": "1",
+                },
+                {
+                    "Authorization": f"Bearer {access_token}",
+                    "api-id": "ka10086",
+                    "cont-yn": "N",
+                    "next-key": "",
+                },
+            )
+        except KiwoomAPIError as error:
+            if error.status_code != 429:
+                raise
+            rate_limit = {"position": position, "stock_code": stock_code}
+            print(
+                f"warning: ka10086 HTTP 429 at position {position}, "
+                f"stock_code {stock_code}; stopping OHLC requests",
+                file=sys.stderr,
+            )
+            break
+
+        daily_rows = _first(response, "daly_stkpc", "daily_stock_price", "output")
+        if not isinstance(daily_rows, list):
+            raise RuntimeError(f"Unexpected ka10086 response: {response}")
+        current_row, previous_row = _select_daily_rows(daily_rows, query_date)
+        trading_date = _daily_row_date(current_row) if current_row else None
+        if trading_date and trading_date != query_date:
+            print(
+                "ka10086 trading_date_used: "
+                f"stock_code={stock_code}, query_date={query_date}, "
+                f"trading_date={trading_date}"
+            )
+        ohlc, vwap_sample = _build_ohlc(current_row, previous_row)
+        if len(raw_samples) < 5:
+            raw_samples.append(
+                {
+                    "stock_code": stock_code,
+                    "current": _ohlc_row_sample(current_row),
+                    "previous": _ohlc_row_sample(previous_row),
+                }
+            )
+            converted_samples.append({"stock_code": stock_code, "ohlc": ohlc})
+            if vwap_sample is not None:
+                vwap_samples.append({"stock_code": stock_code, **vwap_sample})
+        if ohlc is not None:
+            row["ohlc"] = ohlc
+            joined_count += 1
+
+    return {
+        "target_count": len(target_rows),
+        "joined_count": joined_count,
+        "raw_samples": raw_samples,
+        "converted_samples": converted_samples,
+        "vwap_samples": vwap_samples,
+        "rate_limit": rate_limit,
+    }
+
+
 def _load_tradable_stock_codes():
     master_path = DOCS_DIR / "tradable_stock_master.csv"
     with master_path.open("r", encoding="utf-8-sig", newline="") as master_file:
@@ -241,14 +590,63 @@ def main():
     print(f"master code samples: {sorted(tradable_codes)[:10]}")
     print(f"API normalized code samples: {[row['stock_code'] for row in top100_rows[:10]]}")
     filtered_rows = [row for row in top100_rows if row["stock_code"] in tradable_codes]
-    top100_count = min(len(filtered_rows), 100)
-    top100_cache = {"rows": top100_rows}
+    query_date = _query_date()
+    program_data = None
+    program_net_by_code = {}
+    if _program_net_enabled():
+        try:
+            program_data = fetch_program_net(access_token, query_date)
+            program_net_by_code = program_data["values"]
+        except (RuntimeError, ValueError) as error:
+            print(
+                f"warning: ka90004 program net disabled after error: {error}",
+                file=sys.stderr,
+            )
+    for display_rank, row in enumerate(filtered_rows, start=1):
+        row["rank"] = display_rank
+        row["program_net"] = program_net_by_code.get(row["stock_code"])
+    ohlc_limit = _ohlc_limit()
+    request_sleep_sec = _request_sleep_sec()
+    ohlc_data = fetch_ohlc(
+        access_token,
+        filtered_rows,
+        query_date,
+        ohlc_limit,
+        request_sleep_sec,
+    )
+    top100_count = len(filtered_rows)
+    top100_cache = {"rows": filtered_rows}
     server = ThreadingHTTPServer((HOST, PORT), make_handler(top100_cache))
     for page_number, page_count in enumerate(page_counts, start=1):
         print(f"page{page_number} count: {page_count}")
     print(f"unique count: {len(top100_rows)}")
     print(f"filtered count: {len(filtered_rows)}")
     print(f"top100 count: {top100_count}")
+    if program_data is None:
+        print("ka90004 program net: disabled or unavailable")
+    else:
+        print(f"ka90004 query date: {query_date}")
+        print(f"ka90004 eok divisor: {program_data['divisor']}")
+        for market_stat in program_data["market_stats"]:
+            print(
+                f"ka90004 {market_stat['market']} pages: {market_stat['pages']}, "
+                f"rows: {market_stat['rows']}"
+            )
+        print(f"ka90004 raw samples: {program_data['raw_samples']}")
+        print(f"ka90004 converted samples: {program_data['converted_samples']}")
+        print(
+            "ka90004 matched count: "
+            f"{sum(row['program_net'] is not None for row in filtered_rows)}"
+        )
+    print(f"ka10086 query date: {query_date}")
+    print(f"ka10086 OHLC limit: {ohlc_limit}")
+    print(f"ka10086 request sleep sec: {request_sleep_sec}")
+    print(f"ka10086 target count: {ohlc_data['target_count']}")
+    print(f"ka10086 OHLC joined count: {ohlc_data['joined_count']}")
+    print(f"ka10086 raw samples: {ohlc_data['raw_samples']}")
+    print(f"ka10086 converted samples: {ohlc_data['converted_samples']}")
+    print(f"ka10086 VWAP samples: {ohlc_data['vwap_samples']}")
+    print(f"ka10086 HTTP 429 position: {ohlc_data['rate_limit']}")
     print(f"Open http://{HOST}:{PORT}/stockboard_v0_3_0_sample.html")
     try:
         server.serve_forever()
