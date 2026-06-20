@@ -11,6 +11,31 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
+def _load_dotenv():
+    supported_keys = {"KIWOOM_APP_KEY", "KIWOOM_SECRET_KEY"}
+    candidates = (Path(r"C:\aiTrade\.env"), Path(__file__).resolve().parent / ".env")
+    loaded_paths = set()
+
+    for env_path in candidates:
+        resolved_path = env_path.resolve()
+        if resolved_path in loaded_paths or not env_path.is_file():
+            continue
+        loaded_paths.add(resolved_path)
+
+        with env_path.open("r", encoding="utf-8-sig") as env_file:
+            for raw_line in env_file:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                if key in supported_keys:
+                    os.environ.setdefault(key, value.strip())
+
+
+_load_dotenv()
+
+
 API_BASE_URL = os.getenv("KIWOOM_API_BASE_URL", "https://api.kiwoom.com").rstrip("/")
 DOCS_DIR = Path(__file__).resolve().parent / "docs"
 HOST = os.getenv("KIWOOM_HOST", "127.0.0.1")
