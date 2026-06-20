@@ -423,7 +423,7 @@
     }
   });
 
-  fetch('./traddable_stock_master.csv', { cache: 'no-store' })
+  fetch('./tradable_stock_master.csv', { cache: 'no-store' })
     .then(response => {
       if (!response.ok) throw new Error(`CSV load failed: ${response.status}`);
       return response.text();

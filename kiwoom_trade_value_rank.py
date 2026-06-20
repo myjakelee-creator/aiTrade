@@ -1,3 +1,4 @@
+import csv
 import json
 import os
 import sys
@@ -33,7 +34,7 @@ OUTPUT_KEYS = (
 )
 
 
-def _post_json(path, payload, headers=None):
+def _post_json(path, payload, headers=None, return_headers=False):
     request_headers = {"Content-Type": "application/json;charset=UTF-8"}
     request_headers.update(headers or {})
     request = Request(
@@ -44,7 +45,8 @@ def _post_json(path, payload, headers=None):
     )
     try:
         with urlopen(request, timeout=15) as response:
-            return json.loads(response.read().decode("utf-8"))
+            body = json.loads(response.read().decode("utf-8"))
+            return (body, response.headers) if return_headers else body
     except HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Kiwoom API HTTP {error.code}: {detail}") from error
@@ -96,10 +98,14 @@ def _clean_number(value):
 def _stock_code(value):
     if value in (None, ""):
         return None
-    code = str(value).strip().upper()
-    if code.startswith("A") and len(code) == 7:
+    code = "".join(str(value).split()).upper()
+    code = code.split("_", 1)[0]
+    if code.startswith("A"):
         code = code[1:]
-    return code.zfill(6) if code.isdigit() else code
+    if not code.isdigit():
+        return None
+    code = code.zfill(6)
+    return code if len(code) == 6 else None
 
 
 def _absolute_number(value):
@@ -135,30 +141,73 @@ def _normalize_row(row):
 
 
 def fetch_trade_value_top100(access_token):
-    """거래대금상위요청(ka10032)을 한 번 호출해 최대 100건을 반환한다."""
-    response = _post_json(
-        "/api/dostk/rkinfo",
-        {
-            "mrkt_tp": "000",
-            "mang_stk_incls": "0",
-            "stex_tp": "3",
-        },
-        {
-            "Authorization": f"Bearer {access_token}",
-            "api-id": "ka10032",
-            "cont-yn": "N",
-            "next-key": "",
-        },
-    )
-    raw_rows = _first(
-        response,
-        "trde_prica_upper",
-        "trade_value_top",
-        "output",
-    )
-    if not isinstance(raw_rows, list):
-        raise RuntimeError(f"Unexpected ka10032 response: {response}")
-    return [_normalize_row(row) for row in raw_rows[:100] if isinstance(row, dict)]
+    """Fetch up to three ka10032 pages and return at most 300 unique rows."""
+    page_counts = [0, 0, 0]
+    collected_rows = []
+    continuation = "N"
+    next_key = ""
+
+    for page_index in range(3):
+        response, response_headers = _post_json(
+            "/api/dostk/rkinfo",
+            {
+                "mrkt_tp": "000",
+                "mang_stk_incls": "0",
+                "stex_tp": "3",
+            },
+            {
+                "Authorization": f"Bearer {access_token}",
+                "api-id": "ka10032",
+                "cont-yn": continuation,
+                "next-key": next_key,
+            },
+            return_headers=True,
+        )
+        raw_rows = _first(
+            response,
+            "trde_prica_upper",
+            "trade_value_top",
+            "output",
+        )
+        if not isinstance(raw_rows, list):
+            raise RuntimeError(f"Unexpected ka10032 response: {response}")
+
+        page_rows = [row for row in raw_rows[:100] if isinstance(row, dict)]
+        page_counts[page_index] = len(page_rows)
+        collected_rows.extend(_normalize_row(row) for row in page_rows)
+
+        continuation = response_headers.get("cont-yn", "").upper()
+        next_key = response_headers.get("next-key", "")
+        if continuation != "Y" or not next_key:
+            break
+
+    unique_rows = {}
+    for row in collected_rows:
+        stock_code = row["stock_code"]
+        if stock_code and stock_code not in unique_rows:
+            unique_rows[stock_code] = row
+
+    rows = sorted(
+        unique_rows.values(),
+        key=lambda row: (
+            row["trade_value_eok"] is not None,
+            row["trade_value_eok"] if row["trade_value_eok"] is not None else 0,
+        ),
+        reverse=True,
+    )[:300]
+    return rows, page_counts
+
+
+def _load_tradable_stock_codes():
+    master_path = DOCS_DIR / "tradable_stock_master.csv"
+    with master_path.open("r", encoding="utf-8-sig", newline="") as master_file:
+        reader = csv.reader(master_file)
+        next(reader, None)
+        return {
+            code
+            for row in reader
+            if row and (code := _stock_code(row[0]))
+        }
 
 
 def make_handler(top100_cache):
@@ -186,10 +235,20 @@ def main():
         raise RuntimeError(f"docs directory not found: {DOCS_DIR}")
 
     access_token = issue_access_token()
-    top100_rows = fetch_trade_value_top100(access_token)
+    top100_rows, page_counts = fetch_trade_value_top100(access_token)
+    tradable_codes = _load_tradable_stock_codes()
+    print(f"master count: {len(tradable_codes)}")
+    print(f"master code samples: {sorted(tradable_codes)[:10]}")
+    print(f"API normalized code samples: {[row['stock_code'] for row in top100_rows[:10]]}")
+    filtered_rows = [row for row in top100_rows if row["stock_code"] in tradable_codes]
+    top100_count = min(len(filtered_rows), 100)
     top100_cache = {"rows": top100_rows}
     server = ThreadingHTTPServer((HOST, PORT), make_handler(top100_cache))
-    print(f"Fetched {len(top100_rows)} ka10032 rows")
+    for page_number, page_count in enumerate(page_counts, start=1):
+        print(f"page{page_number} count: {page_count}")
+    print(f"unique count: {len(top100_rows)}")
+    print(f"filtered count: {len(filtered_rows)}")
+    print(f"top100 count: {top100_count}")
     print(f"Open http://{HOST}:{PORT}/stockboard_v0_3_0_sample.html")
     try:
         server.serve_forever()
