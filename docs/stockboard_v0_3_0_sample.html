@@ -20,11 +20,15 @@
   }
   .title{height:30px;background:linear-gradient(#dfe7ee,#cbd6df);display:flex;align-items:center;padding:0 10px;font-weight:700;color:#19324a}
   .data-diagnostics{margin-left:auto;font-size:12px;font-weight:700;color:#4b6175;font-variant-numeric:tabular-nums;white-space:nowrap}
-  .topbar{display:grid;grid-template-columns:200px 48px 48px 48px 120px 64px minmax(298px,1fr);align-items:center;height:42px;border-bottom:1px solid var(--line);font-size:14px;font-weight:700;min-width:826px}
+  .topbar{display:grid;grid-template-columns:250px 48px 48px 48px 120px 86px minmax(298px,1fr);align-items:center;height:42px;border-bottom:1px solid var(--line);font-size:14px;font-weight:700;min-width:898px}
   .topbar>div:nth-child(2),.topbar>div:nth-child(3),.topbar>div:nth-child(4){padding:0 5px}
-  .topbar>div{height:100%;min-width:0;padding:0 10px;display:flex;align-items:center;justify-content:center;border-right:1px solid var(--line);white-space:nowrap;overflow:hidden}
+  .topbar>div{position:relative;height:100%;min-width:0;padding:0 10px;display:flex;align-items:center;justify-content:center;border-right:1px solid var(--line);white-space:nowrap;overflow:hidden}
   .topbar>div:first-child,.topbar>div:last-child{justify-content:flex-start}
-  .lamp{display:inline-block;width:17px;height:17px;border-radius:50%;margin-left:7px;background:var(--green);box-shadow:0 0 7px var(--green)}
+  .topbar>div:first-child{font-size:17px;font-variant-numeric:tabular-nums}
+  .lamp{display:inline-block;width:17px;height:17px;border-radius:50%;margin-left:7px;background:#d3a900;box-shadow:0 0 7px #d3a900}
+  .lamp.ok{background:var(--green);box-shadow:0 0 7px var(--green)}
+  .lamp.waiting{background:#d3a900;box-shadow:0 0 7px #d3a900}
+  .lamp.error{background:var(--red);box-shadow:0 0 7px var(--red)}
   .speed{color:#b8860b}.market-open{color:#168000}.focus-name{color:var(--red)}.momentum{color:#b8860b;font-size:14px}
   .focus-momentum{gap:14px}.focus-momentum .momentum{overflow:hidden;text-overflow:ellipsis}
   .grid{width:100%;border-collapse:collapse;table-layout:auto;min-width:1150px}
@@ -36,25 +40,23 @@
   .foreign-zero{color:#7f8c8d}
   .grade{display:inline-block;border-radius:4px;color:#fff;padding:2px 7px;font-weight:900}
   .a{background:#d71920}.b{background:#f08a24}.c{background:#f4c430;color:#111}.d{background:#1266d6}
-  .market-overview{display:grid;grid-template-columns:minmax(0,1fr) 210px;align-items:stretch;min-width:0}
+  .market-overview{display:grid;grid-template-columns:minmax(0,1fr) 250px;align-items:stretch;min-width:0}
   .market-tables{min-width:0}
-  .market{width:100%;min-width:0;table-layout:auto}
+  .market{width:100%;min-width:0;table-layout:fixed}
   .market th,.market td{padding-left:8px;padding-right:8px;white-space:nowrap}
   .market th{font-size:13px}.market td{font-size:14px;font-weight:700}
-  .us{width:100%;min-width:0;table-layout:auto}
-  .us td{font-size:14px;font-weight:800;background:var(--head)}
+  .market th{position:relative;overflow:visible}
+  .upper-column-resizer{position:absolute;top:0;right:0;width:8px;height:100%;z-index:9;cursor:col-resize;touch-action:none;user-select:none}
+  .us{width:100%;min-width:0;table-layout:fixed}
+  .us td{position:relative;font-size:14px;font-weight:800;background:var(--head)}
   .us td span{margin-left:8px}
   .us-impact-cell{max-width:180px}
-  .us-impact-value{display:inline-block;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
-  .market-temperature-header{min-width:92px}
-  .market-temperature-cell{width:120px;min-width:92px;max-width:140px;padding-top:4px;padding-bottom:4px}
-  .market-temperature-bar{display:flex;width:100%;height:7px;overflow:hidden;border:1px solid #b7c1ca;border-radius:4px;background:#e3e8ec}
-  .market-temperature-rise{background:var(--red)}.market-temperature-fall{background:var(--blue)}
+  .us-impact-value{display:inline-block;max-width:110px;margin-left:0!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
   .grade-distribution{display:flex;align-items:center;gap:10px;min-width:0;padding:8px 10px;border:1px solid var(--line);background:#f8fbff}
   .grade-distribution-chart{width:82px;height:82px;flex:0 0 82px;border-radius:50%;background:#e3e8ec;box-shadow:inset 0 0 0 1px #b7c1ca;position:relative}
   .grade-distribution-chart::after{content:"";position:absolute;inset:20px;border-radius:50%;background:#fff;box-shadow:0 0 0 1px #d4dbe1}
   .grade-distribution-info{min-width:0;font-size:12px;font-weight:800}
-  .grade-distribution-title{margin-bottom:5px;color:#263747;font-size:13px}
+  .grade-distribution-title{margin-bottom:5px;color:#263747;font-size:13px;white-space:nowrap}
   .grade-distribution-legend{display:grid;grid-template-columns:repeat(2,minmax(36px,1fr));gap:3px 7px}
   .grade-distribution-item{white-space:nowrap;font-variant-numeric:tabular-nums}
   .grade-dot{display:inline-block;width:8px;height:8px;margin-right:4px;border-radius:2px}
@@ -106,12 +108,12 @@
   <div class="title">▣ StockBoard v0.3.6 Prev Close Proportional <span class="data-diagnostics" id="data-diagnostics">apiRows 0 · apiOhlc 0 · normalizedRows 0 · normalizedOhlc 0 · renderedOhlc 0</span></div>
 
   <div class="topbar">
-    <div>2025/08/17 (수) 14:05:17</div>
-    <div>I <span class="lamp"></span></div>
-    <div>R <span class="lamp"></span></div>
-    <div>B <span class="lamp"></span></div>
-    <div>수신속도 <span class="speed">&nbsp;0.21초</span></div>
-    <div><span class="market-open">정규장</span></div>
+    <div id="current-date-time">-</div>
+    <div>A <span class="lamp waiting" id="api-status-lamp" title="API 서버 대기"></span></div>
+    <div>K <span class="lamp waiting" id="kiwoom-status-lamp" title="Kiwoom 데이터 대기"></span></div>
+    <div>W <span class="lamp waiting" id="web-status-lamp" title="Web 화면 갱신 대기"></span></div>
+    <div>갱신 <span class="speed" id="refresh-delay">-</span></div>
+    <div><span class="market-open" id="market-session">장마감</span></div>
     <div class="focus-momentum"><span class="focus-name">삼성전기</span><span class="momentum">VWAP돌파 + 시가위 + 전고돌파</span></div>
   </div>
 
@@ -125,20 +127,14 @@
       <td>IBB <span class="plus">+0.55%</span></td>
       <td>LIT <span class="minus">-1.25%</span></td>
       <td>BOTZ <span class="plus">+0.82%</span></td>
-      <td class="us-impact-cell">미국장 영향 <span class="us-impact-value" id="us-market-impact-value">반도체 우호</span></td>
+      <td class="us-impact-cell"><span class="us-impact-value" id="us-market-impact-value">반도체 우호</span></td>
     </tr>
   </table>
 
   <table class="grid market">
-    <tr><th>시장</th><th>지수</th><th>등락률</th><th>상승/하락</th><th>외선(억)</th><th>외인(억)</th><th>기관(억)</th><th>프로(억)</th><th>외달(억)</th><th>분위기</th><th class="market-temperature-header" id="market-temperature-header">시장체온</th></tr>
-    <tr><td class="blue">KOSPI</td><td>3,250</td><td class="plus">+1.23%</td><td><span class="plus">720(↑4)</span>/<span class="blue">180(↓0)</span></td><td class="plus">+5,200</td><td class="plus">+2,300</td><td class="minus">-800</td><td class="plus">+1,250</td><td class="plus">+8,600</td><td class="plus">92 폭등장</td><td class="market-temperature-cell"><div class="market-temperature-bar" id="market-kospi-temperature">
-        <span class="market-temperature-rise" id="market-kospi-rise"></span>
-        <span class="market-temperature-fall" id="market-kospi-fall"></span>
-      </div></td></tr>
-    <tr><td class="blue">KOSDAQ</td><td>1,035</td><td class="minus">-0.45%</td><td><span class="plus">430(↑7)</span>/<span class="blue">980(↓1)</span></td><td class="minus">-1,800</td><td class="minus">-500</td><td class="plus">+120</td><td class="minus">-450</td><td class="minus">-2,100</td><td class="minus">28 약세장</td><td class="market-temperature-cell"><div class="market-temperature-bar" id="market-kosdaq-temperature">
-        <span class="market-temperature-rise" id="market-kosdaq-rise"></span>
-        <span class="market-temperature-fall" id="market-kosdaq-fall"></span>
-      </div></td></tr>
+    <tr><th>시장</th><th>지수</th><th>등락률</th><th>상승/하락</th><th>개인(억)</th><th>외인(억)</th><th>기관(억)</th><th>프로(억)</th><th>외선(억)</th></tr>
+    <tr><td class="blue" id="market-kospi-name">-</td><td id="market-kospi-index">-</td><td id="market-kospi-change">-</td><td><span class="plus" id="market-kospi-advance">-</span> / <span class="blue" id="market-kospi-decline">-</span></td><td id="market-kospi-individual">-</td><td id="market-kospi-foreign-spot">-</td><td id="market-kospi-institution">-</td><td id="market-kospi-program">-</td><td id="market-kospi-foreign-futures">-</td></tr>
+    <tr><td class="blue" id="market-kosdaq-name">-</td><td id="market-kosdaq-index">-</td><td id="market-kosdaq-change">-</td><td><span class="plus" id="market-kosdaq-advance">-</span> / <span class="blue" id="market-kosdaq-decline">-</span></td><td id="market-kosdaq-individual">-</td><td id="market-kosdaq-foreign-spot">-</td><td id="market-kosdaq-institution">-</td><td id="market-kosdaq-program">-</td><td id="market-kosdaq-foreign-futures">-</td></tr>
   </table>
   </div>
   <aside class="grade-distribution" aria-label="TOP100 등급분포">
@@ -165,29 +161,144 @@
   const candidateBoard = document.getElementById('candidate-board');
   const dataDiagnostics = document.getElementById('data-diagnostics');
   const topbar = document.querySelector('.topbar');
+  const currentDateTime = document.getElementById('current-date-time');
+  const refreshDelay = document.getElementById('refresh-delay');
+  const marketSession = document.getElementById('market-session');
+  const statusLamps = {
+    api: document.getElementById('api-status-lamp'),
+    kiwoom: document.getElementById('kiwoom-status-lamp'),
+    web: document.getElementById('web-status-lamp')
+  };
   const marketOverview = document.getElementById('market-overview');
+  const usMarketTable = document.querySelector('.us');
   const marketTable = document.querySelector('.market');
-  const marketTemperatureHeader = document.getElementById('market-temperature-header');
   const gradeDistributionChart = document.getElementById('grade-distribution-chart');
   const gradeDistributionLegend = document.getElementById('grade-distribution-legend');
   const usMarketImpactValue = document.getElementById('us-market-impact-value');
   // Temporary UI-only fallback until a real US market impact value is supplied.
   const usMarketImpactFallback = '반도체 우호';
-  const marketTemperatureBars = {
-    kospi: {
-      container: document.getElementById('market-kospi-temperature'),
-      rise: document.getElementById('market-kospi-rise'),
-      fall: document.getElementById('market-kospi-fall')
-    },
-    kosdaq: {
-      container: document.getElementById('market-kosdaq-temperature'),
-      rise: document.getElementById('market-kosdaq-rise'),
-      fall: document.getElementById('market-kosdaq-fall')
-    }
-  };
+  const marketSupplyCells = Object.fromEntries(['kospi', 'kosdaq'].map(key => [key, {
+    name: document.getElementById(`market-${key}-name`),
+    index: document.getElementById(`market-${key}-index`),
+    change: document.getElementById(`market-${key}-change`),
+    advance: document.getElementById(`market-${key}-advance`),
+    decline: document.getElementById(`market-${key}-decline`),
+    individual: document.getElementById(`market-${key}-individual`),
+    foreignFutures: document.getElementById(`market-${key}-foreign-futures`),
+    foreignSpot: document.getElementById(`market-${key}-foreign-spot`),
+    institution: document.getElementById(`market-${key}-institution`),
+    program: document.getElementById(`market-${key}-program`)
+  }]));
   const columnWidthStorageKey = 'stockboard.tradingBoard.columnWidths.v1';
+  const topbarWidthStorageKey = 'stockboard.topbar.columnWidths.v1';
+  const usMarketWidthStorageKey = 'stockboard.usMarket.columnWidths.v1';
+  const marketWidthStorageKey = 'stockboard.marketSupply.columnWidths.v1';
   const candleModeStorageKey = 'stockboard.candleMode.v1';
   const candleModes = new Set(['full', 'proportional']);
+  const marketSessions = new Set(['프리마켓', '정규장', '애프터마켓', '장마감']);
+  let topbarColumnResizeController = null;
+  let usMarketColumnResizeController = null;
+  let marketColumnResizeController = null;
+  let lastSuccessfulUpdateAt = null;
+
+  function setStatusLamp(name, state, message) {
+    const lamp = statusLamps[name];
+    lamp.classList.remove('ok', 'waiting', 'error');
+    lamp.classList.add(state);
+    lamp.dataset.state = state;
+    lamp.title = message;
+  }
+
+  function markSuccessfulUpdate() {
+    lastSuccessfulUpdateAt = performance.now();
+    setStatusLamp('web', 'ok', 'Web 화면 갱신 정상');
+  }
+
+  function updateRefreshDelay() {
+    if (lastSuccessfulUpdateAt === null) {
+      refreshDelay.textContent = '-';
+      return;
+    }
+    const delaySeconds = Math.max(0, (performance.now() - lastSuccessfulUpdateAt) / 1000);
+    refreshDelay.textContent = `${delaySeconds.toFixed(1)}초`;
+    if (delaySeconds >= 10 && statusLamps.web.dataset.state !== 'error') {
+      setStatusLamp('web', 'waiting', 'Web 화면 갱신 지연');
+    }
+  }
+
+  function updateCurrentDateTime() {
+    const now = new Date();
+    const pad = value => String(value).padStart(2, '0');
+    const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
+    currentDateTime.textContent = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} (${weekdays[now.getDay()]}) ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  }
+
+  updateCurrentDateTime();
+  window.setInterval(updateCurrentDateTime, 1000);
+  window.setInterval(updateRefreshDelay, 100);
+
+  function finiteMarketNumber(value, field) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new TypeError(`Invalid market supply field: ${field}`);
+    }
+    return value;
+  }
+
+  function marketCount(value, field) {
+    const count = finiteMarketNumber(value, field);
+    if (!Number.isInteger(count) || count < 0) {
+      throw new TypeError(`Invalid market supply count: ${field}`);
+    }
+    return count.toLocaleString('en-US');
+  }
+
+  function renderMarketFlow(cell, value, integer = false) {
+    cell.classList.remove('plus', 'minus');
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      cell.textContent = '-';
+      return;
+    }
+    const displayValue = integer ? Math.round(value) : value;
+    cell.textContent = `${displayValue > 0 ? '+' : ''}${displayValue.toLocaleString('en-US', {
+      maximumFractionDigits: 2
+    })}`;
+    if (displayValue > 0) cell.classList.add('plus');
+    if (displayValue < 0) cell.classList.add('minus');
+  }
+
+  function renderMarketSupplyMarket(key, market) {
+    if (!market || typeof market !== 'object') {
+      throw new TypeError(`Missing market supply data: ${key}`);
+    }
+    const cells = marketSupplyCells[key];
+    const changeRate = finiteMarketNumber(market.market_change_rate, `${key}.market_change_rate`);
+    cells.name.textContent = String(market.market_name || '-');
+    cells.index.textContent = finiteMarketNumber(market.market_index, `${key}.market_index`).toFixed(2);
+    cells.change.textContent = `${changeRate > 0 ? '+' : ''}${changeRate.toFixed(2)}%`;
+    cells.change.classList.remove('plus', 'minus');
+    if (changeRate > 0) cells.change.classList.add('plus');
+    if (changeRate < 0) cells.change.classList.add('minus');
+    cells.advance.textContent = `${marketCount(market.advancers, `${key}.advancers`)}(↑${marketCount(market.upper_limit_count, `${key}.upper_limit_count`)})`;
+    cells.decline.textContent = `${marketCount(market.decliners, `${key}.decliners`)}(↓${marketCount(market.lower_limit_count, `${key}.lower_limit_count`)})`;
+    renderMarketFlow(cells.individual, market.individual_eok);
+    renderMarketFlow(cells.foreignSpot, market.foreign_spot_eok);
+    renderMarketFlow(cells.institution, market.institution_eok);
+    renderMarketFlow(cells.program, market.program_market_eok, true);
+    renderMarketFlow(cells.foreignFutures, market.foreign_futures_eok);
+  }
+
+  function renderMarketSupply(data) {
+    if (!data || !marketSessions.has(data.market_session)) {
+      throw new TypeError('Invalid market_session');
+    }
+    marketSession.textContent = data.market_session;
+    renderMarketSupplyMarket('kospi', data && data.kospi);
+    renderMarketSupplyMarket('kosdaq', data && data.kosdaq);
+    setStatusLamp('kiwoom', 'ok', 'Kiwoom 시장 데이터 정상');
+    markSuccessfulUpdate();
+    topbarColumnResizeController?.refreshAutomaticWidths();
+    marketColumnResizeController?.refreshAutomaticWidths();
+  }
 
   function loadCandleMode() {
     try {
@@ -205,6 +316,291 @@
       console.warn('Candle mode could not be saved.', error);
     }
   }
+
+  function loadUpperColumnWidths(storageKey, columns) {
+    try {
+      const savedWidths = JSON.parse(localStorage.getItem(storageKey));
+      if (!Array.isArray(savedWidths) || savedWidths.length !== columns.length) return null;
+      const widths = savedWidths.map(Number);
+      if (!widths.every((width, index) =>
+        Number.isFinite(width) && width >= columns[index].minWidth && width <= 2000
+      )) return null;
+      return widths.map(Math.round);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function initializeUpperColumnResize({
+    root,
+    columns,
+    storageKey,
+    getHandleCells,
+    applyWidths,
+    measureWidth
+  }) {
+    const savedWidths = loadUpperColumnWidths(storageKey, columns);
+    let widths = savedWidths;
+    let automaticWidths = !savedWidths;
+    let resize = null;
+
+    function saveWidths() {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(widths));
+      } catch (error) {
+        console.warn('Upper column widths could not be saved.', error);
+      }
+    }
+
+    getHandleCells().forEach((cell, columnIndex) => {
+      const resizer = document.createElement('span');
+      resizer.className = 'upper-column-resizer';
+      resizer.dataset.columnIndex = String(columnIndex);
+      resizer.setAttribute('aria-hidden', 'true');
+      cell.appendChild(resizer);
+    });
+
+    function measureAllWidths() {
+      return columns.map((column, columnIndex) => Math.min(
+        2000,
+        Math.max(column.minWidth, Math.ceil(measureWidth(columnIndex)))
+      ));
+    }
+
+    if (automaticWidths) widths = measureAllWidths();
+
+    root.addEventListener('pointerdown', event => {
+      const resizer = event.target.closest('.upper-column-resizer');
+      if (!resizer || !root.contains(resizer)) return;
+      const columnIndex = Number(resizer.dataset.columnIndex);
+      if (!Number.isInteger(columnIndex) || !columns[columnIndex]) return;
+      automaticWidths = false;
+      resize = {
+        pointerId: event.pointerId,
+        columnIndex,
+        startX: event.clientX,
+        startWidth: widths[columnIndex]
+      };
+      document.body.classList.add('column-resizing');
+      event.preventDefault();
+    });
+
+    root.addEventListener('dblclick', event => {
+      const resizer = event.target.closest('.upper-column-resizer');
+      if (!resizer || !root.contains(resizer)) return;
+      const columnIndex = Number(resizer.dataset.columnIndex);
+      if (!Number.isInteger(columnIndex) || !columns[columnIndex]) return;
+      automaticWidths = false;
+      widths[columnIndex] = Math.min(
+        2000,
+        Math.max(columns[columnIndex].minWidth, Math.ceil(measureWidth(columnIndex)))
+      );
+      applyWidths(widths);
+      saveWidths();
+      event.preventDefault();
+      event.stopPropagation();
+    });
+
+    window.addEventListener('pointermove', event => {
+      if (!resize || event.pointerId !== resize.pointerId) return;
+      const { columnIndex, startX, startWidth } = resize;
+      widths[columnIndex] = Math.max(
+        columns[columnIndex].minWidth,
+        Math.round(startWidth + event.clientX - startX)
+      );
+      applyWidths(widths);
+    });
+
+    function finishResize(event) {
+      if (!resize || event.pointerId !== resize.pointerId) return;
+      resize = null;
+      document.body.classList.remove('column-resizing');
+      saveWidths();
+    }
+
+    window.addEventListener('pointerup', finishResize);
+    window.addEventListener('pointercancel', finishResize);
+    applyWidths(widths);
+    return {
+      reapplyWidths() {
+        applyWidths(widths);
+      },
+      refreshAutomaticWidths() {
+        if (!automaticWidths) return;
+        widths = measureAllWidths();
+        applyWidths(widths);
+      }
+    };
+  }
+
+  function initializeTopbarColumnResize() {
+    const columns = [
+      { defaultWidth: 250, minWidth: 220 },
+      { defaultWidth: 48, minWidth: 36 },
+      { defaultWidth: 48, minWidth: 36 },
+      { defaultWidth: 48, minWidth: 36 },
+      { defaultWidth: 120, minWidth: 78 },
+      { defaultWidth: 86, minWidth: 68 },
+      { defaultWidth: 298, minWidth: 180 }
+    ];
+    const cells = () => Array.from(topbar.children);
+    const controller = initializeUpperColumnResize({
+      root: topbar,
+      columns,
+      storageKey: topbarWidthStorageKey,
+      getHandleCells: cells,
+      applyWidths(widths) {
+        const renderedWidths = [...widths];
+        const requestedWidth = renderedWidths.reduce((sum, width) => sum + width, 0);
+        renderedWidths[renderedWidths.length - 1] += Math.max(0, topbar.clientWidth - requestedWidth);
+        topbar.style.gridTemplateColumns = renderedWidths.map(width => `${width}px`).join(' ');
+      },
+      measureWidth(columnIndex) {
+        const source = cells()[columnIndex];
+        const sourceStyle = getComputedStyle(source);
+        const measurement = source.cloneNode(true);
+        measurement.querySelectorAll('.upper-column-resizer').forEach(resizer => resizer.remove());
+        measurement.style.cssText = [
+          'position:fixed',
+          'left:-10000px',
+          'top:0',
+          'visibility:hidden',
+          'display:flex',
+          'width:max-content',
+          'min-width:0',
+          'height:auto',
+          'overflow:visible',
+          `padding-left:${sourceStyle.paddingLeft}`,
+          `padding-right:${sourceStyle.paddingRight}`,
+          `font:${sourceStyle.font}`,
+          `font-weight:${sourceStyle.fontWeight}`
+        ].join(';');
+        document.body.appendChild(measurement);
+        const measuredWidth = measurement.getBoundingClientRect().width + 2;
+        measurement.remove();
+        return measuredWidth;
+      }
+    });
+    new ResizeObserver(() => controller.reapplyWidths()).observe(topbar);
+    return controller;
+  }
+
+  function initializeUsMarketColumnResize() {
+    const columns = Array.from({ length: 7 }, () => ({ minWidth: 36 }));
+    const cells = () => Array.from(usMarketTable.rows[0].cells);
+    const colgroup = document.createElement('colgroup');
+    columns.forEach(() => colgroup.appendChild(document.createElement('col')));
+    usMarketTable.prepend(colgroup);
+
+    const controller = initializeUpperColumnResize({
+      root: usMarketTable,
+      columns,
+      storageKey: usMarketWidthStorageKey,
+      getHandleCells: cells,
+      applyWidths(widths) {
+        Array.from(colgroup.children).forEach((column, index) => {
+          column.style.width = `${widths[index]}px`;
+        });
+        const requestedWidth = widths.reduce((sum, width) => sum + width, 0);
+        usMarketTable.style.width = `${requestedWidth}px`;
+        marketOverview.style.gridTemplateColumns = `${requestedWidth}px minmax(250px,1fr)`;
+      },
+      measureWidth(columnIndex) {
+        const source = cells()[columnIndex];
+        const measurementTable = document.createElement('table');
+        measurementTable.className = 'grid us';
+        measurementTable.style.cssText = [
+          'position:fixed',
+          'left:-10000px',
+          'top:0',
+          'visibility:hidden',
+          'width:auto',
+          'min-width:0',
+          'table-layout:auto'
+        ].join(';');
+        const measurementRow = measurementTable.insertRow();
+        const measurementCell = source.cloneNode(true);
+        measurementCell.querySelectorAll('.upper-column-resizer').forEach(resizer => resizer.remove());
+        measurementCell.style.width = 'auto';
+        measurementCell.style.maxWidth = 'none';
+        measurementCell.style.overflow = 'visible';
+        measurementRow.appendChild(measurementCell);
+        document.body.appendChild(measurementTable);
+        const measuredWidth = measurementTable.getBoundingClientRect().width + 2;
+        measurementTable.remove();
+        return measuredWidth;
+      }
+    });
+    new ResizeObserver(() => controller.reapplyWidths()).observe(marketOverview);
+    return controller;
+  }
+
+  function initializeMarketColumnResize() {
+    const columns = [
+      { defaultWidth: 72, minWidth: 58 },
+      { defaultWidth: 94, minWidth: 72 },
+      { defaultWidth: 78, minWidth: 68 },
+      { defaultWidth: 146, minWidth: 118 },
+      { defaultWidth: 88, minWidth: 72 },
+      { defaultWidth: 88, minWidth: 72 },
+      { defaultWidth: 88, minWidth: 72 },
+      { defaultWidth: 88, minWidth: 72 },
+      { defaultWidth: 88, minWidth: 72 }
+    ];
+    const headerCells = () => Array.from(marketTable.rows[0].cells);
+    const colgroup = document.createElement('colgroup');
+    columns.forEach(() => colgroup.appendChild(document.createElement('col')));
+    marketTable.prepend(colgroup);
+
+    const controller = initializeUpperColumnResize({
+      root: marketTable,
+      columns,
+      storageKey: marketWidthStorageKey,
+      getHandleCells: headerCells,
+      applyWidths(widths) {
+        const renderedWidths = [...widths];
+        const requestedWidth = renderedWidths.reduce((sum, width) => sum + width, 0);
+        const availableWidth = marketTable.parentElement.clientWidth;
+        renderedWidths[renderedWidths.length - 1] += Math.max(0, availableWidth - requestedWidth);
+        Array.from(colgroup.children).forEach((column, index) => {
+          column.style.width = `${renderedWidths[index]}px`;
+        });
+        marketTable.style.width = `${Math.max(requestedWidth, availableWidth)}px`;
+      },
+      measureWidth(columnIndex) {
+        const measurementTable = document.createElement('table');
+        measurementTable.className = 'grid market';
+        measurementTable.style.cssText = [
+          'position:fixed',
+          'left:-10000px',
+          'top:0',
+          'visibility:hidden',
+          'width:auto',
+          'min-width:0',
+          'table-layout:auto'
+        ].join(';');
+        const tableBody = measurementTable.createTBody();
+        Array.from(marketTable.rows).forEach(sourceRow => {
+          const sourceCell = sourceRow.cells[columnIndex];
+          if (!sourceCell) return;
+          const measurementRow = tableBody.insertRow();
+          const measurementCell = sourceCell.cloneNode(true);
+          measurementCell.querySelectorAll('.upper-column-resizer').forEach(resizer => resizer.remove());
+          measurementCell.style.width = 'auto';
+          measurementCell.style.maxWidth = 'none';
+          measurementCell.style.overflow = 'visible';
+          measurementRow.appendChild(measurementCell);
+        });
+        document.body.appendChild(measurementTable);
+        const measuredWidth = measurementTable.getBoundingClientRect().width + 2;
+        measurementTable.remove();
+        return measuredWidth;
+      }
+    });
+    new ResizeObserver(() => controller.reapplyWidths()).observe(marketTable.parentElement);
+    return controller;
+  }
+
   const boardColumns = [
     { label: '순위', defaultWidth: 36, minWidth: 30 },
     { label: '전일', defaultWidth: 46, minWidth: 36 },
@@ -271,6 +667,9 @@
   }
 
   applyColumnWidths();
+  topbarColumnResizeController = initializeTopbarColumnResize();
+  marketColumnResizeController = initializeMarketColumnResize();
+  usMarketColumnResizeController = initializeUsMarketColumnResize();
   let columnResize = null;
   function startColumnResize(event) {
     const table = event.currentTarget;
@@ -1024,25 +1423,10 @@
     updateVisibleCandleCells();
   }
 
-  function updateMarketTemperature(rows) {
-    const directionCounts = { rise: 0, fall: 0, neutral: 0 };
+  function updateGradeDistribution(rows) {
     const gradeCounts = { a: 0, b: 0, c: 0, d: 0 };
     rows.forEach(row => {
-      if (Number.isFinite(row.changeRateNumber) && row.changeRateNumber > 0) directionCounts.rise += 1;
-      else if (Number.isFinite(row.changeRateNumber) && row.changeRateNumber < 0) directionCounts.fall += 1;
-      else directionCounts.neutral += 1;
       if (Object.hasOwn(gradeCounts, row.gradeClass)) gradeCounts[row.gradeClass] += 1;
-    });
-
-    const directionalTotal = directionCounts.rise + directionCounts.fall;
-    const riseWidth = directionalTotal ? directionCounts.rise / directionalTotal * 100 : 0;
-    const summary = `상승 ${directionCounts.rise} / 하락 ${directionCounts.fall} / 보합·제외 ${directionCounts.neutral}`;
-    marketTemperatureHeader.dataset.temperature = summary;
-    Object.values(marketTemperatureBars).forEach(bars => {
-      bars.rise.style.width = `${riseWidth}%`;
-      bars.fall.style.width = `${directionalTotal ? 100 - riseWidth : 0}%`;
-      bars.container.title = summary;
-      bars.container.setAttribute('aria-label', summary);
     });
 
     const gradeTotal = Object.values(gradeCounts).reduce((sum, count) => sum + count, 0);
@@ -1063,7 +1447,7 @@
   }
 
   function renderBoard(rows) {
-    updateMarketTemperature(rows);
+    updateGradeDistribution(rows);
     top100State.renderedRows = rows;
     top100State.candleDomain = candleDomain(rows);
     renderCandidateBoard(rows);
@@ -1113,6 +1497,7 @@
       ? usMarketImpactFallback
       : String(value).trim();
     usMarketImpactValue.textContent = impact;
+    usMarketColumnResizeController?.refreshAutomaticWidths();
     return impact;
   }
 
@@ -1153,15 +1538,46 @@
     }
   });
 
+  let marketSupplyLoading = false;
+  async function loadMarketSupply() {
+    if (marketSupplyLoading) return;
+    marketSupplyLoading = true;
+    try {
+      const response = await fetch('/api/market_supply', { cache: 'no-store' });
+      if (!response.ok) throw new Error(`Market supply load failed: ${response.status}`);
+      setStatusLamp('api', 'ok', 'API 서버 응답 정상');
+      renderMarketSupply(await response.json());
+    } catch (error) {
+      console.error(error);
+      setStatusLamp('api', 'error', 'API 서버 응답 오류');
+      setStatusLamp('kiwoom', 'error', 'Kiwoom 시장 데이터 오류');
+      setStatusLamp('web', 'error', 'Web 화면 갱신 오류');
+    } finally {
+      marketSupplyLoading = false;
+    }
+  }
+
+  loadMarketSupply();
+  window.setInterval(loadMarketSupply, 5000);
+
   fetch('/api/top100', { cache: 'no-store' })
     .then(response => {
       if (!response.ok) throw new Error(`TOP100 load failed: ${response.status}`);
+      setStatusLamp('api', 'ok', 'API 서버 응답 정상');
       return response.json();
     })
-    .then(rows => window.StockBoardTop100.update(rows))
+    .then(rows => {
+      const result = window.StockBoardTop100.update(rows);
+      setStatusLamp('kiwoom', 'ok', 'Kiwoom TOP100 데이터 정상');
+      markSuccessfulUpdate();
+      return result;
+    })
     .catch(error => {
       console.error(error);
       top100State.apiError = error;
+      setStatusLamp('api', 'error', 'API 서버 응답 오류');
+      setStatusLamp('kiwoom', 'error', 'Kiwoom TOP100 데이터 오류');
+      setStatusLamp('web', 'error', 'Web 화면 갱신 오류');
       showBoardMessage('키움 거래대금 순위 조회 결과를 불러오지 못했습니다.');
     });
 </script>

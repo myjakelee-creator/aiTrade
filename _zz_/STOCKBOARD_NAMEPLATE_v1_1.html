@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STOCKBOARD_NAMEPLATE_v1.1</title>
+  <style>
+    :root{--bg:#f4f7fb;--paper:#fff;--ink:#172033;--muted:#637086;--line:#ccd7e3;--head:#eaf2fb;--blue:#0b63ce;--green:#12843d;--orange:#c76a00;--gray:#687588;--purple:#6844b6}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:"Malgun Gothic","Apple SD Gothic Neo",Arial,sans-serif;line-height:1.55;font-size:14px}
+    .wrap{max-width:1200px;margin:0 auto;padding:28px}.cover{background:linear-gradient(135deg,#0d3b66,#125a9c);color:#fff;border-radius:14px;padding:28px 32px;margin-bottom:18px;box-shadow:0 8px 24px rgba(0,0,0,.13)}
+    .cover h1{margin:0 0 8px;font-size:30px}.cover p{margin:6px 0;opacity:.94}.card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px;box-shadow:0 2px 10px rgba(20,40,70,.04)}
+    h2{margin:0 0 14px;font-size:22px;padding-bottom:8px;border-bottom:2px solid #d9e4ef} table{width:100%;border-collapse:collapse;margin:10px 0 14px;background:#fff}
+    th,td{border:1px solid var(--line);padding:7px 9px;vertical-align:top} th{background:var(--head);color:#17324c;text-align:left;white-space:nowrap}
+    code{font-family:Consolas,"D2Coding",monospace;background:#eef3f8;padding:1px 5px;border-radius:5px}.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:800;white-space:nowrap}
+    .done{background:#dff6e8;color:var(--green);border:1px solid #9bd6b3}.todo{background:#edf0f4;color:var(--gray);border:1px solid #c8d0da}.temp{background:#fff0d9;color:var(--orange);border:1px solid #f0c278}.calc{background:#eaf0ff;color:var(--blue);border:1px solid #b8caf5}
+    .note{border-left:5px solid var(--blue);background:#eef6ff;padding:12px 14px;border-radius:8px;margin:12px 0}.rule{display:grid;grid-template-columns:1fr 1fr;gap:12px}.mini{background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:12px}.arrow{font-weight:900;color:var(--blue);padding:0 8px}.footer{text-align:center;color:var(--muted);margin:28px 0 10px}
+    @media(max-width:800px){.wrap{padding:14px}.rule{grid-template-columns:1fr}.cover h1{font-size:24px}table{font-size:12px}}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <section class="cover">
+    <h1>STOCKBOARD_NAMEPLATE_v1.1</h1>
+    <p><strong>목적:</strong> 화면에 표시하는 이름과 데이터 연결에 사용하는 내부 키를 분리한다.</p>
+    <p><strong>핵심 원칙:</strong> UI 문구가 변경되더라도 데이터 연결은 내부 키를 기준으로 유지한다.</p>
+  </section>
+
+  <section class="card">
+    <h2>상태 기준</h2>
+    <table>
+      <tr><th>상태</th><th>의미</th></tr>
+      <tr><td><span class="badge done">DONE</span></td><td>실제 데이터 연결 완료</td></tr>
+      <tr><td><span class="badge todo">예정</span></td><td>이름과 구조는 확정, 실제 데이터 연결 필요</td></tr>
+      <tr><td><span class="badge temp">임시</span></td><td>UI 확인용 fallback 또는 임시 데이터 사용</td></tr>
+      <tr><td><span class="badge calc">산출</span></td><td>다른 필드로 계산</td></tr>
+    </table>
+  </section>
+
+  <section class="card"><h2>1. 종목표 (TOP100 / 후보5)</h2>
+    <table>
+      <tr><th>화면명</th><th>내부키</th><th>데이터 원천</th><th>상태</th></tr>
+      <tr><td>순위</td><td><code>rank</code></td><td>화면 산출</td><td><span class="badge calc">산출</span></td></tr>
+      <tr><td>전일</td><td><code>rank_diff</code></td><td>화면 산출</td><td><span class="badge calc">산출</span></td></tr>
+      <tr><td>전일순위</td><td><code>prev_rank</code></td><td>거래대금 순위</td><td><span class="badge todo">예정</span></td></tr>
+      <tr><td>원순위</td><td><code>original_rank</code></td><td>ka10032</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>등급</td><td><code>grade</code></td><td>종목 평가 로직</td><td><span class="badge temp">임시</span></td></tr>
+      <tr><td>종목명</td><td><code>stock_name</code></td><td>종목마스터</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>종목코드</td><td><code>stock_code</code></td><td>종목마스터</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>현재가</td><td><code>price</code></td><td>REST 실시간</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>등락률</td><td><code>change_rate</code></td><td>REST 실시간</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>금액(억)</td><td><code>trade_value_eok</code></td><td>ka10032</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>일봉</td><td><code>ohlc</code></td><td>ka10086</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>시가</td><td><code>open</code></td><td>ka10086</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>고가</td><td><code>high</code></td><td>ka10086</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>저가</td><td><code>low</code></td><td>ka10086</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>종가</td><td><code>close</code></td><td>ka10086</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>VWAP</td><td><code>vwap</code></td><td>Python 산출</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>전일고가</td><td><code>prev_high</code></td><td>ka10086</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>전일종가</td><td><code>prev_close</code></td><td>ka10086</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>전일저가</td><td><code>prev_low</code></td><td>ka10086</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>잔량비</td><td><code>bid_ask_ratio</code></td><td>호가</td><td><span class="badge todo">예정</span></td></tr>
+      <tr><td>매수잔량</td><td><code>bid_volume</code></td><td>호가</td><td><span class="badge todo">예정</span></td></tr>
+      <tr><td>매도잔량</td><td><code>ask_volume</code></td><td>호가</td><td><span class="badge todo">예정</span></td></tr>
+      <tr><td>1분강도</td><td><code>strength_1m</code></td><td>체결</td><td><span class="badge todo">예정</span></td></tr>
+      <tr><td>당일강도</td><td><code>strength_day</code></td><td>체결</td><td><span class="badge todo">예정</span></td></tr>
+      <tr><td>외합(억)</td><td><code>foreign_sum</code></td><td>거래원</td><td><span class="badge todo">예정</span></td></tr>
+      <tr><td>프로(억)</td><td><code>program_net</code></td><td>프로그램</td><td><span class="badge todo">예정</span></td></tr>
+      <tr><td>큰손</td><td><code>big_hand</code></td><td>체결 산출</td><td><span class="badge todo">예정</span></td></tr>
+      <tr><td>모멘텀</td><td><code>momentum</code></td><td>Python 산출</td><td><span class="badge todo">예정</span></td></tr>
+    </table>
+  </section>
+
+  <section class="card"><h2>2. 시장수급</h2>
+    <table>
+      <tr><th>화면명</th><th>내부키</th><th>데이터 원천</th><th>상태</th></tr>
+      <tr><td>시장</td><td><code>market_name</code></td><td>Backend</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>지수</td><td><code>market_index</code></td><td>시장지수</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>등락률</td><td><code>market_change_rate</code></td><td>시장지수</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>상승종목수</td><td><code>advancers</code></td><td>시장통계</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>하락종목수</td><td><code>decliners</code></td><td>시장통계</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>상한가수</td><td><code>upper_limit_count</code></td><td>시장통계</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>하한가수</td><td><code>lower_limit_count</code></td><td>시장통계</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>개인(억)</td><td><code>individual_eok</code></td><td>ka10051 ind_netprps</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>외인(억)</td><td><code>foreign_spot_eok</code></td><td>ka10051 frgnr_netprps</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>기관(억)</td><td><code>institution_eok</code></td><td>ka10051 orgn_netprps</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>프로(억)</td><td><code>program_market_eok</code></td><td>ka90005 all_netprps</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>외선(억)</td><td><code>foreign_futures_eok</code></td><td>COM 선물투자주체</td><td><span class="badge todo">예정</span></td></tr>
+      <tr><td>시장세션</td><td><code>market_session</code></td><td>Python 산출</td><td><span class="badge done">DONE</span></td></tr>
+    </table>
+  </section>
+
+  <section class="card"><h2>3. 미국시장</h2>
+    <table>
+      <tr><th>화면명</th><th>내부키</th><th>데이터 원천</th><th>상태</th></tr>
+      <tr><td>나스닥</td><td><code>us_nasdaq</code></td><td>미국지수 API</td><td><span class="badge todo">예정</span></td></tr>
+      <tr><td>QQQ</td><td><code>us_qqq</code></td><td>미국 ETF</td><td><span class="badge todo">예정</span></td></tr>
+      <tr><td>SMH</td><td><code>us_smh</code></td><td>미국 ETF</td><td><span class="badge todo">예정</span></td></tr>
+      <tr><td>IBB</td><td><code>us_ibb</code></td><td>미국 ETF</td><td><span class="badge todo">예정</span></td></tr>
+      <tr><td>LIT</td><td><code>us_lit</code></td><td>미국 ETF</td><td><span class="badge todo">예정</span></td></tr>
+      <tr><td>BOTZ</td><td><code>us_botz</code></td><td>미국 ETF</td><td><span class="badge todo">예정</span></td></tr>
+      <tr><td>영향</td><td><code>us_market_impact</code></td><td>Python 산출</td><td><span class="badge temp">임시</span></td></tr>
+    </table>
+    <div class="note">현재 화면에는 <strong>“미국장 영향”</strong> 문구는 제거되었고 값만 표시한다. 예: 반도체 우호</div>
+  </section>
+
+  <section class="card"><h2>4. 상단 상태바</h2>
+    <table>
+      <tr><th>화면명</th><th>내부키</th><th>의미</th><th>상태</th></tr>
+      <tr><td>날짜시간</td><td><code>current_datetime</code></td><td>KST 현재시각</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>A</td><td><code>api_status</code></td><td>API 서버 상태</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>K</td><td><code>kiwoom_status</code></td><td>키움 상태</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>W</td><td><code>web_status</code></td><td>웹 상태</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>갱신지연</td><td><code>update_delay</code></td><td>마지막 API 응답 경과시간</td><td><span class="badge done">DONE</span></td></tr>
+      <tr><td>장상태</td><td><code>market_session</code></td><td>프리/정규/애프터/장마감</td><td><span class="badge done">DONE</span></td></tr>
+    </table>
+  </section>
+
+  <section class="card"><h2>5. 향후 추가 예정</h2>
+    <table>
+      <tr><th>화면명</th><th>내부키</th><th>비고</th></tr>
+      <tr><td>시장체온</td><td><code>market_temperature</code></td><td>TOP100 등급분포 기반</td></tr>
+      <tr><td>후보점수</td><td><code>candidate_score</code></td><td>후보5 선정용</td></tr>
+      <tr><td>큰손매수</td><td><code>big_buy</code></td><td>KRT</td></tr>
+      <tr><td>큰손매도</td><td><code>big_sell</code></td><td>KRT</td></tr>
+      <tr><td>큰손리듬</td><td><code>krt</code></td><td>KRT</td></tr>
+      <tr><td>외선변화</td><td><code>foreign_futures_delta</code></td><td>외선 증감</td></tr>
+      <tr><td>호가흡수</td><td><code>orderbook_absorption</code></td><td>체결 + 호가</td></tr>
+    </table>
+  </section>
+
+  <section class="card"><h2>내부키 명명 규칙</h2>
+    <div class="rule">
+      <div class="mini"><strong>외선(억)</strong><span class="arrow">→</span><code>foreign_futures_eok</code></div>
+      <div class="mini"><strong>개인(억)</strong><span class="arrow">→</span><code>individual_eok</code></div>
+      <div class="mini"><strong>프로(억)</strong><span class="arrow">→</span><code>program_market_eok</code></div>
+      <div class="mini"><strong>시장세션</strong><span class="arrow">→</span><code>market_session</code></div>
+      <div class="mini"><strong>미국시장 영향</strong><span class="arrow">→</span><code>us_market_impact</code></div>
+    </div>
+  </section>
+
+  <section class="card"><h2>최종 원칙</h2>
+    <table>
+      <tr><th>계층</th><th>역할</th></tr>
+      <tr><td>REST</td><td>기본 데이터</td></tr>
+      <tr><td>COM</td><td>외선 + 특수 실시간 데이터</td></tr>
+      <tr><td>Python</td><td>모든 계산</td></tr>
+      <tr><td>HTML</td><td>표시 전용</td></tr>
+    </table>
+    <div class="note">화면명은 바뀔 수 있지만 내부키는 바뀌지 않는다.</div>
+  </section>
+
+  <div class="footer">STOCKBOARD_NAMEPLATE_v1.1 · aiTrade StockBoard</div>
+</div>
+</body>
+</html>

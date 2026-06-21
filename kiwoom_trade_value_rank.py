@@ -447,6 +447,208 @@ def fetch_program_net(access_token, query_date):
     }
 
 
+def _required_market_number(response, field, market_name):
+    value = _clean_number(response.get(field))
+    if not isinstance(value, (int, float)):
+        raise RuntimeError(
+            f"ka20001 {market_name} missing numeric field {field}: {response.get(field)!r}"
+        )
+    return value
+
+
+def _required_market_count(response, field, market_name):
+    value = _required_market_number(response, field, market_name)
+    if value < 0 or int(value) != value:
+        raise RuntimeError(
+            f"ka20001 {market_name} invalid count field {field}: {value!r}"
+        )
+    return int(value)
+
+
+def _market_flow_number(value, field, market_name):
+    text = str(value).strip().replace(",", "")
+    if text.startswith("--"):
+        text = "-" + text[2:]
+    number = _clean_number(text)
+    if not isinstance(number, (int, float)):
+        raise RuntimeError(
+            f"{market_name} missing numeric market flow field {field}: {value!r}"
+        )
+    return number
+
+
+def _million_to_eok(value, field, market_name):
+    number = _market_flow_number(value, field, market_name)
+    eok = Decimal(str(number)) / Decimal("100")
+    return int(eok) if eok == eok.to_integral() else float(eok)
+
+
+def _fetch_market_investor_flow(access_token, market_name, market_type, base_date):
+    response = _post_json(
+        "/api/dostk/sect",
+        {
+            "mrkt_tp": market_type,
+            "amt_qty_tp": "0",
+            "base_dt": base_date,
+            "stex_tp": "3",
+        },
+        {
+            "Authorization": f"Bearer {access_token}",
+            "api-id": "ka10051",
+            "cont-yn": "N",
+            "next-key": "",
+        },
+    )
+    if response.get("return_code") not in (None, 0, "0"):
+        raise RuntimeError(f"ka10051 {market_name} failed: {response}")
+    rows = response.get("inds_netprps", [])
+    if rows is None:
+        return None
+    if not isinstance(rows, list):
+        raise RuntimeError(f"Unexpected ka10051 {market_name} response: {response}")
+    aggregate = next(
+        (
+            row
+            for row in rows
+            if isinstance(row, dict)
+            and (
+                "종합" in str(row.get("inds_nm", ""))
+                or str(row.get("inds_cd", "")).split("_", 1)[0]
+                == ("001" if market_type == "0" else "101")
+            )
+        ),
+        None,
+    )
+    if aggregate is None:
+        return None
+    # ka10051 amount mode exposes the HTS market aggregate in eok units.
+    return {
+        "individual_eok": _market_flow_number(
+            aggregate.get("ind_netprps"), "ind_netprps", market_name
+        ),
+        "foreign_spot_eok": _market_flow_number(
+            aggregate.get("frgnr_netprps"), "frgnr_netprps", market_name
+        ),
+        "institution_eok": _market_flow_number(
+            aggregate.get("orgn_netprps"), "orgn_netprps", market_name
+        ),
+    }
+
+
+def _fetch_market_program_flow(access_token, market_name, market_type, base_date):
+    response = _post_json(
+        "/api/dostk/mrkcond",
+        {
+            "date": base_date,
+            "amt_qty_tp": "1",
+            "mrkt_tp": market_type,
+            "min_tic_tp": "1",
+            "stex_tp": "3",
+        },
+        {
+            "Authorization": f"Bearer {access_token}",
+            "api-id": "ka90005",
+            "cont-yn": "N",
+            "next-key": "",
+        },
+    )
+    if response.get("return_code") not in (None, 0, "0"):
+        raise RuntimeError(f"ka90005 {market_name} failed: {response}")
+    rows = response.get("prm_trde_trnsn", [])
+    if rows is None:
+        return None
+    if not isinstance(rows, list):
+        raise RuntimeError(f"Unexpected ka90005 {market_name} response: {response}")
+    latest = max(
+        (row for row in rows if isinstance(row, dict) and row.get("cntr_tm")),
+        key=lambda row: str(row["cntr_tm"]),
+        default=None,
+    )
+    if latest is None:
+        return None
+    return _million_to_eok(latest.get("all_netprps"), "all_netprps", market_name)
+
+
+def _recent_dates(query_date, days=7):
+    date = datetime.strptime(query_date, "%Y%m%d")
+    return [
+        (date - timedelta(days=offset)).strftime("%Y%m%d")
+        for offset in range(days)
+    ]
+
+
+def fetch_market_supply(access_token, query_date):
+    """Fetch raw KOSPI/KOSDAQ index and advance/decline statistics."""
+    market_supply = {}
+    markets = (
+        ("kospi", "KOSPI", "0", "001", "P001_AL01"),
+        ("kosdaq", "KOSDAQ", "1", "101", "P101_AL02"),
+    )
+    for key, market_name, market_type, industry_code, _ in markets:
+        response = _post_json(
+            "/api/dostk/sect",
+            {"mrkt_tp": market_type, "inds_cd": industry_code},
+            {
+                "Authorization": f"Bearer {access_token}",
+                "api-id": "ka20001",
+                "cont-yn": "N",
+                "next-key": "",
+            },
+        )
+        return_code = response.get("return_code")
+        if return_code not in (None, 0, "0"):
+            raise RuntimeError(f"ka20001 {market_name} failed: {response}")
+
+        market_supply[key] = {
+            "market_name": market_name,
+            # Kiwoom signs cur_prc by direction; the displayed index is its magnitude.
+            "market_index": abs(
+                _required_market_number(response, "cur_prc", market_name)
+            ),
+            "market_change_rate": _required_market_number(
+                response, "flu_rt", market_name
+            ),
+            "advancers": _required_market_count(response, "rising", market_name),
+            "upper_limit_count": _required_market_count(
+                response, "upl", market_name
+            ),
+            "decliners": _required_market_count(response, "fall", market_name),
+            "lower_limit_count": _required_market_count(
+                response, "lst", market_name
+            ),
+            "individual_eok": None,
+            # Kiwoom REST does not expose these two HTS-wide common values.
+            "foreign_futures_eok": None,
+            "foreign_spot_eok": None,
+            "institution_eok": None,
+            "program_market_eok": None,
+        }
+
+    for base_date in _recent_dates(query_date):
+        dated_flows = {}
+        for key, market_name, market_type, _, program_market_type in markets:
+            investor_flow = _fetch_market_investor_flow(
+                access_token, market_name, market_type, base_date
+            )
+            program_flow = _fetch_market_program_flow(
+                access_token, market_name, program_market_type, base_date
+            )
+            if investor_flow is None or program_flow is None:
+                break
+            dated_flows[key] = {
+                **investor_flow,
+                "program_market_eok": program_flow,
+            }
+        if len(dated_flows) == len(markets):
+            for key, values in dated_flows.items():
+                market_supply[key].update(values)
+            return market_supply
+
+    raise RuntimeError(
+        f"ka10051/ka90005 market flow data unavailable through {query_date}"
+    )
+
+
 def _ohlc_price(value):
     number = _clean_number(value)
     return abs(number) if isinstance(number, (int, float)) else None
@@ -725,13 +927,48 @@ def _load_tradable_stock_codes():
         }
 
 
-def make_handler(rows, expected_row_count, expected_ohlc_count, expected_rows_id):
+def _market_session(now=None):
+    current = now or datetime.now(KST)
+    if current.weekday() >= 5:
+        return "장마감"
+    minutes = current.hour * 60 + current.minute
+    if 8 * 60 <= minutes < 9 * 60:
+        return "프리마켓"
+    if 9 * 60 <= minutes < 15 * 60 + 30:
+        return "정규장"
+    if 15 * 60 + 30 <= minutes < 20 * 60:
+        return "애프터마켓"
+    return "장마감"
+
+
+def make_handler(
+    rows,
+    expected_row_count,
+    expected_ohlc_count,
+    expected_rows_id,
+    market_supply,
+):
     class RequestHandler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(DOCS_DIR), **kwargs)
 
         def do_GET(self):
-            if self.path.split("?", 1)[0] == "/api/top100":
+            request_path = self.path.split("?", 1)[0]
+            if request_path == "/api/market_supply":
+                response_payload = {
+                    "market_session": _market_session(),
+                    "kospi": market_supply["kospi"],
+                    "kosdaq": market_supply["kosdaq"],
+                }
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if request_path == "/api/top100":
                 ohlc_count = sum(row.get("ohlc") is not None for row in rows)
                 rows_id = id(rows)
                 print(
@@ -781,13 +1018,14 @@ def main():
         raise RuntimeError(f"docs directory not found: {DOCS_DIR}")
 
     access_token = issue_access_token()
+    query_date = _query_date()
+    market_supply = fetch_market_supply(access_token, query_date)
     top100_rows, page_counts = fetch_trade_value_top100(access_token)
     tradable_codes = _load_tradable_stock_codes()
     print(f"master count: {len(tradable_codes)}")
     print(f"master code samples: {sorted(tradable_codes)[:10]}")
     print(f"API normalized code samples: {[row['stock_code'] for row in top100_rows[:10]]}")
     filtered_rows = [row for row in top100_rows if row["stock_code"] in tradable_codes]
-    query_date = _query_date()
     program_data = None
     program_net_by_code = {}
     if _program_net_enabled():
@@ -837,6 +1075,7 @@ def main():
             expected_row_count=len(filtered_rows),
             expected_ohlc_count=response_ohlc_count,
             expected_rows_id=id(filtered_rows),
+            market_supply=market_supply,
         ),
     )
     print(f"server pid={os.getpid()}", flush=True)
@@ -846,6 +1085,7 @@ def main():
     print(f"unique count: {len(top100_rows)}")
     print(f"filtered count: {len(filtered_rows)}")
     print(f"top100 count: {top100_count}")
+    print(f"ka20001 market supply: {market_supply}")
     if program_data is None:
         print("ka90004 program net: disabled or unavailable")
     else:

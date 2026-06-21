@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>aiTrade StockBoard A3 통합 시스템 구성도</title>
+<style>
+body{margin:0;background:#f5f7fb;color:#111827;font-family:"Malgun Gothic",system-ui,sans-serif;line-height:1.45}
+.page{max-width:1680px;margin:24px auto;padding:28px;background:#fff;border:1px solid #cbd5e1;box-shadow:0 8px 28px rgba(15,23,42,.08)}
+header{border-bottom:3px solid #0f172a;padding-bottom:14px;margin-bottom:22px}
+h1{margin:0;font-size:30px} h2{margin:30px 0 12px;font-size:22px;border-left:6px solid #2563eb;padding-left:10px}
+.subtitle{margin-top:8px;color:#64748b;font-size:15px}
+.note{background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:12px 14px;margin:12px 0}
+.legend{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:16px 0 24px}
+.pill{padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;background:#f1f5f9;font-weight:700;text-align:center;font-size:14px}
+.diagram{overflow-x:auto;padding:16px;border:1px solid #cbd5e1;background:#fbfdff;border-radius:12px}
+.flow{min-width:1320px;display:grid;gap:12px}
+.layer{border:2px solid #cbd5e1;border-radius:14px;padding:14px;background:#fff}
+.layer-title{font-weight:900;font-size:18px;margin-bottom:10px}
+.nodes{display:grid;gap:10px;align-items:stretch}.cols-2{grid-template-columns:repeat(2,1fr)}.cols-3{grid-template-columns:repeat(3,1fr)}.cols-5{grid-template-columns:repeat(5,1fr)}
+.node{min-height:78px;padding:12px;border:1.5px solid #94a3b8;border-radius:10px;background:#f1f5f9;text-align:center;display:flex;flex-direction:column;justify-content:center}
+.node b{font-size:16px}.node span{color:#334155;font-size:13px;margin-top:4px}
+.blue{background:#dbeafe}.green{background:#dcfce7}.yellow{background:#fef9c3}.orange{background:#ffedd5}.red{background:#fee2e2}.purple{background:#ede9fe}
+.arrow{text-align:center;font-size:26px;font-weight:900;color:#334155;line-height:1}
+table{width:100%;border-collapse:collapse;margin:10px 0 18px;font-size:14px}th,td{border:1px solid #cbd5e1;padding:9px 10px;vertical-align:top}th{background:#e2e8f0}
+pre{white-space:pre-wrap;background:#0f172a;color:#e5e7eb;border-radius:12px;padding:16px;overflow-x:auto;font-size:13px;line-height:1.45}
+.small{color:#64748b;font-size:13px}
+@media print{body{background:white}.page{max-width:none;margin:0;box-shadow:none;border:none}.diagram{overflow:visible}}
+</style>
+</head>
+<body>
+<main class="page">
+<header>
+<h1>aiTrade StockBoard A3 통합 시스템 구성도</h1>
+<div class="subtitle">REST 장마감 조회와 OpenAPI+ 실시간 스트리밍을 분리하고, Store → Signal → Ranking → Strategy → API → HTML 흐름으로 정리한 설계 문서</div>
+</header>
+
+<section>
+<h2>한 줄 요약</h2>
+<div class="note"><b>키움 REST</b>는 장마감/조회 데이터를 가져오고, <b>키움 OpenAPI+ COM</b>은 장중 실시간 데이터를 받습니다. 두 데이터는 <b>StockBoard Store</b>에 모이고, <b>Signal Engine → Ranking Engine → Strategy Engine</b>을 거쳐 후보 5종목과 TOP100 화면에 표시됩니다.</div>
+<div class="legend">
+<div class="pill">REST = 장마감 조회</div><div class="pill">OpenAPI = 실시간 수신</div><div class="pill">Store = 데이터 창고</div><div class="pill">Engine = 두뇌</div><div class="pill">HTML = 표시 전용</div>
+</div>
+</section>
+
+<section>
+<h2>A3용 시각 구조도</h2>
+<div class="diagram"><div class="flow">
+<div class="layer"><div class="layer-title">1. 데이터 수집 계층</div><div class="nodes cols-3">
+<div class="node blue"><b>Kiwoom REST</b><span>kiwoom_rest_client.py<br>장마감/조회 데이터<br>거래대금 · OHLC · 시장수급</span></div>
+<div class="node green"><b>Kiwoom OpenAPI+ COM</b><span>kiwoom_openapi_streamer.py<br>실시간 스트리밍<br>체결 · 호가 · 외선 · 큰손</span></div>
+<div class="node purple"><b>미국 데이터</b><span>us_market_fetcher.py<br>Twelve Data / Finnhub<br>나스닥 · QQQ · SMH 등</span></div>
+</div></div>
+<div class="arrow">↓</div>
+<div class="layer"><div class="layer-title">2. 저장·정규화 계층</div><div class="nodes cols-2">
+<div class="node orange"><b>Realtime Recorder</b><span>realtime_recorder.py<br>틱 · 호가 · 체결 저장<br>리플레이 원본 보관</span></div>
+<div class="node orange"><b>StockBoard Store</b><span>stockboard_store.py<br>REST + 실시간 + 미국 데이터 통합<br>현재 상태 캐시</span></div>
+</div></div>
+<div class="arrow">↓</div>
+<div class="layer"><div class="layer-title">3. 기본 보드 데이터 생성</div><div class="nodes cols-2">
+<div class="node yellow"><b>TOP100 Service</b><span>stockboard_top100_service.py<br>거래대금 상위 100/189종목<br>OHLC · VWAP · 전일선 결합</span></div>
+<div class="node yellow"><b>Market Supply Service</b><span>market_supply_service.py<br>KOSPI / KOSDAQ 시장수급<br>외인 · 기관 · 프로 · 외선</span></div>
+</div></div>
+<div class="arrow">↓</div>
+<div class="layer"><div class="layer-title">4. 시그널 연구실 두뇌 라인</div><div class="nodes cols-3">
+<div class="node red"><b>Signal Engine</b><span>signal_engine.py<br>VWAP돌파 · 전고돌파<br>거래대금 급증 · 큰손/KRT</span></div>
+<div class="node red"><b>Ranking Engine</b><span>ranking_engine.py<br>점수 · 등급 계산<br>A/B/C/D · 시장체온</span></div>
+<div class="node red"><b>Strategy Engine</b><span>strategy_engine.py<br>후보5 최종 판단<br>candidate_score · momentum_text</span></div>
+</div></div>
+<div class="arrow">↓</div>
+<div class="layer"><div class="layer-title">5. Backend API 계층</div><div class="nodes cols-5">
+<div class="node blue"><b>/api/top100</b><span>TOP100 전체</span></div>
+<div class="node blue"><b>/api/market_supply</b><span>시장수급</span></div>
+<div class="node blue"><b>/api/candidates5</b><span>후보5</span></div>
+<div class="node blue"><b>/api/us_market</b><span>미국시장</span></div>
+<div class="node blue"><b>/api/futures_supply</b><span>외선</span></div>
+</div><div class="nodes" style="margin-top:10px"><div class="node blue"><b>StockBoard API Server</b><span>stockboard_server.py</span></div></div></div>
+<div class="arrow">↓</div>
+<div class="layer"><div class="layer-title">6. Frontend Dashboard 표시 계층</div><div class="nodes cols-3">
+<div class="node green"><b>상단 상태바 / 미국시장</b><span>A · K · W · 장상태<br>나스닥 · QQQ · SMH · IBB · LIT · BOTZ</span></div>
+<div class="node green"><b>시장수급 패널</b><span>KOSPI · KOSDAQ<br>외인 · 기관 · 프로 · 외선</span></div>
+<div class="node green"><b>후보5 / TOP100</b><span>유력 후보 5종목<br>거래대금 상위 100종목<br>등급분포 · 시장체온</span></div>
+</div><div class="nodes" style="margin-top:10px"><div class="node green"><b>StockBoard HTML</b><span>docs/stockboard_v0_3_0_sample.html<br>계산 금지 · 표시만 담당</span></div></div></div>
+</div></div>
+</section>
+
+<section>
+<h2>영역별 역할 표</h2>
+<table><thead><tr><th>계층</th><th>담당 파일</th><th>역할</th><th>현재 상태</th></tr></thead><tbody>
+<tr><td>REST 조회</td><td>kiwoom_rest_client.py</td><td>거래대금, OHLC, 시장수급, 프로그램, 외합 조회</td><td>분리 예정</td></tr>
+<tr><td>실시간 수신</td><td>kiwoom_openapi_streamer.py</td><td>체결, 호가, 잔량, 외선, 큰손/KRT 수신</td><td>다음 핵심 단계</td></tr>
+<tr><td>저장</td><td>stockboard_store.py</td><td>REST/실시간/미국 데이터를 하나로 합침</td><td>분리 예정</td></tr>
+<tr><td>TOP100</td><td>stockboard_top100_service.py</td><td>거래대금 상위 종목과 OHLC/VWAP 결합</td><td>현재 통합 파일에서 동작</td></tr>
+<tr><td>시장수급</td><td>market_supply_service.py</td><td>KOSPI/KOSDAQ 지수, 등락률, 수급 표시 데이터 생성</td><td>현재 통합 파일에서 동작</td></tr>
+<tr><td>Signal</td><td>signal_engine.py</td><td>시그널 연구실 가설 기반 신호 발견</td><td>설계 단계</td></tr>
+<tr><td>Ranking</td><td>ranking_engine.py</td><td>후보 점수, 등급, 시장체온 계산</td><td>설계 단계</td></tr>
+<tr><td>Strategy</td><td>strategy_engine.py</td><td>후보5 최종 선정</td><td>설계 단계</td></tr>
+<tr><td>API</td><td>stockboard_server.py</td><td>/api/top100, /api/market_supply, /api/candidates5 제공</td><td>분리 예정</td></tr>
+<tr><td>HTML</td><td>docs/stockboard_v0_3_0_sample.html</td><td>화면 표시, 색상, 정렬, 셀폭 조절</td><td>동작 중</td></tr>
+</tbody></table>
+</section>
+
+<section>
+<h2>후보 5종목 선정 흐름</h2>
+<div class="diagram"><div class="flow" style="min-width:980px"><div class="nodes cols-5">
+<div class="node yellow"><b>TOP100</b><span>거래대금 상위 종목</span></div>
+<div class="node red"><b>Signal Engine</b><span>신호 발견</span></div>
+<div class="node red"><b>Ranking Engine</b><span>점수·등급 계산</span></div>
+<div class="node red"><b>Strategy Engine</b><span>후보 판단</span></div>
+<div class="node green"><b>Candidate Top5</b><span>화면 상단 후보 5종목</span></div>
+</div></div></div>
+<div class="note">시그널 연구실의 가설은 이 구간에 들어갑니다. 예: 외선 우호, 외합 증가, 프로그램 유입, VWAP 돌파, 전고 돌파, 거래대금 급증, 큰손/KRT.</div>
+</section>
+
+<section>
+<h2>다음 우선순위</h2>
+<table><thead><tr><th>순서</th><th>과제</th><th>이유</th></tr></thead><tbody>
+<tr><td>1</td><td>외선 COM 연결</td><td>외국인 코스피 지수선물 순매수는 시장수급 핵심 요소</td></tr>
+<tr><td>2</td><td>후보5 선정 로직</td><td>TOP100 중 진짜 볼 종목 5개를 뽑는 StockBoard의 두뇌</td></tr>
+<tr><td>3</td><td>큰손/KRT</td><td>실시간 체결 기반 큰 자금 흐름 탐지</td></tr>
+<tr><td>4</td><td>모멘텀</td><td>VWAP돌파, 시가위, 전고돌파, 거래대금 급증 등</td></tr>
+<tr><td>5</td><td>미국시장 실제 데이터</td><td>반도체·바이오·2차전지 등 국내 섹터 영향 판단</td></tr>
+</tbody></table>
+</section>
+
+<section>
+<h2>Excalidraw / Mermaid용 원본 코드</h2>
+<p class="small">아래 Mermaid 코드를 Excalidraw의 Mermaid Import 또는 Mermaid Live Editor에 붙여넣으면 구조도를 자동 생성할 수 있습니다.</p>
+<pre>flowchart TD
+A0[&quot;aiTrade StockBoard&lt;br/&gt;실전 수동매매용 시장 조종석&quot;]
+
+subgraph L1[&quot;1. 데이터 수집 계층&quot;]
+  REST[&quot;Kiwoom REST&lt;br/&gt;kiwoom_rest_client.py&lt;br/&gt;장마감/조회 데이터&quot;]
+  COM[&quot;Kiwoom OpenAPI+ COM&lt;br/&gt;kiwoom_openapi_streamer.py&lt;br/&gt;실시간 스트리밍&quot;]
+  US[&quot;미국 데이터&lt;br/&gt;us_market_fetcher.py&lt;br/&gt;Twelve Data / Finnhub&quot;]
+end
+
+REST --&gt; RESTDATA[&quot;거래대금 / OHLC / VWAP&lt;br/&gt;시장수급 / 프로그램 / 외합&quot;]
+COM --&gt; STREAMDATA[&quot;체결 / 호가 / 잔량&lt;br/&gt;외선 / 큰손 / KRT&quot;]
+US --&gt; USDATA[&quot;나스닥 / QQQ / SMH&lt;br/&gt;IBB / LIT / BOTZ&lt;br/&gt;미국장 영향&quot;]
+
+subgraph L2[&quot;2. 저장·정규화 계층&quot;]
+  REC[&quot;Realtime Recorder&lt;br/&gt;realtime_recorder.py&lt;br/&gt;틱·호가·체결 저장&quot;]
+  STORE[&quot;StockBoard Store&lt;br/&gt;stockboard_store.py&lt;br/&gt;REST + 실시간 + 미국 데이터 통합&quot;]
+end
+
+RESTDATA --&gt; STORE
+STREAMDATA --&gt; REC
+REC --&gt; STORE
+USDATA --&gt; STORE
+
+subgraph L3[&quot;3. 기본 보드 데이터 생성&quot;]
+  TOP100[&quot;TOP100 Service&lt;br/&gt;stockboard_top100_service.py&lt;br/&gt;거래대금 상위 100/189종목&quot;]
+  MARKET[&quot;Market Supply Service&lt;br/&gt;market_supply_service.py&lt;br/&gt;KOSPI / KOSDAQ 시장수급&quot;]
+end
+
+STORE --&gt; TOP100
+STORE --&gt; MARKET
+
+TOP100 --&gt; TOP100FIELDS[&quot;TOP100 필드&lt;br/&gt;rank / grade / stock_name&lt;br/&gt;price / change_rate / trade_value_eok&lt;br/&gt;ohlc / vwap / prev_high / prev_close / prev_low&lt;br/&gt;foreign_sum / program_net / big_hand / momentum&quot;]
+
+MARKET --&gt; MARKETFIELDS[&quot;시장수급 필드&lt;br/&gt;index_value / market_change_rate&lt;br/&gt;advancers / decliners&lt;br/&gt;foreign_net / institution_net&lt;br/&gt;market_program_net / foreign_futures_net&quot;]
+
+subgraph L4[&quot;4. 시그널 연구실 두뇌 라인&quot;]
+  SIGNAL[&quot;Signal Engine&lt;br/&gt;signal_engine.py&lt;br/&gt;신호 발견&quot;]
+  RANKING[&quot;Ranking Engine&lt;br/&gt;ranking_engine.py&lt;br/&gt;점수·등급 계산&quot;]
+  STRATEGY[&quot;Strategy Engine&lt;br/&gt;strategy_engine.py&lt;br/&gt;후보5 최종 판단&quot;]
+end
+
+TOP100FIELDS --&gt; SIGNAL
+MARKETFIELDS --&gt; SIGNAL
+STREAMDATA --&gt; SIGNAL
+USDATA --&gt; SIGNAL
+SIGNAL --&gt; SIGLIST[&quot;신호&lt;br/&gt;VWAP돌파 / 시가위 / 전고돌파&lt;br/&gt;거래대금 급증 / 외합 증가&lt;br/&gt;프로그램 유입 / 큰손 KRT / 외선 우호&quot;]
+SIGLIST --&gt; RANKING
+RANKING --&gt; SCORE[&quot;후보 점수&lt;br/&gt;grade_score / A,B,C,D / 시장체온&quot;]
+SCORE --&gt; STRATEGY
+STRATEGY --&gt; CANDIDATE[&quot;Candidate Top5&lt;br/&gt;candidate_score / is_candidate / momentum_text&quot;]
+
+subgraph L5[&quot;5. Backend API 계층&quot;]
+  API[&quot;StockBoard API Server&lt;br/&gt;stockboard_server.py&quot;]
+  API1[&quot;/api/top100&quot;]
+  API2[&quot;/api/market_supply&quot;]
+  API3[&quot;/api/candidates5&quot;]
+  API4[&quot;/api/us_market&quot;]
+  API5[&quot;/api/futures_supply&quot;]
+end
+
+TOP100FIELDS --&gt; API1
+MARKETFIELDS --&gt; API2
+CANDIDATE --&gt; API3
+USDATA --&gt; API4
+STREAMDATA --&gt; API5
+API1 --&gt; API
+API2 --&gt; API
+API3 --&gt; API
+API4 --&gt; API
+API5 --&gt; API
+
+subgraph L6[&quot;6. Frontend Dashboard 표시 계층&quot;]
+  HTML[&quot;StockBoard HTML&lt;br/&gt;docs/stockboard_v0_3_0_sample.html&lt;br/&gt;계산 금지 / 표시만&quot;]
+  TOPPANEL[&quot;상단 상태바&lt;br/&gt;A / K / W / 갱신 지연 / 장상태&quot;]
+  USPANEL[&quot;미국시장 패널&lt;br/&gt;나스닥 / QQQ / SMH / IBB / LIT / BOTZ&quot;]
+  MARKETPANEL[&quot;시장수급 패널&lt;br/&gt;KOSPI / KOSDAQ&lt;br/&gt;외인 / 기관 / 프로 / 외선&quot;]
+  CANDIPANEL[&quot;유력 후보 5종목&lt;br/&gt;Strategy Engine 결과&quot;]
+  TABLEPANEL[&quot;거래대금 상위 100종목&lt;br/&gt;TOP100 전체 표시&quot;]
+  TEMP[&quot;TOP100 등급분포&lt;br/&gt;시장체온&quot;]
+end
+
+API --&gt; HTML
+HTML --&gt; TOPPANEL
+HTML --&gt; USPANEL
+HTML --&gt; MARKETPANEL
+HTML --&gt; CANDIPANEL
+HTML --&gt; TABLEPANEL
+HTML --&gt; TEMP
+API4 --&gt; USPANEL
+API2 --&gt; MARKETPANEL
+API3 --&gt; CANDIPANEL
+API1 --&gt; TABLEPANEL
+SCORE --&gt; TEMP
+
+RULE1[&quot;핵심 원칙&lt;br/&gt;UI는 계산하지 않는다&lt;br/&gt;Python Backend가 계산한다&lt;br/&gt;HTML은 최종 결과만 표시한다&quot;]
+RULE1 -.-&gt; SIGNAL
+RULE1 -.-&gt; RANKING
+RULE1 -.-&gt; STRATEGY
+RULE1 -.-&gt; HTML
+
+A0 --&gt; L1
+
+NEXT[&quot;다음 우선순위&lt;br/&gt;1. 외선 COM 연결&lt;br/&gt;2. 후보5 선정 로직&lt;br/&gt;3. 큰손/KRT&lt;br/&gt;4. 모멘텀&lt;br/&gt;5. 미국시장 실제 데이터&quot;]
+NEXT -.-&gt; COM
+NEXT -.-&gt; STRATEGY
+NEXT -.-&gt; SIGNAL
+NEXT -.-&gt; US
+</pre>
+</section>
+</main></body></html>
