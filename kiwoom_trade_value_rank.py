@@ -1,8 +1,10 @@
 import csv
 import json
 import os
+import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -44,7 +46,6 @@ KST = timezone(timedelta(hours=9))
 # ka90004 netprps_prica is provisionally treated as KRW millions: 100 million KRW per eok.
 PROGRAM_NET_EOK_DIVISOR_TEXT = os.getenv("KIWOOM_PROGRAM_NET_EOK_DIVISOR", "100")
 PROGRAM_NET_ENABLED_TEXT = os.getenv("KIWOOM_PROGRAM_NET_ENABLED", "0")
-OHLC_LIMIT_TEXT = os.getenv("KIWOOM_OHLC_LIMIT", "20")
 REQUEST_SLEEP_SEC_TEXT = os.getenv("KIWOOM_REQUEST_SLEEP_SEC", "0.25")
 
 OUTPUT_KEYS = (
@@ -73,6 +74,78 @@ class KiwoomAPIError(RuntimeError):
         self.status_code = status_code
         self.detail = detail
         super().__init__(f"Kiwoom API HTTP {status_code}: {detail}")
+
+
+def _listening_pids(host, port):
+    result = subprocess.run(
+        ["netstat", "-ano", "-p", "tcp"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"netstat failed while checking {host}:{port}: {result.stderr.strip()}"
+        )
+
+    endpoint = f"{host}:{port}".lower()
+    pids = set()
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 5 or fields[0].upper() != "TCP":
+            continue
+        if fields[1].lower() != endpoint or fields[3].upper() != "LISTENING":
+            continue
+        try:
+            pid = int(fields[4])
+            if pid > 0:
+                pids.add(pid)
+        except ValueError:
+            continue
+    return pids
+
+
+def _stop_existing_server(host, port, timeout_seconds=5.0):
+    current_pid = os.getpid()
+    old_pids = sorted(_listening_pids(host, port) - {current_pid})
+    print(f"current pid={current_pid}", flush=True)
+    print(f"old server pids={old_pids}", flush=True)
+
+    for pid in old_pids:
+        print(f"old stockboard server found pid={pid}", flush=True)
+        print("killing old stockboard server...", flush=True)
+        result = subprocess.run(
+            ["taskkill", "/PID", str(pid), "/F"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            check=False,
+        )
+        if result.returncode != 0:
+            print(
+                f"warning: taskkill failed for pid={pid}: {result.stderr.strip()}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        remaining_pids = _listening_pids(host, port) - {current_pid}
+        if not remaining_pids:
+            if old_pids:
+                print("old server killed.", flush=True)
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"port {host}:{port} is still listening on pids "
+                f"{sorted(remaining_pids)}"
+            )
+        time.sleep(0.1)
 
 
 def _post_json(path, payload, headers=None, return_headers=False):
@@ -200,16 +273,6 @@ def _query_date():
 
 def _program_net_enabled():
     return PROGRAM_NET_ENABLED_TEXT.strip() == "1"
-
-
-def _ohlc_limit():
-    try:
-        limit = int(OHLC_LIMIT_TEXT)
-    except ValueError as error:
-        raise RuntimeError("KIWOOM_OHLC_LIMIT must be a non-negative integer") from error
-    if limit < 0:
-        raise RuntimeError("KIWOOM_OHLC_LIMIT must be a non-negative integer")
-    return limit
 
 
 def _request_sleep_sec():
@@ -496,75 +559,153 @@ def _ohlc_row_sample(row):
     }
 
 
-def fetch_ohlc(access_token, rows, query_date, limit, sleep_seconds):
-    """Attach ka10086 OHLC to a limited number of rows without trading actions."""
+def fetch_ohlc(access_token, rows, query_date, sleep_seconds):
+    """Attach actual ka10086 OHLC data to every displayed row."""
     raw_samples = []
     converted_samples = []
     vwap_samples = []
+    failed_samples = []
+    failed_count = 0
     joined_count = 0
     rate_limit = None
-    target_rows = rows[:limit]
+    target_rows = rows
 
-    for position, row in enumerate(target_rows, start=1):
-        if position > 1 and sleep_seconds:
-            time.sleep(sleep_seconds)
-        stock_code = row["stock_code"]
-        try:
-            response = _post_json(
-                "/api/dostk/mrkcond",
+    def record_failure(position, stock_code, reason):
+        nonlocal failed_count
+        failed_count += 1
+        if len(failed_samples) < 5:
+            failed_samples.append(
                 {
-                    "stk_cd": stock_code,
-                    "qry_dt": query_date,
-                    "indc_tp": "1",
-                },
-                {
-                    "Authorization": f"Bearer {access_token}",
-                    "api-id": "ka10086",
-                    "cont-yn": "N",
-                    "next-key": "",
-                },
-            )
-        except KiwoomAPIError as error:
-            if error.status_code != 429:
-                raise
-            rate_limit = {"position": position, "stock_code": stock_code}
-            print(
-                f"warning: ka10086 HTTP 429 at position {position}, "
-                f"stock_code {stock_code}; stopping OHLC requests",
-                file=sys.stderr,
-            )
-            break
-
-        daily_rows = _first(response, "daly_stkpc", "daily_stock_price", "output")
-        if not isinstance(daily_rows, list):
-            raise RuntimeError(f"Unexpected ka10086 response: {response}")
-        current_row, previous_row = _select_daily_rows(daily_rows, query_date)
-        trading_date = _daily_row_date(current_row) if current_row else None
-        if trading_date and trading_date != query_date:
-            print(
-                "ka10086 trading_date_used: "
-                f"stock_code={stock_code}, query_date={query_date}, "
-                f"trading_date={trading_date}"
-            )
-        ohlc, vwap_sample = _build_ohlc(current_row, previous_row)
-        if len(raw_samples) < 5:
-            raw_samples.append(
-                {
+                    "position": position,
                     "stock_code": stock_code,
-                    "current": _ohlc_row_sample(current_row),
-                    "previous": _ohlc_row_sample(previous_row),
+                    "reason": reason,
                 }
             )
-            converted_samples.append({"stock_code": stock_code, "ohlc": ohlc})
-            if vwap_sample is not None:
-                vwap_samples.append({"stock_code": stock_code, **vwap_sample})
-        if ohlc is not None:
-            row["ohlc"] = ohlc
-            joined_count += 1
+
+    def request_ohlc(position, stock_code):
+        rate_limited = False
+        failure_reason = None
+        response = None
+
+        for attempt in range(1, 4):
+            try:
+                response = _post_json(
+                    "/api/dostk/mrkcond",
+                    {
+                        "stk_cd": stock_code,
+                        "qry_dt": query_date,
+                        "indc_tp": "1",
+                    },
+                    {
+                        "Authorization": f"Bearer {access_token}",
+                        "api-id": "ka10086",
+                        "cont-yn": "N",
+                        "next-key": "",
+                    },
+                )
+                break
+            except KiwoomAPIError as error:
+                if error.status_code != 429:
+                    failure_reason = f"HTTP {error.status_code}"
+                    break
+                rate_limited = True
+                if attempt == 3:
+                    failure_reason = "HTTP 429 after 3 attempts"
+                    break
+                retry_delay = max(1.0, sleep_seconds)
+                print(
+                    f"warning: ka10086 HTTP 429 at position {position}, "
+                    f"stock_code {stock_code}; retry {attempt}/2 after "
+                    f"{retry_delay:g}s",
+                    file=sys.stderr,
+                )
+                time.sleep(retry_delay)
+            except (RuntimeError, ValueError) as error:
+                failure_reason = f"{type(error).__name__}: {error}"
+                break
+
+        return response, failure_reason, rate_limited
+
+    pending_requests = []
+    worker_count = min(4, len(target_rows)) or 1
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        for position, row in enumerate(target_rows, start=1):
+            row["ohlc"] = None
+            pending_requests.append(
+                (
+                    position,
+                    row,
+                    executor.submit(request_ohlc, position, row["stock_code"]),
+                )
+            )
+            if position < len(target_rows) and sleep_seconds:
+                time.sleep(sleep_seconds)
+
+        for position, row, request in pending_requests:
+            stock_code = row["stock_code"]
+            response, failure_reason, was_rate_limited = request.result()
+            if was_rate_limited and rate_limit is None:
+                rate_limit = {"position": position, "stock_code": stock_code}
+            if response is None:
+                record_failure(position, stock_code, failure_reason or "request failed")
+                continue
+
+            daily_rows = _first(response, "daly_stkpc", "daily_stock_price", "output")
+            if not isinstance(daily_rows, list):
+                return_code = _first(response, "return_code", "code")
+                return_message = _first(response, "return_msg", "message")
+                record_failure(
+                    position,
+                    stock_code,
+                    f"unexpected response data: code={return_code}, "
+                    f"message={return_message}",
+                )
+                continue
+            current_row, previous_row = _select_daily_rows(daily_rows, query_date)
+            trading_date = _daily_row_date(current_row) if current_row else None
+            if trading_date and trading_date != query_date:
+                print(
+                    "ka10086 trading_date_used: "
+                    f"stock_code={stock_code}, query_date={query_date}, "
+                    f"trading_date={trading_date}"
+                )
+            ohlc, vwap_sample = _build_ohlc(current_row, previous_row)
+            if len(raw_samples) < 5:
+                raw_samples.append(
+                    {
+                        "stock_code": stock_code,
+                        "current": _ohlc_row_sample(current_row),
+                        "previous": _ohlc_row_sample(previous_row),
+                    }
+                )
+                converted_samples.append({"stock_code": stock_code, "ohlc": ohlc})
+                if vwap_sample is not None:
+                    vwap_samples.append({"stock_code": stock_code, **vwap_sample})
+            if ohlc is not None:
+                row["ohlc"] = ohlc
+                joined_count += 1
+            else:
+                record_failure(position, stock_code, "missing or invalid daily data")
+
+    attached_count = sum(row.get("ohlc") is not None for row in rows)
+    if attached_count != joined_count:
+        raise RuntimeError(
+            "ka10086 joined count does not match fetch_ohlc rows: "
+            f"joined={joined_count}, rows={attached_count}"
+        )
+    print(
+        f"ka10086 OHLC attached before return: rows={len(rows)}, "
+        f"ohlc={attached_count}, rows_id={id(rows)}, pid={os.getpid()}",
+        flush=True,
+    )
 
     return {
         "target_count": len(target_rows),
         "joined_count": joined_count,
+        "attached_count": attached_count,
+        "rows_id": id(rows),
+        "failed_count": failed_count,
+        "failed_samples": failed_samples,
         "raw_samples": raw_samples,
         "converted_samples": converted_samples,
         "vwap_samples": vwap_samples,
@@ -584,18 +725,47 @@ def _load_tradable_stock_codes():
         }
 
 
-def make_handler(top100_cache):
+def make_handler(rows, expected_row_count, expected_ohlc_count, expected_rows_id):
     class RequestHandler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(DOCS_DIR), **kwargs)
 
         def do_GET(self):
             if self.path.split("?", 1)[0] == "/api/top100":
-                body = json.dumps(top100_cache["rows"], ensure_ascii=False).encode("utf-8")
+                ohlc_count = sum(row.get("ohlc") is not None for row in rows)
+                rows_id = id(rows)
+                print(
+                    f"/api/top100 response rows: {len(rows)}, "
+                    f"ohlc count: {ohlc_count}, rows_id: {rows_id}, "
+                    f"pid: {os.getpid()}",
+                    flush=True,
+                )
+                if (
+                    len(rows) != expected_row_count
+                    or ohlc_count != expected_ohlc_count
+                    or rows_id != expected_rows_id
+                ):
+                    detail = {
+                        "error": "top100 response invariant failed",
+                        "rows": len(rows),
+                        "ohlc": ohlc_count,
+                    }
+                    body = json.dumps(detail).encode("utf-8")
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                body = json.dumps(rows, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Cache-Control", "no-store")
+                self.send_header("X-StockBoard-PID", str(os.getpid()))
+                self.send_header("X-StockBoard-OHLC-Count", str(ohlc_count))
+                self.send_header("X-StockBoard-Rows-ID", str(rows_id))
                 self.end_headers()
                 self.wfile.write(body)
                 return
@@ -605,6 +775,8 @@ def make_handler(top100_cache):
 
 
 def main():
+    _stop_existing_server(HOST, PORT)
+
     if not DOCS_DIR.is_dir():
         raise RuntimeError(f"docs directory not found: {DOCS_DIR}")
 
@@ -630,18 +802,45 @@ def main():
     for display_rank, row in enumerate(filtered_rows, start=1):
         row["rank"] = display_rank
         row["program_net"] = program_net_by_code.get(row["stock_code"])
-    ohlc_limit = _ohlc_limit()
     request_sleep_sec = _request_sleep_sec()
     ohlc_data = fetch_ohlc(
         access_token,
         filtered_rows,
         query_date,
-        ohlc_limit,
         request_sleep_sec,
     )
     top100_count = len(filtered_rows)
-    top100_cache = {"rows": filtered_rows}
-    server = ThreadingHTTPServer((HOST, PORT), make_handler(top100_cache))
+    response_ohlc_count = sum(row.get("ohlc") is not None for row in filtered_rows)
+    if (
+        id(filtered_rows) != ohlc_data["rows_id"]
+        or response_ohlc_count != ohlc_data["joined_count"]
+        or response_ohlc_count != ohlc_data["attached_count"]
+    ):
+        raise RuntimeError(
+            "ka10086 fetch_ohlc result does not match /api/top100 rows: "
+            f"joined={ohlc_data['joined_count']}, "
+            f"attached={ohlc_data['attached_count']}, "
+            f"response={response_ohlc_count}, "
+            f"fetch_rows_id={ohlc_data['rows_id']}, "
+            f"response_rows_id={id(filtered_rows)}"
+        )
+    print(
+        f"ka10086 OHLC count before /api/top100: {response_ohlc_count}, "
+        f"rows: {len(filtered_rows)}, rows_id: {id(filtered_rows)}, "
+        f"pid: {os.getpid()}",
+        flush=True,
+    )
+    server = ThreadingHTTPServer(
+        (HOST, PORT),
+        make_handler(
+            filtered_rows,
+            expected_row_count=len(filtered_rows),
+            expected_ohlc_count=response_ohlc_count,
+            expected_rows_id=id(filtered_rows),
+        ),
+    )
+    print(f"server pid={os.getpid()}", flush=True)
+    print(f"server url=http://{HOST}:{PORT}/", flush=True)
     for page_number, page_count in enumerate(page_counts, start=1):
         print(f"page{page_number} count: {page_count}")
     print(f"unique count: {len(top100_rows)}")
@@ -664,10 +863,12 @@ def main():
             f"{sum(row['program_net'] is not None for row in filtered_rows)}"
         )
     print(f"ka10086 query date: {query_date}")
-    print(f"ka10086 OHLC limit: {ohlc_limit}")
+    print("ka10086 OHLC limit: all")
     print(f"ka10086 request sleep sec: {request_sleep_sec}")
     print(f"ka10086 target count: {ohlc_data['target_count']}")
     print(f"ka10086 OHLC joined count: {ohlc_data['joined_count']}")
+    print(f"ka10086 OHLC failed count: {ohlc_data['failed_count']}")
+    print(f"ka10086 OHLC first failed samples: {ohlc_data['failed_samples']}")
     print(f"ka10086 raw samples: {ohlc_data['raw_samples']}")
     print(f"ka10086 converted samples: {ohlc_data['converted_samples']}")
     print(f"ka10086 VWAP samples: {ohlc_data['vwap_samples']}")

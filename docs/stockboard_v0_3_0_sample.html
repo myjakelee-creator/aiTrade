@@ -2,7 +2,10 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8" />
-<title>StockBoard v0.3.0 Sample</title>
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
+<title>StockBoard v0.3.6 Prev Close Proportional</title>
 <style>
   :root{
     --bg:#f3f6f8; --line:#c8d0d8; --head:#e7edf3;
@@ -16,12 +19,14 @@
     overflow:auto; margin:10px auto; border:1px solid #9aa8b5; background:#fff; box-shadow:0 2px 12px #999;
   }
   .title{height:30px;background:linear-gradient(#dfe7ee,#cbd6df);display:flex;align-items:center;padding:0 10px;font-weight:700;color:#19324a}
-  .topbar{display:grid;grid-template-columns:200px 48px 48px 48px 120px 64px 78px 220px;align-items:center;justify-content:start;height:42px;border-bottom:1px solid var(--line);font-size:14px;font-weight:700;min-width:826px}
+  .data-diagnostics{margin-left:auto;font-size:12px;font-weight:700;color:#4b6175;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .topbar{display:grid;grid-template-columns:200px 48px 48px 48px 120px 64px minmax(298px,1fr);align-items:center;height:42px;border-bottom:1px solid var(--line);font-size:14px;font-weight:700;min-width:826px}
   .topbar>div:nth-child(2),.topbar>div:nth-child(3),.topbar>div:nth-child(4){padding:0 5px}
   .topbar>div{height:100%;min-width:0;padding:0 10px;display:flex;align-items:center;justify-content:center;border-right:1px solid var(--line);white-space:nowrap;overflow:hidden}
   .topbar>div:first-child,.topbar>div:last-child{justify-content:flex-start}
   .lamp{display:inline-block;width:17px;height:17px;border-radius:50%;margin-left:7px;background:var(--green);box-shadow:0 0 7px var(--green)}
   .speed{color:#b8860b}.market-open{color:#168000}.focus-name{color:var(--red)}.momentum{color:#b8860b;font-size:14px}
+  .focus-momentum{gap:14px}.focus-momentum .momentum{overflow:hidden;text-overflow:ellipsis}
   .grid{width:100%;border-collapse:collapse;table-layout:auto;min-width:1150px}
   th,td{border:1px solid var(--line);padding:4px 6px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   th{background:var(--head);font-weight:800;color:#263747}
@@ -31,10 +36,12 @@
   .foreign-zero{color:#7f8c8d}
   .grade{display:inline-block;border-radius:4px;color:#fff;padding:2px 7px;font-weight:900}
   .a{background:#d71920}.b{background:#f08a24}.c{background:#f4c430;color:#111}.d{background:#1266d6}
-  .market{width:auto;min-width:0;max-width:100%;table-layout:auto}
+  .market-overview{display:grid;grid-template-columns:minmax(0,1fr) 210px;align-items:stretch;min-width:0}
+  .market-tables{min-width:0}
+  .market{width:100%;min-width:0;table-layout:auto}
   .market th,.market td{padding-left:8px;padding-right:8px;white-space:nowrap}
   .market th{font-size:13px}.market td{font-size:14px;font-weight:700}
-  .us{width:auto;min-width:0;max-width:100%;table-layout:auto}
+  .us{width:100%;min-width:0;table-layout:auto}
   .us td{font-size:14px;font-weight:800;background:var(--head)}
   .us td span{margin-left:8px}
   .us-impact-cell{max-width:180px}
@@ -42,7 +49,15 @@
   .market-temperature-header{min-width:92px}
   .market-temperature-cell{width:120px;min-width:92px;max-width:140px;padding-top:4px;padding-bottom:4px}
   .market-temperature-bar{display:flex;width:100%;height:7px;overflow:hidden;border:1px solid #b7c1ca;border-radius:4px;background:#e3e8ec}
-  .market-temperature-a{background:#d71920}.market-temperature-b{background:#f08a24}.market-temperature-c{background:#f4c430}.market-temperature-d{background:#1266d6}
+  .market-temperature-rise{background:var(--red)}.market-temperature-fall{background:var(--blue)}
+  .grade-distribution{display:flex;align-items:center;gap:10px;min-width:0;padding:8px 10px;border:1px solid var(--line);background:#f8fbff}
+  .grade-distribution-chart{width:82px;height:82px;flex:0 0 82px;border-radius:50%;background:#e3e8ec;box-shadow:inset 0 0 0 1px #b7c1ca;position:relative}
+  .grade-distribution-chart::after{content:"";position:absolute;inset:20px;border-radius:50%;background:#fff;box-shadow:0 0 0 1px #d4dbe1}
+  .grade-distribution-info{min-width:0;font-size:12px;font-weight:800}
+  .grade-distribution-title{margin-bottom:5px;color:#263747;font-size:13px}
+  .grade-distribution-legend{display:grid;grid-template-columns:repeat(2,minmax(36px,1fr));gap:3px 7px}
+  .grade-distribution-item{white-space:nowrap;font-variant-numeric:tabular-nums}
+  .grade-dot{display:inline-block;width:8px;height:8px;margin-right:4px;border-radius:2px}
   .board td{font-size:14px;height:34px;font-weight:700}.board th{font-size:13px;font-weight:800}
   .enhanced-board td:nth-child(3){text-align:center;vertical-align:middle}
   .note{text-align:left!important;font-size:12px;min-width:210px}
@@ -70,6 +85,7 @@
   .enhanced-board .ohlc-prev-high{left:var(--prev-high);background:var(--red);z-index:7}
   .enhanced-board .ohlc-prev-close{left:var(--prev-close);background:var(--green);z-index:6}
   .enhanced-board .ohlc-prev-low{left:var(--prev-low);background:var(--blue);z-index:5}
+  .enhanced-board .ohlc-proportional-center{left:50%;background:var(--green);z-index:6}
   .enhanced-board .metric{position:relative;display:flex;align-items:center;justify-content:center;min-width:105px;height:26px;overflow:hidden;background:#e5e9ed;border:1px solid #c5cdd4;border-radius:2px}
   .enhanced-board .metric-track{position:absolute;inset:0;width:100%;height:100%;overflow:hidden}
   .enhanced-board .metric-fill{display:block;width:var(--bar-width);height:100%;background:var(--bar-color)}
@@ -87,7 +103,7 @@
 </head>
 <body>
 <div class="window">
-  <div class="title">▣ StockBoard v0.2.1 Sample</div>
+  <div class="title">▣ StockBoard v0.3.6 Prev Close Proportional <span class="data-diagnostics" id="data-diagnostics">apiRows 0 · apiOhlc 0 · normalizedRows 0 · normalizedOhlc 0 · renderedOhlc 0</span></div>
 
   <div class="topbar">
     <div>2025/08/17 (수) 14:05:17</div>
@@ -96,10 +112,11 @@
     <div>B <span class="lamp"></span></div>
     <div>수신속도 <span class="speed">&nbsp;0.21초</span></div>
     <div><span class="market-open">정규장</span></div>
-    <div><span class="focus-name">삼성전기</span></div>
-    <div class="momentum">VWAP돌파 + 시가위 + 전고돌파</div>
+    <div class="focus-momentum"><span class="focus-name">삼성전기</span><span class="momentum">VWAP돌파 + 시가위 + 전고돌파</span></div>
   </div>
 
+  <div class="market-overview" id="market-overview">
+  <div class="market-tables">
   <table class="grid us">
     <tr>
       <td>나스닥 <span class="plus">+1.85%</span></td>
@@ -114,70 +131,58 @@
 
   <table class="grid market">
     <tr><th>시장</th><th>지수</th><th>등락률</th><th>상승/하락</th><th>외선(억)</th><th>외인(억)</th><th>기관(억)</th><th>프로(억)</th><th>외달(억)</th><th>분위기</th><th class="market-temperature-header" id="market-temperature-header">시장체온</th></tr>
-    <tr><td class="blue">KOSPI</td><td>3,250</td><td class="plus">+1.23</td><td><span class="plus">720(↑4)</span>/<span class="blue">180(↓0)</span></td><td class="plus">+5,200</td><td class="plus">+2,300</td><td class="minus">-800</td><td class="plus">+1,250</td><td class="plus">+8,600</td><td class="plus">92 폭등장</td><td class="market-temperature-cell"><div class="market-temperature-bar" aria-label="KOSPI 등급분포">
-        <span class="market-temperature-a" id="market-kospi-a"></span>
-        <span class="market-temperature-b" id="market-kospi-b"></span>
-        <span class="market-temperature-c" id="market-kospi-c"></span>
-        <span class="market-temperature-d" id="market-kospi-d"></span>
+    <tr><td class="blue">KOSPI</td><td>3,250</td><td class="plus">+1.23%</td><td><span class="plus">720(↑4)</span>/<span class="blue">180(↓0)</span></td><td class="plus">+5,200</td><td class="plus">+2,300</td><td class="minus">-800</td><td class="plus">+1,250</td><td class="plus">+8,600</td><td class="plus">92 폭등장</td><td class="market-temperature-cell"><div class="market-temperature-bar" id="market-kospi-temperature">
+        <span class="market-temperature-rise" id="market-kospi-rise"></span>
+        <span class="market-temperature-fall" id="market-kospi-fall"></span>
       </div></td></tr>
-    <tr><td class="blue">KOSDAQ</td><td>1,035</td><td class="minus">-0.45</td><td><span class="plus">430(↑7)</span>/<span class="blue">980(↓1)</span></td><td class="minus">-1,800</td><td class="minus">-500</td><td class="plus">+120</td><td class="minus">-450</td><td class="minus">-2,100</td><td class="minus">28 약세장</td><td class="market-temperature-cell"><div class="market-temperature-bar" aria-label="KOSDAQ 등급분포">
-        <span class="market-temperature-a" id="market-kosdaq-a"></span>
-        <span class="market-temperature-b" id="market-kosdaq-b"></span>
-        <span class="market-temperature-c" id="market-kosdaq-c"></span>
-        <span class="market-temperature-d" id="market-kosdaq-d"></span>
+    <tr><td class="blue">KOSDAQ</td><td>1,035</td><td class="minus">-0.45%</td><td><span class="plus">430(↑7)</span>/<span class="blue">980(↓1)</span></td><td class="minus">-1,800</td><td class="minus">-500</td><td class="plus">+120</td><td class="minus">-450</td><td class="minus">-2,100</td><td class="minus">28 약세장</td><td class="market-temperature-cell"><div class="market-temperature-bar" id="market-kosdaq-temperature">
+        <span class="market-temperature-rise" id="market-kosdaq-rise"></span>
+        <span class="market-temperature-fall" id="market-kosdaq-fall"></span>
       </div></td></tr>
   </table>
+  </div>
+  <aside class="grade-distribution" aria-label="TOP100 등급분포">
+    <div class="grade-distribution-chart" id="grade-distribution-chart" role="img"></div>
+    <div class="grade-distribution-info">
+      <div class="grade-distribution-title">TOP100 등급분포</div>
+      <div class="grade-distribution-legend" id="grade-distribution-legend"></div>
+    </div>
+  </aside>
+  </div>
 
   <div class="section sec-orange">▶ 유력 후보 상위 5종목</div>
   <table class="grid board enhanced-board" id="candidate-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락율</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>1분강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>1분강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
   </table>
 
   <div class="section sec-blue">▶ 거래대금 상위 100종목</div>
   <table class="grid board enhanced-board" id="trading-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락율</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>1분강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
-    <tr><td>1</td><td>3</td><td><span class="grade a">A95</span></td><td>삼성전자</td><td>82,400</td><td class="plus">+2.96%</td><td>8,921</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.38</td><td class="plus">185</td><td class="plus">142</td><td class="plus">+74</td><td class="plus">+321</td><td class="plus">+S</td><td class="note">대금 1위 + 외인/기관 동반</td></tr>
-    <tr><td>2</td><td>1</td><td><span class="grade b">A88</span></td><td>SK하이닉스</td><td>238,500</td><td class="plus">+1.83%</td><td>7,642</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.12</td><td class="plus">166</td><td class="plus">137</td><td class="plus">+41</td><td class="plus">+213</td><td class="plus">+A</td><td class="note">주도 유지, 수급 안정</td></tr>
-    <tr><td>3</td><td>12</td><td><span class="grade b">B83</span></td><td>현대차</td><td>286,000</td><td class="plus">+4.21%</td><td>5,130</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.29</td><td class="plus">201</td><td class="plus">150</td><td class="plus">+26</td><td class="plus">+89</td><td class="plus">+A</td><td class="note">신고가 접근, 기관 유입</td></tr>
-    <tr><td>4</td><td>18</td><td><span class="grade c">B75</span></td><td>셀트리온</td><td>194,300</td><td class="plus">+3.15%</td><td>3,884</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>0.98</td><td class="plus">144</td><td class="plus">128</td><td class="plus">+9</td><td class="plus">+37</td><td>+B</td><td class="note">바이오 순환매</td></tr>
-    <tr><td>5</td><td>44</td><td><span class="grade c">B71</span></td><td>포스코DX</td><td>51,200</td><td class="plus">+5.63%</td><td>2,761</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.55</td><td class="plus">218</td><td class="plus">159</td><td class="plus">+12</td><td class="plus">+25</td><td>+B</td><td class="note">급등 후 강도 유지</td></tr>
-    <tr><td>6</td><td>2</td><td><span class="grade b">B80</span></td><td>LG에너지솔루션</td><td>375,000</td><td class="plus">+1.62%</td><td>2,432</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.06</td><td class="plus">152</td><td class="plus">129</td><td class="plus">+7</td><td class="plus">+31</td><td>+B</td><td class="note">2차전지 섹터 강세</td></tr>
-    <tr><td>7</td><td>33</td><td><span class="grade d">C61</span></td><td>카카오</td><td>55,700</td><td class="minus">-1.24%</td><td>1,892</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>0.87</td><td class="minus">98</td><td class="minus">102</td><td class="minus">-3</td><td class="minus">-12</td><td>-C</td><td class="note">단기 조정 구간</td></tr>
-    <tr><td>8</td><td>7</td><td><span class="grade b">B79</span></td><td>기아</td><td>126,800</td><td class="plus">+2.18%</td><td>1,744</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.18</td><td class="plus">157</td><td class="plus">133</td><td class="plus">+15</td><td class="plus">+42</td><td class="plus">+B</td><td class="note">자동차 수급 동반 강세</td></tr>
-    <tr><td>9</td><td>21</td><td><span class="grade c">B74</span></td><td>NAVER</td><td>214,500</td><td class="plus">+1.42%</td><td>1,638</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.04</td><td class="plus">139</td><td class="plus">125</td><td class="plus">+11</td><td class="plus">+28</td><td class="plus">+B</td><td class="note">플랫폼주 반등 시도</td></tr>
-    <tr><td>10</td><td>6</td><td><span class="grade b">B78</span></td><td>한화에어로스페이스</td><td>352,000</td><td class="plus">+3.76%</td><td>1,572</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.36</td><td class="plus">181</td><td class="plus">147</td><td class="plus">+23</td><td class="plus">+61</td><td class="plus">+A</td><td class="note">방산 모멘텀 재부각</td></tr>
-    <tr><td>11</td><td>15</td><td><span class="grade c">B72</span></td><td>삼성SDI</td><td>412,500</td><td class="minus">-0.58%</td><td>1,486</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>0.94</td><td class="minus">112</td><td class="minus">108</td><td class="minus">-6</td><td class="minus">-18</td><td>-B</td><td class="note">배터리주 숨 고르기</td></tr>
-    <tr><td>12</td><td>28</td><td><span class="grade c">B70</span></td><td>KB금융</td><td>89,600</td><td class="plus">+1.09%</td><td>1,394</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.11</td><td class="plus">146</td><td class="plus">130</td><td class="plus">+19</td><td class="plus">+35</td><td class="plus">+B</td><td class="note">금융주 외인 매수 유입</td></tr>
-    <tr><td>13</td><td>11</td><td><span class="grade b">B77</span></td><td>HD현대일렉트릭</td><td>328,500</td><td class="plus">+4.08%</td><td>1,327</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.43</td><td class="plus">193</td><td class="plus">154</td><td class="plus">+27</td><td class="plus">+74</td><td class="plus">+A</td><td class="note">전력기기 강세 지속</td></tr>
-    <tr><td>14</td><td>39</td><td><span class="grade d">C65</span></td><td>신한지주</td><td>57,300</td><td class="minus">-0.35%</td><td>1,245</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>0.96</td><td class="minus">108</td><td class="minus">105</td><td class="plus">+4</td><td class="minus">-9</td><td>-C</td><td class="note">박스권 상단 매물 소화</td></tr>
-    <tr><td>15</td><td>25</td><td><span class="grade c">B73</span></td><td>POSCO홀딩스</td><td>378,000</td><td class="plus">+1.21%</td><td>1,186</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.08</td><td class="plus">137</td><td class="plus">124</td><td class="plus">+8</td><td class="plus">+22</td><td class="plus">+B</td><td class="note">철강주 저점 매수세</td></tr>
-    <tr><td>16</td><td>8</td><td><span class="grade b">B76</span></td><td>두산로보틱스</td><td>91,400</td><td class="plus">+3.04%</td><td>1,108</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.31</td><td class="plus">174</td><td class="plus">145</td><td class="plus">+13</td><td class="plus">+47</td><td class="plus">+A</td><td class="note">로봇 테마 거래 증가</td></tr>
-    <tr><td>17</td><td>52</td><td><span class="grade d">C63</span></td><td>에코프로비엠</td><td>184,200</td><td class="minus">-1.07%</td><td>1,026</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>0.89</td><td class="minus">101</td><td class="minus">103</td><td class="minus">-11</td><td class="minus">-26</td><td>-C</td><td class="note">이차전지 매물 출회</td></tr>
-    <tr><td>18</td><td>19</td><td><span class="grade c">B69</span></td><td>한국전력</td><td>23,850</td><td class="plus">+0.85%</td><td>972</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.02</td><td class="plus">128</td><td class="plus">119</td><td class="plus">+16</td><td class="plus">+24</td><td class="plus">+B</td><td class="note">실적 개선 기대 반영</td></tr>
-    <tr><td>19</td><td>36</td><td><span class="grade d">C60</span></td><td>LG화학</td><td>342,500</td><td class="minus">-0.92%</td><td>914</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>0.91</td><td class="minus">106</td><td class="minus">104</td><td class="minus">-8</td><td class="minus">-21</td><td>-C</td><td class="note">화학 업종 약세 흐름</td></tr>
-    <tr><td>20</td><td>14</td><td><span class="grade c">B68</span></td><td>현대로템</td><td>48,750</td><td class="plus">+2.52%</td><td>861</td><td><div class="candle"><i class="prevh"></i><i class="open"></i><i class="vwap"></i><i class="prevc"></i><i class="prevl"></i><i class="wick"></i><i class="bar"></i></div></td><td>1.22</td><td class="plus">163</td><td class="plus">138</td><td class="plus">+17</td><td class="plus">+39</td><td class="plus">+B</td><td class="note">철도·방산 수급 유입</td></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>1분강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
   </table>
 </div>
 <script>
   const board = document.getElementById('trading-board');
   const candidateBoard = document.getElementById('candidate-board');
+  const dataDiagnostics = document.getElementById('data-diagnostics');
+  const topbar = document.querySelector('.topbar');
+  const marketOverview = document.getElementById('market-overview');
   const marketTable = document.querySelector('.market');
   const marketTemperatureHeader = document.getElementById('market-temperature-header');
+  const gradeDistributionChart = document.getElementById('grade-distribution-chart');
+  const gradeDistributionLegend = document.getElementById('grade-distribution-legend');
   const usMarketImpactValue = document.getElementById('us-market-impact-value');
   // Temporary UI-only fallback until a real US market impact value is supplied.
   const usMarketImpactFallback = '반도체 우호';
   const marketTemperatureBars = {
     kospi: {
-      a: document.getElementById('market-kospi-a'),
-      b: document.getElementById('market-kospi-b'),
-      c: document.getElementById('market-kospi-c'),
-      d: document.getElementById('market-kospi-d')
+      container: document.getElementById('market-kospi-temperature'),
+      rise: document.getElementById('market-kospi-rise'),
+      fall: document.getElementById('market-kospi-fall')
     },
     kosdaq: {
-      a: document.getElementById('market-kosdaq-a'),
-      b: document.getElementById('market-kosdaq-b'),
-      c: document.getElementById('market-kosdaq-c'),
-      d: document.getElementById('market-kosdaq-d')
+      container: document.getElementById('market-kosdaq-temperature'),
+      rise: document.getElementById('market-kosdaq-rise'),
+      fall: document.getElementById('market-kosdaq-fall')
     }
   };
   const columnWidthStorageKey = 'stockboard.tradingBoard.columnWidths.v1';
@@ -206,7 +211,7 @@
     { label: '등급', defaultWidth: 54, minWidth: 48 },
     { label: '종목명', defaultWidth: 125, minWidth: 95 },
     { label: '현재가', defaultWidth: 80, minWidth: 68 },
-    { label: '등락율', defaultWidth: 64, minWidth: 56 },
+    { label: '등락률', defaultWidth: 64, minWidth: 56 },
     { label: '금액(억)', defaultWidth: 82, minWidth: 68 },
     { label: '일봉', defaultWidth: 86, minWidth: 70 },
     { label: '잔량비', defaultWidth: 56, minWidth: 48 },
@@ -253,7 +258,8 @@
       });
       table.style.width = `${totalWidth}px`;
     });
-    marketTable.style.maxWidth = `${totalWidth}px`;
+    topbar.style.width = `${totalWidth}px`;
+    marketOverview.style.width = `${totalWidth}px`;
   }
 
   function saveColumnWidths() {
@@ -282,8 +288,56 @@
     event.preventDefault();
   }
 
+  function measureColumnWidth(columnIndex) {
+    const measurementTable = document.createElement('table');
+    measurementTable.className = 'grid board enhanced-board';
+    measurementTable.style.cssText = [
+      'position:fixed',
+      'left:-10000px',
+      'top:0',
+      'visibility:hidden',
+      'width:auto',
+      'min-width:0',
+      'table-layout:auto'
+    ].join(';');
+    const tableBody = measurementTable.createTBody();
+
+    [candidateBoard, board].forEach(table => {
+      Array.from(table.rows).forEach(sourceRow => {
+        if (sourceRow.cells.length !== boardColumns.length) return;
+        const sourceCell = sourceRow.cells[columnIndex];
+        const measurementRow = tableBody.insertRow();
+        const measurementCell = sourceCell.cloneNode(true);
+        measurementCell.querySelectorAll('.column-resizer').forEach(resizer => resizer.remove());
+        measurementCell.style.width = 'auto';
+        measurementCell.style.maxWidth = 'none';
+        measurementCell.style.overflow = 'visible';
+        measurementRow.appendChild(measurementCell);
+      });
+    });
+
+    document.body.appendChild(measurementTable);
+    const measuredWidth = Math.ceil(measurementTable.getBoundingClientRect().width) + 2;
+    measurementTable.remove();
+    return Math.min(2000, Math.max(boardColumns[columnIndex].minWidth, measuredWidth));
+  }
+
+  function autoFitColumn(event) {
+    const table = event.currentTarget;
+    const resizer = event.target.closest('.column-resizer');
+    if (!resizer || !table.contains(resizer)) return;
+    const columnIndex = Number(resizer.dataset.columnIndex);
+    if (!Number.isInteger(columnIndex) || !boardColumns[columnIndex]) return;
+    boardColumnWidths[columnIndex] = measureColumnWidth(columnIndex);
+    applyColumnWidths();
+    saveColumnWidths();
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
   [board, candidateBoard].forEach(table => {
     table.addEventListener('pointerdown', startColumnResize);
+    table.addEventListener('dblclick', autoFitColumn);
   });
 
   window.addEventListener('pointermove', event => {
@@ -300,7 +354,8 @@
       table.style.setProperty(`--trading-column-${columnIndex}-width`, `${width}px`);
       table.style.width = `${totalWidth}px`;
     });
-    marketTable.style.maxWidth = `${totalWidth}px`;
+    topbar.style.width = `${totalWidth}px`;
+    marketOverview.style.width = `${totalWidth}px`;
   });
 
   function finishColumnResize(event) {
@@ -313,49 +368,40 @@
   window.addEventListener('pointerup', finishColumnResize);
   window.addEventListener('pointercancel', finishColumnResize);
   const top100State = {
-    masterSet: new Set(),
-    masterNameByCode: new Map(),
     rowByCode: new Map(),
     candidateRowByCode: new Map(),
-    masterReady: false,
-    pendingRows: null,
     apiError: null,
     renderedRows: [],
     candidateRows: [],
     candleMode: loadCandleMode(),
-    candleDomain: null
+    candleDomain: null,
+    diagnostics: {
+      apiRows: 0,
+      apiOhlc: 0,
+      normalizedRows: 0,
+      normalizedOhlc: 0,
+      renderedOhlc: 0
+    }
   };
 
-  function parseCsvLine(line) {
-    const values = [];
-    let value = '';
-    let quoted = false;
-
-    for (let i = 0; i < line.length; i += 1) {
-      const char = line[i];
-      if (char === '"' && quoted && line[i + 1] === '"') {
-        value += '"';
-        i += 1;
-      } else if (char === '"') {
-        quoted = !quoted;
-      } else if (char === ',' && !quoted) {
-        values.push(value);
-        value = '';
-      } else {
-        value += char;
-      }
-    }
-    values.push(value);
-    return values;
+  function hasOhlc(row) {
+    return Boolean(
+      row
+      && row.ohlc
+      && typeof row.ohlc === 'object'
+      && !Array.isArray(row.ohlc)
+    );
   }
 
-  function parseCsv(text) {
-    const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(line => line.trim());
-    const headers = parseCsvLine(lines[0]);
-    return lines.slice(1).map(line => {
-      const values = parseCsvLine(line);
-      return Object.fromEntries(headers.map((header, index) => [header, values[index] || '']));
-    });
+  function updateDataDiagnostics() {
+    const diagnostics = top100State.diagnostics;
+    dataDiagnostics.textContent = [
+      `apiRows ${diagnostics.apiRows}`,
+      `apiOhlc ${diagnostics.apiOhlc}`,
+      `normalizedRows ${diagnostics.normalizedRows}`,
+      `normalizedOhlc ${diagnostics.normalizedOhlc}`,
+      `renderedOhlc ${diagnostics.renderedOhlc}`
+    ].join(' · ');
   }
 
   function escapeHtml(value) {
@@ -383,6 +429,38 @@
     if (value === null || value === undefined || value === '') return '-';
     const number = Number(String(value).replace(/,/g, ''));
     return Number.isFinite(number) ? Math.trunc(number).toLocaleString('en-US') : displayValue(value);
+  }
+
+  function formatPercent(value) {
+    if (value === null || value === undefined || value === '') return '-';
+    const number = Number(String(value).replace(/[%+,]/g, '').trim());
+    if (!Number.isFinite(number)) return displayValue(value, '%');
+    return `${number > 0 ? '+' : ''}${number.toFixed(2)}%`;
+  }
+
+  function formatOhlcTooltipNumber(value, maximumFractionDigits = 0) {
+    if (value === null || value === undefined || value === '') return '-';
+    const number = Number(String(value).replace(/,/g, ''));
+    if (!Number.isFinite(number)) return '-';
+    return number.toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits
+    });
+  }
+
+  function ohlcTooltip(candle) {
+    const prices = candle.prices;
+    return [
+      `거래일: ${candle.tradingDate || '-'}`,
+      `당일 시가: ${formatOhlcTooltipNumber(prices.open)}`,
+      `당일 고가: ${formatOhlcTooltipNumber(prices.high)}`,
+      `당일 저가: ${formatOhlcTooltipNumber(prices.low)}`,
+      `당일 종가: ${formatOhlcTooltipNumber(prices.close)}`,
+      `VWAP: ${formatOhlcTooltipNumber(prices.vwap, 2)}`,
+      `전일 고가: ${formatOhlcTooltipNumber(prices.prevHigh)}`,
+      `전일 종가: ${formatOhlcTooltipNumber(prices.prevClose)}`,
+      `전일 저가: ${formatOhlcTooltipNumber(prices.prevLow)}`
+    ].join('\n');
   }
 
   function foreignSumView(value) {
@@ -522,20 +600,27 @@
       prevLow: toPrice(value.prev_low)
     };
     const requiredPrices = [prices.open, prices.high, prices.low, prices.close];
-    if (requiredPrices.some(price => price === null) || prices.high < prices.low) return null;
+    const tradingDate = String(value.trading_date ?? '').trim();
+    if (
+      requiredPrices.some(price => price === null)
+      || prices.high < prices.low
+    ) return null;
     return {
       direction: prices.close === prices.open ? 'doji' : prices.close < prices.open ? 'down' : 'up',
-      prices
+      prices,
+      tradingDate: tradingDate || '-'
     };
   }
 
   function candleDomain(rows) {
-    const maxMoves = rows.slice(0, 100)
-      .map(row => row.candle)
-      .filter(candle => candle && Number.isFinite(candle.prices.open) && candle.prices.open !== 0)
+    const maxMoves = rows
+      .map(row => candleView(row.ohlc))
+      .filter(candle => candle && Number.isFinite(candle.prices.prevClose) && candle.prices.prevClose !== 0)
       .flatMap(candle => {
-        const { open, high, low } = candle.prices;
-        return [Math.abs((high - open) / open), Math.abs((low - open) / open)];
+        const { open, high, low, close, vwap, prevClose } = candle.prices;
+        return [open, high, low, close, vwap]
+          .filter(Number.isFinite)
+          .map(price => Math.abs((price - prevClose) / prevClose));
       })
       .filter(Number.isFinite);
     return maxMoves.length ? { maxAbsMove: Math.max(...maxMoves) } : null;
@@ -546,19 +631,27 @@
     const { prices } = candle;
     const proportional = top100State.candleMode === 'proportional' && sharedDomain;
     let position;
-    let inDomain;
+    let levelPosition;
     if (proportional) {
       const { maxAbsMove } = sharedDomain;
-      if (!Number.isFinite(prices.open) || prices.open === 0 || !Number.isFinite(maxAbsMove)) return null;
-      position = price => {
+      if (!Number.isFinite(prices.prevClose) || prices.prevClose === 0 || !Number.isFinite(maxAbsMove)) return null;
+      const rawPosition = price => {
         if (!Number.isFinite(price)) return null;
-        if (maxAbsMove === 0) return 50;
-        const moveFromOpen = (price - prices.open) / prices.open;
-        return 50 + (moveFromOpen / maxAbsMove) * 50;
+        if (maxAbsMove === 0) return price === prices.prevClose ? 50 : null;
+        const moveFromPrevClose = (price - prices.prevClose) / prices.prevClose;
+        return 50 + (moveFromPrevClose / maxAbsMove) * 50;
       };
-      inDomain = price => {
-        const pricePosition = position(price);
-        return Number.isFinite(pricePosition) && pricePosition >= 0 && pricePosition <= 100;
+      position = price => {
+        const pricePosition = rawPosition(price);
+        return Number.isFinite(pricePosition)
+          ? Math.max(0, Math.min(100, pricePosition))
+          : null;
+      };
+      levelPosition = price => {
+        const pricePosition = rawPosition(price);
+        return Number.isFinite(pricePosition) && pricePosition >= 0 && pricePosition <= 100
+          ? pricePosition
+          : null;
       };
     } else {
       const domain = { low: prices.low, high: prices.high };
@@ -566,28 +659,31 @@
       position = price => domain.high === domain.low
         ? 50
         : ((price - domain.low) / (domain.high - domain.low)) * 100;
-      inDomain = price => Number.isFinite(price) && price >= domain.low && price <= domain.high;
+      levelPosition = price => Number.isFinite(price) && price >= domain.low && price <= domain.high
+        ? position(price)
+        : null;
     }
     const openPosition = position(prices.open);
     const closePosition = position(prices.close);
     return {
+      proportional,
       low: position(prices.low),
       high: position(prices.high),
       open: openPosition,
       bodyLeft: Math.min(openPosition, closePosition),
       bodyRight: 100 - Math.max(openPosition, closePosition),
       levels: {
-        vwap: inDomain(prices.vwap) ? position(prices.vwap) : null,
-        prevHigh: inDomain(prices.prevHigh) ? position(prices.prevHigh) : null,
-        prevClose: inDomain(prices.prevClose) ? position(prices.prevClose) : null,
-        prevLow: inDomain(prices.prevLow) ? position(prices.prevLow) : null
+        vwap: levelPosition(prices.vwap),
+        prevHigh: proportional ? null : levelPosition(prices.prevHigh),
+        prevClose: proportional ? null : levelPosition(prices.prevClose),
+        prevLow: proportional ? null : levelPosition(prices.prevLow)
       }
     };
   }
 
-  function ohlcLevelMarkup(className, label, price, position) {
+  function ohlcLevelMarkup(className, position, tooltip) {
     if (!Number.isFinite(position)) return '';
-    return `<i class="ohlc-level ${className}" style="left:${position}%" title="${label} ${escapeHtml(price)}"></i>`;
+    return `<i class="ohlc-level ${className}" style="left:${position}%" title="${escapeHtml(tooltip)}"></i>`;
   }
 
   function ohlcMarkup(candle, sharedDomain = top100State.candleDomain) {
@@ -595,6 +691,15 @@
     const { direction, prices } = candle;
     const positions = candlePositions(candle, sharedDomain);
     if (!positions) return '-';
+    const tooltip = ohlcTooltip(candle);
+    const escapedTooltip = escapeHtml(tooltip);
+    const previousLevelMarkup = positions.proportional
+      ? ohlcLevelMarkup('ohlc-proportional-center', 50, tooltip)
+      : [
+          ohlcLevelMarkup('ohlc-prev-high', positions.levels.prevHigh, tooltip),
+          ohlcLevelMarkup('ohlc-prev-close', positions.levels.prevClose, tooltip),
+          ohlcLevelMarkup('ohlc-prev-low', positions.levels.prevLow, tooltip)
+        ].join('');
     const style = [
       `--low:${positions.low}%`,
       `--high:${positions.high}%`,
@@ -602,14 +707,12 @@
       `--body-left:${positions.bodyLeft}%`,
       `--body-right:${positions.bodyRight}%`
     ].join(';');
-    return `<div class="ohlc-chart ohlc-${direction}" style="${style}" role="img" aria-label="당일 저가-고가, 시가-종가, VWAP, 전일 고가, 종가, 저가 표시 영역" data-candle-mode="${top100State.candleMode}" data-open="${escapeHtml(prices.open)}" data-high="${escapeHtml(prices.high)}" data-low="${escapeHtml(prices.low)}" data-close="${escapeHtml(prices.close)}" data-vwap="${escapeHtml(prices.vwap)}" data-prev-high="${escapeHtml(prices.prevHigh)}" data-prev-close="${escapeHtml(prices.prevClose)}" data-prev-low="${escapeHtml(prices.prevLow)}">
-      <i class="ohlc-range" title="당일 저가 ${escapeHtml(prices.low)} / 고가 ${escapeHtml(prices.high)}"></i>
-      <i class="ohlc-body" title="시가 ${escapeHtml(prices.open)} / 종가 ${escapeHtml(prices.close)}"></i>
-      <i class="ohlc-open" title="시가 ${escapeHtml(prices.open)}"></i>
-      ${ohlcLevelMarkup('ohlc-vwap', 'VWAP', prices.vwap, positions.levels.vwap)}
-      ${ohlcLevelMarkup('ohlc-prev-high', '전일 고가', prices.prevHigh, positions.levels.prevHigh)}
-      ${ohlcLevelMarkup('ohlc-prev-close', '전일 종가', prices.prevClose, positions.levels.prevClose)}
-      ${ohlcLevelMarkup('ohlc-prev-low', '전일 저가', prices.prevLow, positions.levels.prevLow)}
+    return `<div class="ohlc-chart ohlc-${direction}" style="${style}" role="img" aria-label="${escapedTooltip}" title="${escapedTooltip}" data-candle-mode="${top100State.candleMode}" data-trading-date="${escapeHtml(candle.tradingDate)}" data-open="${escapeHtml(prices.open)}" data-high="${escapeHtml(prices.high)}" data-low="${escapeHtml(prices.low)}" data-close="${escapeHtml(prices.close)}" data-vwap="${escapeHtml(prices.vwap)}" data-prev-high="${escapeHtml(prices.prevHigh)}" data-prev-close="${escapeHtml(prices.prevClose)}" data-prev-low="${escapeHtml(prices.prevLow)}">
+      <i class="ohlc-range" title="${escapedTooltip}"></i>
+      <i class="ohlc-body" title="${escapedTooltip}"></i>
+      <i class="ohlc-open" title="${escapedTooltip}"></i>
+      ${ohlcLevelMarkup('ohlc-vwap', positions.levels.vwap, tooltip)}
+      ${previousLevelMarkup}
     </div>`;
   }
 
@@ -747,40 +850,7 @@
   }
   // Temporary sample values for visually checking TOP100 grade badges only.
   const gradeFallbackValues = ['A92', 'B74', 'A88', 'C61', 'B81', 'D42', 'A90', 'C55', 'B68', 'A95'];
-  // Temporary UI-only OHLC patterns. Real OHLC data always takes priority.
-  const candleFallbackPatterns = [
-    { open: .97, high: 1.04, low: .95, close: 1.02, vwap: .99, prevHigh: 1.03, prevClose: .98, prevLow: .94 },
-    { open: 1.03, high: 1.05, low: .94, close: .97, vwap: 1.00, prevHigh: 1.06, prevClose: 1.01, prevLow: .96 },
-    { open: .94, high: 1.06, low: .93, close: 1.05, vwap: .99, prevHigh: 1.04, prevClose: .96, prevLow: .92 },
-    { open: 1.06, high: 1.07, low: .92, close: .93, vwap: 1.01, prevHigh: 1.08, prevClose: 1.04, prevLow: .95 },
-    { open: 1.00, high: 1.04, low: .96, close: 1.00, vwap: 1.00, prevHigh: 1.03, prevClose: .99, prevLow: .95 },
-    { open: .98, high: 1.05, low: .96, close: 1.03, vwap: .99, prevHigh: 1.06, prevClose: 1.01, prevLow: .95 },
-    { open: 1.02, high: 1.04, low: .94, close: .97, vwap: 1.01, prevHigh: 1.05, prevClose: 1.00, prevLow: .93 },
-    { open: .99, high: 1.03, low: .97, close: 1.01, vwap: 1.00, prevHigh: 1.04, prevClose: .98, prevLow: .96 }
-  ];
-
-  function fallbackCandle(priceValue, fallbackIndex) {
-    const price = Number(String(priceValue ?? '').replace(/,/g, ''));
-    const base = Number.isFinite(price) && price > 0 ? price : 100;
-    const pattern = candleFallbackPatterns[fallbackIndex % candleFallbackPatterns.length];
-    return candleView({
-      open: base * pattern.open,
-      high: base * pattern.high,
-      low: base * pattern.low,
-      close: base * pattern.close,
-      vwap: base * pattern.vwap,
-      prev_high: base * pattern.prevHigh,
-      prev_close: base * pattern.prevClose,
-      prev_low: base * pattern.prevLow
-    });
-  }
-  // Temporary UI-only distributions until TOP100 rows include KOSPI/KOSDAQ identifiers.
-  const marketDistributionFallback = {
-    kospi: { a: 40, b: 30, c: 20, d: 10 },
-    kosdaq: { a: 20, b: 30, c: 30, d: 20 }
-  };
-
-  function normalizeRankingRow(row, masterName, fallbackIndex) {
+  function normalizeRankingRow(row, fallbackIndex) {
     const gradeValue = firstValue(row, ['grade', 'grade_score', '등급']);
     const effectiveGradeValue = gradeValue !== null
       ? gradeValue
@@ -790,10 +860,7 @@
     const gradeClass = ['a', 'b', 'c', 'd'].includes(explicitGradeClass)
       ? explicitGradeClass
       : ['a', 'b', 'c', 'd'].includes(inferredGradeClass) ? inferredGradeClass : 'd';
-    const candleSource = firstValue(row, ['ohlc', 'mini_daily_candle']);
-    const actualCandle = candleView(candleSource) || candleView(row);
-    const candle = actualCandle || fallbackCandle(firstValue(row, ['price', '현재가']), fallbackIndex);
-    const changeRate = firstValue(row, ['change_rate', '등락률', '등락율']);
+    const changeRate = firstValue(row, ['change_rate', '등락률']);
     const balanceValue = firstValue(row, ['bid_ask_ratio', 'orderbook_ratio', '잔량비']);
     const effectiveBalanceValue = balanceValue !== null
       ? balanceValue
@@ -837,18 +904,19 @@
       isCandidate: firstValue(row, ['is_candidate', 'candidate']),
       candidateScore: firstValue(row, ['candidate_score']),
       gradeScore: firstValue(row, ['grade_score']),
+      ohlc: row.ohlc,
       rank: displayValue(firstValue(row, ['rank', '현재순위', '순위'])),
       previousRank: rankMovement.display,
       rankMovementClass: rankMovement.className,
       rankTooltip: rankMovement.tooltip,
       grade: displayValue(effectiveGradeValue),
       gradeClass,
-      name: displayValue(firstValue(row, ['stock_name', '종목명']) || masterName),
+      name: displayValue(firstValue(row, ['stock_name', '종목명'])),
       price: formatInteger(firstValue(row, ['price', '현재가'])),
-      changeRate: displayValue(changeRate, '%'),
+      changeRate: formatPercent(changeRate),
+      changeRateNumber: Number(String(changeRate ?? '').replace(/[%+,]/g, '').trim()),
       changeClass: toneClass(firstValue(row, ['change_tone']), changeRate),
       amount: formatInteger(firstValue(row, ['trade_value_eok', '거래대금(억)', '거래대금_억'])),
-      candle,
       balanceForce: balanceView(effectiveBalanceValue),
       minuteForce: minuteStrengthView(effectiveMinuteStrengthValue),
       dailyForce: dailyStrengthView(effectiveDailyStrengthValue),
@@ -881,7 +949,7 @@
 
   function updateBoardRow(tableRow, row) {
     const grade = row.grade === '-' ? '-' : `<span class="grade ${row.gradeClass}">${escapeHtml(row.grade)}</span>`;
-    const candle = ohlcMarkup(row.candle);
+    const candle = ohlcMarkup(candleView(row.ohlc));
     const cells = tableRow.cells;
     setCell(cells[0], escapeHtml(row.rank), 'rank-cell');
     setCell(cells[1], escapeHtml(row.previousRank), `rank-cell ${row.rankMovementClass}`.trim(), row.rankTooltip);
@@ -903,6 +971,7 @@
   function createBoardRow(row) {
     const tableRow = document.createElement('tr');
     tableRow.dataset.stockCode = row.code;
+    tableRow.dataset.hasOhlc = hasOhlc(row) ? 'true' : 'false';
     for (let index = 0; index < 15; index += 1) tableRow.insertCell();
     updateBoardRow(tableRow, row);
     return tableRow;
@@ -919,42 +988,34 @@
   function renderCandidateBoard(rows) {
     const candidates = selectCandidateRows(rows);
     top100State.candidateRows = candidates;
-    const activeCodes = new Set(candidates.map(row => row.code));
-    for (const [code, tableRow] of top100State.candidateRowByCode) {
-      if (!activeCodes.has(code)) {
-        tableRow.remove();
-        top100State.candidateRowByCode.delete(code);
-      }
-    }
-
-    const tableBody = candidateBoard.tBodies[0];
+    top100State.candidateRowByCode.clear();
+    candidateBoard.innerHTML = boardHeader;
     candidates.forEach((row, index) => {
-      let tableRow = top100State.candidateRowByCode.get(row.code);
-      if (!tableRow) {
-        tableRow = document.createElement('tr');
-        tableRow.dataset.stockCode = row.code;
-        for (let cellIndex = 0; cellIndex < 15; cellIndex += 1) tableRow.insertCell();
-        top100State.candidateRowByCode.set(row.code, tableRow);
-      }
+      const tableRow = document.createElement('tr');
+      tableRow.dataset.stockCode = row.code;
+      tableRow.dataset.hasOhlc = hasOhlc(row) ? 'true' : 'false';
+      for (let cellIndex = 0; cellIndex < 15; cellIndex += 1) tableRow.insertCell();
       updateCandidateRow(tableRow, row, index);
-      const expectedRow = tableBody.rows[index + 1];
-      if (expectedRow !== tableRow) tableBody.insertBefore(tableRow, expectedRow || null);
+      candidateBoard.tBodies[0].appendChild(tableRow);
+      top100State.candidateRowByCode.set(row.code, tableRow);
     });
   }
 
   function updateCandidateCandleCells() {
     top100State.candidateRows.forEach(row => {
       const tableRow = top100State.candidateRowByCode.get(row.code);
-      if (tableRow) setCell(tableRow.cells[7], ohlcMarkup(row.candle));
+      if (tableRow) setCell(tableRow.cells[7], ohlcMarkup(candleView(row.ohlc)));
     });
   }
 
   function updateVisibleCandleCells() {
     top100State.renderedRows.forEach(row => {
       const tableRow = top100State.rowByCode.get(row.code);
-      if (tableRow) setCell(tableRow.cells[7], ohlcMarkup(row.candle));
+      if (tableRow) setCell(tableRow.cells[7], ohlcMarkup(candleView(row.ohlc)));
     });
     updateCandidateCandleCells();
+    top100State.diagnostics.renderedOhlc = board.querySelectorAll('.ohlc-chart').length;
+    updateDataDiagnostics();
   }
 
   function toggleCandleMode() {
@@ -964,80 +1025,79 @@
   }
 
   function updateMarketTemperature(rows) {
-    const counts = { a: 0, b: 0, c: 0, d: 0 };
-    const marketCounts = {
-      kospi: { a: 0, b: 0, c: 0, d: 0 },
-      kosdaq: { a: 0, b: 0, c: 0, d: 0 }
-    };
-    let classifiedRows = 0;
-    rows.slice(0, 100).forEach(row => {
-      if (Object.hasOwn(counts, row.gradeClass)) counts[row.gradeClass] += 1;
-      if (Object.hasOwn(marketCounts, row.marketGroup) && Object.hasOwn(counts, row.gradeClass)) {
-        marketCounts[row.marketGroup][row.gradeClass] += 1;
-        classifiedRows += 1;
-      }
+    const directionCounts = { rise: 0, fall: 0, neutral: 0 };
+    const gradeCounts = { a: 0, b: 0, c: 0, d: 0 };
+    rows.forEach(row => {
+      if (Number.isFinite(row.changeRateNumber) && row.changeRateNumber > 0) directionCounts.rise += 1;
+      else if (Number.isFinite(row.changeRateNumber) && row.changeRateNumber < 0) directionCounts.fall += 1;
+      else directionCounts.neutral += 1;
+      if (Object.hasOwn(gradeCounts, row.gradeClass)) gradeCounts[row.gradeClass] += 1;
     });
-    const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
-    const weightedTotal = counts.a * 100 + counts.b * 70 + counts.c * 40 + counts.d * 10;
-    marketTemperatureHeader.dataset.temperature = total ? String(Math.round(weightedTotal / total)) : '';
-    const distributions = classifiedRows ? marketCounts : marketDistributionFallback;
-    Object.entries(distributions).forEach(([market, distribution]) => {
-      const marketTotal = Object.values(distribution).reduce((sum, count) => sum + count, 0);
-      Object.entries(marketTemperatureBars[market]).forEach(([grade, bar]) => {
-        bar.style.width = `${marketTotal ? (distribution[grade] / marketTotal) * 100 : 0}%`;
-      });
+
+    const directionalTotal = directionCounts.rise + directionCounts.fall;
+    const riseWidth = directionalTotal ? directionCounts.rise / directionalTotal * 100 : 0;
+    const summary = `상승 ${directionCounts.rise} / 하락 ${directionCounts.fall} / 보합·제외 ${directionCounts.neutral}`;
+    marketTemperatureHeader.dataset.temperature = summary;
+    Object.values(marketTemperatureBars).forEach(bars => {
+      bars.rise.style.width = `${riseWidth}%`;
+      bars.fall.style.width = `${directionalTotal ? 100 - riseWidth : 0}%`;
+      bars.container.title = summary;
+      bars.container.setAttribute('aria-label', summary);
     });
+
+    const gradeTotal = Object.values(gradeCounts).reduce((sum, count) => sum + count, 0);
+    const colors = { a: '#d71920', b: '#f08a24', c: '#f4c430', d: '#1266d6' };
+    let boundary = 0;
+    const segments = Object.entries(gradeCounts).map(([grade, count]) => {
+      const start = boundary;
+      boundary += gradeTotal ? count / gradeTotal * 100 : 0;
+      return `${colors[grade]} ${start}% ${boundary}%`;
+    });
+    gradeDistributionChart.style.background = gradeTotal
+      ? `conic-gradient(${segments.join(',')})`
+      : '#e3e8ec';
+    gradeDistributionChart.setAttribute('aria-label', `등급분포 ${Object.entries(gradeCounts).map(([grade, count]) => `${grade.toUpperCase()} ${count}`).join(', ')}`);
+    gradeDistributionLegend.innerHTML = Object.entries(gradeCounts).map(([grade, count]) =>
+      `<span class="grade-distribution-item"><i class="grade-dot ${grade}"></i>${grade.toUpperCase()} ${count}</span>`
+    ).join('');
   }
 
   function renderBoard(rows) {
     updateMarketTemperature(rows);
-    top100State.renderedRows = rows.slice();
+    top100State.renderedRows = rows;
     top100State.candleDomain = candleDomain(rows);
     renderCandidateBoard(rows);
     if (!rows.length) {
       showBoardMessage('표시할 거래대금 순위 종목이 없습니다.');
+      top100State.diagnostics.renderedOhlc = 0;
+      updateDataDiagnostics();
       return;
     }
 
-    if (!top100State.rowByCode.size) board.innerHTML = boardHeader;
-    const activeCodes = new Set(rows.map(row => row.code));
-    for (const [code, tableRow] of top100State.rowByCode) {
-      if (!activeCodes.has(code)) {
-        tableRow.remove();
-        top100State.rowByCode.delete(code);
-      }
-    }
-
-    const tableBody = board.tBodies[0];
-    rows.forEach((row, index) => {
-      let tableRow = top100State.rowByCode.get(row.code);
-      if (!tableRow) {
-        tableRow = createBoardRow(row);
-        top100State.rowByCode.set(row.code, tableRow);
-      } else {
-        updateBoardRow(tableRow, row);
-      }
-      const expectedRow = tableBody.rows[index + 1];
-      if (expectedRow !== tableRow) tableBody.insertBefore(tableRow, expectedRow || null);
+    top100State.rowByCode.clear();
+    board.innerHTML = boardHeader;
+    rows.forEach(row => {
+      const tableRow = createBoardRow(row);
+      board.tBodies[0].appendChild(tableRow);
+      top100State.rowByCode.set(row.code, tableRow);
     });
+    top100State.diagnostics.renderedOhlc = board.querySelectorAll('.ohlc-chart').length;
+    updateDataDiagnostics();
   }
 
   function applyRankingRows(inputRows) {
-    const seen = new Set();
-    const filtered = [];
-    for (const sourceRow of inputRows) {
-      if (!sourceRow || typeof sourceRow !== 'object') continue;
+    const normalizedRows = inputRows.map((sourceRow, index) => {
+      if (!sourceRow || typeof sourceRow !== 'object') return null;
       const code = normalizeCode(firstValue(sourceRow, ['stock_code', '종목코드', 'code']));
-      if (!code || seen.has(code) || !top100State.masterSet.has(code)) continue;
-      seen.add(code);
-      filtered.push(normalizeRankingRow(
+      return normalizeRankingRow(
         { ...sourceRow, stock_code: code },
-        top100State.masterNameByCode.get(code),
-        filtered.length
-      ));
-    }
-    renderBoard(filtered);
-    return { received: inputRows.length, displayed: filtered.length };
+        index
+      );
+    }).filter(Boolean);
+    top100State.diagnostics.normalizedRows = normalizedRows.length;
+    top100State.diagnostics.normalizedOhlc = normalizedRows.filter(hasOhlc).length;
+    renderBoard(normalizedRows);
+    return { received: inputRows.length, displayed: normalizedRows.length };
   }
 
   document.addEventListener('keydown', event => {
@@ -1072,52 +1132,26 @@
   window.StockBoardTop100 = Object.freeze({
     update(rows) {
       if (!Array.isArray(rows)) throw new TypeError('StockBoardTop100.update(rows)는 배열을 받아야 합니다.');
+      top100State.diagnostics.apiRows = rows.length;
+      top100State.diagnostics.apiOhlc = rows.filter(hasOhlc).length;
+      updateDataDiagnostics();
       window.StockBoardUSImpact.update(findUSMarketImpact(rows));
-      top100State.pendingRows = rows.slice();
-      if (!top100State.masterReady) {
-        board.innerHTML = `${boardHeader}<tr><td colspan="15">종목 마스터 준비 후 거래대금 순위를 표시합니다.</td></tr>`;
-        return { received: rows.length, displayed: 0, pending: true };
-      }
-      return applyRankingRows(top100State.pendingRows);
+      return applyRankingRows(rows);
     },
     clear() {
-      top100State.pendingRows = [];
+      Object.keys(top100State.diagnostics).forEach(key => {
+        top100State.diagnostics[key] = 0;
+      });
       renderBoard([]);
     },
     status() {
       return {
-        masterReady: top100State.masterReady,
-        tradableCount: top100State.masterSet.size,
+        ...top100State.diagnostics,
         renderedCount: top100State.rowByCode.size,
-        hasPendingRows: top100State.pendingRows !== null
+        renderedCandleCount: board.querySelectorAll('.ohlc-chart').length
       };
     }
   });
-
-  fetch('./tradable_stock_master.csv', { cache: 'no-store' })
-    .then(response => {
-      if (!response.ok) throw new Error(`CSV load failed: ${response.status}`);
-      return response.text();
-    })
-    .then(text => {
-      const masterRows = parseCsv(text);
-      top100State.masterNameByCode = new Map(masterRows
-        .map(row => [normalizeCode(row['종목코드']), row['종목명']])
-        .filter(([code]) => code));
-      top100State.masterSet = new Set(top100State.masterNameByCode.keys());
-      top100State.masterReady = true;
-      if (top100State.pendingRows !== null) {
-        applyRankingRows(top100State.pendingRows);
-      } else if (top100State.apiError) {
-        showBoardMessage('키움 거래대금 순위 조회 결과를 불러오지 못했습니다.');
-      } else {
-        board.innerHTML = `${boardHeader}<tr><td colspan="15">키움 거래대금 순위 조회 결과를 기다리는 중입니다.</td></tr>`;
-      }
-    })
-    .catch(error => {
-      console.error(error);
-      board.innerHTML = `${boardHeader}<tr><td colspan="15">거래 가능 종목 마스터를 불러오지 못했습니다.</td></tr>`;
-    });
 
   fetch('/api/top100', { cache: 'no-store' })
     .then(response => {
@@ -1128,9 +1162,7 @@
     .catch(error => {
       console.error(error);
       top100State.apiError = error;
-      if (top100State.masterReady) {
-        showBoardMessage('키움 거래대금 순위 조회 결과를 불러오지 못했습니다.');
-      }
+      showBoardMessage('키움 거래대금 순위 조회 결과를 불러오지 못했습니다.');
     });
 </script>
 </body>
