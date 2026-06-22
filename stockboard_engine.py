@@ -6,14 +6,14 @@ from decimal import Decimal, InvalidOperation
 KST = timezone(timedelta(hours=9))
 # ka90004 netprps_prica is provisionally treated as KRW millions: 100 million KRW per eok.
 PROGRAM_NET_EOK_DIVISOR_TEXT = os.getenv("KIWOOM_PROGRAM_NET_EOK_DIVISOR", "100")
-PROGRAM_NET_ENABLED_TEXT = os.getenv("KIWOOM_PROGRAM_NET_ENABLED", "0")
 REQUEST_SLEEP_SEC_TEXT = os.getenv("KIWOOM_REQUEST_SLEEP_SEC", "0.25")
 
 OUTPUT_KEYS = (
     "stock_code", "rank", "original_rank", "prev_rank", "grade", "stock_name",
     "price", "change_rate", "trade_value_eok", "ohlc", "bid_ask_ratio",
-    "strength_1m", "strength_day", "foreign_sum", "program_net", "big_hand",
-    "momentum",
+    "strength_1m", "strength_day", "foreign_sum", "foreign_investor_net",
+    "foreign_display_label", "foreign_display_value", "foreign_display_source",
+    "program_net", "big_hand", "momentum",
 )
 
 
@@ -109,7 +109,9 @@ def _query_date():
 
 
 def _program_net_enabled():
-    return PROGRAM_NET_ENABLED_TEXT.strip() == "1"
+    return os.getenv("KIWOOM_PROGRAM_NET_ENABLED", "1").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
 
 
 def _request_sleep_sec():
@@ -137,6 +139,14 @@ def _normalize_row(row):
             "trade_value_eok": _trade_value_eok(
                 _first(row, "trde_prica", "trade_value", "거래대금")
             ),
+            "foreign_investor_net": _clean_number(
+                _first(row, "foreign_investor_net")
+            ),
+            "foreign_display_label": _first(row, "foreign_display_label"),
+            "foreign_display_value": _clean_number(
+                _first(row, "foreign_display_value")
+            ),
+            "foreign_display_source": _first(row, "foreign_display_source"),
         }
     )
     normalized["original_rank"] = normalized["rank"]

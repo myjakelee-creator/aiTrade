@@ -5,6 +5,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from threading import RLock
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -152,6 +153,18 @@ def fetch_trade_value_top100(access_token):
 def fetch_program_net(access_token, query_date):
     """Fetch ka90004 for KOSPI/KOSDAQ and map stock codes to program net eok."""
     divisor = _program_net_eok_divisor()
+    sleep_text = os.getenv("KIWOOM_PROGRAM_NET_REQUEST_SLEEP_SEC", "0.25")
+    try:
+        sleep_seconds = Decimal(sleep_text)
+    except InvalidOperation as error:
+        raise RuntimeError(
+            "KIWOOM_PROGRAM_NET_REQUEST_SLEEP_SEC must be a non-negative number"
+        ) from error
+    if not sleep_seconds.is_finite() or sleep_seconds < 0:
+        raise RuntimeError(
+            "KIWOOM_PROGRAM_NET_REQUEST_SLEEP_SEC must be a non-negative number"
+        )
+    sleep_seconds = float(sleep_seconds)
     program_net_by_code = {}
     market_stats = []
     market_counts = {"KOSPI": 0, "KOSDAQ": 0}
@@ -170,6 +183,7 @@ def fetch_program_net(access_token, query_date):
         market_raw_samples = []
         market_converted_samples = []
         market_error = None
+        market_rate_limited = False
 
         while True:
             try:
@@ -191,10 +205,12 @@ def fetch_program_net(access_token, query_date):
             except KiwoomAPIError as error:
                 market_error = f"HTTP {error.status_code}: {error.detail}"
                 if error.status_code == 429:
-                    rate_limit = {"market": market_name, "page": page_count + 1}
+                    market_rate_limited = True
+                    if rate_limit is None:
+                        rate_limit = {"market": market_name, "page": page_count + 1}
                     print(
                         f"warning: ka90004 HTTP 429 at market {market_name}, "
-                        f"page {page_count + 1}; stopping program lookup",
+                        f"page {page_count + 1}; keeping partial market result",
                         file=sys.stderr,
                     )
                 break
@@ -265,8 +281,10 @@ def fetch_program_net(access_token, query_date):
                 )
                 break
             seen_next_keys.add(next_key)
+            if sleep_seconds:
+                time.sleep(sleep_seconds)
 
-        if market_error is None or rate_limit is not None:
+        if market_error is None or market_rate_limited:
             program_net_by_code.update(market_values)
             market_counts[market_name] = len(market_values)
             remaining_sample_count = 5 - len(raw_samples)
@@ -285,10 +303,11 @@ def fetch_program_net(access_token, query_date):
                 "rows": row_count,
                 "count": market_counts[market_name],
                 "error": market_error,
+                "rate_limited": market_rate_limited,
             }
         )
-        if rate_limit is not None:
-            break
+        if market_rate_limited:
+            time.sleep(max(1.0, sleep_seconds))
 
     return {
         "values": program_net_by_code,
@@ -297,6 +316,7 @@ def fetch_program_net(access_token, query_date):
         "raw_samples": raw_samples,
         "converted_samples": converted_samples,
         "divisor": divisor,
+        "request_sleep_seconds": sleep_seconds,
         "errors": errors,
         "rate_limit": rate_limit,
     }
@@ -488,6 +508,203 @@ def fetch_foreign_sum(access_token, query_date):
             )
 
     return {"values": foreign_sum_by_code, "stats": stats}
+
+
+def fetch_foreign_investor_net_after_close(access_token, query_date):
+    """Fetch ka10066 after-close foreign investor net amounts by stock."""
+    sleep_text = os.getenv(
+        "KIWOOM_FOREIGN_INVESTOR_NET_REQUEST_SLEEP_SEC", "0.25"
+    )
+    try:
+        sleep_seconds = Decimal(sleep_text)
+    except InvalidOperation as error:
+        raise RuntimeError(
+            "KIWOOM_FOREIGN_INVESTOR_NET_REQUEST_SLEEP_SEC must be a "
+            "non-negative number"
+        ) from error
+    if not sleep_seconds.is_finite() or sleep_seconds < 0:
+        raise RuntimeError(
+            "KIWOOM_FOREIGN_INVESTOR_NET_REQUEST_SLEEP_SEC must be a "
+            "non-negative number"
+        )
+    sleep_seconds = float(sleep_seconds)
+    values = {}
+    stats = {
+        "available": False,
+        "query_date": query_date,
+        "market_counts": {"KOSPI": 0, "KOSDAQ": 0},
+        "market_stats": [],
+        "collected_count": 0,
+        "joined_count": 0,
+        "errors": [],
+        "rate_limit": None,
+        "raw_samples": [],
+        "converted_samples": [],
+        "request_sleep_seconds": sleep_seconds,
+    }
+
+    for market_name, market_type in (("KOSPI", "001"), ("KOSDAQ", "101")):
+        continuation = "N"
+        next_key = ""
+        seen_next_keys = set()
+        page_count = 0
+        row_count = 0
+        market_values = {}
+        market_raw_samples = []
+        market_converted_samples = []
+        market_error = None
+        market_rate_limited = False
+
+        while True:
+            try:
+                response, response_headers = _post_json(
+                    "/api/dostk/mrkcond",
+                    {
+                        "mrkt_tp": market_type,
+                        "amt_qty_tp": "1",
+                        "trde_tp": "0",
+                        "stex_tp": "3",
+                    },
+                    {
+                        "Authorization": f"Bearer {access_token}",
+                        "api-id": "ka10066",
+                        "cont-yn": continuation,
+                        "next-key": next_key,
+                    },
+                    return_headers=True,
+                )
+            except KiwoomAPIError as error:
+                market_error = f"HTTP {error.status_code}: {error.detail}"
+                if error.status_code == 429:
+                    market_rate_limited = True
+                    if stats["rate_limit"] is None:
+                        stats["rate_limit"] = {
+                            "market": market_name,
+                            "page": page_count + 1,
+                        }
+                    print(
+                        f"warning: ka10066 HTTP 429 at market {market_name}, "
+                        f"page {page_count + 1}; keeping partial market result",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"warning: ka10066 market {market_name} skipped: "
+                        f"HTTP {error.status_code}",
+                        file=sys.stderr,
+                    )
+                break
+            except (RuntimeError, ValueError) as error:
+                market_error = f"{type(error).__name__}: {error}"
+                print(
+                    f"warning: ka10066 market {market_name} skipped: {error}",
+                    file=sys.stderr,
+                )
+                break
+
+            if response.get("return_code") not in (None, 0, "0"):
+                market_error = (
+                    f"API failed: return_code={response.get('return_code')}"
+                )
+                print(
+                    f"warning: ka10066 market {market_name} skipped: "
+                    f"return_code={response.get('return_code')}",
+                    file=sys.stderr,
+                )
+                break
+
+            raw_rows = _first(
+                response,
+                "opaf_invsr_trde",
+                "after_close_investor_trade",
+                "output",
+            )
+            if not isinstance(raw_rows, list):
+                market_error = "missing opaf_invsr_trde list"
+                print(
+                    f"warning: ka10066 market {market_name} skipped: "
+                    "missing opaf_invsr_trde list",
+                    file=sys.stderr,
+                )
+                break
+
+            page_count += 1
+            page_rows = [row for row in raw_rows if isinstance(row, dict)]
+            row_count += len(page_rows)
+            for row in page_rows:
+                stock_code = _stock_code(row.get("stk_cd"))
+                raw_value = row.get("frgnr_invsr")
+                converted_value = _foreign_sum_eok(raw_value, Decimal("100"))
+                if stock_code and converted_value is not None:
+                    market_values[stock_code] = converted_value
+                    if len(market_raw_samples) < 5:
+                        market_raw_samples.append(
+                            {
+                                "stock_code": stock_code,
+                                "frgnr_invsr": raw_value,
+                            }
+                        )
+                        market_converted_samples.append(
+                            {
+                                "stock_code": stock_code,
+                                "foreign_investor_net": converted_value,
+                            }
+                        )
+
+            continuation = response_headers.get("cont-yn", "").upper()
+            next_key = response_headers.get("next-key", "")
+            if continuation != "Y" or not next_key:
+                break
+            if next_key in seen_next_keys:
+                market_error = f"repeated next-key: {next_key}"
+                print(
+                    f"warning: ka10066 market {market_name} skipped: "
+                    f"repeated next-key {next_key}",
+                    file=sys.stderr,
+                )
+                break
+            seen_next_keys.add(next_key)
+            if sleep_seconds:
+                time.sleep(sleep_seconds)
+
+        if market_error is None or market_rate_limited:
+            values.update(market_values)
+            stats["market_counts"][market_name] = len(market_values)
+            remaining_sample_count = 5 - len(stats["raw_samples"])
+            if remaining_sample_count > 0:
+                stats["raw_samples"].extend(
+                    market_raw_samples[:remaining_sample_count]
+                )
+                stats["converted_samples"].extend(
+                    market_converted_samples[:remaining_sample_count]
+                )
+        else:
+            stats["errors"].append(
+                {"market": market_name, "error": market_error}
+            )
+
+        stats["market_stats"].append(
+            {
+                "market": market_name,
+                "pages": page_count,
+                "rows": row_count,
+                "count": stats["market_counts"][market_name],
+                "error": market_error,
+                "rate_limited": market_rate_limited,
+            }
+        )
+        if market_rate_limited:
+            time.sleep(max(1.0, sleep_seconds))
+
+    stats["available"] = any(
+        market["error"] is None or market["rate_limited"]
+        for market in stats["market_stats"]
+    )
+    stats["collected_count"] = len(values)
+    return {
+        "values": values,
+        "stats": stats,
+    }
 
 
 def _fetch_market_investor_flow(access_token, market_name, market_type, base_date):
@@ -800,3 +1017,181 @@ def fetch_ohlc(access_token, rows, query_date, sleep_seconds):
         "vwap_samples": vwap_samples,
         "rate_limit": rate_limit,
     }
+
+
+class KiwoomOpenApiRealtimeProvider:
+    """Optional OpenAPI+ lifecycle skeleton without connection or FID parsing."""
+
+    def __init__(self, store=None, logger=None):
+        self.store = store
+        self.logger = logger
+        self._lock = RLock()
+        self._availability_checked = False
+        self._available = False
+        self._backend = None
+        self._running = False
+        self._registered_codes = set()
+        self._last_error = None
+        self._last_received_at = None
+        self._app = None
+        self._control = None
+        self._qt_thread = None
+        self._owns_app = False
+        self._qt_ready = False
+        self._control_created = False
+        self._login_requested = False
+        self._login_state = "not_requested"
+
+    def _check_availability(self):
+        if self._availability_checked:
+            return self._available
+        self._availability_checked = True
+        errors = []
+        try:
+            from PyQt5.QAxContainer import QAxWidget  # noqa: F401
+
+            self._backend = "PyQt5.QAxContainer"
+            self._available = True
+        except Exception as error:
+            errors.append(f"PyQt5.QAxContainer: {error}")
+
+        if not self._available:
+            try:
+                import win32com.client  # noqa: F401
+
+                self._backend = "win32com.client"
+                self._available = True
+            except Exception as error:
+                errors.append(f"win32com.client: {error}")
+
+        self._last_error = None if self._available else "; ".join(errors)
+        return self._available
+
+    def start(self):
+        with self._lock:
+            if self._running:
+                return True
+            if not self._check_availability():
+                self._running = False
+                return False
+
+            try:
+                from PyQt5.QtCore import QCoreApplication, QThread
+                from PyQt5.QtWidgets import QApplication
+                from PyQt5.QAxContainer import QAxWidget
+
+                app = QCoreApplication.instance()
+                if app is None:
+                    app = QApplication([])
+                    self._owns_app = True
+                elif not isinstance(app, QApplication):
+                    raise RuntimeError(
+                        "QAxWidget requires QApplication, but a QCoreApplication "
+                        "instance already exists"
+                    )
+
+                self._app = app
+                self._qt_thread = QThread.currentThread()
+                self._qt_ready = True
+                self._control = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
+                if self._control.isNull():
+                    raise RuntimeError(
+                        "failed to create KHOPENAPI.KHOpenAPICtrl.1 QAx control"
+                    )
+
+                self._control_created = True
+                self._last_error = None
+                self._running = True
+                return True
+            except Exception as error:
+                self._last_error = f"QAxWidget initialization failed: {error}"
+                self._running = False
+                self._control_created = False
+                if self._control is not None:
+                    try:
+                        self._control.clear()
+                    except Exception:
+                        pass
+                self._control = None
+                self._qt_thread = None
+                self._qt_ready = False
+                if self._owns_app and self._app is not None:
+                    try:
+                        self._app.quit()
+                    except Exception:
+                        pass
+                self._app = None
+                self._owns_app = False
+                return False
+
+    def stop(self):
+        with self._lock:
+            stopped = True
+            try:
+                if self._control is not None:
+                    self._control.clear()
+                    self._control.deleteLater()
+                if self._app is not None:
+                    self._app.processEvents()
+                    if self._owns_app:
+                        self._app.quit()
+            except Exception as error:
+                self._last_error = f"QAxWidget cleanup failed: {error}"
+                stopped = False
+            finally:
+                self._control = None
+                self._app = None
+                self._qt_thread = None
+                self._owns_app = False
+                self._qt_ready = False
+                self._control_created = False
+                self._running = False
+            return stopped
+
+    def register_codes(self, codes):
+        if isinstance(codes, str):
+            codes = [codes]
+        normalized_codes = set()
+        for stock_code in codes:
+            code = _stock_code(stock_code)
+            if code is None:
+                raise ValueError(f"invalid stock code: {stock_code!r}")
+            normalized_codes.add(code)
+        with self._lock:
+            self._registered_codes.update(normalized_codes)
+            return len(self._registered_codes)
+
+    def unregister_all(self):
+        with self._lock:
+            self._registered_codes.clear()
+            return True
+
+    def is_available(self):
+        with self._lock:
+            return self._check_availability()
+
+    def status(self):
+        with self._lock:
+            return {
+                "available": self._check_availability(),
+                "running": self._running,
+                "registered_count": len(self._registered_codes),
+                "last_error": self._last_error,
+                "last_received_at": self._last_received_at,
+                "qt_ready": self._qt_ready,
+                "control_created": self._control_created,
+                "login_requested": self._login_requested,
+                "login_state": self._login_state,
+            }
+
+    def _on_receive_real_data(self, *args, **kwargs):
+        return {}
+
+    def _parse_trade_real_data(self, *args, **kwargs):
+        return {}
+
+    def _parse_orderbook_real_data(self, *args, **kwargs):
+        return {}
+
+    def _parse_foreign_line_real_data(self, *args, **kwargs):
+        return {}

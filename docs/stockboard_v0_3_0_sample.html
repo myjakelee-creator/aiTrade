@@ -641,8 +641,11 @@
     || boardColumns.map(column => column.defaultWidth);
   const columnGroupMarkup = `<colgroup>${boardColumns.map((column, index) =>
     `<col style="width:var(--trading-column-${index}-width)">`).join('')}</colgroup>`;
-  const boardHeader = `${columnGroupMarkup}<tr>${boardColumns.map((column, index) =>
+  function buildBoardHeader() {
+    return `${columnGroupMarkup}<tr>${boardColumns.map((column, index) =>
       `<th><span class="column-label">${column.label}</span><span class="column-resizer" data-column-index="${index}" aria-hidden="true"></span></th>`).join('')}</tr>`;
+  }
+  let boardHeader = buildBoardHeader();
   board.innerHTML = `${boardHeader}<tr><td colspan="15">거래 가능 종목 마스터를 불러오는 중입니다.</td></tr>`;
   candidateBoard.innerHTML = boardHeader;
 
@@ -866,13 +869,16 @@
     ].join('\n');
   }
 
-  function foreignSumView(value) {
+  function foreignSumView(value, label = '외합(억)', source = 'foreign_sum') {
+    const description = source === 'foreign_investor_net'
+      ? '장마감 후 종목별 외국인 순매수'
+      : '외국계 창구 순매수합';
     const number = Number(String(value).replace(/,/g, ''));
     if (!Number.isFinite(number)) {
       return {
         display: '-',
         className: '',
-        tooltip: ['외합(억) : -', '외국계 창구 순매수합', '외국인 순매수 실시간 대체값'].join('\n')
+        tooltip: [`${label} : -`, description].join('\n')
       };
     }
     const integer = Math.trunc(number);
@@ -881,7 +887,7 @@
     return {
       display,
       className: integer > 0 ? 'plus' : integer < 0 ? 'minus' : 'foreign-zero',
-      tooltip: [`외합(억) : ${display}`, '외국계 창구 순매수합', '외국인 순매수 실시간 대체값'].join('\n')
+      tooltip: [`${label} : ${display}`, description].join('\n')
     };
   }
 
@@ -925,7 +931,7 @@
   function balanceView(value) {
     if (value === null || value === undefined || value === '') return null;
     const number = Number(value);
-    if (!Number.isFinite(number) || number <= 0) return null;
+    if (!Number.isFinite(number)) return null;
     const clamped = Math.max(0.1, Math.min(10, number));
     const position = (Math.log10(clamped) + 1) / 2;
     const display = number.toFixed(2);
@@ -1190,27 +1196,6 @@
     return '';
   }
 
-  // Temporary sample values for visually checking the balance-ratio UI only.
-  const balanceFallbackValues = [0.2, 0.5, 0.72, 1.0, 1.28, 1.85, 3.0, 5.0];
-  // Temporary sample values for visually checking the 1-minute strength UI only.
-  const minuteStrengthFallbackValues = [50, 80, 100, 120, 150, 185, 220, 280];
-  // Temporary sample values for visually checking the daily strength UI only.
-  const dailyStrengthFallbackValues = [70, 90, 100, 120, 150, 180, 220, 260];
-  // Temporary sample values for visually checking the foreign-broker sum UI only.
-  const foreignSumFallbackValues = [520, 180, -35, 0, 1240, -520, 80, 320];
-  // Temporary sample values for visually checking the program-net UI only.
-  const programFallbackValues = [350, 185, 92, 48, 89, -120, 55, 280];
-  // Temporary sample values for visually checking the big-hand score UI only.
-  const bigHandFallbackValues = [18, 52, 31, 18, 26, -8, 45, 120];
-  // Temporary sample values for candidate momentum UI only; never apply these to TOP100 rows.
-  const candidateMomentumFallbackValues = [
-    'VWAP돌파 + 전고접근',
-    '대금급증 + 큰손유입',
-    '돌파직전 + 강한매수세',
-    '눌림후재상승',
-    '기관유입 + 신고가접근'
-  ];
-
   function isCandidateFlag(value) {
     if (value === true || value === 1) return true;
     return ['1', 'true', 'y', 'yes'].includes(String(value ?? '').trim().toLowerCase());
@@ -1255,53 +1240,42 @@
       .slice(0, 5)
       .map(item => item.row);
   }
-  // Temporary sample values for visually checking TOP100 grade badges only.
-  const gradeFallbackValues = ['A92', 'B74', 'A88', 'C61', 'B81', 'D42', 'A90', 'C55', 'B68', 'A95'];
-  function normalizeRankingRow(row, fallbackIndex) {
+  function normalizeRankingRow(row) {
     const gradeValue = firstValue(row, ['grade', 'grade_score', '등급']);
-    const effectiveGradeValue = gradeValue !== null
-      ? gradeValue
-      : gradeFallbackValues[fallbackIndex % gradeFallbackValues.length];
     const explicitGradeClass = String(firstValue(row, ['grade_class', 'grade_tone']) || '').toLowerCase();
-    const inferredGradeClass = String(effectiveGradeValue).trim().charAt(0).toLowerCase();
-    const gradeClass = ['a', 'b', 'c', 'd'].includes(explicitGradeClass)
-      ? explicitGradeClass
-      : ['a', 'b', 'c', 'd'].includes(inferredGradeClass) ? inferredGradeClass : 'd';
+    const inferredGradeClass = String(gradeValue ?? '').trim().charAt(0).toLowerCase();
+    const gradeClass = gradeValue === null
+      ? ''
+      : ['a', 'b', 'c', 'd'].includes(explicitGradeClass)
+        ? explicitGradeClass
+        : ['a', 'b', 'c', 'd'].includes(inferredGradeClass) ? inferredGradeClass : 'd';
     const changeRate = firstValue(row, ['change_rate', '등락률']);
-    const balanceValue = firstValue(row, ['bid_ask_ratio', 'orderbook_ratio', '잔량비']);
-    const effectiveBalanceValue = balanceValue !== null
-      ? balanceValue
-      : balanceFallbackValues[fallbackIndex % balanceFallbackValues.length];
-    const minuteStrengthValue = firstValue(row, ['strength_1m', '1분강도']);
-    const effectiveMinuteStrengthValue = minuteStrengthValue !== null
-      ? minuteStrengthValue
-      : minuteStrengthFallbackValues[fallbackIndex % minuteStrengthFallbackValues.length];
-    const dailyStrengthValue = firstValue(row, ['strength_day', '당일강도']);
-    const effectiveDailyStrengthValue = dailyStrengthValue !== null
-      ? dailyStrengthValue
-      : dailyStrengthFallbackValues[fallbackIndex % dailyStrengthFallbackValues.length];
-    const foreignValue = firstValue(row, [
-      'foreign_sum',
-      'foreign_broker_sum',
-      'foreign_window_sum',
-      'foreign_net_proxy',
-      'foreign_sum_eok',
-      '외합(억)'
+    const balanceValue = firstValue(row, [
+      'balance_ratio',
+      'order_balance_ratio',
+      'bid_ask_ratio',
+      'orderbook_ratio',
+      '잔량비'
     ]);
-    const effectiveForeignValue = foreignValue !== null
-      ? foreignValue
-      : foreignSumFallbackValues[fallbackIndex % foreignSumFallbackValues.length];
-    const foreign = foreignSumView(effectiveForeignValue);
+    const minuteStrengthValue = firstValue(row, ['strength_1m', 'minute_strength', '1분강도']);
+    const dailyStrengthValue = firstValue(row, ['strength_day', 'daily_strength', '당일강도']);
+    const foreignLabel = firstValue(row, ['foreign_display_label']) || '외합(억)';
+    const foreignSource = firstValue(row, ['foreign_display_source']) || 'foreign_sum';
+    const foreignValue = Object.hasOwn(row, 'foreign_display_value')
+      ? row.foreign_display_value
+      : firstValue(row, [
+          'foreign_sum',
+          'foreign_broker_sum',
+          'foreign_window_sum',
+          'foreign_net_proxy',
+          'foreign_sum_eok',
+          '외합(억)'
+        ]);
+    const foreign = foreignSumView(foreignValue, foreignLabel, foreignSource);
     const programValue = firstValue(row, ['program_net', 'program_sum', 'program_net_eok', '프로(억)']);
-    const effectiveProgramValue = programValue !== null
-      ? programValue
-      : programFallbackValues[fallbackIndex % programFallbackValues.length];
-    const program = signedFlowView(effectiveProgramValue, '프로(억)', '프로그램 순매수 합');
+    const program = signedFlowView(programValue, '프로(억)', '프로그램 순매수 합');
     const bigHandValue = firstValue(row, ['whale_score', 'big_hand', 'big_buy_score', 'big_money_score', '큰손']);
-    const effectiveBigHandValue = bigHandValue !== null
-      ? bigHandValue
-      : bigHandFallbackValues[fallbackIndex % bigHandFallbackValues.length];
-    const bigHand = signedFlowView(effectiveBigHandValue, '큰손', '큰손 순매수 우위');
+    const bigHand = signedFlowView(bigHandValue, '큰손', '큰손 순매수 우위');
     const previousRankValue = firstValue(row, ['prev_rank', '전일순위', '전일']);
     const originalRankValue = firstValue(row, ['original_rank', 'rank']);
     const rankMovement = rankMovementView(previousRankValue, originalRankValue);
@@ -1316,7 +1290,7 @@
       previousRank: rankMovement.display,
       rankMovementClass: rankMovement.className,
       rankTooltip: rankMovement.tooltip,
-      grade: displayValue(effectiveGradeValue),
+      grade: displayValue(gradeValue),
       gradeClass,
       name: displayValue(firstValue(row, ['stock_name', '종목명'])),
       price: formatInteger(firstValue(row, ['price', '현재가'])),
@@ -1324,10 +1298,11 @@
       changeRateNumber: Number(String(changeRate ?? '').replace(/[%+,]/g, '').trim()),
       changeClass: toneClass(firstValue(row, ['change_tone']), changeRate),
       amount: formatInteger(firstValue(row, ['trade_value_eok', '거래대금(억)', '거래대금_억'])),
-      balanceForce: balanceView(effectiveBalanceValue),
-      minuteForce: minuteStrengthView(effectiveMinuteStrengthValue),
-      dailyForce: dailyStrengthView(effectiveDailyStrengthValue),
+      balanceForce: balanceView(balanceValue),
+      minuteForce: minuteStrengthView(minuteStrengthValue),
+      dailyForce: dailyStrengthView(dailyStrengthValue),
       foreign: foreign.display,
+      foreignLabel,
       foreignClass: foreign.className,
       foreignTooltip: foreign.tooltip,
       program: program.display,
@@ -1384,12 +1359,8 @@
     return tableRow;
   }
 
-  function updateCandidateRow(tableRow, row, index) {
+  function updateCandidateRow(tableRow, row) {
     updateBoardRow(tableRow, row);
-    const momentum = row.note && row.note !== '-'
-      ? row.note
-      : candidateMomentumFallbackValues[index % candidateMomentumFallbackValues.length];
-    setCell(tableRow.cells[14], escapeHtml(momentum), 'note');
   }
 
   function renderCandidateBoard(rows) {
@@ -1397,12 +1368,12 @@
     top100State.candidateRows = candidates;
     top100State.candidateRowByCode.clear();
     candidateBoard.innerHTML = boardHeader;
-    candidates.forEach((row, index) => {
+    candidates.forEach(row => {
       const tableRow = document.createElement('tr');
       tableRow.dataset.stockCode = row.code;
       tableRow.dataset.hasOhlc = hasOhlc(row) ? 'true' : 'false';
       for (let cellIndex = 0; cellIndex < 15; cellIndex += 1) tableRow.insertCell();
-      updateCandidateRow(tableRow, row, index);
+      updateCandidateRow(tableRow, row);
       candidateBoard.tBodies[0].appendChild(tableRow);
       top100State.candidateRowByCode.set(row.code, tableRow);
     });
@@ -1456,6 +1427,11 @@
   }
 
   function renderBoard(rows) {
+    const foreignLabel = rows.find(row => row.foreignLabel)?.foreignLabel || '외합(억)';
+    if (boardColumns[11].label !== foreignLabel) {
+      boardColumns[11].label = foreignLabel;
+      boardHeader = buildBoardHeader();
+    }
     rankingRowCount.textContent = `${rows.length}개`;
     updateGradeDistribution(rows);
     top100State.renderedRows = rows;
@@ -1483,13 +1459,10 @@
   }
 
   function applyRankingRows(inputRows) {
-    const normalizedRows = inputRows.map((sourceRow, index) => {
+    const normalizedRows = inputRows.map(sourceRow => {
       if (!sourceRow || typeof sourceRow !== 'object') return null;
       const code = normalizeCode(firstValue(sourceRow, ['stock_code', '종목코드', 'code']));
-      return normalizeRankingRow(
-        { ...sourceRow, stock_code: code },
-        index
-      );
+      return normalizeRankingRow({ ...sourceRow, stock_code: code });
     }).filter(Boolean);
     top100State.diagnostics.normalizedRows = normalizedRows.length;
     top100State.diagnostics.normalizedOhlc = normalizedRows.filter(hasOhlc).length;
