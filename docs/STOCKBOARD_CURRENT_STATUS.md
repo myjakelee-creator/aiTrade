@@ -32,10 +32,10 @@ DONE 25. CommConnect 로그인
 DONE 26. Qt Event Pump
 DONE 27. SetRealReg 등록
 DONE 28. OnReceiveRealData 연결
+DONE 29. GetCommRealData 최소 파싱
 
 ## TODO
 
-TODO 29. GetCommRealData 최소 파싱
 TODO 30. Tick 저장
 TODO 31. 호가 저장
 TODO 32. RealtimeStore update
@@ -79,11 +79,12 @@ TODO 48. 시장체온(Market Temperature)
 ## 2. 현재 미완료
 
 - `/api/realtime_status` 기준 실시간 quote/event 데이터는 아직 수집되지 않았다.
-- `realdata_received_count`는 0이다. 현재 장마감 상태라 0은 허용된다.
-- `GetCommRealData` 상세 FID 파싱은 아직 구현되지 않았다.
+- 프리마켓 실제 검증에서 `realdata_received_count=7`이 확인되었다.
+- `GetCommRealData` 주식체결 최소 FID raw sample 저장은 구현되었다.
 - `RealtimeStore.update_trade()` 연결은 아직 구현되지 않았다.
 - `RealtimeStore.update_orderbook()` 연결은 아직 구현되지 않았다.
 - `RealtimeStore.update_foreign_line()` 연결은 아직 구현되지 않았다.
+- 실제 Kiwoom 프리마켓 수동 테스트에서 `GetCommRealData` raw 값 수신이 확인되었다.
 - 호가잔량 실시간 등록은 아직 구현되지 않았다.
 - 외선 실시간 등록은 아직 구현되지 않았다.
 - Signal, Ranking, Strategy 계산은 아직 구현되지 않았다.
@@ -141,8 +142,12 @@ TODO 48. 시장체온(Market Temperature)
   - `realreg_fids`: `10;12;20;15;228;13;14`
   - `realreg_real_type`: `주식체결`
   - `realreg_screens`: `9000`, `9001`
-  - `realdata_received_count`: 0
-  - `realdata_last_received_at`: null
+  - `realdata_received_count`: 7
+  - `realdata_last_received_at`: 프리마켓 검증 시 값 존재
+  - `realdata_last_code`: `036930`
+  - `realdata_last_real_type`: `주식체결`
+  - `realdata_last_sample`: 존재
+  - `realdata_parse_error`: null
   - `start_requested`: true
   - `start_succeeded`: true
   - `register_requested`: true
@@ -158,9 +163,12 @@ TODO 48. 시장체온(Market Temperature)
 - 등록 화면번호는 `9000`, `9001`이다.
 - 등록 FID는 `10;12;20;15;228;13;14`이다.
 - `SetRealReg` 호출은 Qt pump thread 내부에서 처리된다.
-- `OnReceiveRealData`는 연결되었고 수신 카운트만 기록한다.
-- 현재 장마감 상태라 `realdata_received_count=0`은 허용된다.
-- `GetCommRealData` 호출은 아직 없다.
+- `OnReceiveRealData`는 연결되었고 주식체결 수신 시 `GetCommRealData` 최소 FID를 읽어 raw sample만 기록한다.
+- 프리마켓 실제 검증에서 `realdata_received_count=7`이 확인되었다.
+- 마지막 수신 종목은 `036930`이고 마지막 실시간 타입은 `주식체결`이다.
+- `GetCommRealData` 호출 FID는 `10`, `12`, `20`, `15`, `228`, `13`, `14`이다.
+- 실제 Kiwoom 프리마켓 수신 기준 `realdata_last_sample` 저장을 확인했다.
+- `GetCommRealData` raw 값 실제 수신이 성공했다.
 - RealtimeStore update 연결은 아직 없다.
 
 ## 6. 현재 Row Count
@@ -175,12 +183,11 @@ TODO 48. 시장체온(Market Temperature)
 - realtime orderbook event count: 0
 - realreg code count: 193
 - realreg screen count: 2
-- realdata received count: 0
+- realdata received count: 7
 
 ## 7. 다음 작업
 
-- 장중에 `realdata_received_count`가 증가하는지 확인한다.
-- `OnReceiveRealData`에서 주식체결 FID 값을 읽는 STEP을 별도로 진행한다.
+- TODO 30 Tick 저장 STEP을 진행한다.
 - `GetCommRealData` 파싱 결과를 `RealtimeStore.update_trade()`에 연결하는 STEP을 별도로 진행한다.
 - 호가잔량 실시간 등록과 `RealtimeStore.update_orderbook()` 연결은 별도 STEP으로 진행한다.
 - `/api/realtime`에 실시간 값이 들어오는지 검증한다.
@@ -194,7 +201,7 @@ TODO 48. 시장체온(Market Temperature)
 - 승인 없이 CSV를 수정하지 않는다.
 - 승인 없이 이미지 파일을 수정하지 않는다.
 - 승인 없이 문서 파일을 추가하거나 수정하지 않는다.
-- `GetCommRealData` FID 파싱은 별도 승인 전 추가하지 않는다.
+- `GetCommRealData` 추가 FID / 상세 파싱은 별도 승인 전 추가하지 않는다.
 - RealtimeStore update 연결은 별도 승인 전 추가하지 않는다.
 - Signal, Ranking, Strategy 계산은 별도 승인 전 추가하지 않는다.
 - sample, demo, mock, fallback 값을 실제 화면 표시값으로 주입하지 않는다.

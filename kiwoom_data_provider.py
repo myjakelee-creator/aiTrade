@@ -1027,6 +1027,15 @@ class KiwoomOpenApiRealtimeProvider:
     _REALREG_SCREEN_START = 9000
     _REALREG_FIDS = "10;12;20;15;228;13;14"
     _REALREG_REAL_TYPE = "주식체결"
+    _TRADE_REALDATA_FIDS = (
+        (10, "price_raw"),
+        (12, "change_rate_raw"),
+        (20, "trade_time_raw"),
+        (15, "trade_qty_raw"),
+        (228, "execution_strength_raw"),
+        (13, "cumulative_volume_raw"),
+        (14, "cumulative_value_raw"),
+    )
 
     def __init__(self, store=None, logger=None):
         self.store = store
@@ -1066,6 +1075,10 @@ class KiwoomOpenApiRealtimeProvider:
         self._realreg_screens = []
         self._realdata_received_count = 0
         self._realdata_last_received_at = None
+        self._realdata_last_code = None
+        self._realdata_last_real_type = None
+        self._realdata_last_sample = None
+        self._realdata_parse_error = None
         self._unregister_requested = False
         self._unregister_succeeded = False
         self._unregister_error = None
@@ -1440,6 +1453,10 @@ class KiwoomOpenApiRealtimeProvider:
                 "realreg_screens": list(self._realreg_screens),
                 "realdata_received_count": self._realdata_received_count,
                 "realdata_last_received_at": self._realdata_last_received_at,
+                "realdata_last_code": self._realdata_last_code,
+                "realdata_last_real_type": self._realdata_last_real_type,
+                "realdata_last_sample": self._realdata_last_sample,
+                "realdata_parse_error": self._realdata_parse_error,
                 "unregister_requested": self._unregister_requested,
                 "unregister_succeeded": self._unregister_succeeded,
                 "unregister_error": self._unregister_error,
@@ -1447,14 +1464,43 @@ class KiwoomOpenApiRealtimeProvider:
 
     def _on_receive_real_data(self, *args, **kwargs):
         received_at = datetime.now().isoformat(timespec="seconds")
+        stock_code = args[0] if len(args) > 0 else kwargs.get("stock_code")
+        real_type = args[1] if len(args) > 1 else kwargs.get("real_type")
+        sample = None
+        parse_error = None
+        if real_type == self._REALREG_REAL_TYPE:
+            try:
+                sample = self._parse_trade_real_data(stock_code, real_type)
+            except Exception as error:
+                parse_error = f"{type(error).__name__}: {error}"
         with self._lock:
             self._realdata_received_count += 1
             self._realdata_last_received_at = received_at
+            self._realdata_last_code = _stock_code(stock_code)
+            self._realdata_last_real_type = real_type
+            if sample is not None:
+                self._realdata_last_sample = sample
+            self._realdata_parse_error = parse_error
             self._last_received_at = received_at
         return {}
 
-    def _parse_trade_real_data(self, *args, **kwargs):
-        return {}
+    def _parse_trade_real_data(self, stock_code, real_type):
+        with self._lock:
+            control = self._control
+        if control is None:
+            raise RuntimeError("QAx control is not available")
+
+        sample = {
+            "stock_code": _stock_code(stock_code),
+            "real_type": real_type,
+        }
+        for fid, key in self._TRADE_REALDATA_FIDS:
+            sample[key] = control.dynamicCall(
+                "GetCommRealData(QString, int)",
+                stock_code,
+                fid,
+            )
+        return sample
 
     def _parse_orderbook_real_data(self, *args, **kwargs):
         return {}
