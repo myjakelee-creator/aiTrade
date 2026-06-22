@@ -105,7 +105,7 @@
 </head>
 <body>
 <div class="window">
-  <div class="title">▣ StockBoard v0.3.6 Prev Close Proportional <span class="data-diagnostics" id="data-diagnostics">apiRows 0 · apiOhlc 0 · normalizedRows 0 · normalizedOhlc 0 · renderedOhlc 0</span></div>
+  <div class="title">▣ StockBoard v0.3.6 Prev Close Proportional <span class="data-diagnostics" id="data-diagnostics">apiRows 0 · apiOhlc 0 · normalizedRows 0 · normalizedOhlc 0 · renderOhlc 0 · domOhlc 0</span></div>
 
   <div class="topbar">
     <div id="current-date-time">-</div>
@@ -779,6 +779,8 @@
       apiOhlc: 0,
       normalizedRows: 0,
       normalizedOhlc: 0,
+      renderOhlc: 0,
+      domOhlc: 0,
       renderedOhlc: 0
     }
   };
@@ -799,7 +801,8 @@
       `apiOhlc ${diagnostics.apiOhlc}`,
       `normalizedRows ${diagnostics.normalizedRows}`,
       `normalizedOhlc ${diagnostics.normalizedOhlc}`,
-      `renderedOhlc ${diagnostics.renderedOhlc}`
+      `renderOhlc ${diagnostics.renderOhlc}`,
+      `domOhlc ${diagnostics.domOhlc}`
     ].join(' · ');
   }
 
@@ -1115,6 +1118,10 @@
     </div>`;
   }
 
+  function rowOhlcMarkup(row) {
+    return hasOhlc(row) ? ohlcMarkup(candleView(row.ohlc)) : '-';
+  }
+
   function metricMarkup(label, metric) {
     if (!metric) return '-';
     return `<div class="metric" title="${escapeHtml(label)} ${escapeHtml(metric.value)}" style="--bar-width:${metric.barWidth}%;--bar-color:${metric.color}">
@@ -1348,7 +1355,7 @@
 
   function updateBoardRow(tableRow, row) {
     const grade = row.grade === '-' ? '-' : `<span class="grade ${row.gradeClass}">${escapeHtml(row.grade)}</span>`;
-    const candle = ohlcMarkup(candleView(row.ohlc));
+    const candle = rowOhlcMarkup(row);
     const cells = tableRow.cells;
     setCell(cells[0], escapeHtml(row.rank), 'rank-cell');
     setCell(cells[1], escapeHtml(row.previousRank), `rank-cell ${row.rankMovementClass}`.trim(), row.rankTooltip);
@@ -1403,17 +1410,18 @@
   function updateCandidateCandleCells() {
     top100State.candidateRows.forEach(row => {
       const tableRow = top100State.candidateRowByCode.get(row.code);
-      if (tableRow) setCell(tableRow.cells[7], ohlcMarkup(candleView(row.ohlc)));
+      if (tableRow) setCell(tableRow.cells[7], rowOhlcMarkup(row));
     });
   }
 
   function updateVisibleCandleCells() {
     top100State.renderedRows.forEach(row => {
       const tableRow = top100State.rowByCode.get(row.code);
-      if (tableRow) setCell(tableRow.cells[7], ohlcMarkup(candleView(row.ohlc)));
+      if (tableRow) setCell(tableRow.cells[7], rowOhlcMarkup(row));
     });
     updateCandidateCandleCells();
-    top100State.diagnostics.renderedOhlc = board.querySelectorAll('.ohlc-chart').length;
+    top100State.diagnostics.domOhlc = board.querySelectorAll('.ohlc-chart').length;
+    top100State.diagnostics.renderedOhlc = top100State.diagnostics.domOhlc;
     updateDataDiagnostics();
   }
 
@@ -1449,10 +1457,12 @@
   function renderBoard(rows) {
     updateGradeDistribution(rows);
     top100State.renderedRows = rows;
+    top100State.diagnostics.renderOhlc = rows.filter(hasOhlc).length;
     top100State.candleDomain = candleDomain(rows);
     renderCandidateBoard(rows);
     if (!rows.length) {
       showBoardMessage('표시할 거래대금 순위 종목이 없습니다.');
+      top100State.diagnostics.domOhlc = 0;
       top100State.diagnostics.renderedOhlc = 0;
       updateDataDiagnostics();
       return;
@@ -1465,7 +1475,8 @@
       board.tBodies[0].appendChild(tableRow);
       top100State.rowByCode.set(row.code, tableRow);
     });
-    top100State.diagnostics.renderedOhlc = board.querySelectorAll('.ohlc-chart').length;
+    top100State.diagnostics.domOhlc = board.querySelectorAll('.ohlc-chart').length;
+    top100State.diagnostics.renderedOhlc = top100State.diagnostics.domOhlc;
     updateDataDiagnostics();
   }
 
