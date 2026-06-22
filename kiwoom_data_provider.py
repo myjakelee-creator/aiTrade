@@ -3,9 +3,10 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock, Thread
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -1041,6 +1042,13 @@ class KiwoomOpenApiRealtimeProvider:
         self._control_created = False
         self._login_requested = False
         self._login_state = "not_requested"
+        self._login_error_code = None
+        self._login_completed_at = None
+        self._qt_pump_thread = None
+        self._qt_pump_stop_event = None
+        self._qt_ready_event = None
+        self._qt_pump_running = False
+        self._qt_pump_last_at = None
 
     def _check_availability(self):
         if self._availability_checked:
@@ -1074,71 +1082,140 @@ class KiwoomOpenApiRealtimeProvider:
             if not self._check_availability():
                 self._running = False
                 return False
+            self._qt_pump_stop_event = Event()
+            self._qt_ready_event = Event()
+            self._qt_pump_thread = Thread(
+                target=self._pump_qt_events,
+                name="StockBoardQtEventPump",
+                daemon=True,
+            )
+            ready_event = self._qt_ready_event
+            self._qt_pump_thread.start()
 
-            try:
-                from PyQt5.QtCore import QCoreApplication, QThread
-                from PyQt5.QtWidgets import QApplication
-                from PyQt5.QAxContainer import QAxWidget
-
-                app = QCoreApplication.instance()
-                if app is None:
-                    app = QApplication([])
-                    self._owns_app = True
-                elif not isinstance(app, QApplication):
-                    raise RuntimeError(
-                        "QAxWidget requires QApplication, but a QCoreApplication "
-                        "instance already exists"
-                    )
-
-                self._app = app
-                self._qt_thread = QThread.currentThread()
-                self._qt_ready = True
-                self._control = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
-                if self._control.isNull():
-                    raise RuntimeError(
-                        "failed to create KHOPENAPI.KHOpenAPICtrl.1 QAx control"
-                    )
-
-                self._control_created = True
-                self._last_error = None
-                self._running = True
-                return True
-            except Exception as error:
-                self._last_error = f"QAxWidget initialization failed: {error}"
+        if not ready_event.wait(timeout=10.0):
+            with self._lock:
+                self._last_error = "QAxWidget initialization timed out"
                 self._running = False
-                self._control_created = False
-                if self._control is not None:
-                    try:
-                        self._control.clear()
-                    except Exception:
-                        pass
-                self._control = None
-                self._qt_thread = None
-                self._qt_ready = False
-                if self._owns_app and self._app is not None:
-                    try:
-                        self._app.quit()
-                    except Exception:
-                        pass
-                self._app = None
-                self._owns_app = False
-                return False
+            self._stop_qt_pump()
+            return False
+
+        with self._lock:
+            return self._running
 
     def stop(self):
+        return self._stop_qt_pump()
+
+    def _stop_qt_pump(self):
         with self._lock:
-            stopped = True
+            stop_event = self._qt_pump_stop_event
+            pump_thread = self._qt_pump_thread
+        if stop_event is not None:
+            stop_event.set()
+        if pump_thread is not None and pump_thread.is_alive():
+            pump_thread.join(timeout=2.0)
+        stopped = pump_thread is None or not pump_thread.is_alive()
+        with self._lock:
+            if not stopped:
+                self._last_error = "Qt event pump did not stop within timeout"
+            self._qt_pump_running = False
+            if stopped:
+                self._qt_pump_thread = None
+                self._qt_pump_stop_event = None
+                self._qt_ready_event = None
+            self._running = False
+        return stopped
+
+    def _pump_qt_events(self):
+        app = None
+        control = None
+        owns_app = False
+        try:
+            from PyQt5.QtCore import QCoreApplication, QThread
+            from PyQt5.QtWidgets import QApplication
+            from PyQt5.QAxContainer import QAxWidget
+
+            app = QCoreApplication.instance()
+            if app is None:
+                app = QApplication([])
+                owns_app = True
+            elif not isinstance(app, QApplication):
+                raise RuntimeError(
+                    "QAxWidget requires QApplication, but a QCoreApplication "
+                    "instance already exists"
+                )
+
+            with self._lock:
+                self._app = app
+                self._qt_thread = QThread.currentThread()
+                self._owns_app = owns_app
+                self._qt_ready = True
+                self._qt_pump_running = True
+
+            control = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
+            if control.isNull():
+                raise RuntimeError(
+                    "failed to create KHOPENAPI.KHOpenAPICtrl.1 QAx control"
+                )
+            control.OnEventConnect.connect(self._on_event_connect)
+
+            with self._lock:
+                self._control = control
+                self._control_created = True
+                self._running = True
+
+            login_request_succeeded = self._request_login()
+            if login_request_succeeded:
+                with self._lock:
+                    self._last_error = None
+
+            with self._lock:
+                ready_event = self._qt_ready_event
+            if ready_event is not None:
+                ready_event.set()
+
+            while True:
+                with self._lock:
+                    app = self._app
+                    stop_event = self._qt_pump_stop_event
+                if app is None or stop_event is None or stop_event.is_set():
+                    break
+                try:
+                    app.processEvents()
+                    pump_time = datetime.now().isoformat(timespec="seconds")
+                    with self._lock:
+                        self._qt_pump_running = True
+                        self._qt_pump_last_at = pump_time
+                except Exception as error:
+                    with self._lock:
+                        self._last_error = f"Qt event pump failed: {error}"
+                        self._qt_pump_running = False
+                    break
+                time.sleep(0.02)
+        except Exception as error:
+            with self._lock:
+                self._last_error = f"QAxWidget initialization failed: {error}"
+                self._running = False
+                self._qt_ready = False
+                self._control_created = False
+                ready_event = self._qt_ready_event
+            if ready_event is not None:
+                ready_event.set()
+        finally:
+            cleanup_error = None
             try:
-                if self._control is not None:
-                    self._control.clear()
-                    self._control.deleteLater()
-                if self._app is not None:
-                    self._app.processEvents()
-                    if self._owns_app:
-                        self._app.quit()
+                if control is not None:
+                    control.clear()
+                    control.deleteLater()
+                if app is not None:
+                    app.processEvents()
+                    if owns_app:
+                        app.quit()
             except Exception as error:
-                self._last_error = f"QAxWidget cleanup failed: {error}"
-                stopped = False
-            finally:
+                cleanup_error = error
+            with self._lock:
+                if cleanup_error is not None:
+                    self._last_error = f"QAxWidget cleanup failed: {cleanup_error}"
+                self._qt_pump_running = False
                 self._control = None
                 self._app = None
                 self._qt_thread = None
@@ -1146,7 +1223,33 @@ class KiwoomOpenApiRealtimeProvider:
                 self._qt_ready = False
                 self._control_created = False
                 self._running = False
-            return stopped
+
+    def _request_login(self):
+        if self._login_requested:
+            return True
+        self._login_requested = True
+        self._login_state = "requested"
+        self._login_error_code = None
+        self._login_completed_at = None
+        result = self._control.dynamicCall("CommConnect()")
+        if result not in (None, 0, "0"):
+            self._login_state = "failed"
+            self._login_error_code = result
+            self._login_completed_at = datetime.now().isoformat(timespec="seconds")
+            self._last_error = f"CommConnect returned {result!r}"
+            return False
+        return True
+
+    def _on_event_connect(self, err_code):
+        with self._lock:
+            self._login_error_code = err_code
+            self._login_completed_at = datetime.now().isoformat(timespec="seconds")
+            if err_code == 0:
+                self._login_state = "connected"
+                self._last_error = None
+            else:
+                self._login_state = "failed"
+                self._last_error = f"OnEventConnect failed: {err_code}"
 
     def register_codes(self, codes):
         if isinstance(codes, str):
@@ -1182,6 +1285,10 @@ class KiwoomOpenApiRealtimeProvider:
                 "control_created": self._control_created,
                 "login_requested": self._login_requested,
                 "login_state": self._login_state,
+                "login_error_code": self._login_error_code,
+                "login_completed_at": self._login_completed_at,
+                "qt_pump_running": self._qt_pump_running,
+                "qt_pump_last_at": self._qt_pump_last_at,
             }
 
     def _on_receive_real_data(self, *args, **kwargs):
