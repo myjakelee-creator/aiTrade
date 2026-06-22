@@ -1023,6 +1023,11 @@ def fetch_ohlc(access_token, rows, query_date, sleep_seconds):
 class KiwoomOpenApiRealtimeProvider:
     """Optional OpenAPI+ lifecycle skeleton without connection or FID parsing."""
 
+    _REALREG_BATCH_SIZE = 100
+    _REALREG_SCREEN_START = 9000
+    _REALREG_FIDS = "10;12;20;15;228;13;14"
+    _REALREG_REAL_TYPE = "주식체결"
+
     def __init__(self, store=None, logger=None):
         self.store = store
         self.logger = logger
@@ -1049,6 +1054,21 @@ class KiwoomOpenApiRealtimeProvider:
         self._qt_ready_event = None
         self._qt_pump_running = False
         self._qt_pump_last_at = None
+        self._pending_register_codes = None
+        self._pending_unregister = False
+        self._realreg_requested = False
+        self._realreg_succeeded = False
+        self._realreg_error = None
+        self._realreg_screen_count = 0
+        self._realreg_code_count = 0
+        self._realreg_fids = self._REALREG_FIDS
+        self._realreg_real_type = self._REALREG_REAL_TYPE
+        self._realreg_screens = []
+        self._realdata_received_count = 0
+        self._realdata_last_received_at = None
+        self._unregister_requested = False
+        self._unregister_succeeded = False
+        self._unregister_error = None
 
     def _check_availability(self):
         if self._availability_checked:
@@ -1157,6 +1177,7 @@ class KiwoomOpenApiRealtimeProvider:
                     "failed to create KHOPENAPI.KHOpenAPICtrl.1 QAx control"
                 )
             control.OnEventConnect.connect(self._on_event_connect)
+            control.OnReceiveRealData.connect(self._on_receive_real_data)
 
             with self._lock:
                 self._control = control
@@ -1181,6 +1202,7 @@ class KiwoomOpenApiRealtimeProvider:
                     break
                 try:
                     app.processEvents()
+                    self._process_pending_realtime_requests()
                     pump_time = datetime.now().isoformat(timespec="seconds")
                     with self._lock:
                         self._qt_pump_running = True
@@ -1251,22 +1273,141 @@ class KiwoomOpenApiRealtimeProvider:
                 self._login_state = "failed"
                 self._last_error = f"OnEventConnect failed: {err_code}"
 
+    def _registration_batches(self, codes):
+        for index in range(0, len(codes), self._REALREG_BATCH_SIZE):
+            screen = str(self._REALREG_SCREEN_START + index // self._REALREG_BATCH_SIZE)
+            yield screen, codes[index : index + self._REALREG_BATCH_SIZE]
+
+    def _is_success_result(self, result):
+        return result in (None, 0, "0")
+
+    def _process_pending_realtime_requests(self):
+        self._process_pending_unregister()
+        self._process_pending_register()
+
+    def _process_pending_unregister(self):
+        with self._lock:
+            if not self._pending_unregister:
+                return
+            control = self._control
+            screens = list(self._realreg_screens)
+            self._pending_unregister = False
+
+        error_message = None
+        if control is None:
+            error_message = "QAx control is not available"
+        else:
+            try:
+                for screen in screens:
+                    control.dynamicCall("DisconnectRealData(QString)", screen)
+            except Exception as error:
+                error_message = str(error)
+
+        with self._lock:
+            if error_message is None:
+                self._registered_codes.clear()
+                self._realreg_succeeded = False
+                self._realreg_screen_count = 0
+                self._realreg_code_count = 0
+                self._realreg_screens = []
+                self._unregister_succeeded = True
+                self._unregister_error = None
+            else:
+                self._unregister_succeeded = False
+                self._unregister_error = error_message
+                self._last_error = f"DisconnectRealData failed: {error_message}"
+
+    def _process_pending_register(self):
+        with self._lock:
+            pending_codes = self._pending_register_codes
+            control = self._control
+            login_state = self._login_state
+        if not pending_codes:
+            return
+        if login_state == "requested":
+            return
+
+        with self._lock:
+            self._pending_register_codes = None
+
+        if control is None:
+            self._mark_realreg_failed("QAx control is not available")
+            return
+        if login_state != "connected":
+            self._mark_realreg_failed(f"login_state={login_state}")
+            return
+
+        codes = list(pending_codes)
+        screens = []
+        try:
+            for screen, batch in self._registration_batches(codes):
+                screens.append(screen)
+                result = control.dynamicCall(
+                    "SetRealReg(QString, QString, QString, QString)",
+                    screen,
+                    ";".join(batch),
+                    self._REALREG_FIDS,
+                    "0",
+                )
+                if not self._is_success_result(result):
+                    raise RuntimeError(
+                        f"SetRealReg screen {screen} returned {result!r}"
+                    )
+        except Exception as error:
+            self._mark_realreg_failed(str(error))
+            return
+
+        with self._lock:
+            self._registered_codes = set(codes)
+            self._realreg_succeeded = True
+            self._realreg_error = None
+            self._realreg_screen_count = len(screens)
+            self._realreg_code_count = len(codes)
+            self._realreg_fids = self._REALREG_FIDS
+            self._realreg_real_type = self._REALREG_REAL_TYPE
+            self._realreg_screens = screens
+
+    def _mark_realreg_failed(self, error_message):
+        with self._lock:
+            self._realreg_succeeded = False
+            self._realreg_error = error_message
+            self._last_error = f"SetRealReg failed: {error_message}"
+
     def register_codes(self, codes):
         if isinstance(codes, str):
             codes = [codes]
-        normalized_codes = set()
+        normalized_codes = []
+        seen_codes = set()
         for stock_code in codes:
             code = _stock_code(stock_code)
             if code is None:
                 raise ValueError(f"invalid stock code: {stock_code!r}")
-            normalized_codes.add(code)
+            if code not in seen_codes:
+                normalized_codes.append(code)
+                seen_codes.add(code)
+        screens = [
+            screen
+            for screen, _ in self._registration_batches(normalized_codes)
+        ]
         with self._lock:
-            self._registered_codes.update(normalized_codes)
-            return len(self._registered_codes)
+            self._registered_codes = set(normalized_codes)
+            self._pending_register_codes = tuple(normalized_codes)
+            self._realreg_requested = True
+            self._realreg_succeeded = False
+            self._realreg_error = None
+            self._realreg_screen_count = len(screens)
+            self._realreg_code_count = len(normalized_codes)
+            self._realreg_fids = self._REALREG_FIDS
+            self._realreg_real_type = self._REALREG_REAL_TYPE
+            self._realreg_screens = screens
+            return len(normalized_codes)
 
     def unregister_all(self):
         with self._lock:
-            self._registered_codes.clear()
+            self._pending_unregister = True
+            self._unregister_requested = True
+            self._unregister_succeeded = False
+            self._unregister_error = None
             return True
 
     def is_available(self):
@@ -1289,9 +1430,27 @@ class KiwoomOpenApiRealtimeProvider:
                 "login_completed_at": self._login_completed_at,
                 "qt_pump_running": self._qt_pump_running,
                 "qt_pump_last_at": self._qt_pump_last_at,
+                "realreg_requested": self._realreg_requested,
+                "realreg_succeeded": self._realreg_succeeded,
+                "realreg_error": self._realreg_error,
+                "realreg_screen_count": self._realreg_screen_count,
+                "realreg_code_count": self._realreg_code_count,
+                "realreg_fids": self._realreg_fids,
+                "realreg_real_type": self._realreg_real_type,
+                "realreg_screens": list(self._realreg_screens),
+                "realdata_received_count": self._realdata_received_count,
+                "realdata_last_received_at": self._realdata_last_received_at,
+                "unregister_requested": self._unregister_requested,
+                "unregister_succeeded": self._unregister_succeeded,
+                "unregister_error": self._unregister_error,
             }
 
     def _on_receive_real_data(self, *args, **kwargs):
+        received_at = datetime.now().isoformat(timespec="seconds")
+        with self._lock:
+            self._realdata_received_count += 1
+            self._realdata_last_received_at = received_at
+            self._last_received_at = received_at
         return {}
 
     def _parse_trade_real_data(self, *args, **kwargs):

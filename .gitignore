@@ -1,3 +1,5 @@
 .env
 __pycache__/
 *.pyc
+
+_zz_
