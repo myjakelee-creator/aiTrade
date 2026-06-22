@@ -3,6 +3,7 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -299,6 +300,194 @@ def fetch_program_net(access_token, query_date):
         "errors": errors,
         "rate_limit": rate_limit,
     }
+
+
+def _foreign_sum_eok_divisor():
+    divisor_text = os.getenv("KIWOOM_FOREIGN_SUM_EOK_DIVISOR", "100")
+    try:
+        divisor = Decimal(divisor_text)
+    except InvalidOperation as error:
+        raise RuntimeError(
+            "KIWOOM_FOREIGN_SUM_EOK_DIVISOR must be a positive number"
+        ) from error
+    if not divisor.is_finite() or divisor <= 0:
+        raise RuntimeError(
+            "KIWOOM_FOREIGN_SUM_EOK_DIVISOR must be a positive number"
+        )
+    return divisor
+
+
+def _foreign_sum_eok(value, divisor):
+    if value in (None, ""):
+        return None
+    text = str(value).strip().replace(",", "")
+    if text.startswith("--"):
+        text = "-" + text[2:]
+    elif text.startswith("+"):
+        text = text[1:]
+    try:
+        number = Decimal(text)
+    except InvalidOperation:
+        return None
+    if not number.is_finite():
+        return None
+    eok = number / divisor
+    return float(eok)
+
+
+def fetch_foreign_sum(access_token, query_date):
+    """Fetch ka10037 and map normalized stock codes to foreign net buy eok."""
+    enabled = os.getenv("KIWOOM_FOREIGN_SUM_ENABLED", "1").strip() == "1"
+    divisor = _foreign_sum_eok_divisor()
+    foreign_sum_by_code = {}
+    stats = {
+        "enabled": enabled,
+        "query_date": query_date,
+        "market_counts": {"KOSPI": 0, "KOSDAQ": 0},
+        "joined_count": 0,
+        "errors": [],
+        "rate_limit": None,
+        "raw_samples": [],
+        "converted_samples": [],
+        "divisor": divisor,
+    }
+    if not enabled:
+        return {"values": foreign_sum_by_code, "stats": stats}
+
+    for market_name, market_type in (("KOSPI", "001"), ("KOSDAQ", "101")):
+        continuation = "N"
+        next_key = ""
+        seen_next_keys = set()
+        page_count = 0
+        market_values = {}
+        market_raw_samples = []
+        market_converted_samples = []
+        market_error = None
+
+        while True:
+            try:
+                response, response_headers = _post_json(
+                    "/api/dostk/rkinfo",
+                    {
+                        "mrkt_tp": market_type,
+                        "dt": "0",
+                        "trde_tp": "0",
+                        "sort_tp": "0",
+                        "stex_tp": "3",
+                    },
+                    {
+                        "Authorization": f"Bearer {access_token}",
+                        "api-id": "ka10037",
+                        "cont-yn": continuation,
+                        "next-key": next_key,
+                    },
+                    return_headers=True,
+                )
+            except KiwoomAPIError as error:
+                market_error = f"HTTP {error.status_code}: {error.detail}"
+                if error.status_code == 429 and stats["rate_limit"] is None:
+                    stats["rate_limit"] = {
+                        "market": market_name,
+                        "page": page_count + 1,
+                    }
+                    print(
+                        f"warning: ka10037 HTTP 429 at market {market_name}, "
+                        f"page {page_count + 1}; skipping market",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"warning: ka10037 market {market_name} skipped: "
+                        f"HTTP {error.status_code}",
+                        file=sys.stderr,
+                    )
+                break
+            except (RuntimeError, ValueError) as error:
+                market_error = f"{type(error).__name__}: {error}"
+                print(
+                    f"warning: ka10037 market {market_name} skipped: {error}",
+                    file=sys.stderr,
+                )
+                break
+
+            if response.get("return_code") not in (None, 0, "0"):
+                market_error = f"API failed: return_code={response.get('return_code')}"
+                print(
+                    f"warning: ka10037 market {market_name} skipped: "
+                    f"return_code={response.get('return_code')}",
+                    file=sys.stderr,
+                )
+                break
+
+            raw_rows = _first(
+                response,
+                "frgn_wicket_trde_upper",
+                "foreign_broker_trade_top",
+                "output",
+            )
+            if not isinstance(raw_rows, list):
+                market_error = "missing frgn_wicket_trde_upper list"
+                print(
+                    f"warning: ka10037 market {market_name} skipped: "
+                    "missing frgn_wicket_trde_upper list",
+                    file=sys.stderr,
+                )
+                break
+
+            page_count += 1
+            for row in raw_rows:
+                if not isinstance(row, dict):
+                    continue
+                stock_code = _stock_code(row.get("stk_cd"))
+                raw_value = row.get("netprps_prica")
+                converted_value = _foreign_sum_eok(raw_value, divisor)
+                if stock_code and converted_value is not None:
+                    market_values[stock_code] = converted_value
+                    if len(market_raw_samples) < 5:
+                        market_raw_samples.append(
+                            {
+                                "stock_code": stock_code,
+                                "netprps_prica": raw_value,
+                            }
+                        )
+                        market_converted_samples.append(
+                            {
+                                "stock_code": stock_code,
+                                "foreign_sum": converted_value,
+                            }
+                        )
+
+            continuation = response_headers.get("cont-yn", "").upper()
+            next_key = response_headers.get("next-key", "")
+            if continuation != "Y" or not next_key:
+                break
+            if next_key in seen_next_keys:
+                market_error = f"repeated next-key: {next_key}"
+                print(
+                    f"warning: ka10037 market {market_name} skipped: "
+                    f"repeated next-key {next_key}",
+                    file=sys.stderr,
+                )
+                break
+            seen_next_keys.add(next_key)
+
+        if market_error is None:
+            foreign_sum_by_code.update(market_values)
+            stats["market_counts"][market_name] = len(market_values)
+            remaining_sample_count = 5 - len(stats["raw_samples"])
+            if remaining_sample_count > 0:
+                stats["raw_samples"].extend(
+                    market_raw_samples[:remaining_sample_count]
+                )
+                stats["converted_samples"].extend(
+                    market_converted_samples[:remaining_sample_count]
+                )
+        else:
+            stats["errors"].append(
+                {"market": market_name, "error": market_error}
+            )
+
+    return {"values": foreign_sum_by_code, "stats": stats}
 
 
 def _fetch_market_investor_flow(access_token, market_name, market_type, base_date):

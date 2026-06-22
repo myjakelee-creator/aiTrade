@@ -8,7 +8,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from kiwoom_data_provider import (
-    fetch_market_supply, fetch_ohlc, fetch_program_net,
+    fetch_foreign_sum, fetch_market_supply, fetch_ohlc, fetch_program_net,
     fetch_trade_value_top100, issue_access_token,
 )
 from stockboard_engine import (
@@ -213,9 +213,26 @@ def main():
                 f"warning: ka90004 program net disabled after error: {error}",
                 file=sys.stderr,
             )
+    foreign_sum_data = None
+    foreign_sum_by_code = {}
+    try:
+        foreign_sum_data = fetch_foreign_sum(access_token, query_date)
+        foreign_sum_by_code = foreign_sum_data["values"]
+    except (RuntimeError, ValueError) as error:
+        print(
+            f"warning: ka10037 foreign sum disabled after error: {error}",
+            file=sys.stderr,
+        )
     filtered_rows = prepare_display_rows(
         top100_rows, tradable_codes, program_net_by_code
     )
+    for row in filtered_rows:
+        row["foreign_sum"] = foreign_sum_by_code.get(row["stock_code"])
+    foreign_sum_joined_count = sum(
+        row.get("foreign_sum") is not None for row in filtered_rows
+    )
+    if foreign_sum_data is not None:
+        foreign_sum_data["stats"]["joined_count"] = foreign_sum_joined_count
     program_net_joined_count = sum(
         row.get("program_net") is not None for row in filtered_rows
     )
@@ -290,6 +307,42 @@ def main():
     print(
         "ka90004 HTTP 429 position: "
         f"{program_data['rate_limit'] if program_data is not None else None}"
+    )
+    foreign_sum_stats = (
+        foreign_sum_data["stats"]
+        if foreign_sum_data is not None
+        else {
+            "enabled": os.getenv("KIWOOM_FOREIGN_SUM_ENABLED", "1").strip() == "1",
+            "query_date": query_date,
+            "market_counts": {"KOSPI": 0, "KOSDAQ": 0},
+            "joined_count": foreign_sum_joined_count,
+            "raw_samples": [],
+            "converted_samples": [],
+            "rate_limit": None,
+        }
+    )
+    print(
+        "ka10037 enabled: "
+        f"{str(foreign_sum_stats['enabled']).lower()}"
+    )
+    print(f"ka10037 query date: {foreign_sum_stats['query_date']}")
+    print(
+        "ka10037 market KOSPI count: "
+        f"{foreign_sum_stats['market_counts']['KOSPI']}"
+    )
+    print(
+        "ka10037 market KOSDAQ count: "
+        f"{foreign_sum_stats['market_counts']['KOSDAQ']}"
+    )
+    print(f"ka10037 joined count: {foreign_sum_stats['joined_count']}")
+    print(f"ka10037 raw samples: {foreign_sum_stats['raw_samples']}")
+    print(
+        "ka10037 converted samples: "
+        f"{foreign_sum_stats['converted_samples']}"
+    )
+    print(
+        "ka10037 HTTP 429 position: "
+        f"{foreign_sum_stats['rate_limit']}"
     )
     print(f"ka10086 query date: {query_date}")
     print("ka10086 OHLC limit: all")
