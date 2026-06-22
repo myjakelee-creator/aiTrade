@@ -137,10 +137,10 @@
     <tr><td class="blue" id="market-kosdaq-name">-</td><td id="market-kosdaq-index">-</td><td id="market-kosdaq-change">-</td><td><span class="plus" id="market-kosdaq-advance">-</span> / <span class="blue" id="market-kosdaq-decline">-</span></td><td id="market-kosdaq-individual">-</td><td id="market-kosdaq-foreign-spot">-</td><td id="market-kosdaq-institution">-</td><td id="market-kosdaq-program">-</td><td id="market-kosdaq-foreign-futures">-</td></tr>
   </table>
   </div>
-  <aside class="grade-distribution" aria-label="TOP100 등급분포">
+  <aside class="grade-distribution" aria-label="거래대금 상위 등급분포">
     <div class="grade-distribution-chart" id="grade-distribution-chart" role="img"></div>
     <div class="grade-distribution-info">
-      <div class="grade-distribution-title">TOP100 등급분포</div>
+      <div class="grade-distribution-title">거래대금 상위 등급분포</div>
       <div class="grade-distribution-legend" id="grade-distribution-legend"></div>
     </div>
   </aside>
@@ -151,7 +151,7 @@
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>1분강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
   </table>
 
-  <div class="section sec-blue">▶ 거래대금 상위 100종목</div>
+  <div class="section sec-blue">▶ 거래대금 상위 종목 <span id="ranking-row-count">0개</span></div>
   <table class="grid board enhanced-board" id="trading-board">
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>1분강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
   </table>
@@ -159,6 +159,7 @@
 <script>
   const board = document.getElementById('trading-board');
   const candidateBoard = document.getElementById('candidate-board');
+  const rankingRowCount = document.getElementById('ranking-row-count');
   const dataDiagnostics = document.getElementById('data-diagnostics');
   const topbar = document.querySelector('.topbar');
   const currentDateTime = document.getElementById('current-date-time');
@@ -1455,6 +1456,7 @@
   }
 
   function renderBoard(rows) {
+    rankingRowCount.textContent = `${rows.length}개`;
     updateGradeDistribution(rows);
     top100State.renderedRows = rows;
     top100State.diagnostics.renderOhlc = rows.filter(hasOhlc).length;

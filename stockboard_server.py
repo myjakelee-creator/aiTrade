@@ -196,9 +196,15 @@ def main():
     print(f"master count: {len(tradable_codes)}")
     print(f"master code samples: {sorted(tradable_codes)[:10]}")
     print(f"API normalized code samples: {[row['stock_code'] for row in top100_rows[:10]]}")
+    program_net_enabled = _program_net_enabled()
+    print(
+        "ka90004 program net enabled: "
+        f"{str(program_net_enabled).lower()}"
+    )
+    print(f"ka90004 query date: {query_date}")
     program_data = None
     program_net_by_code = {}
-    if _program_net_enabled():
+    if program_net_enabled:
         try:
             program_data = fetch_program_net(access_token, query_date)
             program_net_by_code = program_data["values"]
@@ -209,6 +215,9 @@ def main():
             )
     filtered_rows = prepare_display_rows(
         top100_rows, tradable_codes, program_net_by_code
+    )
+    program_net_joined_count = sum(
+        row.get("program_net") is not None for row in filtered_rows
     )
     request_sleep_sec = _request_sleep_sec()
     ohlc_data = fetch_ohlc(
@@ -256,22 +265,32 @@ def main():
     print(f"filtered count: {len(filtered_rows)}")
     print(f"top100 count: {top100_count}")
     print(f"ka20001 market supply: {market_supply}")
-    if program_data is None:
-        print("ka90004 program net: disabled or unavailable")
-    else:
-        print(f"ka90004 query date: {query_date}")
-        print(f"ka90004 eok divisor: {program_data['divisor']}")
-        for market_stat in program_data["market_stats"]:
-            print(
-                f"ka90004 {market_stat['market']} pages: {market_stat['pages']}, "
-                f"rows: {market_stat['rows']}"
-            )
-        print(f"ka90004 raw samples: {program_data['raw_samples']}")
-        print(f"ka90004 converted samples: {program_data['converted_samples']}")
-        print(
-            "ka90004 matched count: "
-            f"{sum(row['program_net'] is not None for row in filtered_rows)}"
-        )
+    market_counts = (
+        program_data["market_counts"]
+        if program_data is not None
+        else {"KOSPI": 0, "KOSDAQ": 0}
+    )
+    program_net_divisor = (
+        program_data["divisor"]
+        if program_data is not None
+        else os.getenv("KIWOOM_PROGRAM_NET_EOK_DIVISOR", "100")
+    )
+    print(f"ka90004 market KOSPI count: {market_counts['KOSPI']}")
+    print(f"ka90004 market KOSDAQ count: {market_counts['KOSDAQ']}")
+    print(f"ka90004 joined count: {program_net_joined_count}")
+    print(
+        "ka90004 raw samples: "
+        f"{program_data['raw_samples'] if program_data is not None else []}"
+    )
+    print(
+        "ka90004 converted samples: "
+        f"{program_data['converted_samples'] if program_data is not None else []}"
+    )
+    print(f"ka90004 divisor: {program_net_divisor}")
+    print(
+        "ka90004 HTTP 429 position: "
+        f"{program_data['rate_limit'] if program_data is not None else None}"
+    )
     print(f"ka10086 query date: {query_date}")
     print("ka10086 OHLC limit: all")
     print(f"ka10086 request sleep sec: {request_sleep_sec}")

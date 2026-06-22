@@ -153,8 +153,11 @@ def fetch_program_net(access_token, query_date):
     divisor = _program_net_eok_divisor()
     program_net_by_code = {}
     market_stats = []
+    market_counts = {"KOSPI": 0, "KOSDAQ": 0}
     raw_samples = []
     converted_samples = []
+    errors = []
+    rate_limit = None
 
     for market_name, market_type in (("KOSPI", "P00101"), ("KOSDAQ", "P10102")):
         continuation = "N"
@@ -162,23 +165,55 @@ def fetch_program_net(access_token, query_date):
         seen_next_keys = set()
         page_count = 0
         row_count = 0
+        market_values = {}
+        market_raw_samples = []
+        market_converted_samples = []
+        market_error = None
 
         while True:
-            response, response_headers = _post_json(
-                "/api/dostk/stkinfo",
-                {
-                    "dt": query_date,
-                    "mrkt_tp": market_type,
-                    "stex_tp": "3",
-                },
-                {
-                    "Authorization": f"Bearer {access_token}",
-                    "api-id": "ka90004",
-                    "cont-yn": continuation,
-                    "next-key": next_key,
-                },
-                return_headers=True,
-            )
+            try:
+                response, response_headers = _post_json(
+                    "/api/dostk/stkinfo",
+                    {
+                        "dt": query_date,
+                        "mrkt_tp": market_type,
+                        "stex_tp": "3",
+                    },
+                    {
+                        "Authorization": f"Bearer {access_token}",
+                        "api-id": "ka90004",
+                        "cont-yn": continuation,
+                        "next-key": next_key,
+                    },
+                    return_headers=True,
+                )
+            except KiwoomAPIError as error:
+                market_error = f"HTTP {error.status_code}: {error.detail}"
+                if error.status_code == 429:
+                    rate_limit = {"market": market_name, "page": page_count + 1}
+                    print(
+                        f"warning: ka90004 HTTP 429 at market {market_name}, "
+                        f"page {page_count + 1}; stopping program lookup",
+                        file=sys.stderr,
+                    )
+                break
+            except (RuntimeError, ValueError) as error:
+                market_error = f"{type(error).__name__}: {error}"
+                print(
+                    f"warning: ka90004 market {market_name} skipped: {error}",
+                    file=sys.stderr,
+                )
+                break
+
+            if response.get("return_code") not in (None, 0, "0"):
+                market_error = f"API failed: {response}"
+                print(
+                    f"warning: ka90004 market {market_name} skipped: "
+                    f"return_code={response.get('return_code')}",
+                    file=sys.stderr,
+                )
+                break
+
             raw_rows = _first(
                 response,
                 "stk_prm_trde_prst",
@@ -186,7 +221,13 @@ def fetch_program_net(access_token, query_date):
                 "output",
             )
             if not isinstance(raw_rows, list):
-                raise RuntimeError(f"Unexpected ka90004 response: {response}")
+                market_error = f"Unexpected response: {response}"
+                print(
+                    f"warning: ka90004 market {market_name} skipped: "
+                    "missing stk_prm_trde_prst list",
+                    file=sys.stderr,
+                )
+                break
 
             page_count += 1
             page_rows = [row for row in raw_rows if isinstance(row, dict)]
@@ -201,12 +242,12 @@ def fetch_program_net(access_token, query_date):
                 )
                 converted_value = _program_net_eok(raw_value, divisor)
                 if stock_code and converted_value is not None:
-                    program_net_by_code[stock_code] = converted_value
-                    if len(raw_samples) < 10:
-                        raw_samples.append(
+                    market_values[stock_code] = converted_value
+                    if len(market_raw_samples) < 5:
+                        market_raw_samples.append(
                             {"stock_code": stock_code, "netprps_prica": raw_value}
                         )
-                        converted_samples.append(
+                        market_converted_samples.append(
                             {"stock_code": stock_code, "program_net": converted_value}
                         )
 
@@ -215,19 +256,48 @@ def fetch_program_net(access_token, query_date):
             if continuation != "Y" or not next_key:
                 break
             if next_key in seen_next_keys:
-                raise RuntimeError(f"Repeated ka90004 next-key for {market_name}: {next_key}")
+                market_error = f"Repeated next-key: {next_key}"
+                print(
+                    f"warning: ka90004 market {market_name} skipped: "
+                    f"repeated next-key {next_key}",
+                    file=sys.stderr,
+                )
+                break
             seen_next_keys.add(next_key)
 
+        if market_error is None or rate_limit is not None:
+            program_net_by_code.update(market_values)
+            market_counts[market_name] = len(market_values)
+            remaining_sample_count = 5 - len(raw_samples)
+            if remaining_sample_count > 0:
+                raw_samples.extend(market_raw_samples[:remaining_sample_count])
+                converted_samples.extend(
+                    market_converted_samples[:remaining_sample_count]
+                )
+        else:
+            errors.append({"market": market_name, "error": market_error})
+
         market_stats.append(
-            {"market": market_name, "pages": page_count, "rows": row_count}
+            {
+                "market": market_name,
+                "pages": page_count,
+                "rows": row_count,
+                "count": market_counts[market_name],
+                "error": market_error,
+            }
         )
+        if rate_limit is not None:
+            break
 
     return {
         "values": program_net_by_code,
         "market_stats": market_stats,
+        "market_counts": market_counts,
         "raw_samples": raw_samples,
         "converted_samples": converted_samples,
         "divisor": divisor,
+        "errors": errors,
+        "rate_limit": rate_limit,
     }
 
 
