@@ -3,10 +3,11 @@ import os
 import subprocess
 import sys
 import time
+from copy import deepcopy
 from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlparse
 
 from kiwoom_data_provider import (
     KiwoomOpenApiRealtimeProvider, fetch_foreign_investor_net_after_close,
@@ -127,7 +128,7 @@ def _realtime_stock_codes(rows):
         ):
             continue
         seen_codes.add(stock_code)
-        codes.append(stock_code)
+        codes.append(f"{stock_code}_AL")
     return codes
 
 
@@ -146,6 +147,201 @@ def _apply_foreign_display(rows, market_session):
         row["foreign_display_label"] = label
         row["foreign_display_value"] = row.get(value_key)
         row["foreign_display_source"] = value_key
+
+
+def _realtime_number(value):
+    if isinstance(value, bool):
+        return None
+    return value if isinstance(value, (int, float)) else None
+
+
+def _realtime_abs_number(value):
+    number = _realtime_number(value)
+    return abs(number) if number is not None else None
+
+
+def _realtime_acc_trade_value_diagnostics(value):
+    number = _realtime_number(value)
+    if number is None:
+        return {
+            "raw": None,
+            "million": None,
+            "eok_candidate": None,
+        }
+    eok_candidate = number / 100
+    return {
+        "raw": number,
+        "million": number,
+        "eok_candidate": int(eok_candidate)
+        if eok_candidate == int(eok_candidate)
+        else eok_candidate,
+    }
+
+
+def _latest_event(events_by_code, stock_code):
+    events = events_by_code.get(stock_code)
+    if not events:
+        return None
+    event = events[-1]
+    return event if isinstance(event, dict) else None
+
+
+def _top100_with_realtime(rows, realtime_store):
+    response_rows = [deepcopy(row) for row in rows]
+    codes = [row.get("stock_code") for row in response_rows]
+    try:
+        snapshot = realtime_store.snapshot_many(codes)
+    except Exception as error:
+        print(
+            f"warning: realtime overlay skipped for /api/top100: {error}",
+            file=sys.stderr,
+            flush=True,
+        )
+        snapshot = {"trade_events": {}, "orderbook_events": {}}
+
+    trade_events = snapshot.get("trade_events", {})
+    orderbook_events = snapshot.get("orderbook_events", {})
+    for row in response_rows:
+        stock_code = row.get("stock_code")
+        row["rest_price"] = row.get("price")
+        row["rest_change_rate"] = row.get("change_rate")
+
+        trade_event = _latest_event(trade_events, stock_code)
+        if trade_event is not None:
+            realtime_price = _realtime_abs_number(trade_event.get("price"))
+            realtime_change_rate = _realtime_number(
+                trade_event.get("change_rate")
+            )
+            row["realtime_price"] = realtime_price
+            row["realtime_change_rate"] = realtime_change_rate
+            row["realtime_trade_time"] = trade_event.get("trade_time")
+            row["realtime_strength"] = _realtime_number(
+                trade_event.get("execution_strength")
+            )
+            row["realtime_acc_volume"] = _realtime_number(
+                trade_event.get("cumulative_volume")
+            )
+            row["realtime_acc_trade_value"] = _realtime_number(
+                trade_event.get("cumulative_value")
+            )
+            trade_value_diagnostics = _realtime_acc_trade_value_diagnostics(
+                trade_event.get("cumulative_value")
+            )
+            row["realtime_acc_trade_value_raw"] = trade_value_diagnostics["raw"]
+            row["realtime_acc_trade_value_million"] = trade_value_diagnostics[
+                "million"
+            ]
+            row["realtime_acc_trade_value_eok_candidate"] = (
+                trade_value_diagnostics["eok_candidate"]
+            )
+            row["realtime_received_at"] = trade_event.get("received_at")
+            row["realtime_received_code"] = trade_event.get("received_code")
+            row["realtime_registered_code"] = trade_event.get("registered_code")
+            row["realtime_source_code"] = trade_event.get(
+                "realtime_source_code"
+            ) or trade_event.get("source_code")
+            row["realtime_source"] = "tick"
+            row["realtime_is_stale"] = False
+            if realtime_price is not None:
+                row["price"] = realtime_price
+            if realtime_change_rate is not None:
+                row["change_rate"] = realtime_change_rate
+
+        orderbook_event = _latest_event(orderbook_events, stock_code)
+        if orderbook_event is not None:
+            row["bid_volume"] = _realtime_number(
+                orderbook_event.get("total_bid_qty")
+            )
+            row["ask_volume"] = _realtime_number(
+                orderbook_event.get("total_ask_qty")
+            )
+            row["best_bid_price"] = _realtime_abs_number(
+                orderbook_event.get("best_bid")
+            )
+            row["best_ask_price"] = _realtime_abs_number(
+                orderbook_event.get("best_ask")
+            )
+            row["orderbook_received_at"] = orderbook_event.get("received_at")
+            row["orderbook_source"] = "orderbook"
+    return response_rows
+
+
+def _realtime_patch_payload(
+    realtime_store,
+    since_sequence=None,
+    fallback=False,
+    fallback_reason=None,
+):
+    mode = "full"
+    if fallback or since_sequence is None:
+        snapshot = realtime_store.snapshot_quotes_only()
+    else:
+        try:
+            snapshot = realtime_store.snapshot_quotes_since(since_sequence)
+            mode = "delta"
+        except Exception as error:
+            snapshot = realtime_store.snapshot_quotes_only()
+            fallback = True
+            fallback_reason = str(error) or "delta_failed"
+    patches = []
+    for stock_code, quote in snapshot.get("quotes", {}).items():
+        price = _realtime_abs_number(quote.get("price"))
+        change_rate = _realtime_number(quote.get("change_rate"))
+        best_bid = _realtime_abs_number(quote.get("best_bid"))
+        best_ask = _realtime_abs_number(quote.get("best_ask"))
+        trade_value_diagnostics = _realtime_acc_trade_value_diagnostics(
+            quote.get("cumulative_value")
+        )
+        patches.append(
+            {
+                "stock_code": stock_code,
+                "price": price,
+                "change_rate": change_rate,
+                "realtime_price": price,
+                "realtime_change_rate": change_rate,
+                "trade_time": quote.get("trade_time"),
+                "fid20_trade_time": quote.get("trade_time"),
+                "received_code": quote.get("received_code"),
+                "normalized_code": quote.get("normalized_code"),
+                "registered_code": quote.get("registered_code"),
+                "original_registered_code": quote.get(
+                    "original_registered_code"
+                ),
+                "realtime_source_code": quote.get("realtime_source_code"),
+                "source_code": quote.get("source_code"),
+                "realtime_strength": _realtime_number(
+                    quote.get("execution_strength")
+                ),
+                "realtime_acc_volume": _realtime_number(
+                    quote.get("cumulative_volume")
+                ),
+                "realtime_acc_trade_value": _realtime_number(
+                    quote.get("cumulative_value")
+                ),
+                "realtime_acc_trade_value_raw": trade_value_diagnostics["raw"],
+                "realtime_acc_trade_value_million": trade_value_diagnostics[
+                    "million"
+                ],
+                "realtime_acc_trade_value_eok_candidate": (
+                    trade_value_diagnostics["eok_candidate"]
+                ),
+                "bid_volume": _realtime_number(quote.get("total_bid_qty")),
+                "ask_volume": _realtime_number(quote.get("total_ask_qty")),
+                "best_bid_price": best_bid,
+                "best_ask_price": best_ask,
+                "received_at": quote.get("received_at"),
+                "sequence": quote.get("sequence"),
+            }
+        )
+    return {
+        "sequence": snapshot.get("sequence"),
+        "updated_at": snapshot.get("updated_at"),
+        "mode": mode,
+        "since_sequence": since_sequence,
+        "fallback": bool(fallback),
+        "fallback_reason": fallback_reason,
+        "rows": patches,
+    }
 
 
 def _empty_foreign_investor_net_data(query_date, error=None):
@@ -192,10 +388,10 @@ def make_handler(
             super().__init__(*args, directory=str(DOCS_DIR), **kwargs)
 
         def do_GET(self):
-            request_path = self.path.split("?", 1)[0]
+            parsed_url = urlparse(self.path)
+            request_path = parsed_url.path
+            query = parse_qs(parsed_url.query, keep_blank_values=True)
             if request_path == "/api/realtime":
-                query_string = self.path.split("?", 1)[1] if "?" in self.path else ""
-                query = parse_qs(query_string, keep_blank_values=True)
                 if "codes" in query:
                     codes = [
                         code.strip()
@@ -238,6 +434,33 @@ def make_handler(
                         for events in snapshot["orderbook_events"].values()
                     ),
                 }
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if request_path == "/api/realtime_patch":
+                since_sequence = None
+                fallback = False
+                fallback_reason = None
+                if "since_sequence" in query:
+                    try:
+                        since_sequence = int(query["since_sequence"][0])
+                        if since_sequence < 0:
+                            raise ValueError
+                    except (TypeError, ValueError):
+                        since_sequence = None
+                        fallback = True
+                        fallback_reason = "invalid_since_sequence"
+                response_payload = _realtime_patch_payload(
+                    realtime_store,
+                    since_sequence=since_sequence,
+                    fallback=fallback,
+                    fallback_reason=fallback_reason,
+                )
                 body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -336,7 +559,8 @@ def make_handler(
                     self.end_headers()
                     self.wfile.write(body)
                     return
-                body = json.dumps(rows, ensure_ascii=False).encode("utf-8")
+                response_rows = _top100_with_realtime(rows, realtime_store)
+                body = json.dumps(response_rows, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))

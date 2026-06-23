@@ -27,6 +27,12 @@ QUOTE_FIELDS = (
     "foreign_line_raw",
     "cumulative_volume",
     "cumulative_value",
+    "received_code",
+    "normalized_code",
+    "registered_code",
+    "original_registered_code",
+    "realtime_source_code",
+    "source_code",
 )
 
 
@@ -114,6 +120,12 @@ class RealtimeStore:
         execution_strength=None,
         cumulative_volume=None,
         cumulative_value=None,
+        received_code=None,
+        normalized_code=None,
+        registered_code=None,
+        original_registered_code=None,
+        realtime_source_code=None,
+        source_code=None,
     ):
         code = self._normalized_code(stock_code)
         values = {
@@ -126,6 +138,12 @@ class RealtimeStore:
             "execution_strength": execution_strength,
             "cumulative_volume": cumulative_volume,
             "cumulative_value": cumulative_value,
+            "received_code": received_code,
+            "normalized_code": normalized_code,
+            "registered_code": registered_code,
+            "original_registered_code": original_registered_code,
+            "realtime_source_code": realtime_source_code,
+            "source_code": source_code,
         }
         with self._lock:
             quote, timestamp_text, sequence = self._apply_update(code, values)
@@ -138,21 +156,43 @@ class RealtimeStore:
     def update_orderbook(
         self,
         stock_code,
+        orderbook=None,
         *,
         best_bid=None,
         best_ask=None,
         total_bid_qty=None,
         total_ask_qty=None,
         bid_ask_ratio=None,
+        received_code=None,
+        normalized_code=None,
+        registered_code=None,
+        original_registered_code=None,
+        realtime_source_code=None,
+        source_code=None,
     ):
         code = self._normalized_code(stock_code)
+        if orderbook is not None:
+            if not isinstance(orderbook, dict):
+                raise TypeError("orderbook must be a dict")
+            best_bid = orderbook.get("best_bid_price", best_bid)
+            best_ask = orderbook.get("best_ask_price", best_ask)
+            total_bid_qty = orderbook.get("bid_volume", total_bid_qty)
+            total_ask_qty = orderbook.get("ask_volume", total_ask_qty)
         values = {
             "best_bid": best_bid,
             "best_ask": best_ask,
             "total_bid_qty": total_bid_qty,
             "total_ask_qty": total_ask_qty,
             "bid_ask_ratio": bid_ask_ratio,
+            "received_code": received_code,
+            "normalized_code": normalized_code,
+            "registered_code": registered_code,
+            "original_registered_code": original_registered_code,
+            "realtime_source_code": realtime_source_code,
+            "source_code": source_code,
         }
+        if orderbook is not None:
+            values["raw"] = orderbook.get("raw")
         with self._lock:
             quote, timestamp_text, sequence = self._apply_update(code, values)
             events = self._orderbook_events.setdefault(
@@ -198,6 +238,73 @@ class RealtimeStore:
         codes = tuple(dict.fromkeys(self._normalized_code(code) for code in stock_codes))
         with self._lock:
             return self._snapshot_for_codes(codes)
+
+    def snapshot_quotes_only(self, stock_codes=None):
+        if stock_codes is None:
+            with self._lock:
+                codes = tuple(self._quotes)
+                return {
+                    "sequence": self._sequence,
+                    "updated_at": self._updated_at,
+                    "quotes": {
+                        code: dict(self._quotes[code])
+                        for code in codes
+                        if code in self._quotes
+                    },
+                }
+
+        codes = tuple(dict.fromkeys(self._normalized_code(code) for code in stock_codes))
+        with self._lock:
+            return {
+                "sequence": self._sequence,
+                "updated_at": self._updated_at,
+                "quotes": {
+                    code: dict(self._quotes[code])
+                    for code in codes
+                    if code in self._quotes
+                },
+            }
+
+    def snapshot_quotes_since(self, since_sequence, stock_codes=None):
+        since_sequence = int(since_sequence)
+        if since_sequence < 0:
+            raise ValueError("since_sequence must be non-negative")
+        if stock_codes is None:
+            with self._lock:
+                if since_sequence > self._sequence:
+                    raise ValueError("sequence_ahead")
+                codes = tuple(self._quotes)
+                return {
+                    "sequence": self._sequence,
+                    "updated_at": self._updated_at,
+                    "quotes": {
+                        code: dict(self._quotes[code])
+                        for code in codes
+                        if code in self._quotes
+                        and (
+                            self._quotes[code].get("sequence") is None
+                            or self._quotes[code].get("sequence") > since_sequence
+                        )
+                    },
+                }
+
+        codes = tuple(dict.fromkeys(self._normalized_code(code) for code in stock_codes))
+        with self._lock:
+            if since_sequence > self._sequence:
+                raise ValueError("sequence_ahead")
+            return {
+                "sequence": self._sequence,
+                "updated_at": self._updated_at,
+                "quotes": {
+                    code: dict(self._quotes[code])
+                    for code in codes
+                    if code in self._quotes
+                    and (
+                        self._quotes[code].get("sequence") is None
+                        or self._quotes[code].get("sequence") > since_sequence
+                    )
+                },
+            }
 
     def remove_stale(self, max_age_seconds, now=None):
         if max_age_seconds < 0:

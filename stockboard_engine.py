@@ -59,9 +59,16 @@ def _stock_code(value):
     return code if len(code) == 6 else None
 
 
-def _absolute_number(value):
+def normalize_kiwoom_price(value):
     number = _clean_number(value)
-    return abs(number) if isinstance(number, (int, float)) else number
+    if not isinstance(number, (int, float)):
+        return None
+    normalized = Decimal(str(abs(number)))
+    return int(normalized) if normalized == normalized.to_integral() else float(normalized)
+
+
+def _absolute_number(value):
+    return normalize_kiwoom_price(value)
 
 
 def _trade_value_eok(value):
@@ -127,10 +134,13 @@ def _request_sleep_sec():
 
 
 def _normalize_row(row):
+    raw_stock_code = _first(row, "stk_cd", "stock_code", "종목코드")
     normalized = dict.fromkeys(OUTPUT_KEYS)
     normalized.update(
         {
-            "stock_code": _stock_code(_first(row, "stk_cd", "stock_code", "종목코드")),
+            "stock_code": _stock_code(raw_stock_code),
+            "raw_stock_code": raw_stock_code,
+            "source_stock_code": raw_stock_code,
             "rank": _clean_number(_first(row, "now_rank", "rank", "현재순위")),
             "prev_rank": _clean_number(_first(row, "pred_rank", "prev_rank", "전일순위")),
             "stock_name": _first(row, "stk_nm", "stock_name", "종목명"),
@@ -198,8 +208,7 @@ def _recent_dates(query_date, days=7):
 
 
 def _ohlc_price(value):
-    number = _clean_number(value)
-    return abs(number) if isinstance(number, (int, float)) else None
+    return normalize_kiwoom_price(value)
 
 
 def _daily_row_date(row):
@@ -266,7 +275,7 @@ def _build_ohlc(current_row, previous_row):
         vwap_decimal = (
             Decimal(str(amount_million)) * Decimal("1000000")
         ) / Decimal(str(trade_quantity))
-        vwap_candidate = float(vwap_decimal)
+        vwap_candidate = normalize_kiwoom_price(vwap_decimal)
 
     vwap = (
         round(vwap_candidate, 2)

@@ -72,6 +72,7 @@
   #trading-board .rank-cell{text-align:center}
   #trading-board .stock-name{text-align:left}
   #trading-board .number-cell{text-align:right;font-variant-numeric:tabular-nums}
+  #trading-board td.realtime-flash,#candidate-board td.realtime-flash{background:#fff3b0;transition:background-color .18s ease}
   .enhanced-board .flow-number{text-align:right;font-variant-numeric:tabular-nums}
   .flow-zero{color:#7f8c8d}
   body.column-resizing{cursor:col-resize;user-select:none}
@@ -770,12 +771,16 @@
 
   window.addEventListener('pointerup', finishColumnResize);
   window.addEventListener('pointercancel', finishColumnResize);
+  const TOP100_REFRESH_MS = 30000;
+  const REALTIME_PATCH_REFRESH_MS = 500;
+  const REALTIME_PATCH_DELTA_ENABLED = true;
   const top100State = {
     rowByCode: new Map(),
     candidateRowByCode: new Map(),
     apiError: null,
     renderedRows: [],
     candidateRows: [],
+    lastRealtimePatchSequence: null,
     candleMode: loadCandleMode(),
     candleDomain: null,
     diagnostics: {
@@ -1320,16 +1325,30 @@
     board.innerHTML = `${boardHeader}<tr><td colspan="15">${escapeHtml(message)}</td></tr>`;
   }
 
-  function setCell(cell, html, className = '', title = '') {
-    if (cell.dataset.renderedHtml !== html) {
+  function setCell(cell, html, className = '', title = '', flashOnChange = false) {
+    const changed = cell.dataset.renderedHtml !== html;
+    if (changed) {
       cell.innerHTML = html;
       cell.dataset.renderedHtml = html;
     }
     if (cell.className !== className) cell.className = className;
     if (cell.title !== title) cell.title = title;
+    if (changed && flashOnChange) flashRealtimeCell(cell);
   }
 
-  function updateBoardRow(tableRow, row) {
+  function flashRealtimeCell(cell) {
+    if (!cell) return;
+    if (cell.dataset.flashTimer) window.clearTimeout(Number(cell.dataset.flashTimer));
+    cell.classList.remove('realtime-flash');
+    void cell.offsetWidth;
+    cell.classList.add('realtime-flash');
+    cell.dataset.flashTimer = String(window.setTimeout(() => {
+      cell.classList.remove('realtime-flash');
+      delete cell.dataset.flashTimer;
+    }, 220));
+  }
+
+  function updateBoardRow(tableRow, row, flashRealtime = false) {
     const grade = row.grade === '-' ? '-' : `<span class="grade ${row.gradeClass}">${escapeHtml(row.grade)}</span>`;
     const candle = rowOhlcMarkup(row);
     const cells = tableRow.cells;
@@ -1337,8 +1356,8 @@
     setCell(cells[1], escapeHtml(row.previousRank), `rank-cell ${row.rankMovementClass}`.trim(), row.rankTooltip);
     setCell(cells[2], grade);
     setCell(cells[3], escapeHtml(row.name), 'stock-name', `종목코드: ${row.code}`);
-    setCell(cells[4], escapeHtml(row.price), 'number-cell');
-    setCell(cells[5], escapeHtml(row.changeRate), `number-cell ${row.changeClass}`.trim());
+    setCell(cells[4], escapeHtml(row.price), 'number-cell', '', flashRealtime);
+    setCell(cells[5], escapeHtml(row.changeRate), `number-cell ${row.changeClass}`.trim(), '', flashRealtime);
     setCell(cells[6], escapeHtml(row.amount), 'number-cell');
     setCell(cells[7], candle);
     setCell(cells[8], balanceMarkup(row.balanceForce), 'balance-cell');
@@ -1361,6 +1380,74 @@
 
   function updateCandidateRow(tableRow, row) {
     updateBoardRow(tableRow, row);
+  }
+
+  function findRenderedTableRow(code) {
+    return top100State.rowByCode.get(code)
+      || board.querySelector(`tr[data-stock-code="${code}"]`);
+  }
+
+  function findCandidateTableRow(code) {
+    return top100State.candidateRowByCode.get(code)
+      || candidateBoard.querySelector(`tr[data-stock-code="${code}"]`);
+  }
+
+  function applyRealtimePatchToRow(tableRow, row, patch) {
+    const changeRate = firstValue(patch, ['change_rate', 'realtime_change_rate']);
+    const price = firstValue(patch, ['price', 'realtime_price']);
+    if (price !== null) {
+      const displayPrice = formatInteger(price);
+      if (row) row.price = displayPrice;
+      setCell(tableRow.cells[4], escapeHtml(displayPrice), 'number-cell', '', true);
+    }
+    if (changeRate !== null) {
+      const displayChangeRate = formatPercent(changeRate);
+      const changeClass = toneClass(null, changeRate);
+      if (row) {
+        row.changeRate = displayChangeRate;
+        row.changeRateNumber = Number(String(changeRate ?? '').replace(/[%+,]/g, '').trim());
+        row.changeClass = changeClass;
+      }
+      setCell(tableRow.cells[5], escapeHtml(displayChangeRate), `number-cell ${changeClass}`.trim(), '', true);
+    }
+    if (!row) return;
+    row.realtimeStrength = firstValue(patch, ['realtime_strength']);
+    row.realtimeAccVolume = firstValue(patch, ['realtime_acc_volume']);
+    row.realtimeAccTradeValue = firstValue(patch, ['realtime_acc_trade_value']);
+    row.bidVolume = firstValue(patch, ['bid_volume']);
+    row.askVolume = firstValue(patch, ['ask_volume']);
+    row.bestBidPrice = firstValue(patch, ['best_bid_price']);
+    row.bestAskPrice = firstValue(patch, ['best_ask_price']);
+    row.realtimeReceivedAt = firstValue(patch, ['received_at']);
+    row.realtimeSequence = firstValue(patch, ['sequence']);
+  }
+
+  function preserveRealtimeFields(nextRow, previousRow) {
+    if (!nextRow || !previousRow) return nextRow;
+    [
+      'price',
+      'changeRate',
+      'changeRateNumber',
+      'changeClass',
+      'bidVolume',
+      'askVolume',
+      'bestBidPrice',
+      'bestAskPrice',
+      'realtimeStrength',
+      'realtimeAccVolume',
+      'realtimeAccTradeValue',
+      'realtimeReceivedAt',
+      'realtimeSequence'
+    ].forEach(key => {
+      if (
+        previousRow[key] !== null
+        && previousRow[key] !== undefined
+        && previousRow[key] !== ''
+      ) {
+        nextRow[key] = previousRow[key];
+      }
+    });
+    return nextRow;
   }
 
   function renderCandidateBoard(rows) {
@@ -1509,6 +1596,54 @@
       window.StockBoardUSImpact.update(findUSMarketImpact(rows));
       return applyRankingRows(rows);
     },
+    refresh(rows) {
+      if (!Array.isArray(rows)) throw new TypeError('StockBoardTop100.refresh(rows) must receive an array');
+      top100State.diagnostics.apiRows = rows.length;
+      top100State.diagnostics.apiOhlc = rows.filter(hasOhlc).length;
+      updateDataDiagnostics();
+      window.StockBoardUSImpact.update(findUSMarketImpact(rows));
+
+      const normalizedRows = rows.map(sourceRow => {
+        if (!sourceRow || typeof sourceRow !== 'object') return null;
+        const code = normalizeCode(firstValue(sourceRow, ['stock_code', '종목코드', 'code']));
+        return normalizeRankingRow({ ...sourceRow, stock_code: code });
+      }).filter(Boolean);
+      const previousRowByCode = new Map(top100State.renderedRows.map(row => [row.code, row]));
+      normalizedRows.forEach(row => preserveRealtimeFields(row, previousRowByCode.get(row.code)));
+      top100State.diagnostics.normalizedRows = normalizedRows.length;
+      top100State.diagnostics.normalizedOhlc = normalizedRows.filter(hasOhlc).length;
+      top100State.renderedRows = normalizedRows;
+      top100State.diagnostics.renderOhlc = normalizedRows.filter(hasOhlc).length;
+      top100State.candleDomain = candleDomain(normalizedRows);
+
+      let updatedCount = 0;
+      let missingCount = 0;
+      normalizedRows.forEach(row => {
+        const tableRow = top100State.rowByCode.get(row.code);
+        if (!tableRow) {
+          missingCount += 1;
+          return;
+        }
+        tableRow.dataset.hasOhlc = hasOhlc(row) ? 'true' : 'false';
+        updateBoardRow(tableRow, row, true);
+        updatedCount += 1;
+      });
+
+      const rowByCode = new Map(normalizedRows.map(row => [row.code, row]));
+      top100State.candidateRows = top100State.candidateRows.map(row => rowByCode.get(row.code) || row);
+      top100State.candidateRows.forEach(row => {
+        const tableRow = top100State.candidateRowByCode.get(row.code);
+        if (!tableRow) return;
+        tableRow.dataset.hasOhlc = hasOhlc(row) ? 'true' : 'false';
+        updateBoardRow(tableRow, row, true);
+      });
+
+      top100State.diagnostics.domOhlc = board.querySelectorAll('.ohlc-chart').length;
+      top100State.diagnostics.renderedOhlc = top100State.diagnostics.domOhlc;
+      updateDataDiagnostics();
+      if (missingCount) console.warn(`TOP100 refresh skipped ${missingCount} missing rows`);
+      return { received: rows.length, displayed: updatedCount, missing: missingCount };
+    },
     clear() {
       Object.keys(top100State.diagnostics).forEach(key => {
         top100State.diagnostics[key] = 0;
@@ -1556,6 +1691,7 @@
       const result = window.StockBoardTop100.update(rows);
       setStatusLamp('kiwoom', 'ok', 'Kiwoom TOP100 데이터 정상');
       markSuccessfulUpdate();
+      loadRealtimePatch({ forceFull: true });
       return result;
     })
     .catch(error => {
@@ -1566,6 +1702,75 @@
       setStatusLamp('web', 'error', 'Web 화면 갱신 오류');
       showBoardMessage('키움 거래대금 순위 조회 결과를 불러오지 못했습니다.');
     });
+  let top100RefreshLoading = false;
+  async function refreshTop100() {
+    if (top100RefreshLoading || top100State.rowByCode.size === 0) return null;
+    top100RefreshLoading = true;
+    try {
+      const response = await fetch('/api/top100', { cache: 'no-store' });
+      if (!response.ok) throw new Error(`TOP100 refresh failed: ${response.status}`);
+      setStatusLamp('api', 'ok', 'API 서버 응답 정상');
+      const rows = await response.json();
+      const result = window.StockBoardTop100.refresh(rows);
+      setStatusLamp('kiwoom', 'ok', 'Kiwoom TOP100 데이터 정상');
+      markSuccessfulUpdate();
+      loadRealtimePatch({ forceFull: true });
+      return result;
+    } catch (error) {
+      console.warn(error);
+      top100State.apiError = error;
+      setStatusLamp('api', 'error', 'API 서버 응답 오류');
+      setStatusLamp('kiwoom', 'error', 'Kiwoom TOP100 데이터 오류');
+      setStatusLamp('web', 'error', 'Web 화면 갱신 오류');
+      return null;
+    } finally {
+      top100RefreshLoading = false;
+    }
+  }
+
+  window.setInterval(refreshTop100, TOP100_REFRESH_MS);
+
+  let realtimePatchLoading = false;
+  async function loadRealtimePatch(options = {}) {
+    if (realtimePatchLoading || top100State.rowByCode.size === 0) return null;
+    realtimePatchLoading = true;
+    try {
+      const useDelta = REALTIME_PATCH_DELTA_ENABLED
+        && !options.forceFull
+        && top100State.lastRealtimePatchSequence !== null;
+      const patchUrl = useDelta
+        ? `/api/realtime_patch?since_sequence=${encodeURIComponent(top100State.lastRealtimePatchSequence)}`
+        : '/api/realtime_patch';
+      const response = await fetch(patchUrl, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`Realtime patch failed: ${response.status}`);
+      const payload = await response.json();
+      const patches = Array.isArray(payload.rows) ? payload.rows : [];
+      if (Number.isFinite(Number(payload.sequence))) {
+        top100State.lastRealtimePatchSequence = Number(payload.sequence);
+      }
+      if (!patches.length) return { received: 0, sequence: top100State.lastRealtimePatchSequence };
+      const renderedRowByCode = new Map(top100State.renderedRows.map(row => [row.code, row]));
+      const candidateRowByCode = new Map(top100State.candidateRows.map(row => [row.code, row]));
+      patches.forEach(patch => {
+        const code = normalizeCode(firstValue(patch, ['stock_code', 'code']));
+        if (!code) return;
+        const tableRow = findRenderedTableRow(code);
+        const row = renderedRowByCode.get(code);
+        if (tableRow) applyRealtimePatchToRow(tableRow, row, patch);
+        const candidateTableRow = findCandidateTableRow(code);
+        const candidateRow = candidateRowByCode.get(code);
+        if (candidateTableRow) applyRealtimePatchToRow(candidateTableRow, candidateRow, patch);
+      });
+      return { received: patches.length };
+    } catch (error) {
+      console.warn(error);
+      return null;
+    } finally {
+      realtimePatchLoading = false;
+    }
+  }
+
+  window.setInterval(loadRealtimePatch, REALTIME_PATCH_REFRESH_MS);
 </script>
 </body>
 </html>
