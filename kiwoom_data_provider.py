@@ -794,76 +794,182 @@ def _fetch_market_program_flow(access_token, market_name, market_type, base_date
     return _million_to_eok(latest.get("all_netprps"), "all_netprps", market_name)
 
 
+def _empty_market_supply_entry(market_name):
+    return {
+        "market_name": market_name,
+        "market_index": None,
+        "market_change_rate": None,
+        "advancers": None,
+        "upper_limit_count": None,
+        "decliners": None,
+        "lower_limit_count": None,
+        "individual_eok": None,
+        # Kiwoom REST does not expose these two HTS-wide common values.
+        "foreign_futures_eok": None,
+        "foreign_spot_eok": None,
+        "institution_eok": None,
+        "program_market_eok": None,
+        "available": False,
+        "status": "unavailable",
+        "error": None,
+    }
+
+
 def fetch_market_supply(access_token, query_date):
     """Fetch raw KOSPI/KOSDAQ index and advance/decline statistics."""
     market_supply = {}
+    errors = []
     markets = (
         ("kospi", "KOSPI", "0", "001", "P001_AL01"),
         ("kosdaq", "KOSDAQ", "1", "101", "P101_AL02"),
     )
     for key, market_name, market_type, industry_code, _ in markets:
-        response = _post_json(
-            "/api/dostk/sect",
-            {"mrkt_tp": market_type, "inds_cd": industry_code},
-            {
-                "Authorization": f"Bearer {access_token}",
-                "api-id": "ka20001",
-                "cont-yn": "N",
-                "next-key": "",
-            },
-        )
-        return_code = response.get("return_code")
-        if return_code not in (None, 0, "0"):
-            raise RuntimeError(f"ka20001 {market_name} failed: {response}")
+        entry = _empty_market_supply_entry(market_name)
+        market_supply[key] = entry
+        try:
+            response = _post_json(
+                "/api/dostk/sect",
+                {"mrkt_tp": market_type, "inds_cd": industry_code},
+                {
+                    "Authorization": f"Bearer {access_token}",
+                    "api-id": "ka20001",
+                    "cont-yn": "N",
+                    "next-key": "",
+                },
+            )
+            return_code = response.get("return_code")
+            if return_code not in (None, 0, "0"):
+                raise RuntimeError(f"ka20001 {market_name} failed: {response}")
 
-        market_supply[key] = {
-            "market_name": market_name,
-            # Kiwoom signs cur_prc by direction; the displayed index is its magnitude.
-            "market_index": abs(
-                _required_market_number(response, "cur_prc", market_name)
-            ),
-            "market_change_rate": _required_market_number(
-                response, "flu_rt", market_name
-            ),
-            "advancers": _required_market_count(response, "rising", market_name),
-            "upper_limit_count": _required_market_count(
-                response, "upl", market_name
-            ),
-            "decliners": _required_market_count(response, "fall", market_name),
-            "lower_limit_count": _required_market_count(
-                response, "lst", market_name
-            ),
-            "individual_eok": None,
-            # Kiwoom REST does not expose these two HTS-wide common values.
-            "foreign_futures_eok": None,
-            "foreign_spot_eok": None,
-            "institution_eok": None,
-            "program_market_eok": None,
-        }
+            entry.update(
+                {
+                    # Kiwoom signs cur_prc by direction; the displayed index is its magnitude.
+                    "market_index": abs(
+                        _required_market_number(response, "cur_prc", market_name)
+                    ),
+                    "market_change_rate": _required_market_number(
+                        response, "flu_rt", market_name
+                    ),
+                    "advancers": _required_market_count(
+                        response, "rising", market_name
+                    ),
+                    "upper_limit_count": _required_market_count(
+                        response, "upl", market_name
+                    ),
+                    "decliners": _required_market_count(
+                        response, "fall", market_name
+                    ),
+                    "lower_limit_count": _required_market_count(
+                        response, "lst", market_name
+                    ),
+                }
+            )
+        except (KiwoomAPIError, RuntimeError, ValueError) as error:
+            entry["error"] = str(error)
+            errors.append({"market": market_name, "api": "ka20001", "error": str(error)})
+            print(
+                f"warning: ka20001 {market_name} market supply unavailable: {error}",
+                file=sys.stderr,
+            )
 
     for base_date in _recent_dates(query_date):
         dated_flows = {}
+        flow_errors = []
         for key, market_name, market_type, _, program_market_type in markets:
-            investor_flow = _fetch_market_investor_flow(
-                access_token, market_name, market_type, base_date
-            )
-            program_flow = _fetch_market_program_flow(
-                access_token, market_name, program_market_type, base_date
-            )
+            investor_flow = None
+            program_flow = None
+            investor_failed = False
+            program_failed = False
+            try:
+                investor_flow = _fetch_market_investor_flow(
+                    access_token, market_name, market_type, base_date
+                )
+            except (KiwoomAPIError, RuntimeError, ValueError) as error:
+                investor_failed = True
+                flow_errors.append(
+                    {
+                        "market": market_name,
+                        "api": "ka10051",
+                        "date": base_date,
+                        "error": str(error),
+                    }
+                )
+            try:
+                program_flow = _fetch_market_program_flow(
+                    access_token, market_name, program_market_type, base_date
+                )
+            except (KiwoomAPIError, RuntimeError, ValueError) as error:
+                program_failed = True
+                flow_errors.append(
+                    {
+                        "market": market_name,
+                        "api": "ka90005",
+                        "date": base_date,
+                        "error": str(error),
+                    }
+                )
             if investor_flow is None or program_flow is None:
-                break
+                if investor_flow is None and not investor_failed:
+                    flow_errors.append(
+                        {
+                            "market": market_name,
+                            "api": "ka10051",
+                            "date": base_date,
+                            "error": "no aggregate market flow row",
+                        }
+                    )
+                if program_flow is None and not program_failed:
+                    flow_errors.append(
+                        {
+                            "market": market_name,
+                            "api": "ka90005",
+                            "date": base_date,
+                            "error": "no program market flow row",
+                        }
+                    )
+                continue
             dated_flows[key] = {
                 **investor_flow,
                 "program_market_eok": program_flow,
             }
         if len(dated_flows) == len(markets):
             for key, values in dated_flows.items():
-                market_supply[key].update(values)
+                market_supply[key].update(
+                    {
+                        **values,
+                        "available": True,
+                        "status": "available",
+                        "error": None,
+                        "flow_date": base_date,
+                    }
+                )
+            market_supply["_status"] = {
+                "available": True,
+                "status": "available",
+                "error": None,
+                "query_date": query_date,
+                "flow_date": base_date,
+                "errors": errors,
+            }
             return market_supply
+        errors.extend(flow_errors)
 
-    raise RuntimeError(
+    error_message = (
         f"ka10051/ka90005 market flow data unavailable through {query_date}"
     )
+    for entry in market_supply.values():
+        if entry["error"] is None:
+            entry["error"] = error_message
+    market_supply["_status"] = {
+        "available": False,
+        "status": "unavailable",
+        "error": error_message,
+        "query_date": query_date,
+        "flow_date": None,
+        "errors": errors,
+    }
+    print(f"warning: {error_message}", file=sys.stderr)
+    return market_supply
 
 
 def fetch_ohlc(access_token, rows, query_date, sleep_seconds):

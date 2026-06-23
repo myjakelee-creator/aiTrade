@@ -519,8 +519,13 @@ def make_handler(
                 self.wfile.write(body)
                 return
             if request_path == "/api/market_supply":
+                market_supply_status = market_supply.get("_status", {})
                 response_payload = {
                     "market_session": _market_session(),
+                    "available": market_supply_status.get("available", True),
+                    "status": market_supply_status.get("status", "available"),
+                    "error": market_supply_status.get("error"),
+                    "flow_date": market_supply_status.get("flow_date"),
                     "kospi": market_supply["kospi"],
                     "kosdaq": market_supply["kosdaq"],
                 }
