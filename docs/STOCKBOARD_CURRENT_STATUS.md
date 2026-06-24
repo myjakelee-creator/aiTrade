@@ -4,7 +4,7 @@
 
 ## 1. 현재 한 줄 요약
 
-StockBoard는 REST/TR 데이터와 OpenAPI 실시간 데이터(`_AL` 통합 원천)를 RealtimeStore에 결합해 `/api/top100`, `/api/realtime`, `/api/realtime_status`, `/api/realtime_provider_status`, `/api/realtime_patch`로 제공하며, 화면은 TOP100 30초 갱신과 realtime_patch 500ms 갱신으로 현재가/등락률/금액(억)/잔량비/순간강도/세션강도를 표시한다.
+StockBoard는 REST/TR 데이터와 OpenAPI 실시간 데이터(`_AL` 통합 원천)를 RealtimeStore에 결합해 `/api/top100`, `/api/realtime`, `/api/realtime_status`, `/api/realtime_provider_status`, `/api/realtime_patch`로 제공하며, 화면은 TOP100 30초 갱신과 realtime_patch 500ms 갱신으로 현재가/등락률/금액(억)/일봉/잔량비/순간강도/세션강도를 표시한다.
 
 ## 2. 최종 목표 구조
 
@@ -78,6 +78,8 @@ DONE 44. 순간강도 realtime_patch 화면 연결
 DONE 45. 금액(억) realtime_patch 화면 연결
 DONE 46. 순간강도 색상바 스케일 개선
 DONE 47. 세션강도 realtime_patch 화면 연결
+DONE 48B. 일봉 `realtime_ohlc` backend/API 계산 및 노출
+DONE 48C. 일봉 `cells[7]` realtime_patch 화면 연결 및 custom tooltip
 
 ### TODO
 
@@ -186,7 +188,7 @@ TODO 58. 시장체온(Market Temperature)
 - 초기 또는 fallback 시 full patch를 반환한다.
 - 이후에는 `since_sequence` 기반 delta patch를 반환한다.
 - 최근 검증 기준 delta row에는 `price`, `change_rate`, `realtime_strength`, `realtime_acc_volume`, `realtime_acc_trade_value`, `realtime_acc_trade_value_eok_candidate`, `bid_volume`, `ask_volume`, `bid_ask_ratio`가 포함된다.
-- 현재가/등락률/금액(억)/잔량비/순간강도/세션강도는 HTML `applyRealtimePatchToRow()`에서 500ms patch 경로로 셀을 갱신한다.
+- 현재가/등락률/금액(억)/일봉/잔량비/순간강도/세션강도는 HTML `applyRealtimePatchToRow()`에서 500ms patch 경로로 셀을 갱신한다.
 - 순간강도는 `/api/top100` 호출 없이 `/api/realtime_patch`만 20초 확인한 결과 delta 호출 26회, delta row 2,179개, `realtime_strength` 포함 row 2,179개로 검증되었다.
 - 금액(억)은 `/api/top100` 호출 없이 `/api/realtime_patch`만 20초 확인한 결과 delta 호출 27회, delta row 1,424개, `realtime_acc_trade_value_eok_candidate` 포함 row 1,424개로 검증되었다.
 - 시장세션, TOP100 필터, 거래대금 조회 결과, 실시간 이벤트 수신 상태에 따라 row 수와 payload는 변동 가능하다.
@@ -243,7 +245,7 @@ TOP100 refresh = 30000ms
 
 최근 감사 기준:
 
-- 현재가/등락률/금액(억)/잔량비/순간강도/세션강도는 `/api/realtime_patch` 500ms 경로로 화면 셀이 갱신된다.
+- 현재가/등락률/금액(억)/일봉/잔량비/순간강도/세션강도는 `/api/realtime_patch` 500ms 경로로 화면 셀이 갱신된다.
 - 금액(억)은 `/api/realtime_patch`의 `realtime_acc_trade_value_eok_candidate`를 그대로 표시한다.
 - HTML에서 새 거래대금 계산을 하지 않고 서버가 내려주는 억 단위 후보값을 사용한다.
 - 초기 렌더는 `realtime_acc_trade_value_eok_candidate`를 우선 사용하고, `applyRealtimePatchToRow()`는 `cells[6]` 금액(억) 셀을 즉시 갱신한다.
@@ -278,7 +280,9 @@ TOP100 refresh = 30000ms
 - `/api/top100` overlay도 세션강도 필드를 포함하며, top100 내부 값 기준 계산 일치가 확인되었다. `/api/realtime`과 `/api/top100`을 순차 호출할 때는 활발한 종목에서 호출 시점 차이로 값이 어긋날 수 있다.
 - OPT10084는 호출 가능하고 `_AL` 입력도 가능하지만 현재 샘플 기준 `cntr_trde_qty`가 unsigned이고 `sign`은 전일대비 기호로 보여 buy/sell base 원천으로는 부족하다.
 - 정확한 당일강도는 `day_buy_qty_base`, `day_sell_qty_base`, `session_buy_qty_live`, `session_sell_qty_live`, `strength_day` 구조로 확장 가능한 후속 과제로 보류한다.
-- 일봉 캔들은 `/api/top100`/초기 OHLC 기반이다. 실시간화는 별도 검토가 필요하다.
+- 일봉 캔들은 ka10086 base OHLC를 저장하고, realtime tick price로 `high`/`low`/`close`를 갱신하는 `realtime_ohlc` 기준을 사용한다. `open`, `prev_high`, `prev_close`, `prev_low`, `vwap`은 base 값을 유지하며 `vwap_source="base"`다.
+- `/api/realtime_patch`와 `/api/top100` overlay는 `realtime_ohlc`를 노출한다. HTML `cells[7]`은 `realtime_ohlc`가 있으면 우선 표시하고, 없으면 기존 `ohlc`로 fallback한다.
+- 일봉 tooltip은 native `title`을 제거하고 custom tooltip을 사용한다. 시가/고가/저가/종가/현재와 전일종가 대비 등락률을 표시하며, hover 중 realtime 갱신 시 tooltip 내용만 최신 값으로 갱신한다.
 - 1분 평균강도는 최신 실시간 체결강도와 별도 지표로 나중에 추가한다.
 - 외합(억)과 프로(억)는 TR 기반이므로 30초 또는 별도 주기 유지가 가능하다.
 - 시장수급 패널은 화면에서 5초마다 `/api/market_supply`를 호출하지만 backend 값은 서버 시작 시 수집값에 가까우므로 별도 재수집 설계가 필요하다.
@@ -288,10 +292,11 @@ TOP100 refresh = 30000ms
 
 - 2026-06-24 after-market 관찰: COM realtime 서버는 `running=True`, `login_state=connected`, `realreg_succeeded=True`, `orderbook_realreg_succeeded=True`, `registered_count=175` 상태로 정상 동작했다.
 - `realdata_received_count`는 관찰 중 계속 증가했고, NXT/AL 실시간 거래가 있는 종목은 `/api/realtime_patch` 500ms 경로로 계속 갱신되었다.
-- 현재 500ms realtime_patch 화면 갱신 컬럼은 현재가, 등락률, 금액(억), 잔량비, 순간강도, 세션강도다.
+- 현재 500ms realtime_patch 화면 갱신 컬럼은 현재가, 등락률, 금액(억), 일봉, 잔량비, 순간강도, 세션강도다.
 - Source 후보는 `realtime`, `close_snapshot`, `regular_close_snapshot`, `nxt_after_close_snapshot`, `unavailable`, `close_snapshot_candidate`만 사용한다.
 - 현재가/등락률/금액(억)은 `realtime`을 우선하고, 실시간 값이 없으면 `close_snapshot` 표시가 가능하다.
-- 일봉은 현재 `ka10086` base이며, 실시간 값이 없으면 `close_snapshot` 성격의 표시가 가능하다. 추후 `realtime_ohlc` 구조로 실시간화한다.
+- 일봉은 `ka10086` base OHLC를 유지하고, 실시간 tick이 있으면 `realtime_ohlc`를 우선 표시한다. tick이 없거나 `realtime_ohlc`가 없으면 기존 `ohlc`를 fallback으로 유지한다.
+- `realtime_ohlc`는 base open/prev_high/prev_close/prev_low/vwap을 유지하고 tick price로 high/low/close만 갱신한다. vwap은 base 유지이며 `vwap_source="base"`다.
 - 잔량비는 실시간 호가가 없으면 `unavailable`이다. 마감 호가 원천 확인 전에는 `close_snapshot_candidate`로만 둔다.
 - 순간강도는 `realtime` FID228을 우선하고, FID228 실시간 값이 없으면 `unavailable`이다. `OPT10047`/`OPT10084` snapshot 후보는 별도 검증 전까지 표시 원천으로 쓰지 않는다.
 - 세션강도는 fallback 금지다. 서버 시작 이후 실시간 FID15 체결수량 부호 누적이라는 정의를 유지한다.
@@ -312,12 +317,12 @@ TOP100 refresh = 30000ms
 
 우선순위 갱신:
 
-1. 일봉 `realtime_ohlc` 구현 조사/설계
-2. HTS 0186 상위 20 캡처와 `/api/top100` `original_rank` 대조
-3. 신규상장/종목마스터 누락 점검
-4. 장마감 snapshot/fallback 구현은 source 정책 확정 후 진행
+1. HTS 0186 상위 20 캡처와 `/api/top100` `original_rank` 대조
+2. 신규상장/종목마스터 누락 점검
+3. 장마감 snapshot/fallback 구현은 source 정책 확정 후 진행
+4. 정확한 당일강도는 backfill 원천 확보 후 진행
 
-1순위 작업은 컬럼별 source 필드 설계, 일봉 `realtime_ohlc` 구현, 잔량비/순간강도 마감 snapshot 원천 조사, 0186 `original_rank` 대조다.
+1순위 작업은 0186 `original_rank` 대조, 신규상장/종목마스터 누락 점검, 잔량비/순간강도 마감 snapshot 원천 조사다.
 
 TODO 43B 잔량비 표시 디테일:
 

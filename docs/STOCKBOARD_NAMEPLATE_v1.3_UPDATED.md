@@ -76,12 +76,16 @@ normalized_code = 005930
 | 체결시간 | trade_time / fid20_trade_time | OpenAPI `_AL` FID20 | DONE/보존 | 실시간 지연 판단용 아님 |
 | 수신시각 | received_at | 서버 수신시각 | DONE | 실시간성 판단 기준 |
 | 실시간 sequence | sequence | RealtimeStore | DONE | 실시간성 판단 기준 |
-| 일봉 | ohlc | ka10086 | DONE | 반복 렌더링 해결 완료 |
-| 시가 | open | ka10086 | DONE |  |
-| 고가 | high | ka10086 | DONE |  |
-| 저가 | low | ka10086 | DONE |  |
-| 종가 | close | ka10086 | DONE |  |
-| VWAP | vwap | Python 산출 | DONE |  |
+| 일봉 | ohlc | ka10086 | DONE | base OHLC. `realtime_ohlc`가 없을 때 fallback |
+| 실시간 일봉 | realtime_ohlc | ka10086 base + realtime tick | DONE | 화면 일봉 우선 원천. base open 유지, tick price로 high/low/close 갱신 |
+| 실시간 일봉 원천 | realtime_ohlc_source | RealtimeStore | DONE | `ka10086_base_plus_realtime_tick` |
+| 일봉 원천 | ohlc_source | 표시 정책 | DONE/후보 | `realtime_ohlc` 우선, 없으면 `ohlc` fallback |
+| 시가 | open | ka10086 / realtime_ohlc | DONE | realtime_ohlc에서도 base open 유지 |
+| 고가 | high | ka10086 / realtime tick | DONE | realtime_ohlc는 max(base high, 기존 realtime high, tick price) |
+| 저가 | low | ka10086 / realtime tick | DONE | realtime_ohlc는 min(base low, 기존 realtime low, tick price) |
+| 종가 | close | ka10086 / realtime tick | DONE | realtime_ohlc는 최신 realtime price |
+| VWAP | vwap | Python 산출 / base 유지 | DONE | realtime_ohlc에서는 base vwap 유지 |
+| VWAP 원천 | vwap_source | RealtimeStore | DONE | 현재 `base` |
 | 전일고가 | prev_high | ka10086 | DONE |  |
 | 전일종가 | prev_close | ka10086 | DONE |  |
 | 전일저가 | prev_low | ka10086 | DONE |  |
@@ -109,6 +113,8 @@ Source 필드 후보:
 | price_source | 현재가 |
 | trade_value_source | 금액(억) |
 | ohlc_source | 일봉 |
+| realtime_ohlc_source | 실시간 일봉 |
+| vwap_source | VWAP |
 | bid_ask_ratio_source | 잔량비 |
 | realtime_strength_source | 순간강도 |
 | session_strength_source | 세션강도 |
@@ -118,6 +124,7 @@ Source 필드 후보:
 - 현재가
 - 등락률
 - 금액(억)
+- 일봉
 - 잔량비
 - 순간강도
 - 세션강도
@@ -125,6 +132,7 @@ Source 필드 후보:
 Fallback 원칙:
 
 - 현재가/등락률/금액(억)/일봉은 `close_snapshot` 표시 가능.
+- 일봉은 `realtime_ohlc` 우선, 없으면 기존 `ohlc` fallback.
 - 잔량비는 realtime 호가가 없으면 `unavailable`.
 - 순간강도는 realtime FID228이 없으면 `unavailable`.
 - 세션강도는 서버 시작 이후 실시간 체결 누적이므로 fallback 금지.
