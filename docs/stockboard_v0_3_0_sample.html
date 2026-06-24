@@ -99,6 +99,8 @@
   .enhanced-board .balance-side-blue{left:0;width:var(--blue-width);background:var(--blue)}
   .enhanced-board .balance-side-red{right:0;width:var(--red-width);background:var(--red)}
   .enhanced-board .balance-meeting{position:absolute;z-index:1;left:var(--blue-width);top:1px;bottom:1px;width:2px;background:#5f676e;transform:translateX(-1px)}
+  .balance-tooltip{position:fixed;z-index:10000;display:none;max-width:260px;padding:7px 9px;border:1px solid rgba(148,163,184,.8);border-radius:3px;background:#fff;color:#111827;font-size:12px;font-weight:700;line-height:1.45;white-space:pre-line;box-shadow:0 6px 18px rgba(15,23,42,.18);pointer-events:none}
+  .balance-tooltip.visible{display:block}
   #candidate-board .stock-name{text-align:left}
   #candidate-board td:nth-child(5),#candidate-board td:nth-child(6),#candidate-board td:nth-child(7){text-align:right;font-variant-numeric:tabular-nums}
   #candidate-board .note{min-width:0}
@@ -933,7 +935,7 @@
     };
   }
 
-  function balanceView(value) {
+  function balanceView(value, options = {}) {
     if (value === null || value === undefined || value === '') return null;
     const number = Number(value);
     if (!Number.isFinite(number)) return null;
@@ -945,12 +947,26 @@
       : number < 1
         ? number <= 0.5 ? '매도 압도' : '매도 우세'
         : number >= 2 ? '매수 압도' : '매수 우세';
-    const tooltipLines = [`잔량비 : ${display}`, status];
-    if (number !== 1) {
+    const volumeNumber = value => {
+      if (value === null || value === undefined || value === '') return null;
+      const parsed = Number(String(value).replace(/,/g, ''));
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const bidVolume = volumeNumber(options.bidVolume);
+    const askVolume = volumeNumber(options.askVolume);
+    const formatVolume = volume => Math.trunc(volume).toLocaleString('en-US');
+    const tooltipLines = [`잔량비: ${display}`];
+    if (bidVolume !== null && askVolume !== null) {
+      tooltipLines.push(`매수잔량: ${formatVolume(bidVolume)}`);
+      tooltipLines.push(`매도잔량: ${formatVolume(askVolume)}`);
+      tooltipLines.push(`계산: ${formatVolume(bidVolume)} / ${formatVolume(askVolume)}`);
+    } else if (number !== 1) {
       const differencePercent = Math.round((number - 1) * 100);
       tooltipLines.push(`기준 1 대비 ${differencePercent > 0 ? '+' : ''}${differencePercent}%`);
     }
-    // Buy/sell order quantities can be appended here when the REST data provides them.
+    tooltipLines.push(`상태: ${status}`);
+    if (number > 10) tooltipLines.push('바 표시는 10 기준 포화');
+    if (number < 0.1) tooltipLines.push('바 표시는 0.1 기준 포화');
     return {
       value: display,
       blueWidth: (1 - position) * 100,
@@ -1144,7 +1160,7 @@
 
   function balanceMarkup(balance) {
     if (!balance) return '-';
-    return `<div class="balance-box" title="${escapeHtml(balance.tooltip)}" role="img" aria-label="${escapeHtml(balance.tooltip)}" style="--blue-width:${balance.blueWidth}%;--red-width:${balance.redWidth}%">
+    return `<div class="balance-box" data-balance-tooltip="${escapeHtml(balance.tooltip)}" role="img" aria-label="${escapeHtml(balance.tooltip)}" style="--blue-width:${balance.blueWidth}%;--red-width:${balance.redWidth}%">
       <span class="balance-side balance-side-blue"></span>
       <span class="balance-side balance-side-red"></span>
       <span class="balance-meeting"></span>
@@ -1262,6 +1278,8 @@
       'orderbook_ratio',
       '잔량비'
     ]);
+    const bidVolume = firstValue(row, ['bid_volume']);
+    const askVolume = firstValue(row, ['ask_volume']);
     const minuteStrengthValue = firstValue(row, ['strength_1m', 'minute_strength', '1분강도']);
     const dailyStrengthValue = firstValue(row, ['strength_day', 'daily_strength', '당일강도']);
     const foreignLabel = firstValue(row, ['foreign_display_label']) || '외합(억)';
@@ -1303,7 +1321,9 @@
       changeRateNumber: Number(String(changeRate ?? '').replace(/[%+,]/g, '').trim()),
       changeClass: toneClass(firstValue(row, ['change_tone']), changeRate),
       amount: formatInteger(firstValue(row, ['trade_value_eok', '거래대금(억)', '거래대금_억'])),
-      balanceForce: balanceView(balanceValue),
+      bidVolume,
+      askVolume,
+      balanceForce: balanceView(balanceValue, { bidVolume, askVolume }),
       minuteForce: minuteStrengthView(minuteStrengthValue),
       dailyForce: dailyStrengthView(dailyStrengthValue),
       foreign: foreign.display,
@@ -1348,6 +1368,88 @@
     }, 220));
   }
 
+  const balanceTooltip = document.createElement('div');
+  balanceTooltip.className = 'balance-tooltip';
+  balanceTooltip.setAttribute('role', 'tooltip');
+  document.body.appendChild(balanceTooltip);
+  let activeBalanceTooltipCell = null;
+  let lastBalanceTooltipEvent = null;
+
+  function balanceTooltipText(cell) {
+    return cell?.querySelector('[data-balance-tooltip]')?.dataset.balanceTooltip || '';
+  }
+
+  function positionBalanceTooltip(event) {
+    if (!event) return;
+    const margin = 12;
+    balanceTooltip.style.left = `${event.clientX + margin}px`;
+    balanceTooltip.style.top = `${event.clientY + margin}px`;
+    const rect = balanceTooltip.getBoundingClientRect();
+    const left = Math.min(event.clientX + margin, window.innerWidth - rect.width - margin);
+    const top = Math.min(event.clientY + margin, window.innerHeight - rect.height - margin);
+    balanceTooltip.style.left = `${Math.max(margin, left)}px`;
+    balanceTooltip.style.top = `${Math.max(margin, top)}px`;
+  }
+
+  function showBalanceTooltip(cell, event) {
+    const text = balanceTooltipText(cell);
+    if (!text) return;
+    activeBalanceTooltipCell = cell;
+    lastBalanceTooltipEvent = event;
+    balanceTooltip.textContent = text;
+    balanceTooltip.classList.add('visible');
+    positionBalanceTooltip(event);
+  }
+
+  function refreshBalanceTooltip(cell) {
+    if (activeBalanceTooltipCell !== cell) return;
+    if (currentBalanceTooltipCell() !== cell) {
+      hideBalanceTooltip(cell);
+      return;
+    }
+    const text = balanceTooltipText(cell);
+    if (!text) {
+      hideBalanceTooltip(cell);
+      return;
+    }
+    balanceTooltip.textContent = text;
+    positionBalanceTooltip(lastBalanceTooltipEvent);
+  }
+
+  function hideBalanceTooltip(cell) {
+    if (cell && activeBalanceTooltipCell !== cell) return;
+    activeBalanceTooltipCell = null;
+    lastBalanceTooltipEvent = null;
+    balanceTooltip.classList.remove('visible');
+  }
+
+  function balanceTooltipCellFromTarget(target) {
+    const source = target?.closest?.('[data-balance-tooltip]');
+    return source?.closest('td.balance-cell') || null;
+  }
+
+  function currentBalanceTooltipCell() {
+    if (!lastBalanceTooltipEvent) return null;
+    const hovered = document.elementFromPoint(lastBalanceTooltipEvent.clientX, lastBalanceTooltipEvent.clientY);
+    return balanceTooltipCellFromTarget(hovered);
+  }
+
+  function updateBalanceTooltipFromMouse(event) {
+    const cell = balanceTooltipCellFromTarget(event.target);
+    if (!cell) {
+      hideBalanceTooltip();
+      return;
+    }
+    showBalanceTooltip(cell, event);
+  }
+
+  document.addEventListener('mousemove', updateBalanceTooltipFromMouse);
+  document.addEventListener('click', () => hideBalanceTooltip());
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') hideBalanceTooltip();
+  });
+  document.addEventListener('scroll', () => hideBalanceTooltip(), true);
+
   function updateBoardRow(tableRow, row, flashRealtime = false) {
     const grade = row.grade === '-' ? '-' : `<span class="grade ${row.gradeClass}">${escapeHtml(row.grade)}</span>`;
     const candle = rowOhlcMarkup(row);
@@ -1361,6 +1463,7 @@
     setCell(cells[6], escapeHtml(row.amount), 'number-cell');
     setCell(cells[7], candle);
     setCell(cells[8], balanceMarkup(row.balanceForce), 'balance-cell');
+    refreshBalanceTooltip(cells[8]);
     setCell(cells[9], minuteStrengthMarkup(row.minuteForce), 'balance-cell');
     setCell(cells[10], dailyStrengthMarkup(row.dailyForce), 'balance-cell');
     setCell(cells[11], escapeHtml(row.foreign), `flow-number ${row.foreignClass}`.trim(), row.foreignTooltip);
@@ -1423,8 +1526,12 @@
       'orderbook_ratio',
       '잔량비'
     ]);
-    row.balanceForce = balanceView(row.bid_ask_ratio);
+    row.balanceForce = balanceView(row.bid_ask_ratio, {
+      bidVolume: row.bidVolume,
+      askVolume: row.askVolume
+    });
     setCell(tableRow.cells[8], balanceMarkup(row.balanceForce), 'balance-cell');
+    refreshBalanceTooltip(tableRow.cells[8]);
     row.bestBidPrice = firstValue(patch, ['best_bid_price']);
     row.bestAskPrice = firstValue(patch, ['best_ask_price']);
     row.realtimeReceivedAt = firstValue(patch, ['received_at']);
