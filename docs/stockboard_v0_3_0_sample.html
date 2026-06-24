@@ -1280,6 +1280,19 @@
     };
   }
 
+  function rankCellTooltip(displayRankValue, originalRankValue) {
+    const displayRank = Number(displayRankValue);
+    const originalRank = Number(originalRankValue);
+    if (!Number.isFinite(displayRank) || !Number.isFinite(originalRank)) return '';
+    const difference = displayRank - originalRank;
+    return [
+      `표시순위: ${displayRank}`,
+      `원순위: ${originalRank}`,
+      `차이: ${difference > 0 ? '+' : ''}${difference}`,
+      '설명: ka10032 원본 순위에서 ETF/우선주 등 tradable master 제외 후 재순위'
+    ].join('\n');
+  }
+
   function stockMarketGroup(row) {
     const value = firstValue(row, ['market_type', 'market', 'market_name', 'mrkt_tp']);
     if (value === null) return '';
@@ -1405,6 +1418,7 @@
     const bigHand = signedFlowView(bigHandValue, '큰손', '큰손 순매수 우위');
     const previousRankValue = firstValue(row, ['prev_rank', '전일순위', '전일']);
     const originalRankValue = firstValue(row, ['original_rank', 'rank']);
+    const displayRankValue = firstValue(row, ['rank', '현재순위', '순위']);
     const rankMovement = rankMovementView(previousRankValue, originalRankValue);
     return {
       code: normalizeCode(firstValue(row, ['stock_code', '종목코드', 'code'])),
@@ -1419,7 +1433,9 @@
         'realtime_ohlc_source',
         'realtimeOhlcSource'
       ]),
-      rank: displayValue(firstValue(row, ['rank', '현재순위', '순위'])),
+      rank: displayValue(displayRankValue),
+      originalRank: originalRankValue,
+      rankCellTooltip: rankCellTooltip(displayRankValue, originalRankValue),
       previousRank: rankMovement.display,
       rankMovementClass: rankMovement.className,
       rankTooltip: rankMovement.tooltip,
@@ -1663,7 +1679,7 @@
     const grade = row.grade === '-' ? '-' : `<span class="grade ${row.gradeClass}">${escapeHtml(row.grade)}</span>`;
     const candle = rowOhlcMarkup(row);
     const cells = tableRow.cells;
-    setCell(cells[0], escapeHtml(row.rank), 'rank-cell');
+    setCell(cells[0], escapeHtml(row.rank), 'rank-cell', row.rankCellTooltip);
     setCell(cells[1], escapeHtml(row.previousRank), `rank-cell ${row.rankMovementClass}`.trim(), row.rankTooltip);
     setCell(cells[2], grade);
     setCell(cells[3], escapeHtml(row.name), 'stock-name', `종목코드: ${row.code}`);
