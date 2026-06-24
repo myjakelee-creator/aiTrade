@@ -21,6 +21,8 @@ QUOTE_FIELDS = (
     "execution_strength",
     "best_bid",
     "best_ask",
+    "bid_volume",
+    "ask_volume",
     "total_bid_qty",
     "total_ask_qty",
     "bid_ask_ratio",
@@ -107,6 +109,17 @@ class RealtimeStore:
         event.update({key: value for key, value in values.items() if value is not None})
         return event
 
+    @staticmethod
+    def _orderbook_ratio(bid_volume, ask_volume):
+        try:
+            bid_number = float(bid_volume)
+            ask_number = float(ask_volume)
+        except (TypeError, ValueError):
+            return None
+        if bid_number < 0 or ask_number <= 0:
+            return None
+        return round(bid_number / ask_number, 4)
+
     def update_trade(
         self,
         stock_code,
@@ -178,9 +191,12 @@ class RealtimeStore:
             best_ask = orderbook.get("best_ask_price", best_ask)
             total_bid_qty = orderbook.get("bid_volume", total_bid_qty)
             total_ask_qty = orderbook.get("ask_volume", total_ask_qty)
+        bid_ask_ratio = self._orderbook_ratio(total_bid_qty, total_ask_qty)
         values = {
             "best_bid": best_bid,
             "best_ask": best_ask,
+            "bid_volume": total_bid_qty,
+            "ask_volume": total_ask_qty,
             "total_bid_qty": total_bid_qty,
             "total_ask_qty": total_ask_qty,
             "bid_ask_ratio": bid_ask_ratio,
@@ -195,10 +211,17 @@ class RealtimeStore:
             values["raw"] = orderbook.get("raw")
         with self._lock:
             quote, timestamp_text, sequence = self._apply_update(code, values)
+            quote["bid_volume"] = total_bid_qty
+            quote["ask_volume"] = total_ask_qty
+            quote["bid_ask_ratio"] = bid_ask_ratio
             events = self._orderbook_events.setdefault(
                 code, deque(maxlen=self._orderbook_event_limit)
             )
-            events.append(self._event(code, values, timestamp_text, sequence))
+            event = self._event(code, values, timestamp_text, sequence)
+            event["bid_volume"] = total_bid_qty
+            event["ask_volume"] = total_ask_qty
+            event["bid_ask_ratio"] = bid_ask_ratio
+            events.append(event)
             return deepcopy(quote)
 
     def update_foreign_line(self, stock_code, foreign_line_raw):

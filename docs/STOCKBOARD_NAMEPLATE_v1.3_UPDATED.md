@@ -1,6 +1,6 @@
 # STOCKBOARD_NAMEPLATE_v1.3.md
 
-작성 기준: 2026-06-23 최신 StockBoard 상태 기준
+작성 기준: 2026-06-24 최신 StockBoard 상태 기준
 
 ---
 
@@ -95,8 +95,8 @@ normalized_code = 005930
 | 최우선매도호가 | best_ask_price | OpenAPI `_AL` 호가 | DONE | 주식호가잔량 `_AL` 기준 |
 | 매수잔량 | bid_volume | OpenAPI `_AL` 호가 | DONE | 잔량비 계산 원천 |
 | 매도잔량 | ask_volume | OpenAPI `_AL` 호가 | DONE | 잔량비 계산 원천 |
-| 잔량비 | bid_ask_ratio | 호가 산출 | 예정 | 다음 단계 계산 |
-| 1분강도 | strength_1m | 체결 산출 | 예정 | Signal 단계에서 계산 주기 결정 |
+| 잔량비 | bid_ask_ratio | OpenAPI `_AL` 호가 산출 | DONE | `bid_volume / ask_volume`, 최신 호가잔량 순간값. 1분 평균 아님 |
+| 순간강도 | strength_1m | 체결 산출 | 예정 | 기존 화면명 1분강도 변경 검토. 원천 후보는 realtime_strength |
 | 당일강도 | strength_day | 체결 산출 | 예정 | Signal 단계에서 계산 주기 결정 |
 | 큰손 | big_hand | 체결 산출 | 예정 | KRT/큰손 원천 연결 후 계산 |
 | 모멘텀 | momentum | Python 산출 | 예정 | Strategy 전까지 미구현 |
@@ -133,7 +133,7 @@ normalized_code = 005930
 | quote 수 | quote_count | RealtimeStore | DONE | 시장세션에 따라 변동 |
 | trade event 수 | trade_event_count | RealtimeStore | DONE | 시장세션에 따라 변동 |
 | orderbook event 수 | orderbook_event_count | RealtimeStore | DONE | 시장세션에 따라 변동 |
-| 실시간 patch | realtime_patch | RealtimeStore snapshot | DONE | 현재 full snapshot 방식 |
+| 실시간 patch | realtime_patch | RealtimeStore snapshot/delta | DONE | 초기 full + since_sequence 기반 delta |
 | Provider 사용 가능 | available | KiwoomOpenApiRealtimeProvider | DONE | 상태 조회 가능 |
 | Provider 실행 | running | KiwoomOpenApiRealtimeProvider | DONE | env ON 시 실행 |
 | QAx 준비 | qt_ready | QAxWidget | DONE | 32bit Python 필요 |
@@ -193,7 +193,7 @@ normalized_code = 005930
 | 큰손리듬 | krt | KRT |
 | 외선변화 | foreign_futures_delta | 외선 증감 |
 | 호가흡수 | orderbook_absorption | 체결 + 호가 |
-| patch delta | realtime_patch_delta | since_sequence 기반 경량 patch 후보 |
+| patch delta | realtime_patch_delta | since_sequence 기반 경량 patch |
 
 ---
 

@@ -1,10 +1,10 @@
 # StockBoard Current Status
 
-작성 기준: 2026-06-23 현재 코드와 최근 검증 결과 기준.
+작성 기준: 2026-06-24 현재 코드와 최근 검증 결과 기준.
 
 ## 1. 현재 한 줄 요약
 
-StockBoard는 REST/TR 데이터와 OpenAPI 실시간 데이터(`_AL` 통합 원천)를 RealtimeStore에 결합해 `/api/top100`, `/api/realtime`, `/api/realtime_status`, `/api/realtime_provider_status`, `/api/realtime_patch`로 제공하며, 화면은 TOP100 30초 갱신과 realtime_patch 500ms 갱신으로 실시간 가격을 표시한다.
+StockBoard는 REST/TR 데이터와 OpenAPI 실시간 데이터(`_AL` 통합 원천)를 RealtimeStore에 결합해 `/api/top100`, `/api/realtime`, `/api/realtime_status`, `/api/realtime_provider_status`, `/api/realtime_patch`로 제공하며, 화면은 TOP100 30초 갱신과 realtime_patch 500ms 갱신으로 현재가/등락률/잔량비를 표시한다.
 
 ## 2. 최종 목표 구조
 
@@ -72,15 +72,16 @@ DONE 36. 6자리 / _AL / _NX SetRealReg 실험
 DONE 37. 표시용 실시간 가격 원천 _AL 통합 전환
 DONE 38. 실시간 가격/지연 진단 완료
 DONE 39. TOP100 polling 부하 완화
+DONE 42. 잔량비 계산
+DONE 43A. 잔량비 realtime_patch 화면 연결
 
 ### TODO
 
 TODO 40. /api/realtime_patch payload 경량화
 TODO 41. 외선(foreign_futures_eok)
-TODO 42. 잔량비 계산
-TODO 43. 잔량비 색상바
-TODO 44. 1분강도 계산
-TODO 45. 1분강도 색상바
+TODO 43B. 잔량비 표시 디테일
+TODO 44. 순간강도 계산
+TODO 45. 순간강도 색상바
 TODO 46. 당일강도 계산
 TODO 47. 당일강도 색상바
 TODO 48. 큰손 계산
@@ -122,12 +123,14 @@ TODO 56. 시장체온(Market Temperature)
 - RealtimeStore가 구축되었다.
 - `RealtimeStore.update_trade()`가 연결되었다.
 - `RealtimeStore.update_orderbook()`이 연결되었다.
+- `bid_ask_ratio = bid_volume / ask_volume` 계산이 연결되었다.
+- 잔량비는 최신 실시간 호가잔량 순간값 기준이며 1분 평균이 아니다.
 - Store key는 6자리 종목코드를 유지한다.
 - `/api/realtime` 응답이 정상 반환된다.
 - `/api/realtime_status` 응답이 정상 반환된다.
 - `/api/realtime_provider_status` 응답이 정상 반환된다.
 - `/api/realtime_patch` 응답이 정상 반환된다.
-- DOM realtime patch가 연결되었다.
+- DOM realtime patch가 현재가/등락률/잔량비 셀에 연결되었다.
 - top100 refresh가 실시간 가격/등락률/호가 셀을 덮지 않도록 `preserveRealtimeFields()` 보존 로직이 들어갔다.
 
 ### 대체거래소 / 가격 원천
@@ -152,6 +155,7 @@ TODO 56. 시장체온(Market Temperature)
 - `rest_price`: REST/TR 원본 가격 보존
 - `received_code`, `registered_code`, `realtime_source_code`: `_AL` suffix 보존 가능
 - `program_net`, `foreign_sum`, `foreign_investor_net`, OHLC 결합 유지
+- `bid_ask_ratio`는 최신 실시간 호가 overlay 값이 있으면 결합된다.
 
 ### `GET /api/realtime`
 
@@ -159,6 +163,7 @@ TODO 56. 시장체온(Market Temperature)
 - 응답 quote key는 6자리 종목코드 기준이다.
 - quote 내부 원천 코드 필드는 `_AL` suffix를 보존한다.
 - trade/orderbook event history는 유지된다.
+- quote에는 `bid_volume`, `ask_volume`, `bid_ask_ratio`가 포함된다.
 
 ### `GET /api/realtime_status`
 
@@ -174,9 +179,10 @@ TODO 56. 시장체온(Market Temperature)
 
 ### `GET /api/realtime_patch`
 
-- 최근 검증 기준 row 수는 약 142개다.
-- 최근 검증 기준 payload는 약 108KB다.
-- 현재는 full snapshot 성격의 payload를 반환한다.
+- 초기 또는 fallback 시 full patch를 반환한다.
+- 이후에는 `since_sequence` 기반 delta patch를 반환한다.
+- 최근 검증 기준 delta row에는 `price`, `change_rate`, `realtime_strength`, `realtime_acc_volume`, `realtime_acc_trade_value`, `bid_volume`, `ask_volume`, `bid_ask_ratio`가 포함된다.
+- 현재가/등락률/잔량비는 HTML `applyRealtimePatchToRow()`에서 500ms patch 경로로 셀을 갱신한다.
 - 시장세션, TOP100 필터, 거래대금 조회 결과, 실시간 이벤트 수신 상태에 따라 row 수와 payload는 변동 가능하다.
 
 ## 6. _AL 통합 실시간 가격 원천 규칙
@@ -208,8 +214,8 @@ normalized_code = 005930
 - `/api/top100` 자동 갱신: 30000ms
 - `/api/realtime_patch` 자동 갱신: 500ms
 - TOP100 refresh는 순위/구성/거래대금/기본 데이터 갱신용이다.
-- realtime_patch는 현재가/등락률/호가/실시간 값 갱신용이다.
-- `preserveRealtimeFields()`로 top100 refresh가 현재가/등락률/호가 실시간 셀을 덮는 위험을 완화한다.
+- realtime_patch는 현재가/등락률/잔량비/호가/실시간 값 갱신용이다.
+- `preserveRealtimeFields()`로 top100 refresh가 현재가/등락률/잔량비/호가 실시간 셀을 덮는 위험을 완화한다.
 - FID20은 실시간 지연 판단용이 아니라 체결 원천시각 보존용이다.
 - 실시간성 판단은 `received_at`과 `sequence` 기준이다.
 - suffix 실험 screen 9100/9110/9120은 기본 실행에서 OFF다.
@@ -218,42 +224,46 @@ normalized_code = 005930
 최근 검증 기준:
 
 ```text
-TOP100 rows ≈ 182
-registered_count ≈ 182
-realtime_patch rows ≈ 142
-realtime_patch payload ≈ 108KB
+TOP100 rows ≈ 173
+registered_count ≈ 173
+realtime_patch delta rows = 변경 row 수에 따라 변동
 realtime_patch refresh = 500ms
 TOP100 refresh = 30000ms
 ```
 
 위 수치는 시장세션, 필터, 거래대금 조회 결과, 실시간 수신 상태에 따라 변동 가능하다. 문서에서는 고정 성공 기준으로 사용하지 않는다.
 
-## 8. 다음 작업
+## 8. 컬럼별 갱신 경로 감사
 
-1순위 작업은 `/api/realtime_patch payload 경량화`다.
+최근 감사 기준:
 
-목표:
+- 현재가/등락률/잔량비는 `/api/realtime_patch` 500ms 경로로 화면 셀이 갱신된다.
+- 잔량비는 `bid_ask_ratio = bid_volume / ask_volume`이며 최신 실시간 호가잔량 순간값이다.
+- 금액(억)은 현재 `/api/top100` 30초 경로다. `realtime_acc_trade_value` 기반 실시간화 후보로 남긴다.
+- 일봉 캔들은 `/api/top100`/초기 OHLC 기반이다. 실시간화는 별도 검토가 필요하다.
+- 기존 화면명 `1분강도`는 다음 작업에서 `순간강도`로 변경을 검토한다.
+- 순간강도 원천 후보는 `/api/realtime_patch`의 `realtime_strength`다.
+- 1분 평균강도는 최신 실시간 체결강도와 별도 지표로 나중에 추가한다.
+- 외합(억)과 프로(억)는 TR 기반이므로 30초 또는 별도 주기 유지가 가능하다.
+- 시장수급 패널은 화면에서 5초마다 `/api/market_supply`를 호출하지만 backend 값은 서버 시작 시 수집값에 가까우므로 별도 재수집 설계가 필요하다.
+- 큰손/모멘텀은 backend 계산이 아직 미구현이다.
 
-```text
-현재 full snapshot 방식
-↓
-since_sequence 기반 delta patch
-변경 row만 반환
-초기 1회 full patch + 이후 delta patch
-```
+## 9. 다음 작업
 
-후보 설계:
+1순위 작업은 잔량비 표시 디테일(TODO 43B) 또는 순간강도 계산(TODO 44)이다.
 
-- 초기 1회는 full patch를 반환한다.
-- 이후에는 client가 보낸 `last_sequence` 이후 변경분만 반환한다.
-- 변경 row만 반환한다.
-- payload를 줄인 뒤 333ms 또는 250ms 주기 실험 여부를 다시 판단한다.
+TODO 43B 잔량비 표시 디테일:
+
+- 색상 방향
+- tooltip 문구
+- 극단값 표시/클램프
+- 디자인 디테일
 
 그 다음 작업 순서:
 
 1. 외선(foreign_futures_eok)
-2. 잔량비 계산 / 잔량비 색상바
-3. 1분강도 계산 / 1분강도 색상바
+2. 잔량비 표시 디테일(TODO 43B)
+3. 순간강도 계산 / 순간강도 색상바
 4. 당일강도 계산 / 당일강도 색상바
 5. 큰손 계산
 6. KRT 계산
@@ -265,7 +275,7 @@ since_sequence 기반 delta patch
 12. Replay 기능
 13. 시장체온(Market Temperature)
 
-## 9. 금지사항
+## 10. 금지사항
 
 - 승인 없이 Python 파일을 수정하지 않는다.
 - 승인 없이 HTML 파일을 수정하지 않는다.
@@ -280,7 +290,7 @@ since_sequence 기반 delta patch
 - Signal, Ranking, Strategy 계산은 별도 승인 전 진행하지 않는다.
 - sample, demo, mock, fallback 값을 실제 화면 표시값으로 주입하지 않는다.
 
-## 10. 변경 이력
+## 11. 변경 이력
 
 - 2026-06-22: StockBoard 기본 화면, TOP100, 시장수급, OHLC/VWAP, OpenAPI provider 초기 상태 정리.
 - 2026-06-23: Tick 저장, 호가 저장, RealtimeStore update, `/api/realtime_patch`, DOM realtime patch 상태 반영.
@@ -288,3 +298,5 @@ since_sequence 기반 delta patch
 - 2026-06-23: 표시용 실시간 가격 원천을 `_AL` 통합 코드로 전환한 상태 반영.
 - 2026-06-23: TOP100 polling 30000ms, realtime_patch 500ms 운영 기준과 payload 경량화 TODO 반영.
 - 2026-06-23: `STOCKBOARD_CODING_ROADMAP_v2.1_UPDATED.md` 핵심 내용을 통합해 `STOCKBOARD_CURRENT_STATUS.md`를 마스터 상태 문서로 정리.
+- 2026-06-24: 잔량비 계산(TODO 42)과 잔량비 realtime_patch 화면 연결(TODO 43A) 완료 상태 반영.
+- 2026-06-24: 전체 컬럼 갱신 경로 감사 결과와 순간강도 작업 기준을 반영.

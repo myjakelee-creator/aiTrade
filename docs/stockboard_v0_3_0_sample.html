@@ -1416,6 +1416,15 @@
     row.realtimeAccTradeValue = firstValue(patch, ['realtime_acc_trade_value']);
     row.bidVolume = firstValue(patch, ['bid_volume']);
     row.askVolume = firstValue(patch, ['ask_volume']);
+    row.bid_ask_ratio = firstValue(patch, [
+      'balance_ratio',
+      'order_balance_ratio',
+      'bid_ask_ratio',
+      'orderbook_ratio',
+      '잔량비'
+    ]);
+    row.balanceForce = balanceView(row.bid_ask_ratio);
+    setCell(tableRow.cells[8], balanceMarkup(row.balanceForce), 'balance-cell');
     row.bestBidPrice = firstValue(patch, ['best_bid_price']);
     row.bestAskPrice = firstValue(patch, ['best_ask_price']);
     row.realtimeReceivedAt = firstValue(patch, ['received_at']);
@@ -1431,6 +1440,8 @@
       'changeClass',
       'bidVolume',
       'askVolume',
+      'bid_ask_ratio',
+      'balanceForce',
       'bestBidPrice',
       'bestAskPrice',
       'realtimeStrength',

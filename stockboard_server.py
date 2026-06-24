@@ -250,10 +250,17 @@ def _top100_with_realtime(rows, realtime_store):
         orderbook_event = _latest_event(orderbook_events, stock_code)
         if orderbook_event is not None:
             row["bid_volume"] = _realtime_number(
-                orderbook_event.get("total_bid_qty")
+                orderbook_event.get("bid_volume")
+                if "bid_volume" in orderbook_event
+                else orderbook_event.get("total_bid_qty")
             )
             row["ask_volume"] = _realtime_number(
-                orderbook_event.get("total_ask_qty")
+                orderbook_event.get("ask_volume")
+                if "ask_volume" in orderbook_event
+                else orderbook_event.get("total_ask_qty")
+            )
+            row["bid_ask_ratio"] = _realtime_number(
+                orderbook_event.get("bid_ask_ratio")
             )
             row["best_bid_price"] = _realtime_abs_number(
                 orderbook_event.get("best_bid")
@@ -325,8 +332,17 @@ def _realtime_patch_payload(
                 "realtime_acc_trade_value_eok_candidate": (
                     trade_value_diagnostics["eok_candidate"]
                 ),
-                "bid_volume": _realtime_number(quote.get("total_bid_qty")),
-                "ask_volume": _realtime_number(quote.get("total_ask_qty")),
+                "bid_volume": _realtime_number(
+                    quote.get("bid_volume")
+                    if "bid_volume" in quote
+                    else quote.get("total_bid_qty")
+                ),
+                "ask_volume": _realtime_number(
+                    quote.get("ask_volume")
+                    if "ask_volume" in quote
+                    else quote.get("total_ask_qty")
+                ),
+                "bid_ask_ratio": _realtime_number(quote.get("bid_ask_ratio")),
                 "best_bid_price": best_bid,
                 "best_ask_price": best_ask,
                 "received_at": quote.get("received_at"),
