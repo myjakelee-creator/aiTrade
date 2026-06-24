@@ -75,24 +75,25 @@ DONE 39. TOP100 polling 부하 완화
 DONE 42. 잔량비 계산
 DONE 43A. 잔량비 realtime_patch 화면 연결
 DONE 44. 순간강도 realtime_patch 화면 연결
+DONE 45. 금액(억) realtime_patch 화면 연결
 
 ### TODO
 
 TODO 40. /api/realtime_patch payload 경량화
 TODO 41. 외선(foreign_futures_eok)
 TODO 43B. 잔량비 표시 디테일
-TODO 45. 순간강도 색상바
-TODO 46. 당일강도 계산
-TODO 47. 당일강도 색상바
-TODO 48. 큰손 계산
-TODO 49. KRT 계산
-TODO 50. 후보5 실제 선정
-TODO 51. Signal Engine
-TODO 52. Ranking Engine
-TODO 53. Strategy Engine
-TODO 54. 미국시장 실데이터
-TODO 55. Replay 기능
-TODO 56. 시장체온(Market Temperature)
+TODO 46. 순간강도 색상바
+TODO 47. 당일강도 계산
+TODO 48. 당일강도 색상바
+TODO 49. 큰손 계산
+TODO 50. KRT 계산
+TODO 51. 후보5 실제 선정
+TODO 52. Signal Engine
+TODO 53. Ranking Engine
+TODO 54. Strategy Engine
+TODO 55. 미국시장 실데이터
+TODO 56. Replay 기능
+TODO 57. 시장체온(Market Temperature)
 
 ## 4. 현재 완료 상태
 
@@ -183,9 +184,10 @@ TODO 56. 시장체온(Market Temperature)
 
 - 초기 또는 fallback 시 full patch를 반환한다.
 - 이후에는 `since_sequence` 기반 delta patch를 반환한다.
-- 최근 검증 기준 delta row에는 `price`, `change_rate`, `realtime_strength`, `realtime_acc_volume`, `realtime_acc_trade_value`, `bid_volume`, `ask_volume`, `bid_ask_ratio`가 포함된다.
-- 현재가/등락률/잔량비/순간강도는 HTML `applyRealtimePatchToRow()`에서 500ms patch 경로로 셀을 갱신한다.
+- 최근 검증 기준 delta row에는 `price`, `change_rate`, `realtime_strength`, `realtime_acc_volume`, `realtime_acc_trade_value`, `realtime_acc_trade_value_eok_candidate`, `bid_volume`, `ask_volume`, `bid_ask_ratio`가 포함된다.
+- 현재가/등락률/금액(억)/잔량비/순간강도는 HTML `applyRealtimePatchToRow()`에서 500ms patch 경로로 셀을 갱신한다.
 - 순간강도는 `/api/top100` 호출 없이 `/api/realtime_patch`만 20초 확인한 결과 delta 호출 26회, delta row 2,179개, `realtime_strength` 포함 row 2,179개로 검증되었다.
+- 금액(억)은 `/api/top100` 호출 없이 `/api/realtime_patch`만 20초 확인한 결과 delta 호출 27회, delta row 1,424개, `realtime_acc_trade_value_eok_candidate` 포함 row 1,424개로 검증되었다.
 - 시장세션, TOP100 필터, 거래대금 조회 결과, 실시간 이벤트 수신 상태에 따라 row 수와 payload는 변동 가능하다.
 
 ## 6. _AL 통합 실시간 가격 원천 규칙
@@ -217,8 +219,8 @@ normalized_code = 005930
 - `/api/top100` 자동 갱신: 30000ms
 - `/api/realtime_patch` 자동 갱신: 500ms
 - TOP100 refresh는 순위/구성/거래대금/기본 데이터 갱신용이다.
-- realtime_patch는 현재가/등락률/잔량비/순간강도/호가/실시간 값 갱신용이다.
-- `preserveRealtimeFields()`로 top100 refresh가 현재가/등락률/잔량비/순간강도/호가 실시간 셀을 덮는 위험을 완화한다.
+- realtime_patch는 현재가/등락률/금액(억)/잔량비/순간강도/호가/실시간 값 갱신용이다.
+- `preserveRealtimeFields()`로 top100 refresh가 현재가/등락률/금액(억)/잔량비/순간강도/호가 실시간 셀을 덮는 위험을 완화한다.
 - FID20은 실시간 지연 판단용이 아니라 체결 원천시각 보존용이다.
 - 실시간성 판단은 `received_at`과 `sequence` 기준이다.
 - suffix 실험 screen 9100/9110/9120은 기본 실행에서 OFF다.
@@ -240,13 +242,18 @@ TOP100 refresh = 30000ms
 
 최근 감사 기준:
 
-- 현재가/등락률/잔량비/순간강도는 `/api/realtime_patch` 500ms 경로로 화면 셀이 갱신된다.
+- 현재가/등락률/금액(억)/잔량비/순간강도는 `/api/realtime_patch` 500ms 경로로 화면 셀이 갱신된다.
+- 금액(억)은 `/api/realtime_patch`의 `realtime_acc_trade_value_eok_candidate`를 그대로 표시한다.
+- HTML에서 새 거래대금 계산을 하지 않고 서버가 내려주는 억 단위 후보값을 사용한다.
+- 초기 렌더는 `realtime_acc_trade_value_eok_candidate`를 우선 사용하고, `applyRealtimePatchToRow()`는 `cells[6]` 금액(억) 셀을 즉시 갱신한다.
+- `preserveRealtimeFields()`는 `amount`, `realtimeAccTradeValueEokCandidate`, `realtime_acc_trade_value_eok_candidate`를 보존한다.
+- 금액(억) realtime_patch 연결 단계에서는 순위 재정렬, 후보5 재선정, 금액 기준 정렬 재계산, backend/API 구조 변경을 하지 않았다.
+- 순위/후보5는 추후 Ranking Engine 또는 별도 재정렬 단계에서 처리한다.
 - 잔량비는 `bid_ask_ratio = bid_volume / ask_volume`이며 최신 실시간 호가잔량 순간값이다.
 - 순간강도는 OpenAPI FID 228 `execution_strength_raw` → Store `execution_strength` → API `realtime_strength` 경로를 사용한다.
 - 화면 헤더는 `1분강도`에서 `순간강도`로 변경되었고 초기 렌더에서 `realtime_strength`를 우선 사용한다.
 - `applyRealtimePatchToRow()`는 `cells[9]` 순간강도 셀을 realtime_patch 경로로 즉시 갱신한다.
 - 과거 `strength_1m`, `minute_strength`, `1분강도` key는 payload 호환 fallback으로만 유지한다.
-- 금액(억)은 현재 `/api/top100` 30초 경로다. `realtime_acc_trade_value` 기반 실시간화 후보로 남긴다.
 - 일봉 캔들은 `/api/top100`/초기 OHLC 기반이다. 실시간화는 별도 검토가 필요하다.
 - 1분 평균강도는 최신 실시간 체결강도와 별도 지표로 나중에 추가한다.
 - 외합(억)과 프로(억)는 TR 기반이므로 30초 또는 별도 주기 유지가 가능하다.

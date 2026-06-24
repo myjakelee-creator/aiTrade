@@ -70,7 +70,7 @@ normalized_code = 005930
 | 실시간 현재가 | realtime_price | OpenAPI `_AL` FID10 | DONE | StockBoard 표시 현재가의 우선 원천 |
 | 등락률 | change_rate | REST + realtime overlay | DONE | 실시간 tick 있으면 `_AL` FID12 overlay |
 | 실시간 등락률 | realtime_change_rate | OpenAPI `_AL` FID12 | DONE | patch 기준 |
-| 금액(억) | trade_value_eok | ka10032 | DONE | 거래대금 |
+| 금액(억) | realtime_acc_trade_value_eok_candidate | `/api/realtime_patch` 누적 거래대금 억 후보 | DONE | 초기 fallback은 `trade_value_eok`. HTML 계산 없음. `cells[6]` 500ms 표시 갱신. 순위 재정렬/후보5 재선정은 별도 Ranking Engine 또는 재정렬 단계에서 처리 |
 | 실시간 누적거래량 | cumulative_volume | OpenAPI `_AL` FID13 | DONE | quote 내부 보존 |
 | 실시간 누적거래대금 | cumulative_value | OpenAPI `_AL` FID14 | DONE | quote 내부 보존 |
 | 체결시간 | trade_time / fid20_trade_time | OpenAPI `_AL` FID20 | DONE/보존 | 실시간 지연 판단용 아님 |

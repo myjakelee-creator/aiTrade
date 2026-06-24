@@ -1280,6 +1280,17 @@
     ]);
     const bidVolume = firstValue(row, ['bid_volume']);
     const askVolume = firstValue(row, ['ask_volume']);
+    const realtimeAccTradeValueEokCandidate = firstValue(row, [
+      'realtime_acc_trade_value_eok_candidate',
+      'realtimeAccTradeValueEokCandidate'
+    ]);
+    const amountValue = firstValue(row, [
+      'realtime_acc_trade_value_eok_candidate',
+      'realtimeAccTradeValueEokCandidate',
+      'trade_value_eok',
+      '거래대금(억)',
+      '거래대금_억'
+    ]);
     const minuteStrengthValue = firstValue(row, [
       'realtime_strength',
       'realtimeStrength',
@@ -1327,7 +1338,9 @@
       changeRate: formatPercent(changeRate),
       changeRateNumber: Number(String(changeRate ?? '').replace(/[%+,]/g, '').trim()),
       changeClass: toneClass(firstValue(row, ['change_tone']), changeRate),
-      amount: formatInteger(firstValue(row, ['trade_value_eok', '거래대금(억)', '거래대금_억'])),
+      amount: formatInteger(amountValue),
+      realtimeAccTradeValueEokCandidate,
+      realtime_acc_trade_value_eok_candidate: realtimeAccTradeValueEokCandidate,
       bidVolume,
       askVolume,
       balanceForce: balanceView(balanceValue, { bidVolume, askVolume }),
@@ -1534,6 +1547,16 @@
     }
     row.realtimeAccVolume = firstValue(patch, ['realtime_acc_volume']);
     row.realtimeAccTradeValue = firstValue(patch, ['realtime_acc_trade_value']);
+    const realtimeAccTradeValueEokCandidate = firstValue(patch, [
+      'realtime_acc_trade_value_eok_candidate',
+      'realtimeAccTradeValueEokCandidate'
+    ]);
+    if (realtimeAccTradeValueEokCandidate !== null) {
+      row.realtimeAccTradeValueEokCandidate = realtimeAccTradeValueEokCandidate;
+      row.realtime_acc_trade_value_eok_candidate = realtimeAccTradeValueEokCandidate;
+      row.amount = formatInteger(realtimeAccTradeValueEokCandidate);
+      setCell(tableRow.cells[6], escapeHtml(row.amount), 'number-cell');
+    }
     row.bidVolume = firstValue(patch, ['bid_volume']);
     row.askVolume = firstValue(patch, ['ask_volume']);
     row.bid_ask_ratio = firstValue(patch, [
@@ -1562,6 +1585,7 @@
       'changeRate',
       'changeRateNumber',
       'changeClass',
+      'amount',
       'bidVolume',
       'askVolume',
       'bid_ask_ratio',
@@ -1573,6 +1597,8 @@
       'realtime_strength',
       'realtimeAccVolume',
       'realtimeAccTradeValue',
+      'realtimeAccTradeValueEokCandidate',
+      'realtime_acc_trade_value_eok_candidate',
       'realtimeReceivedAt',
       'realtimeSequence'
     ].forEach(key => {
