@@ -102,6 +102,33 @@ normalized_code = 005930
 | 큰손 | big_hand | 체결 산출 | 예정 | KRT/큰손 원천 연결 후 계산 |
 | 모멘텀 | momentum | Python 산출 | 예정 | Strategy 전까지 미구현 |
 
+Source 필드 후보:
+
+| 필드 | 대상 |
+|---|---|
+| price_source | 현재가 |
+| trade_value_source | 금액(억) |
+| ohlc_source | 일봉 |
+| bid_ask_ratio_source | 잔량비 |
+| realtime_strength_source | 순간강도 |
+| session_strength_source | 세션강도 |
+
+현재 500ms `/api/realtime_patch` 갱신 컬럼:
+
+- 현재가
+- 등락률
+- 금액(억)
+- 잔량비
+- 순간강도
+- 세션강도
+
+Fallback 원칙:
+
+- 현재가/등락률/금액(억)/일봉은 `close_snapshot` 표시 가능.
+- 잔량비는 realtime 호가가 없으면 `unavailable`.
+- 순간강도는 realtime FID228이 없으면 `unavailable`.
+- 세션강도는 서버 시작 이후 실시간 체결 누적이므로 fallback 금지.
+
 ---
 
 # 2. 시장수급

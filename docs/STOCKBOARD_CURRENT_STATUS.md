@@ -284,9 +284,40 @@ TOP100 refresh = 30000ms
 - 시장수급 패널은 화면에서 5초마다 `/api/market_supply`를 호출하지만 backend 값은 서버 시작 시 수집값에 가까우므로 별도 재수집 설계가 필요하다.
 - 큰손/모멘텀은 backend 계산이 아직 미구현이다.
 
+### Fallback / Source 운영 원칙
+
+- 2026-06-24 after-market 관찰: COM realtime 서버는 `running=True`, `login_state=connected`, `realreg_succeeded=True`, `orderbook_realreg_succeeded=True`, `registered_count=175` 상태로 정상 동작했다.
+- `realdata_received_count`는 관찰 중 계속 증가했고, NXT/AL 실시간 거래가 있는 종목은 `/api/realtime_patch` 500ms 경로로 계속 갱신되었다.
+- 현재 500ms realtime_patch 화면 갱신 컬럼은 현재가, 등락률, 금액(억), 잔량비, 순간강도, 세션강도다.
+- Source 후보는 `realtime`, `close_snapshot`, `regular_close_snapshot`, `nxt_after_close_snapshot`, `unavailable`, `close_snapshot_candidate`만 사용한다.
+- 현재가/등락률/금액(억)은 `realtime`을 우선하고, 실시간 값이 없으면 `close_snapshot` 표시가 가능하다.
+- 일봉은 현재 `ka10086` base이며, 실시간 값이 없으면 `close_snapshot` 성격의 표시가 가능하다. 추후 `realtime_ohlc` 구조로 실시간화한다.
+- 잔량비는 실시간 호가가 없으면 `unavailable`이다. 마감 호가 원천 확인 전에는 `close_snapshot_candidate`로만 둔다.
+- 순간강도는 `realtime` FID228을 우선하고, FID228 실시간 값이 없으면 `unavailable`이다. `OPT10047`/`OPT10084` snapshot 후보는 별도 검증 전까지 표시 원천으로 쓰지 않는다.
+- 세션강도는 fallback 금지다. 서버 시작 이후 실시간 FID15 체결수량 부호 누적이라는 정의를 유지한다.
+- 080220 제주반도체와 036930 주성엔지니어링은 `/api/top100`에는 있고 price/change_rate/trade_value_eok/ohlc도 있으나, `/api/realtime` quote와 `/api/realtime_patch` row가 없다. 따라서 잔량비/순간강도/세션강도는 `unavailable`이 맞다.
+
+### 0186 통합 순위 비교 메모
+
+- StockBoard top100 원천은 `ka10032`다.
+- 현재 요청 조건은 `mrkt_tp="000"`, `mang_stk_incls="0"`, `stex_tp="3"`이다.
+- StockBoard는 `tradable_stock_master.csv` 필터 후 `rank`를 다시 매긴다.
+- 키움 0186은 ETF/ETN/스팩 제외 통합 순위로 보이며, StockBoard는 일반 보통주 중심으로 우선주 포함 대부분을 제외한다.
+- HTS 0186 거래대금상위(통합)와 비교할 때는 `rank`보다 `original_rank`를 먼저 비교한다.
+- 실시간 금액은 overlay되지만 순위 재정렬은 아직 하지 않는다.
+- 차이가 계속 나면 신규상장/종목마스터 누락 또는 필터 차이를 먼저 점검한다.
+- 추후 같은 시각 HTS 0186 상위 20과 `/api/top100` 상위 20의 `rank`/`original_rank`/`trade_value_eok` 대조가 필요하다.
+
 ## 9. 다음 작업
 
-1순위 작업은 잔량비 표시 디테일(TODO 43B) 또는 정확한 당일강도 backfill 원천 재검토다.
+우선순위 갱신:
+
+1. 일봉 `realtime_ohlc` 구현 조사/설계
+2. HTS 0186 상위 20 캡처와 `/api/top100` `original_rank` 대조
+3. 신규상장/종목마스터 누락 점검
+4. 장마감 snapshot/fallback 구현은 source 정책 확정 후 진행
+
+1순위 작업은 컬럼별 source 필드 설계, 일봉 `realtime_ohlc` 구현, 잔량비/순간강도 마감 snapshot 원천 조사, 0186 `original_rank` 대조다.
 
 TODO 43B 잔량비 표시 디테일:
 
