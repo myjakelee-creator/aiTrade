@@ -4,7 +4,7 @@
 
 ## 1. 현재 한 줄 요약
 
-StockBoard는 REST/TR 데이터와 OpenAPI 실시간 데이터(`_AL` 통합 원천)를 RealtimeStore에 결합해 `/api/top100`, `/api/realtime`, `/api/realtime_status`, `/api/realtime_provider_status`, `/api/realtime_patch`로 제공하며, 화면은 TOP100 30초 갱신과 realtime_patch 500ms 갱신으로 현재가/등락률/잔량비를 표시한다.
+StockBoard는 REST/TR 데이터와 OpenAPI 실시간 데이터(`_AL` 통합 원천)를 RealtimeStore에 결합해 `/api/top100`, `/api/realtime`, `/api/realtime_status`, `/api/realtime_provider_status`, `/api/realtime_patch`로 제공하며, 화면은 TOP100 30초 갱신과 realtime_patch 500ms 갱신으로 현재가/등락률/잔량비/순간강도를 표시한다.
 
 ## 2. 최종 목표 구조
 
@@ -74,13 +74,13 @@ DONE 38. 실시간 가격/지연 진단 완료
 DONE 39. TOP100 polling 부하 완화
 DONE 42. 잔량비 계산
 DONE 43A. 잔량비 realtime_patch 화면 연결
+DONE 44. 순간강도 realtime_patch 화면 연결
 
 ### TODO
 
 TODO 40. /api/realtime_patch payload 경량화
 TODO 41. 외선(foreign_futures_eok)
 TODO 43B. 잔량비 표시 디테일
-TODO 44. 순간강도 계산
 TODO 45. 순간강도 색상바
 TODO 46. 당일강도 계산
 TODO 47. 당일강도 색상바
@@ -130,7 +130,9 @@ TODO 56. 시장체온(Market Temperature)
 - `/api/realtime_status` 응답이 정상 반환된다.
 - `/api/realtime_provider_status` 응답이 정상 반환된다.
 - `/api/realtime_patch` 응답이 정상 반환된다.
-- DOM realtime patch가 현재가/등락률/잔량비 셀에 연결되었다.
+- DOM realtime patch가 현재가/등락률/잔량비/순간강도 셀에 연결되었다.
+- OpenAPI FID 228 `execution_strength_raw`가 Store `execution_strength`로 저장되고 API `realtime_strength`로 노출된다.
+- 순간강도는 최신 실시간 체결강도 순간값 기준이며 1분 평균이 아니다.
 - top100 refresh가 실시간 가격/등락률/호가 셀을 덮지 않도록 `preserveRealtimeFields()` 보존 로직이 들어갔다.
 
 ### 대체거래소 / 가격 원천
@@ -182,7 +184,8 @@ TODO 56. 시장체온(Market Temperature)
 - 초기 또는 fallback 시 full patch를 반환한다.
 - 이후에는 `since_sequence` 기반 delta patch를 반환한다.
 - 최근 검증 기준 delta row에는 `price`, `change_rate`, `realtime_strength`, `realtime_acc_volume`, `realtime_acc_trade_value`, `bid_volume`, `ask_volume`, `bid_ask_ratio`가 포함된다.
-- 현재가/등락률/잔량비는 HTML `applyRealtimePatchToRow()`에서 500ms patch 경로로 셀을 갱신한다.
+- 현재가/등락률/잔량비/순간강도는 HTML `applyRealtimePatchToRow()`에서 500ms patch 경로로 셀을 갱신한다.
+- 순간강도는 `/api/top100` 호출 없이 `/api/realtime_patch`만 20초 확인한 결과 delta 호출 26회, delta row 2,179개, `realtime_strength` 포함 row 2,179개로 검증되었다.
 - 시장세션, TOP100 필터, 거래대금 조회 결과, 실시간 이벤트 수신 상태에 따라 row 수와 payload는 변동 가능하다.
 
 ## 6. _AL 통합 실시간 가격 원천 규칙
@@ -214,8 +217,8 @@ normalized_code = 005930
 - `/api/top100` 자동 갱신: 30000ms
 - `/api/realtime_patch` 자동 갱신: 500ms
 - TOP100 refresh는 순위/구성/거래대금/기본 데이터 갱신용이다.
-- realtime_patch는 현재가/등락률/잔량비/호가/실시간 값 갱신용이다.
-- `preserveRealtimeFields()`로 top100 refresh가 현재가/등락률/잔량비/호가 실시간 셀을 덮는 위험을 완화한다.
+- realtime_patch는 현재가/등락률/잔량비/순간강도/호가/실시간 값 갱신용이다.
+- `preserveRealtimeFields()`로 top100 refresh가 현재가/등락률/잔량비/순간강도/호가 실시간 셀을 덮는 위험을 완화한다.
 - FID20은 실시간 지연 판단용이 아니라 체결 원천시각 보존용이다.
 - 실시간성 판단은 `received_at`과 `sequence` 기준이다.
 - suffix 실험 screen 9100/9110/9120은 기본 실행에서 OFF다.

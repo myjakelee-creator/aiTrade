@@ -151,12 +151,12 @@
 
   <div class="section sec-orange">▶ 유력 후보 상위 5종목</div>
   <table class="grid board enhanced-board" id="candidate-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>1분강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
   </table>
 
   <div class="section sec-blue">▶ 거래대금 상위 종목 <span id="ranking-row-count">0개</span></div>
   <table class="grid board enhanced-board" id="trading-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>1분강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
   </table>
 </div>
 <script>
@@ -615,7 +615,7 @@
     { label: '금액(억)', defaultWidth: 82, minWidth: 68 },
     { label: '일봉', defaultWidth: 86, minWidth: 70 },
     { label: '잔량비', defaultWidth: 56, minWidth: 48 },
-    { label: '1분강도', defaultWidth: 56, minWidth: 48 },
+    { label: '순간강도', defaultWidth: 56, minWidth: 48 },
     { label: '당일강도', defaultWidth: 56, minWidth: 48 },
     { label: '외합(억)', defaultWidth: 64, minWidth: 54 },
     { label: '프로(억)', defaultWidth: 64, minWidth: 54 },
@@ -993,7 +993,7 @@
     return {
       blueWidth: 100 - redWidth,
       redWidth,
-      tooltip: [`1분강도 : ${number}`, status, `100 기준 ${differenceText}`].join('\n')
+      tooltip: [`순간강도 : ${number}`, status, `100 기준 ${differenceText}`].join('\n')
     };
   }
 
@@ -1280,7 +1280,14 @@
     ]);
     const bidVolume = firstValue(row, ['bid_volume']);
     const askVolume = firstValue(row, ['ask_volume']);
-    const minuteStrengthValue = firstValue(row, ['strength_1m', 'minute_strength', '1분강도']);
+    const minuteStrengthValue = firstValue(row, [
+      'realtime_strength',
+      'realtimeStrength',
+      'execution_strength',
+      'strength_1m',
+      'minute_strength',
+      '1분강도'
+    ]);
     const dailyStrengthValue = firstValue(row, ['strength_day', 'daily_strength', '당일강도']);
     const foreignLabel = firstValue(row, ['foreign_display_label']) || '외합(억)';
     const foreignSource = firstValue(row, ['foreign_display_source']) || 'foreign_sum';
@@ -1514,7 +1521,17 @@
       setCell(tableRow.cells[5], escapeHtml(displayChangeRate), `number-cell ${changeClass}`.trim(), '', true);
     }
     if (!row) return;
-    row.realtimeStrength = firstValue(patch, ['realtime_strength']);
+    const realtimeStrength = firstValue(patch, [
+      'realtime_strength',
+      'realtimeStrength',
+      'execution_strength'
+    ]);
+    if (realtimeStrength !== null) {
+      row.realtimeStrength = realtimeStrength;
+      row.realtime_strength = realtimeStrength;
+      row.minuteForce = minuteStrengthView(realtimeStrength);
+      setCell(tableRow.cells[9], minuteStrengthMarkup(row.minuteForce), 'balance-cell');
+    }
     row.realtimeAccVolume = firstValue(patch, ['realtime_acc_volume']);
     row.realtimeAccTradeValue = firstValue(patch, ['realtime_acc_trade_value']);
     row.bidVolume = firstValue(patch, ['bid_volume']);
@@ -1549,9 +1566,11 @@
       'askVolume',
       'bid_ask_ratio',
       'balanceForce',
+      'minuteForce',
       'bestBidPrice',
       'bestAskPrice',
       'realtimeStrength',
+      'realtime_strength',
       'realtimeAccVolume',
       'realtimeAccTradeValue',
       'realtimeReceivedAt',
