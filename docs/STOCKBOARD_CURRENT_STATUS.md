@@ -80,6 +80,8 @@ DONE 46. 순간강도 색상바 스케일 개선
 DONE 47. 세션강도 realtime_patch 화면 연결
 DONE 48B. 일봉 `realtime_ohlc` backend/API 계산 및 노출
 DONE 48C. 일봉 `cells[7]` realtime_patch 화면 연결 및 custom tooltip
+DONE 59. `/api/top100_filter_report` 진단 API
+DONE 60. 순위 셀 `original_rank` tooltip
 
 ### TODO
 
@@ -306,23 +308,30 @@ TOP100 refresh = 30000ms
 
 - StockBoard top100 원천은 `ka10032`다.
 - 현재 요청 조건은 `mrkt_tp="000"`, `mang_stk_incls="0"`, `stex_tp="3"`이다.
+- `original_rank`는 `ka10032` 원본 순위다.
+- `rank`/`displayed_rank`는 `tradable_stock_master.csv` 필터 후 StockBoard가 다시 매긴 표시 순위다.
+- HTS/ka10032 원본 대조는 `original_rank` 기준으로 보고, StockBoard 화면의 보통주 중심 순위는 `rank`/`displayed_rank` 기준으로 본다.
 - StockBoard는 `tradable_stock_master.csv` 필터 후 `rank`를 다시 매긴다.
 - 키움 0186은 ETF/ETN/스팩 제외 통합 순위로 보이며, StockBoard는 일반 보통주 중심으로 우선주 포함 대부분을 제외한다.
 - HTS 0186 거래대금상위(통합)와 비교할 때는 `rank`보다 `original_rank`를 먼저 비교한다.
 - 실시간 금액은 overlay되지만 순위 재정렬은 아직 하지 않는다.
 - 차이가 계속 나면 신규상장/종목마스터 누락 또는 필터 차이를 먼저 점검한다.
-- 추후 같은 시각 HTS 0186 상위 20과 `/api/top100` 상위 20의 `rank`/`original_rank`/`trade_value_eok` 대조가 필요하다.
+- `/api/top100_filter_report` 1차 진단 결과는 `raw_count=269`, `displayed_count=177`, `dropped_count=92`다.
+- 탈락 상위 종목은 KODEX/TIGER/ACE/RISE/HANARO/SOL 등 ETF 계열과 삼성전자우/삼성전기우 등 우선주가 대부분이다.
+- 현재 확인 범위에서는 순위 차이의 주원인은 의도된 ETF/우선주 제외 후 재순위다.
+- 0186 순위 차이 원인 조사는 1차 완료로 본다. 탈락 92개 전체 분류는 서버 안정 시 추가 확인한다.
 
 ## 9. 다음 작업
 
 우선순위 갱신:
 
-1. HTS 0186 상위 20 캡처와 `/api/top100` `original_rank` 대조
-2. 신규상장/종목마스터 누락 점검
-3. 장마감 snapshot/fallback 구현은 source 정책 확정 후 진행
-4. 정확한 당일강도는 backfill 원천 확보 후 진행
+1. 탈락 92개 전체 분류는 서버 안정 시 추가 확인
+2. 장마감 snapshot/fallback 구현은 source 정책 확정 후 진행
+3. 정확한 당일강도는 backfill 원천 확보 후 진행
+4. 큰손/KRT, 후보5 실제 선정, Signal/Ranking/Strategy Engine
+5. 미국시장 실데이터, Replay, 시장체온
 
-1순위 작업은 0186 `original_rank` 대조, 신규상장/종목마스터 누락 점검, 잔량비/순간강도 마감 snapshot 원천 조사다.
+1순위 작업은 탈락 92개 전체 분류, 장마감 fallback source 확정, 잔량비/순간강도 마감 snapshot 원천 조사다.
 
 TODO 43B 잔량비 표시 디테일:
 

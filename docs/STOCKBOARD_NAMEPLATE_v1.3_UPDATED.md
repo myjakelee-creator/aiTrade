@@ -52,10 +52,11 @@ normalized_code = 005930
 
 | 화면명 | 내부키 | 데이터 원천 | 상태 | 비고 |
 |---|---|---|---|---|
-| 순위 | rank | 화면 산출 | 산출 | TOP100 표시 순서 |
+| 순위 | rank / displayed_rank | 화면 산출 | 산출 | `tradable_stock_master.csv` 필터 후 StockBoard 표시 순위 |
 | 전일 | rank_diff | 화면 산출 | 산출 | 전일 대비 순위 변화 |
 | 전일순위 | prev_rank | 거래대금 순위 | 예정 | 향후 연결 |
-| 원순위 | original_rank | ka10032 | DONE | 원 거래대금 순위 |
+| 원순위 | original_rank | ka10032 | DONE | ka10032 원본 순위. HTS/ka10032 원본 대조 기준 |
+| 순위 셀 tooltip | rankCellTooltip | HTML | DONE | 표시순위, 원순위, 차이, ETF/우선주 등 tradable master 제외 후 재순위 설명 |
 | 등급 | grade | 종목 평가 로직 | 임시 | Signal/Ranking 전까지 임시 |
 | 종목명 | stock_name | 종목마스터 | DONE |  |
 | 종목코드 | stock_code | 종목마스터 / normalized code | DONE/보존 | 6자리 문자열. DOM/Store/주문 key |
@@ -170,6 +171,7 @@ Fallback 원칙:
 | trade event 수 | trade_event_count | RealtimeStore | DONE | 시장세션에 따라 변동 |
 | orderbook event 수 | orderbook_event_count | RealtimeStore | DONE | 시장세션에 따라 변동 |
 | 실시간 patch | realtime_patch | RealtimeStore snapshot/delta | DONE | 초기 full + since_sequence 기반 delta |
+| TOP100 필터 진단 | top100_filter_report | ka10032 + tradable master | DONE/진단 | raw_count=269, displayed_count=177, dropped_count=92. 탈락 상위는 ETF 계열/우선주가 대부분 |
 | Provider 사용 가능 | available | KiwoomOpenApiRealtimeProvider | DONE | 상태 조회 가능 |
 | Provider 실행 | running | KiwoomOpenApiRealtimeProvider | DONE | env ON 시 실행 |
 | QAx 준비 | qt_ready | QAxWidget | DONE | 32bit Python 필요 |
