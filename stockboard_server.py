@@ -246,6 +246,12 @@ def _top100_with_realtime(rows, realtime_store):
             row["session_strength_source"] = trade_event.get(
                 "session_strength_source"
             )
+            realtime_ohlc = trade_event.get("realtime_ohlc")
+            if realtime_ohlc is not None:
+                row["realtime_ohlc"] = deepcopy(realtime_ohlc)
+                row["realtime_ohlc_source"] = trade_event.get(
+                    "realtime_ohlc_source"
+                )
             row["realtime_received_at"] = trade_event.get("received_at")
             row["realtime_received_code"] = trade_event.get("received_code")
             row["realtime_registered_code"] = trade_event.get("registered_code")
@@ -311,6 +317,7 @@ def _realtime_patch_payload(
         trade_value_diagnostics = _realtime_acc_trade_value_diagnostics(
             quote.get("cumulative_value")
         )
+        realtime_ohlc = quote.get("realtime_ohlc")
         patches.append(
             {
                 "stock_code": stock_code,
@@ -354,6 +361,12 @@ def _realtime_patch_payload(
                     quote.get("session_sell_qty_live")
                 ),
                 "session_strength_source": quote.get("session_strength_source"),
+                "realtime_ohlc": (
+                    deepcopy(realtime_ohlc)
+                    if realtime_ohlc is not None
+                    else None
+                ),
+                "realtime_ohlc_source": quote.get("realtime_ohlc_source"),
                 "bid_volume": _realtime_number(
                     quote.get("bid_volume")
                     if "bid_volume" in quote
@@ -731,6 +744,7 @@ def main():
         flush=True,
     )
     realtime_store = RealtimeStore()
+    realtime_store.set_base_ohlc_many(filtered_rows)
     realtime_provider = None
     realtime_provider_error = None
     realtime_provider_start_requested = (

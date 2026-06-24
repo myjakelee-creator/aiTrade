@@ -100,7 +100,8 @@
   .enhanced-board .balance-side-red{right:0;width:var(--red-width);background:var(--red)}
   .enhanced-board .balance-meeting{position:absolute;z-index:1;left:var(--blue-width);top:1px;bottom:1px;width:2px;background:#5f676e;transform:translateX(-1px)}
   .balance-tooltip{position:fixed;z-index:10000;display:none;max-width:260px;padding:7px 9px;border:1px solid rgba(148,163,184,.8);border-radius:3px;background:#fff;color:#111827;font-size:12px;font-weight:700;line-height:1.45;white-space:pre-line;box-shadow:0 6px 18px rgba(15,23,42,.18);pointer-events:none}
-  .balance-tooltip.visible{display:block}
+  .ohlc-tooltip{position:fixed;z-index:10000;display:none;max-width:280px;padding:7px 9px;border:1px solid rgba(148,163,184,.8);border-radius:3px;background:#fff;color:#111827;font-size:12px;font-weight:400;line-height:1.45;white-space:pre-line;box-shadow:0 6px 18px rgba(15,23,42,.18);pointer-events:none}
+  .balance-tooltip.visible,.ohlc-tooltip.visible{display:block}
   #candidate-board .stock-name{text-align:left}
   #candidate-board td:nth-child(5),#candidate-board td:nth-child(6),#candidate-board td:nth-child(7){text-align:right;font-variant-numeric:tabular-nums}
   #candidate-board .note{min-width:0}
@@ -805,6 +806,23 @@
     );
   }
 
+  function hasRealtimeOhlc(row) {
+    return Boolean(
+      row
+      && row.realtime_ohlc
+      && typeof row.realtime_ohlc === 'object'
+      && !Array.isArray(row.realtime_ohlc)
+    );
+  }
+
+  function displayOhlc(row) {
+    return hasRealtimeOhlc(row) ? row.realtime_ohlc : row?.ohlc;
+  }
+
+  function hasDisplayOhlc(row) {
+    return Boolean(displayOhlc(row));
+  }
+
   function updateDataDiagnostics() {
     const diagnostics = top100State.diagnostics;
     dataDiagnostics.textContent = [
@@ -859,6 +877,20 @@
       minimumFractionDigits: 0,
       maximumFractionDigits
     });
+  }
+
+  function formatOhlcMove(value, prevClose) {
+    const price = Number(value);
+    const base = Number(prevClose);
+    if (!Number.isFinite(price) || !Number.isFinite(base) || base <= 0) return '';
+    const rate = (price - base) / base * 100;
+    return ` (${rate > 0 ? '+' : ''}${rate.toFixed(2)}%)`;
+  }
+
+  function formatOhlcTooltipPrice(value, prevClose, maximumFractionDigits = 0) {
+    const display = formatOhlcTooltipNumber(value, maximumFractionDigits);
+    if (display === '-') return display;
+    return `${display}${formatOhlcMove(value, prevClose)}`;
   }
 
   function ohlcTooltip(candle) {
@@ -1067,7 +1099,7 @@
 
   function candleDomain(rows) {
     const maxMoves = rows
-      .map(row => candleView(row.ohlc))
+      .map(row => candleView(displayOhlc(row)))
       .filter(candle => candle && Number.isFinite(candle.prices.prevClose) && candle.prices.prevClose !== 0)
       .flatMap(candle => {
         const { open, high, low, close, vwap, prevClose } = candle.prices;
@@ -1134,17 +1166,33 @@
     };
   }
 
-  function ohlcLevelMarkup(className, position, tooltip) {
-    if (!Number.isFinite(position)) return '';
-    return `<i class="ohlc-level ${className}" style="left:${position}%" title="${escapeHtml(tooltip)}"></i>`;
+  function ohlcTooltip(candle, source = 'base ohlc') {
+    const prices = candle.prices;
+    return [
+      `거래일: ${candle.tradingDate || '-'}`,
+      `시가: ${formatOhlcTooltipPrice(prices.open, prices.prevClose)}`,
+      `고가: ${formatOhlcTooltipPrice(prices.high, prices.prevClose)}`,
+      `저가: ${formatOhlcTooltipPrice(prices.low, prices.prevClose)}`,
+      `종가/현재: ${formatOhlcTooltipPrice(prices.close, prices.prevClose)}`,
+      `VWAP: ${formatOhlcTooltipNumber(prices.vwap, 2)}`,
+      `전일고가: ${formatOhlcTooltipNumber(prices.prevHigh)}`,
+      `전일종가: ${formatOhlcTooltipNumber(prices.prevClose)}`,
+      `전일저가: ${formatOhlcTooltipNumber(prices.prevLow)}`,
+      `source: ${source}`
+    ].join('\n');
   }
 
-  function ohlcMarkup(candle, sharedDomain = top100State.candleDomain) {
+  function ohlcLevelMarkup(className, position, tooltip) {
+    if (!Number.isFinite(position)) return '';
+    return `<i class="ohlc-level ${className}" style="left:${position}%"></i>`;
+  }
+
+  function ohlcMarkup(candle, sharedDomain = top100State.candleDomain, source = 'base ohlc') {
     if (!candle) return '-';
     const { direction, prices } = candle;
     const positions = candlePositions(candle, sharedDomain);
     if (!positions) return '-';
-    const tooltip = ohlcTooltip(candle);
+    const tooltip = ohlcTooltip(candle, source);
     const escapedTooltip = escapeHtml(tooltip);
     const previousLevelMarkup = positions.proportional
       ? ohlcLevelMarkup('ohlc-proportional-center', 50, tooltip)
@@ -1160,17 +1208,18 @@
       `--body-left:${positions.bodyLeft}%`,
       `--body-right:${positions.bodyRight}%`
     ].join(';');
-    return `<div class="ohlc-chart ohlc-${direction}" style="${style}" role="img" aria-label="${escapedTooltip}" title="${escapedTooltip}" data-candle-mode="${top100State.candleMode}" data-trading-date="${escapeHtml(candle.tradingDate)}" data-open="${escapeHtml(prices.open)}" data-high="${escapeHtml(prices.high)}" data-low="${escapeHtml(prices.low)}" data-close="${escapeHtml(prices.close)}" data-vwap="${escapeHtml(prices.vwap)}" data-prev-high="${escapeHtml(prices.prevHigh)}" data-prev-close="${escapeHtml(prices.prevClose)}" data-prev-low="${escapeHtml(prices.prevLow)}">
-      <i class="ohlc-range" title="${escapedTooltip}"></i>
-      <i class="ohlc-body" title="${escapedTooltip}"></i>
-      <i class="ohlc-open" title="${escapedTooltip}"></i>
+    return `<div class="ohlc-chart ohlc-${direction}" style="${style}" role="img" aria-label="${escapedTooltip}" data-ohlc-tooltip="${escapedTooltip}" data-ohlc-source="${escapeHtml(source)}" data-candle-mode="${top100State.candleMode}" data-trading-date="${escapeHtml(candle.tradingDate)}" data-open="${escapeHtml(prices.open)}" data-high="${escapeHtml(prices.high)}" data-low="${escapeHtml(prices.low)}" data-close="${escapeHtml(prices.close)}" data-vwap="${escapeHtml(prices.vwap)}" data-prev-high="${escapeHtml(prices.prevHigh)}" data-prev-close="${escapeHtml(prices.prevClose)}" data-prev-low="${escapeHtml(prices.prevLow)}">
+      <i class="ohlc-range"></i>
+      <i class="ohlc-body"></i>
+      <i class="ohlc-open"></i>
       ${ohlcLevelMarkup('ohlc-vwap', positions.levels.vwap, tooltip)}
       ${previousLevelMarkup}
     </div>`;
   }
 
   function rowOhlcMarkup(row) {
-    return hasOhlc(row) ? ohlcMarkup(candleView(row.ohlc)) : '-';
+    const source = hasRealtimeOhlc(row) ? 'realtime_ohlc' : 'base ohlc';
+    return hasDisplayOhlc(row) ? ohlcMarkup(candleView(displayOhlc(row)), top100State.candleDomain, source) : '-';
   }
 
   function metricMarkup(label, metric) {
@@ -1364,6 +1413,12 @@
       candidateScore: firstValue(row, ['candidate_score']),
       gradeScore: firstValue(row, ['grade_score']),
       ohlc: row.ohlc,
+      realtime_ohlc: firstValue(row, ['realtime_ohlc', 'realtimeOhlc']),
+      realtimeOhlc: firstValue(row, ['realtime_ohlc', 'realtimeOhlc']),
+      realtime_ohlc_source: firstValue(row, [
+        'realtime_ohlc_source',
+        'realtimeOhlcSource'
+      ]),
       rank: displayValue(firstValue(row, ['rank', '현재순위', '순위'])),
       previousRank: rankMovement.display,
       rankMovementClass: rankMovement.className,
@@ -1442,8 +1497,14 @@
   balanceTooltip.className = 'balance-tooltip';
   balanceTooltip.setAttribute('role', 'tooltip');
   document.body.appendChild(balanceTooltip);
+  const ohlcTooltipElement = document.createElement('div');
+  ohlcTooltipElement.className = 'ohlc-tooltip';
+  ohlcTooltipElement.setAttribute('role', 'tooltip');
+  document.body.appendChild(ohlcTooltipElement);
   let activeBalanceTooltipCell = null;
   let lastBalanceTooltipEvent = null;
+  let activeOhlcTooltipCell = null;
+  let lastOhlcTooltipEvent = null;
 
   function balanceTooltipText(cell) {
     return cell?.querySelector('[data-balance-tooltip]')?.dataset.balanceTooltip || '';
@@ -1493,6 +1554,65 @@
     balanceTooltip.classList.remove('visible');
   }
 
+  function ohlcTooltipText(cell) {
+    return cell?.querySelector('[data-ohlc-tooltip]')?.dataset.ohlcTooltip || '';
+  }
+
+  function positionOhlcTooltip(event) {
+    if (!event) return;
+    const margin = 12;
+    ohlcTooltipElement.style.left = `${event.clientX + margin}px`;
+    ohlcTooltipElement.style.top = `${event.clientY + margin}px`;
+    const rect = ohlcTooltipElement.getBoundingClientRect();
+    const left = Math.min(event.clientX + margin, window.innerWidth - rect.width - margin);
+    const top = Math.min(event.clientY + margin, window.innerHeight - rect.height - margin);
+    ohlcTooltipElement.style.left = `${Math.max(margin, left)}px`;
+    ohlcTooltipElement.style.top = `${Math.max(margin, top)}px`;
+  }
+
+  function showOhlcTooltip(cell, event) {
+    const text = ohlcTooltipText(cell);
+    if (!text) return;
+    activeOhlcTooltipCell = cell;
+    lastOhlcTooltipEvent = event;
+    ohlcTooltipElement.textContent = text;
+    ohlcTooltipElement.classList.add('visible');
+    positionOhlcTooltip(event);
+  }
+
+  function hideOhlcTooltip(cell) {
+    if (cell && activeOhlcTooltipCell !== cell) return;
+    activeOhlcTooltipCell = null;
+    lastOhlcTooltipEvent = null;
+    ohlcTooltipElement.classList.remove('visible');
+  }
+
+  function ohlcTooltipCellFromTarget(target) {
+    const source = target?.closest?.('[data-ohlc-tooltip]');
+    return source?.closest('td') || null;
+  }
+
+  function currentOhlcTooltipCell() {
+    if (!lastOhlcTooltipEvent) return null;
+    const hovered = document.elementFromPoint(lastOhlcTooltipEvent.clientX, lastOhlcTooltipEvent.clientY);
+    return ohlcTooltipCellFromTarget(hovered);
+  }
+
+  function refreshOhlcTooltip(cell) {
+    if (activeOhlcTooltipCell !== cell) return;
+    if (currentOhlcTooltipCell() !== cell) {
+      hideOhlcTooltip(cell);
+      return;
+    }
+    const text = ohlcTooltipText(cell);
+    if (!text) {
+      hideOhlcTooltip(cell);
+      return;
+    }
+    ohlcTooltipElement.textContent = text;
+    positionOhlcTooltip(lastOhlcTooltipEvent);
+  }
+
   function balanceTooltipCellFromTarget(target) {
     const source = target?.closest?.('[data-balance-tooltip]');
     return source?.closest('td.balance-cell') || null;
@@ -1513,12 +1633,31 @@
     showBalanceTooltip(cell, event);
   }
 
+  function updateOhlcTooltipFromMouse(event) {
+    const cell = ohlcTooltipCellFromTarget(event.target);
+    if (!cell) {
+      hideOhlcTooltip();
+      return;
+    }
+    showOhlcTooltip(cell, event);
+  }
+
   document.addEventListener('mousemove', updateBalanceTooltipFromMouse);
-  document.addEventListener('click', () => hideBalanceTooltip());
-  document.addEventListener('keydown', event => {
-    if (event.key === 'Escape') hideBalanceTooltip();
+  document.addEventListener('mousemove', updateOhlcTooltipFromMouse);
+  document.addEventListener('click', () => {
+    hideBalanceTooltip();
+    hideOhlcTooltip();
   });
-  document.addEventListener('scroll', () => hideBalanceTooltip(), true);
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      hideBalanceTooltip();
+      hideOhlcTooltip();
+    }
+  });
+  document.addEventListener('scroll', () => {
+    hideBalanceTooltip();
+    hideOhlcTooltip();
+  }, true);
 
   function updateBoardRow(tableRow, row, flashRealtime = false) {
     const grade = row.grade === '-' ? '-' : `<span class="grade ${row.gradeClass}">${escapeHtml(row.grade)}</span>`;
@@ -1532,6 +1671,7 @@
     setCell(cells[5], escapeHtml(row.changeRate), `number-cell ${row.changeClass}`.trim(), '', flashRealtime);
     setCell(cells[6], escapeHtml(row.amount), 'number-cell');
     setCell(cells[7], candle);
+    refreshOhlcTooltip(cells[7]);
     setCell(cells[8], balanceMarkup(row.balanceForce), 'balance-cell');
     refreshBalanceTooltip(cells[8]);
     setCell(cells[9], minuteStrengthMarkup(row.minuteForce), 'balance-cell');
@@ -1545,7 +1685,7 @@
   function createBoardRow(row) {
     const tableRow = document.createElement('tr');
     tableRow.dataset.stockCode = row.code;
-    tableRow.dataset.hasOhlc = hasOhlc(row) ? 'true' : 'false';
+    tableRow.dataset.hasOhlc = hasDisplayOhlc(row) ? 'true' : 'false';
     for (let index = 0; index < 15; index += 1) tableRow.insertCell();
     updateBoardRow(tableRow, row);
     return tableRow;
@@ -1644,6 +1784,20 @@
       row.amount = formatInteger(realtimeAccTradeValueEokCandidate);
       setCell(tableRow.cells[6], escapeHtml(row.amount), 'number-cell');
     }
+    const realtimeOhlc = firstValue(patch, ['realtime_ohlc', 'realtimeOhlc']);
+    if (realtimeOhlc && typeof realtimeOhlc === 'object' && !Array.isArray(realtimeOhlc)) {
+      row.realtime_ohlc = realtimeOhlc;
+      row.realtimeOhlc = realtimeOhlc;
+      const realtimeOhlcSource = firstValue(patch, [
+        'realtime_ohlc_source',
+        'realtimeOhlcSource'
+      ]);
+      if (realtimeOhlcSource !== null) {
+        row.realtime_ohlc_source = realtimeOhlcSource;
+      }
+      setCell(tableRow.cells[7], rowOhlcMarkup(row));
+      refreshOhlcTooltip(tableRow.cells[7]);
+    }
     row.bidVolume = firstValue(patch, ['bid_volume']);
     row.askVolume = firstValue(patch, ['ask_volume']);
     row.bid_ask_ratio = firstValue(patch, [
@@ -1695,6 +1849,9 @@
       'realtimeAccTradeValue',
       'realtimeAccTradeValueEokCandidate',
       'realtime_acc_trade_value_eok_candidate',
+      'realtime_ohlc',
+      'realtimeOhlc',
+      'realtime_ohlc_source',
       'realtimeReceivedAt',
       'realtimeSequence'
     ].forEach(key => {
@@ -1717,7 +1874,7 @@
     candidates.forEach(row => {
       const tableRow = document.createElement('tr');
       tableRow.dataset.stockCode = row.code;
-      tableRow.dataset.hasOhlc = hasOhlc(row) ? 'true' : 'false';
+      tableRow.dataset.hasOhlc = hasDisplayOhlc(row) ? 'true' : 'false';
       for (let cellIndex = 0; cellIndex < 15; cellIndex += 1) tableRow.insertCell();
       updateCandidateRow(tableRow, row);
       candidateBoard.tBodies[0].appendChild(tableRow);
@@ -1728,14 +1885,20 @@
   function updateCandidateCandleCells() {
     top100State.candidateRows.forEach(row => {
       const tableRow = top100State.candidateRowByCode.get(row.code);
-      if (tableRow) setCell(tableRow.cells[7], rowOhlcMarkup(row));
+      if (tableRow) {
+        setCell(tableRow.cells[7], rowOhlcMarkup(row));
+        refreshOhlcTooltip(tableRow.cells[7]);
+      }
     });
   }
 
   function updateVisibleCandleCells() {
     top100State.renderedRows.forEach(row => {
       const tableRow = top100State.rowByCode.get(row.code);
-      if (tableRow) setCell(tableRow.cells[7], rowOhlcMarkup(row));
+      if (tableRow) {
+        setCell(tableRow.cells[7], rowOhlcMarkup(row));
+        refreshOhlcTooltip(tableRow.cells[7]);
+      }
     });
     updateCandidateCandleCells();
     top100State.diagnostics.domOhlc = board.querySelectorAll('.ohlc-chart').length;
@@ -1781,7 +1944,7 @@
     rankingRowCount.textContent = `${rows.length}개`;
     updateGradeDistribution(rows);
     top100State.renderedRows = rows;
-    top100State.diagnostics.renderOhlc = rows.filter(hasOhlc).length;
+    top100State.diagnostics.renderOhlc = rows.filter(hasDisplayOhlc).length;
     top100State.candleDomain = candleDomain(rows);
     renderCandidateBoard(rows);
     if (!rows.length) {
@@ -1811,7 +1974,7 @@
       return normalizeRankingRow({ ...sourceRow, stock_code: code });
     }).filter(Boolean);
     top100State.diagnostics.normalizedRows = normalizedRows.length;
-    top100State.diagnostics.normalizedOhlc = normalizedRows.filter(hasOhlc).length;
+    top100State.diagnostics.normalizedOhlc = normalizedRows.filter(hasDisplayOhlc).length;
     renderBoard(normalizedRows);
     return { received: inputRows.length, displayed: normalizedRows.length };
   }

@@ -39,6 +39,8 @@ QUOTE_FIELDS = (
     "original_registered_code",
     "realtime_source_code",
     "source_code",
+    "realtime_ohlc",
+    "realtime_ohlc_source",
 )
 
 
@@ -52,6 +54,7 @@ class RealtimeStore:
         self._quotes = {}
         self._trade_events = {}
         self._orderbook_events = {}
+        self._base_ohlc = {}
         self._last_seen = {}
         self._trade_event_limit = trade_event_limit
         self._orderbook_event_limit = orderbook_event_limit
@@ -139,6 +142,84 @@ class RealtimeStore:
             return None
         return round((buy_number / sell_number) * 100, 4)
 
+    @staticmethod
+    def _price_number(value):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if number < 0:
+            number = abs(number)
+        return number
+
+    @classmethod
+    def _ohlc_price(cls, ohlc, key):
+        if not isinstance(ohlc, dict):
+            return None
+        return cls._price_number(ohlc.get(key))
+
+    def set_base_ohlc(self, stock_code, ohlc):
+        code = self._normalized_code(stock_code)
+        if ohlc is None:
+            return None
+        if not isinstance(ohlc, dict):
+            raise TypeError("ohlc must be a dict")
+        with self._lock:
+            self._base_ohlc[code] = deepcopy(ohlc)
+            return deepcopy(self._base_ohlc[code])
+
+    def set_base_ohlc_many(self, rows):
+        count = 0
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            stock_code = row.get("stock_code")
+            ohlc = row.get("ohlc")
+            if stock_code and ohlc is not None:
+                self.set_base_ohlc(stock_code, ohlc)
+                count += 1
+        return count
+
+    def _realtime_ohlc(self, code, tick_price):
+        price = self._price_number(tick_price)
+        if price is None:
+            return None
+        base_ohlc = self._base_ohlc.get(code)
+        if not isinstance(base_ohlc, dict):
+            return None
+        previous = self._quotes.get(code, {}).get("realtime_ohlc")
+        if not isinstance(previous, dict):
+            previous = {}
+
+        base_open = self._ohlc_price(base_ohlc, "open")
+        high_candidates = [
+            self._ohlc_price(base_ohlc, "high"),
+            self._ohlc_price(previous, "high"),
+            price,
+        ]
+        low_candidates = [
+            self._ohlc_price(base_ohlc, "low"),
+            self._ohlc_price(previous, "low"),
+            price,
+        ]
+        high_values = [value for value in high_candidates if value is not None]
+        low_values = [value for value in low_candidates if value is not None]
+
+        realtime_ohlc = {
+            "open": base_open,
+            "high": max(high_values) if high_values else price,
+            "low": min(low_values) if low_values else price,
+            "close": price,
+            "vwap": base_ohlc.get("vwap"),
+            "vwap_source": "base",
+            "prev_high": base_ohlc.get("prev_high"),
+            "prev_close": base_ohlc.get("prev_close"),
+            "prev_low": base_ohlc.get("prev_low"),
+        }
+        if "trading_date" in base_ohlc:
+            realtime_ohlc["trading_date"] = base_ohlc.get("trading_date")
+        return realtime_ohlc
+
     def update_trade(
         self,
         stock_code,
@@ -179,6 +260,16 @@ class RealtimeStore:
         }
         with self._lock:
             quote = self._ensure_quote(code)
+            realtime_ohlc = self._realtime_ohlc(code, price)
+            if realtime_ohlc is not None:
+                values.update(
+                    {
+                        "realtime_ohlc": realtime_ohlc,
+                        "realtime_ohlc_source": (
+                            "ka10086_base_plus_realtime_tick"
+                        ),
+                    }
+                )
             session_buy_qty_live = quote.get("session_buy_qty_live") or 0
             session_sell_qty_live = quote.get("session_sell_qty_live") or 0
             try:
@@ -391,6 +482,7 @@ class RealtimeStore:
             self._trade_events.clear()
             self._orderbook_events.clear()
             self._last_seen.clear()
+            self._base_ohlc.clear()
             self._sequence = 0
             self._updated_at = None
 
