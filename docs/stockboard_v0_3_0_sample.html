@@ -151,12 +151,12 @@
 
   <div class="section sec-orange">▶ 유력 후보 상위 5종목</div>
   <table class="grid board enhanced-board" id="candidate-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>세션강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
   </table>
 
   <div class="section sec-blue">▶ 거래대금 상위 종목 <span id="ranking-row-count">0개</span></div>
   <table class="grid board enhanced-board" id="trading-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>당일강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>세션강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
   </table>
 </div>
 <script>
@@ -616,7 +616,7 @@
     { label: '일봉', defaultWidth: 86, minWidth: 70 },
     { label: '잔량비', defaultWidth: 56, minWidth: 48 },
     { label: '순간강도', defaultWidth: 56, minWidth: 48 },
-    { label: '당일강도', defaultWidth: 56, minWidth: 48 },
+    { label: '세션강도', defaultWidth: 56, minWidth: 48 },
     { label: '외합(억)', defaultWidth: 64, minWidth: 54 },
     { label: '프로(억)', defaultWidth: 64, minWidth: 54 },
     { label: '큰손', defaultWidth: 56, minWidth: 48 },
@@ -1006,18 +1006,32 @@
     };
   }
 
-  function dailyStrengthView(value) {
+  function sessionStrengthView(value, options = {}) {
     if (value === null || value === undefined || value === '') return null;
     const number = Number(value);
     if (!Number.isFinite(number)) return null;
+    const buyVolume = Number(String(options.buyVolume ?? '').replace(/,/g, ''));
+    const sellVolume = Number(String(options.sellVolume ?? '').replace(/,/g, ''));
     const redWidth = minuteStrengthPosition(number);
     const difference = Math.round(number - 100);
     const status = number < 100 ? '매도 우세' : number > 100 ? '매수 우세' : '균형';
     const differenceText = difference > 0 ? `+${difference}` : String(difference);
+    const tooltipLines = [
+      `세션강도: ${number.toFixed(2)}`,
+      `매수체결량: ${Number.isFinite(buyVolume) ? formatInteger(buyVolume) : '-'}`,
+      `매도체결량: ${Number.isFinite(sellVolume) ? formatInteger(sellVolume) : '-'}`,
+      Number.isFinite(buyVolume) && Number.isFinite(sellVolume)
+        ? `계산: ${formatInteger(buyVolume)} / ${formatInteger(sellVolume)} * 100`
+        : '계산: -',
+      status,
+      `100 기준 ${differenceText}`,
+      '기준: 서버 시작 이후 실시간 체결 누적',
+      '주의: 정식 당일 backfill 미포함'
+    ];
     return {
       blueWidth: 100 - redWidth,
       redWidth,
-      tooltip: [`당일강도 : ${number}`, status, `100 기준 ${differenceText}`].join('\n')
+      tooltip: tooltipLines.join('\n')
     };
   }
 
@@ -1308,7 +1322,21 @@
       'minute_strength',
       '1분강도'
     ]);
-    const dailyStrengthValue = firstValue(row, ['strength_day', 'daily_strength', '당일강도']);
+    const sessionStrengthValue = firstValue(row, [
+      'session_strength',
+      'sessionStrength',
+      'strength_day',
+      'daily_strength',
+      '당일강도'
+    ]);
+    const sessionBuyQtyLive = firstValue(row, [
+      'session_buy_qty_live',
+      'sessionBuyQtyLive'
+    ]);
+    const sessionSellQtyLive = firstValue(row, [
+      'session_sell_qty_live',
+      'sessionSellQtyLive'
+    ]);
     const foreignLabel = firstValue(row, ['foreign_display_label']) || '외합(억)';
     const foreignSource = firstValue(row, ['foreign_display_source']) || 'foreign_sum';
     const foreignValue = Object.hasOwn(row, 'foreign_display_value')
@@ -1354,7 +1382,20 @@
       askVolume,
       balanceForce: balanceView(balanceValue, { bidVolume, askVolume }),
       minuteForce: minuteStrengthView(minuteStrengthValue),
-      dailyForce: dailyStrengthView(dailyStrengthValue),
+      sessionStrength: sessionStrengthValue,
+      session_strength: sessionStrengthValue,
+      sessionBuyQtyLive,
+      session_buy_qty_live: sessionBuyQtyLive,
+      sessionSellQtyLive,
+      session_sell_qty_live: sessionSellQtyLive,
+      sessionStrengthSource: firstValue(row, [
+        'session_strength_source',
+        'sessionStrengthSource'
+      ]),
+      sessionForce: sessionStrengthView(sessionStrengthValue, {
+        buyVolume: sessionBuyQtyLive,
+        sellVolume: sessionSellQtyLive
+      }),
       foreign: foreign.display,
       foreignLabel,
       foreignClass: foreign.className,
@@ -1494,7 +1535,7 @@
     setCell(cells[8], balanceMarkup(row.balanceForce), 'balance-cell');
     refreshBalanceTooltip(cells[8]);
     setCell(cells[9], minuteStrengthMarkup(row.minuteForce), 'balance-cell');
-    setCell(cells[10], dailyStrengthMarkup(row.dailyForce), 'balance-cell');
+    setCell(cells[10], dailyStrengthMarkup(row.sessionForce), 'balance-cell');
     setCell(cells[11], escapeHtml(row.foreign), `flow-number ${row.foreignClass}`.trim(), row.foreignTooltip);
     setCell(cells[12], escapeHtml(row.program), `flow-number ${row.programClass}`.trim(), row.programTooltip);
     setCell(cells[13], escapeHtml(row.bigHand), `flow-number ${row.bigHandClass}`.trim(), row.bigHandTooltip);
@@ -1554,6 +1595,43 @@
       row.minuteForce = minuteStrengthView(realtimeStrength);
       setCell(tableRow.cells[9], minuteStrengthMarkup(row.minuteForce), 'balance-cell');
     }
+    const sessionStrength = firstValue(patch, [
+      'session_strength',
+      'sessionStrength'
+    ]);
+    const sessionBuyQtyLive = firstValue(patch, [
+      'session_buy_qty_live',
+      'sessionBuyQtyLive'
+    ]);
+    const sessionSellQtyLive = firstValue(patch, [
+      'session_sell_qty_live',
+      'sessionSellQtyLive'
+    ]);
+    if (sessionBuyQtyLive !== null) {
+      row.sessionBuyQtyLive = sessionBuyQtyLive;
+      row.session_buy_qty_live = sessionBuyQtyLive;
+    }
+    if (sessionSellQtyLive !== null) {
+      row.sessionSellQtyLive = sessionSellQtyLive;
+      row.session_sell_qty_live = sessionSellQtyLive;
+    }
+    const sessionStrengthSource = firstValue(patch, [
+      'session_strength_source',
+      'sessionStrengthSource'
+    ]);
+    if (sessionStrengthSource !== null) {
+      row.sessionStrengthSource = sessionStrengthSource;
+      row.session_strength_source = sessionStrengthSource;
+    }
+    if (sessionStrength !== null || Object.hasOwn(patch, 'session_strength')) {
+      row.sessionStrength = sessionStrength;
+      row.session_strength = sessionStrength;
+      row.sessionForce = sessionStrengthView(sessionStrength, {
+        buyVolume: row.sessionBuyQtyLive,
+        sellVolume: row.sessionSellQtyLive
+      });
+      setCell(tableRow.cells[10], dailyStrengthMarkup(row.sessionForce), 'balance-cell');
+    }
     row.realtimeAccVolume = firstValue(patch, ['realtime_acc_volume']);
     row.realtimeAccTradeValue = firstValue(patch, ['realtime_acc_trade_value']);
     const realtimeAccTradeValueEokCandidate = firstValue(patch, [
@@ -1600,6 +1678,15 @@
       'bid_ask_ratio',
       'balanceForce',
       'minuteForce',
+      'sessionStrength',
+      'session_strength',
+      'sessionBuyQtyLive',
+      'session_buy_qty_live',
+      'sessionSellQtyLive',
+      'session_sell_qty_live',
+      'sessionStrengthSource',
+      'session_strength_source',
+      'sessionForce',
       'bestBidPrice',
       'bestAskPrice',
       'realtimeStrength',

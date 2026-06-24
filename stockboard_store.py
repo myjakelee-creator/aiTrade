@@ -26,6 +26,10 @@ QUOTE_FIELDS = (
     "total_bid_qty",
     "total_ask_qty",
     "bid_ask_ratio",
+    "session_buy_qty_live",
+    "session_sell_qty_live",
+    "session_strength",
+    "session_strength_source",
     "foreign_line_raw",
     "cumulative_volume",
     "cumulative_value",
@@ -120,6 +124,21 @@ class RealtimeStore:
             return None
         return round(bid_number / ask_number, 4)
 
+    @staticmethod
+    def _session_strength(buy_qty, sell_qty):
+        try:
+            buy_number = float(buy_qty)
+            sell_number = float(sell_qty)
+        except (TypeError, ValueError):
+            return None
+        if buy_number <= 0 and sell_number <= 0:
+            return None
+        if sell_number <= 0:
+            return None
+        if buy_number < 0:
+            return None
+        return round((buy_number / sell_number) * 100, 4)
+
     def update_trade(
         self,
         stock_code,
@@ -159,6 +178,27 @@ class RealtimeStore:
             "source_code": source_code,
         }
         with self._lock:
+            quote = self._ensure_quote(code)
+            session_buy_qty_live = quote.get("session_buy_qty_live") or 0
+            session_sell_qty_live = quote.get("session_sell_qty_live") or 0
+            try:
+                trade_qty_number = float(trade_qty)
+            except (TypeError, ValueError):
+                trade_qty_number = 0
+            if trade_qty_number > 0:
+                session_buy_qty_live += trade_qty_number
+            elif trade_qty_number < 0:
+                session_sell_qty_live += abs(trade_qty_number)
+            values.update(
+                {
+                    "session_buy_qty_live": session_buy_qty_live,
+                    "session_sell_qty_live": session_sell_qty_live,
+                    "session_strength": self._session_strength(
+                        session_buy_qty_live, session_sell_qty_live
+                    ),
+                    "session_strength_source": "live_since_server_start",
+                }
+            )
             quote, timestamp_text, sequence = self._apply_update(code, values)
             events = self._trade_events.setdefault(
                 code, deque(maxlen=self._trade_event_limit)

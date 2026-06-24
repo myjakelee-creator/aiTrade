@@ -234,6 +234,18 @@ def _top100_with_realtime(rows, realtime_store):
             row["realtime_acc_trade_value_eok_candidate"] = (
                 trade_value_diagnostics["eok_candidate"]
             )
+            row["session_strength"] = _realtime_number(
+                trade_event.get("session_strength")
+            )
+            row["session_buy_qty_live"] = _realtime_number(
+                trade_event.get("session_buy_qty_live")
+            )
+            row["session_sell_qty_live"] = _realtime_number(
+                trade_event.get("session_sell_qty_live")
+            )
+            row["session_strength_source"] = trade_event.get(
+                "session_strength_source"
+            )
             row["realtime_received_at"] = trade_event.get("received_at")
             row["realtime_received_code"] = trade_event.get("received_code")
             row["realtime_registered_code"] = trade_event.get("registered_code")
@@ -332,6 +344,16 @@ def _realtime_patch_payload(
                 "realtime_acc_trade_value_eok_candidate": (
                     trade_value_diagnostics["eok_candidate"]
                 ),
+                "session_strength": _realtime_number(
+                    quote.get("session_strength")
+                ),
+                "session_buy_qty_live": _realtime_number(
+                    quote.get("session_buy_qty_live")
+                ),
+                "session_sell_qty_live": _realtime_number(
+                    quote.get("session_sell_qty_live")
+                ),
+                "session_strength_source": quote.get("session_strength_source"),
                 "bid_volume": _realtime_number(
                     quote.get("bid_volume")
                     if "bid_volume" in quote

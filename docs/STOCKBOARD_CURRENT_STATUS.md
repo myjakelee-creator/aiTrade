@@ -4,7 +4,7 @@
 
 ## 1. 현재 한 줄 요약
 
-StockBoard는 REST/TR 데이터와 OpenAPI 실시간 데이터(`_AL` 통합 원천)를 RealtimeStore에 결합해 `/api/top100`, `/api/realtime`, `/api/realtime_status`, `/api/realtime_provider_status`, `/api/realtime_patch`로 제공하며, 화면은 TOP100 30초 갱신과 realtime_patch 500ms 갱신으로 현재가/등락률/잔량비/순간강도를 표시한다.
+StockBoard는 REST/TR 데이터와 OpenAPI 실시간 데이터(`_AL` 통합 원천)를 RealtimeStore에 결합해 `/api/top100`, `/api/realtime`, `/api/realtime_status`, `/api/realtime_provider_status`, `/api/realtime_patch`로 제공하며, 화면은 TOP100 30초 갱신과 realtime_patch 500ms 갱신으로 현재가/등락률/금액(억)/잔량비/순간강도/세션강도를 표시한다.
 
 ## 2. 최종 목표 구조
 
@@ -77,23 +77,24 @@ DONE 43A. 잔량비 realtime_patch 화면 연결
 DONE 44. 순간강도 realtime_patch 화면 연결
 DONE 45. 금액(억) realtime_patch 화면 연결
 DONE 46. 순간강도 색상바 스케일 개선
+DONE 47. 세션강도 realtime_patch 화면 연결
 
 ### TODO
 
 TODO 40. /api/realtime_patch payload 경량화
 TODO 41. 외선(foreign_futures_eok)
 TODO 43B. 잔량비 표시 디테일
-TODO 47. 당일강도 계산
-TODO 48. 당일강도 색상바
-TODO 49. 큰손 계산
-TODO 50. KRT 계산
-TODO 51. 후보5 실제 선정
-TODO 52. Signal Engine
-TODO 53. Ranking Engine
-TODO 54. Strategy Engine
-TODO 55. 미국시장 실데이터
-TODO 56. Replay 기능
-TODO 57. 시장체온(Market Temperature)
+TODO 48. 정확한 당일강도 계산(backfill 원천 확보 후)
+TODO 49. 정확한 당일강도 색상바
+TODO 50. 큰손 계산
+TODO 51. KRT 계산
+TODO 52. 후보5 실제 선정
+TODO 53. Signal Engine
+TODO 54. Ranking Engine
+TODO 55. Strategy Engine
+TODO 56. 미국시장 실데이터
+TODO 57. Replay 기능
+TODO 58. 시장체온(Market Temperature)
 
 ## 4. 현재 완료 상태
 
@@ -131,7 +132,7 @@ TODO 57. 시장체온(Market Temperature)
 - `/api/realtime_status` 응답이 정상 반환된다.
 - `/api/realtime_provider_status` 응답이 정상 반환된다.
 - `/api/realtime_patch` 응답이 정상 반환된다.
-- DOM realtime patch가 현재가/등락률/잔량비/순간강도 셀에 연결되었다.
+- DOM realtime patch가 현재가/등락률/금액(억)/잔량비/순간강도/세션강도 셀에 연결되었다.
 - OpenAPI FID 228 `execution_strength_raw`가 Store `execution_strength`로 저장되고 API `realtime_strength`로 노출된다.
 - 순간강도는 최신 실시간 체결강도 순간값 기준이며 1분 평균이 아니다.
 - top100 refresh가 실시간 가격/등락률/호가 셀을 덮지 않도록 `preserveRealtimeFields()` 보존 로직이 들어갔다.
@@ -185,7 +186,7 @@ TODO 57. 시장체온(Market Temperature)
 - 초기 또는 fallback 시 full patch를 반환한다.
 - 이후에는 `since_sequence` 기반 delta patch를 반환한다.
 - 최근 검증 기준 delta row에는 `price`, `change_rate`, `realtime_strength`, `realtime_acc_volume`, `realtime_acc_trade_value`, `realtime_acc_trade_value_eok_candidate`, `bid_volume`, `ask_volume`, `bid_ask_ratio`가 포함된다.
-- 현재가/등락률/금액(억)/잔량비/순간강도는 HTML `applyRealtimePatchToRow()`에서 500ms patch 경로로 셀을 갱신한다.
+- 현재가/등락률/금액(억)/잔량비/순간강도/세션강도는 HTML `applyRealtimePatchToRow()`에서 500ms patch 경로로 셀을 갱신한다.
 - 순간강도는 `/api/top100` 호출 없이 `/api/realtime_patch`만 20초 확인한 결과 delta 호출 26회, delta row 2,179개, `realtime_strength` 포함 row 2,179개로 검증되었다.
 - 금액(억)은 `/api/top100` 호출 없이 `/api/realtime_patch`만 20초 확인한 결과 delta 호출 27회, delta row 1,424개, `realtime_acc_trade_value_eok_candidate` 포함 row 1,424개로 검증되었다.
 - 시장세션, TOP100 필터, 거래대금 조회 결과, 실시간 이벤트 수신 상태에 따라 row 수와 payload는 변동 가능하다.
@@ -219,8 +220,8 @@ normalized_code = 005930
 - `/api/top100` 자동 갱신: 30000ms
 - `/api/realtime_patch` 자동 갱신: 500ms
 - TOP100 refresh는 순위/구성/거래대금/기본 데이터 갱신용이다.
-- realtime_patch는 현재가/등락률/금액(억)/잔량비/순간강도/호가/실시간 값 갱신용이다.
-- `preserveRealtimeFields()`로 top100 refresh가 현재가/등락률/금액(억)/잔량비/순간강도/호가 실시간 셀을 덮는 위험을 완화한다.
+- realtime_patch는 현재가/등락률/금액(억)/잔량비/순간강도/세션강도/호가/실시간 값 갱신용이다.
+- `preserveRealtimeFields()`로 top100 refresh가 현재가/등락률/금액(억)/잔량비/순간강도/세션강도/호가 실시간 셀을 덮는 위험을 완화한다.
 - FID20은 실시간 지연 판단용이 아니라 체결 원천시각 보존용이다.
 - 실시간성 판단은 `received_at`과 `sequence` 기준이다.
 - suffix 실험 screen 9100/9110/9120은 기본 실행에서 OFF다.
@@ -242,7 +243,7 @@ TOP100 refresh = 30000ms
 
 최근 감사 기준:
 
-- 현재가/등락률/금액(억)/잔량비/순간강도는 `/api/realtime_patch` 500ms 경로로 화면 셀이 갱신된다.
+- 현재가/등락률/금액(억)/잔량비/순간강도/세션강도는 `/api/realtime_patch` 500ms 경로로 화면 셀이 갱신된다.
 - 금액(억)은 `/api/realtime_patch`의 `realtime_acc_trade_value_eok_candidate`를 그대로 표시한다.
 - HTML에서 새 거래대금 계산을 하지 않고 서버가 내려주는 억 단위 후보값을 사용한다.
 - 초기 렌더는 `realtime_acc_trade_value_eok_candidate`를 우선 사용하고, `applyRealtimePatchToRow()`는 `cells[6]` 금액(억) 셀을 즉시 갱신한다.
@@ -257,9 +258,26 @@ TOP100 refresh = 30000ms
 - 순간강도 바는 100을 균형으로 두고 100 미만은 매도 체결 우위, 100 초과는 매수 체결 우위로 표시한다.
 - 순간강도 바는 0 이하 매도 포화, 200 이상 매수 포화로 처리한다.
 - `instantStrengthPosition(value)`를 추가해 gamma 0.6 비선형 스케일로 100 근처 변별력을 강화했다.
-- `minuteStrengthView()`만 새 스케일을 사용하고 `dailyStrengthView()`는 기존 `minuteStrengthPosition()`을 유지한다.
+- `minuteStrengthView()`만 새 스케일을 사용하고 세션강도는 기존 `minuteStrengthPosition()` 스케일을 유지한다.
 - 순간강도 색상바 개선 단계에서는 backend/API 수정, 당일강도 구현, 현재가/등락률/금액(억)/잔량비 경로 변경을 하지 않았다.
 - 과거 `strength_1m`, `minute_strength`, `1분강도` key는 payload 호환 fallback으로만 유지한다.
+- 세션강도는 서버 시작 이후 실시간 FID15 `trade_qty` 부호 누적 기반 1차 지표다.
+- `trade_qty > 0`은 `session_buy_qty_live`, `trade_qty < 0`은 `session_sell_qty_live`에 절댓값으로 누적한다.
+- `session_strength = session_buy_qty_live / session_sell_qty_live * 100`이며 `sell == 0`이면 1차 구현에서는 `None` 처리한다.
+- Store quote에는 `session_buy_qty_live`, `session_sell_qty_live`, `session_strength`, `session_strength_source = live_since_server_start`를 보존한다.
+- `/api/realtime_patch`, `/api/top100` overlay, `/api/realtime`은 세션강도 4개 필드를 노출한다.
+- HTML은 기존 `cells[10]`을 `세션강도`로 표시하고 `applyRealtimePatchToRow()`에서 즉시 갱신한다.
+- 세션강도 tooltip은 매수체결량, 매도체결량, 계산식, 서버 시작 이후 누적 기준, 정식 당일 backfill 미포함 주의를 표시한다.
+- 세션강도는 정확한 당일강도가 아니며 서버 재시작 시 초기화된다.
+- 세션강도 런타임 검증은 운영 서버 PID 22288 기준으로 완료했다.
+- 검증 시 provider는 `registered_count=174`, `realdata_received_count=22304`, `trade_seen_codes_count=135`, `orderbook_seen_codes_count=136` 상태였다.
+- 45초 동안 `/api/realtime_patch` delta 호출 36회, 전체 delta rows 2,030개, 대상 5종목 delta rows 180개를 관찰했다.
+- 대상 5종목 delta rows 180개 모두 `session_strength`를 포함했다.
+- 같은 관찰 구간에서 buy 누적 증가 134회, sell 누적 증가 128회를 확인했다.
+- 000660, 005930, 402340, 005380, 009150 모두 `session_strength = session_buy_qty_live / session_sell_qty_live * 100` 계산이 일치했다.
+- `/api/top100` overlay도 세션강도 필드를 포함하며, top100 내부 값 기준 계산 일치가 확인되었다. `/api/realtime`과 `/api/top100`을 순차 호출할 때는 활발한 종목에서 호출 시점 차이로 값이 어긋날 수 있다.
+- OPT10084는 호출 가능하고 `_AL` 입력도 가능하지만 현재 샘플 기준 `cntr_trde_qty`가 unsigned이고 `sign`은 전일대비 기호로 보여 buy/sell base 원천으로는 부족하다.
+- 정확한 당일강도는 `day_buy_qty_base`, `day_sell_qty_base`, `session_buy_qty_live`, `session_sell_qty_live`, `strength_day` 구조로 확장 가능한 후속 과제로 보류한다.
 - 일봉 캔들은 `/api/top100`/초기 OHLC 기반이다. 실시간화는 별도 검토가 필요하다.
 - 1분 평균강도는 최신 실시간 체결강도와 별도 지표로 나중에 추가한다.
 - 외합(억)과 프로(억)는 TR 기반이므로 30초 또는 별도 주기 유지가 가능하다.
@@ -268,7 +286,7 @@ TOP100 refresh = 30000ms
 
 ## 9. 다음 작업
 
-1순위 작업은 잔량비 표시 디테일(TODO 43B) 또는 당일강도 정의/계산(TODO 47)이다.
+1순위 작업은 잔량비 표시 디테일(TODO 43B) 또는 정확한 당일강도 backfill 원천 재검토다.
 
 TODO 43B 잔량비 표시 디테일:
 
@@ -281,16 +299,16 @@ TODO 43B 잔량비 표시 디테일:
 
 1. 외선(foreign_futures_eok)
 2. 잔량비 표시 디테일(TODO 43B)
-3. 당일강도 계산 / 당일강도 색상바
-5. 큰손 계산
-6. KRT 계산
-7. 후보5 실제 선정
-8. Signal Engine
-9. Ranking Engine
-10. Strategy Engine
-11. 미국시장 실데이터
-12. Replay 기능
-13. 시장체온(Market Temperature)
+3. 정확한 당일강도 계산 / 정확한 당일강도 색상바
+4. 큰손 계산
+5. KRT 계산
+6. 후보5 실제 선정
+7. Signal Engine
+8. Ranking Engine
+9. Strategy Engine
+10. 미국시장 실데이터
+11. Replay 기능
+12. 시장체온(Market Temperature)
 
 ## 10. 금지사항
 

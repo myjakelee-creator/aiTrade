@@ -96,8 +96,9 @@ normalized_code = 005930
 | 매수잔량 | bid_volume | OpenAPI `_AL` 호가 | DONE | 잔량비 계산 원천 |
 | 매도잔량 | ask_volume | OpenAPI `_AL` 호가 | DONE | 잔량비 계산 원천 |
 | 잔량비 | bid_ask_ratio | OpenAPI `_AL` 호가 산출 | DONE | `bid_volume / ask_volume`, 최신 호가잔량 순간값. 1분 평균 아님 |
-| 순간강도 | realtime_strength | OpenAPI `_AL` FID228 `execution_strength_raw` | DONE | 최신 실시간 체결강도 순간값. Store `execution_strength`, API `realtime_strength`. 숫자는 원값 그대로 표시. 바는 `instantStrengthPosition()` 0~200 clamp, 100 균형, 0 이하 매도 포화, 200 이상 매수 포화, gamma 0.6 비선형 스케일. `dailyStrengthView()`는 기존 스케일 유지 |
-| 당일강도 | strength_day | 체결 산출 | 예정 | Signal 단계에서 계산 주기 결정 |
+| 순간강도 | realtime_strength | OpenAPI `_AL` FID228 `execution_strength_raw` | DONE | 최신 실시간 체결강도 순간값. Store `execution_strength`, API `realtime_strength`. 숫자는 원값 그대로 표시. 바는 `instantStrengthPosition()` 0~200 clamp, 100 균형, 0 이하 매도 포화, 200 이상 매수 포화, gamma 0.6 비선형 스케일 |
+| 세션강도 | session_strength | OpenAPI `_AL` FID15 `trade_qty` 부호 누적 | DONE | 서버 시작 이후 `session_buy_qty_live / session_sell_qty_live * 100`. `sell == 0`이면 None. `/api/realtime_patch`, `/api/top100` overlay, `/api/realtime` 노출. `cells[10]` realtime_patch 갱신. tooltip은 서버 시작 이후 누적/정식 당일 backfill 미포함 표시. PID 22288 런타임 검증에서 45초 delta 36회, 대상 5종목 row 180/180 포함, 5종목 계산 일치 |
+| 정확한 당일강도 | strength_day | 체결 buy/sell backfill + live 누적 | 보류 | OPT10084 샘플 기준 `cntr_trde_qty`가 unsigned이고 `sign`은 전일대비 기호로 보여 buy/sell base 원천으로 부족. 향후 `day_buy_qty_base`, `day_sell_qty_base`, `session_buy_qty_live`, `session_sell_qty_live` 구조로 확장 |
 | 큰손 | big_hand | 체결 산출 | 예정 | KRT/큰손 원천 연결 후 계산 |
 | 모멘텀 | momentum | Python 산출 | 예정 | Strategy 전까지 미구현 |
 
