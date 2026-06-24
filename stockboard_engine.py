@@ -25,6 +25,36 @@ def prepare_display_rows(top100_rows, tradable_codes, program_net_by_code):
     return filtered_rows
 
 
+def build_top100_filter_report(raw_rows, displayed_rows, tradable_codes):
+    displayed_rank_by_code = {
+        row.get("stock_code"): row.get("rank")
+        for row in displayed_rows
+        if row.get("stock_code")
+    }
+    report_rows = []
+    for row in raw_rows:
+        stock_code = row.get("stock_code")
+        in_tradable_master = stock_code in tradable_codes
+        filter_passed = stock_code in displayed_rank_by_code
+        report_rows.append(
+            {
+                "original_rank": row.get("original_rank"),
+                "displayed_rank": displayed_rank_by_code.get(stock_code),
+                "stock_code": stock_code,
+                "stock_name": row.get("stock_name"),
+                "price": row.get("price"),
+                "change_rate": row.get("change_rate"),
+                "trade_value_eok": row.get("trade_value_eok"),
+                "filter_passed": filter_passed,
+                "filter_reason": (
+                    "passed" if filter_passed else "not_in_tradable_master"
+                ),
+                "in_tradable_master": in_tradable_master,
+            }
+        )
+    return report_rows
+
+
 def _first(row, *keys):
     for key in keys:
         value = row.get(key)

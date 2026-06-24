@@ -19,6 +19,7 @@ from stockboard_engine import (
     _program_net_enabled,
     _query_date,
     _request_sleep_sec,
+    build_top100_filter_report,
     prepare_display_rows,
 )
 from stockboard_store import RealtimeStore, _load_tradable_stock_codes
@@ -420,6 +421,7 @@ def _empty_foreign_investor_net_data(query_date, error=None):
 
 def make_handler(
     rows,
+    filter_report_rows,
     expected_row_count,
     expected_ohlc_count,
     expected_rows_id,
@@ -588,6 +590,30 @@ def make_handler(
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if request_path == "/api/top100_filter_report":
+                dropped_count = sum(
+                    1 for row in filter_report_rows if not row["filter_passed"]
+                )
+                response_payload = {
+                    "source": "ka10032",
+                    "request": {
+                        "mrkt_tp": "000",
+                        "mang_stk_incls": "0",
+                        "stex_tp": "3",
+                    },
+                    "raw_count": len(filter_report_rows),
+                    "displayed_count": len(filter_report_rows) - dropped_count,
+                    "dropped_count": dropped_count,
+                    "rows": filter_report_rows,
+                }
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if request_path == "/api/top100":
                 ohlc_count = sum(row.get("ohlc") is not None for row in rows)
                 rows_id = id(rows)
@@ -694,6 +720,9 @@ def main():
     foreign_investor_net_by_code = foreign_investor_net_data["values"]
     filtered_rows = prepare_display_rows(
         top100_rows, tradable_codes, program_net_by_code
+    )
+    filter_report_rows = build_top100_filter_report(
+        top100_rows, filtered_rows, tradable_codes
     )
     for row in filtered_rows:
         row["foreign_sum"] = foreign_sum_by_code.get(row["stock_code"])
@@ -806,6 +835,7 @@ def main():
         (HOST, PORT),
         make_handler(
             filtered_rows,
+            filter_report_rows,
             expected_row_count=len(filtered_rows),
             expected_ohlc_count=response_ohlc_count,
             expected_rows_id=id(filtered_rows),
