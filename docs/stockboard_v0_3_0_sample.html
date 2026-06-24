@@ -982,18 +982,27 @@
     return Math.max(0, Math.min(1, (buyShare - 0.1) / 0.8)) * 100;
   }
 
+  function instantStrengthPosition(value) {
+    const normalized = Math.max(-1, Math.min(1, (value - 100) / 100));
+    const visual = Math.sign(normalized) * Math.pow(Math.abs(normalized), 0.6);
+    return (1 + visual) * 50;
+  }
+
   function minuteStrengthView(value) {
     if (value === null || value === undefined || value === '') return null;
     const number = Number(value);
     if (!Number.isFinite(number)) return null;
-    const redWidth = minuteStrengthPosition(number);
+    const redWidth = instantStrengthPosition(number);
     const difference = Math.round(number - 100);
     const status = number < 100 ? '매도 우세' : number > 100 ? '매수 우세' : '균형';
     const differenceText = difference > 0 ? `+${difference}` : String(difference);
+    const tooltipLines = [`순간강도 : ${number}`, status, `100 기준 ${differenceText}`];
+    if (number >= 200) tooltipLines.push('바 표시: 200 기준 매수 포화');
+    if (number <= 0) tooltipLines.push('바 표시: 0 기준 매도 포화');
     return {
       blueWidth: 100 - redWidth,
       redWidth,
-      tooltip: [`순간강도 : ${number}`, status, `100 기준 ${differenceText}`].join('\n')
+      tooltip: tooltipLines.join('\n')
     };
   }
 

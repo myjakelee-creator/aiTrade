@@ -96,7 +96,7 @@ normalized_code = 005930
 | 매수잔량 | bid_volume | OpenAPI `_AL` 호가 | DONE | 잔량비 계산 원천 |
 | 매도잔량 | ask_volume | OpenAPI `_AL` 호가 | DONE | 잔량비 계산 원천 |
 | 잔량비 | bid_ask_ratio | OpenAPI `_AL` 호가 산출 | DONE | `bid_volume / ask_volume`, 최신 호가잔량 순간값. 1분 평균 아님 |
-| 순간강도 | realtime_strength | OpenAPI `_AL` FID228 `execution_strength_raw` | DONE | 최신 실시간 체결강도 순간값. Store `execution_strength`, API `realtime_strength`. 1분 평균 아님. `strength_1m`/`minute_strength`/`1분강도` key는 payload 호환 fallback |
+| 순간강도 | realtime_strength | OpenAPI `_AL` FID228 `execution_strength_raw` | DONE | 최신 실시간 체결강도 순간값. Store `execution_strength`, API `realtime_strength`. 숫자는 원값 그대로 표시. 바는 `instantStrengthPosition()` 0~200 clamp, 100 균형, 0 이하 매도 포화, 200 이상 매수 포화, gamma 0.6 비선형 스케일. `dailyStrengthView()`는 기존 스케일 유지 |
 | 당일강도 | strength_day | 체결 산출 | 예정 | Signal 단계에서 계산 주기 결정 |
 | 큰손 | big_hand | 체결 산출 | 예정 | KRT/큰손 원천 연결 후 계산 |
 | 모멘텀 | momentum | Python 산출 | 예정 | Strategy 전까지 미구현 |

@@ -76,13 +76,13 @@ DONE 42. 잔량비 계산
 DONE 43A. 잔량비 realtime_patch 화면 연결
 DONE 44. 순간강도 realtime_patch 화면 연결
 DONE 45. 금액(억) realtime_patch 화면 연결
+DONE 46. 순간강도 색상바 스케일 개선
 
 ### TODO
 
 TODO 40. /api/realtime_patch payload 경량화
 TODO 41. 외선(foreign_futures_eok)
 TODO 43B. 잔량비 표시 디테일
-TODO 46. 순간강도 색상바
 TODO 47. 당일강도 계산
 TODO 48. 당일강도 색상바
 TODO 49. 큰손 계산
@@ -253,6 +253,12 @@ TOP100 refresh = 30000ms
 - 순간강도는 OpenAPI FID 228 `execution_strength_raw` → Store `execution_strength` → API `realtime_strength` 경로를 사용한다.
 - 화면 헤더는 `1분강도`에서 `순간강도`로 변경되었고 초기 렌더에서 `realtime_strength`를 우선 사용한다.
 - `applyRealtimePatchToRow()`는 `cells[9]` 순간강도 셀을 realtime_patch 경로로 즉시 갱신한다.
+- 순간강도 숫자는 `realtime_strength` 원값을 그대로 표시하고, 바 표시만 0~200 기준으로 clamp한다.
+- 순간강도 바는 100을 균형으로 두고 100 미만은 매도 체결 우위, 100 초과는 매수 체결 우위로 표시한다.
+- 순간강도 바는 0 이하 매도 포화, 200 이상 매수 포화로 처리한다.
+- `instantStrengthPosition(value)`를 추가해 gamma 0.6 비선형 스케일로 100 근처 변별력을 강화했다.
+- `minuteStrengthView()`만 새 스케일을 사용하고 `dailyStrengthView()`는 기존 `minuteStrengthPosition()`을 유지한다.
+- 순간강도 색상바 개선 단계에서는 backend/API 수정, 당일강도 구현, 현재가/등락률/금액(억)/잔량비 경로 변경을 하지 않았다.
 - 과거 `strength_1m`, `minute_strength`, `1분강도` key는 payload 호환 fallback으로만 유지한다.
 - 일봉 캔들은 `/api/top100`/초기 OHLC 기반이다. 실시간화는 별도 검토가 필요하다.
 - 1분 평균강도는 최신 실시간 체결강도와 별도 지표로 나중에 추가한다.
@@ -262,7 +268,7 @@ TOP100 refresh = 30000ms
 
 ## 9. 다음 작업
 
-1순위 작업은 잔량비 표시 디테일(TODO 43B) 또는 순간강도 색상바 세부 조정(TODO 45)이다.
+1순위 작업은 잔량비 표시 디테일(TODO 43B) 또는 당일강도 정의/계산(TODO 47)이다.
 
 TODO 43B 잔량비 표시 디테일:
 
@@ -275,8 +281,7 @@ TODO 43B 잔량비 표시 디테일:
 
 1. 외선(foreign_futures_eok)
 2. 잔량비 표시 디테일(TODO 43B)
-3. 순간강도 색상바 세부 조정
-4. 당일강도 계산 / 당일강도 색상바
+3. 당일강도 계산 / 당일강도 색상바
 5. 큰손 계산
 6. KRT 계산
 7. 후보5 실제 선정
@@ -313,3 +318,4 @@ TODO 43B 잔량비 표시 디테일:
 - 2026-06-24: 잔량비 계산(TODO 42)과 잔량비 realtime_patch 화면 연결(TODO 43A) 완료 상태 반영.
 - 2026-06-24: 전체 컬럼 갱신 경로 감사 결과와 순간강도 작업 기준을 반영.
 - 2026-06-24: 순간강도 realtime_patch 화면 연결 완료 상태와 20초 patch-only 검증 결과를 반영.
+- 2026-06-24: 순간강도 0~200 clamp 및 gamma 0.6 비선형 색상바 스케일 개선 완료 상태를 반영.
