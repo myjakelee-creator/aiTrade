@@ -240,12 +240,14 @@ TOP100 refresh = 30000ms
 
 최근 감사 기준:
 
-- 현재가/등락률/잔량비는 `/api/realtime_patch` 500ms 경로로 화면 셀이 갱신된다.
+- 현재가/등락률/잔량비/순간강도는 `/api/realtime_patch` 500ms 경로로 화면 셀이 갱신된다.
 - 잔량비는 `bid_ask_ratio = bid_volume / ask_volume`이며 최신 실시간 호가잔량 순간값이다.
+- 순간강도는 OpenAPI FID 228 `execution_strength_raw` → Store `execution_strength` → API `realtime_strength` 경로를 사용한다.
+- 화면 헤더는 `1분강도`에서 `순간강도`로 변경되었고 초기 렌더에서 `realtime_strength`를 우선 사용한다.
+- `applyRealtimePatchToRow()`는 `cells[9]` 순간강도 셀을 realtime_patch 경로로 즉시 갱신한다.
+- 과거 `strength_1m`, `minute_strength`, `1분강도` key는 payload 호환 fallback으로만 유지한다.
 - 금액(억)은 현재 `/api/top100` 30초 경로다. `realtime_acc_trade_value` 기반 실시간화 후보로 남긴다.
 - 일봉 캔들은 `/api/top100`/초기 OHLC 기반이다. 실시간화는 별도 검토가 필요하다.
-- 기존 화면명 `1분강도`는 다음 작업에서 `순간강도`로 변경을 검토한다.
-- 순간강도 원천 후보는 `/api/realtime_patch`의 `realtime_strength`다.
 - 1분 평균강도는 최신 실시간 체결강도와 별도 지표로 나중에 추가한다.
 - 외합(억)과 프로(억)는 TR 기반이므로 30초 또는 별도 주기 유지가 가능하다.
 - 시장수급 패널은 화면에서 5초마다 `/api/market_supply`를 호출하지만 backend 값은 서버 시작 시 수집값에 가까우므로 별도 재수집 설계가 필요하다.
@@ -253,7 +255,7 @@ TOP100 refresh = 30000ms
 
 ## 9. 다음 작업
 
-1순위 작업은 잔량비 표시 디테일(TODO 43B) 또는 순간강도 계산(TODO 44)이다.
+1순위 작업은 잔량비 표시 디테일(TODO 43B) 또는 순간강도 색상바 세부 조정(TODO 45)이다.
 
 TODO 43B 잔량비 표시 디테일:
 
@@ -266,7 +268,7 @@ TODO 43B 잔량비 표시 디테일:
 
 1. 외선(foreign_futures_eok)
 2. 잔량비 표시 디테일(TODO 43B)
-3. 순간강도 계산 / 순간강도 색상바
+3. 순간강도 색상바 세부 조정
 4. 당일강도 계산 / 당일강도 색상바
 5. 큰손 계산
 6. KRT 계산
@@ -303,3 +305,4 @@ TODO 43B 잔량비 표시 디테일:
 - 2026-06-23: `STOCKBOARD_CODING_ROADMAP_v2.1_UPDATED.md` 핵심 내용을 통합해 `STOCKBOARD_CURRENT_STATUS.md`를 마스터 상태 문서로 정리.
 - 2026-06-24: 잔량비 계산(TODO 42)과 잔량비 realtime_patch 화면 연결(TODO 43A) 완료 상태 반영.
 - 2026-06-24: 전체 컬럼 갱신 경로 감사 결과와 순간강도 작업 기준을 반영.
+- 2026-06-24: 순간강도 realtime_patch 화면 연결 완료 상태와 20초 patch-only 검증 결과를 반영.
