@@ -16,6 +16,14 @@ OUTPUT_KEYS = (
     "program_net", "big_hand", "momentum",
 )
 
+CANDIDATE_SCORE_MODEL = {
+    "version": "CANDIDATE_V0_1_RANK_GAP_OPEN",
+    "items": [
+        {"key": "trade_value_rank", "max_score": 60},
+        {"key": "rank_gap", "max_score": 40},
+    ],
+}
+
 
 def prepare_display_rows(top100_rows, tradable_codes, program_net_by_code):
     filtered_rows = [row for row in top100_rows if row["stock_code"] in tradable_codes]
@@ -61,6 +69,201 @@ def _first(row, *keys):
         if value not in (None, ""):
             return value
     return None
+
+
+def _number_or_none(value):
+    if isinstance(value, bool) or value in (None, ""):
+        return None
+    text = str(value).strip().replace(",", "").replace("%", "")
+    if text.startswith("+"):
+        text = text[1:]
+    try:
+        number = Decimal(text)
+    except InvalidOperation:
+        return None
+    if not number.is_finite():
+        return None
+    return float(number)
+
+
+def _clamp(number, minimum, maximum):
+    return max(minimum, min(maximum, number))
+
+
+def _candidate_score_max(model=None):
+    model = model or CANDIDATE_SCORE_MODEL
+    return sum(
+        _number_or_none(item.get("max_score")) or 0
+        for item in model.get("items", [])
+    )
+
+
+def _item_max_score(key, model=None):
+    model = model or CANDIDATE_SCORE_MODEL
+    for item in model.get("items", []):
+        if item.get("key") == key:
+            return _number_or_none(item.get("max_score")) or 0
+    return 0
+
+
+def _current_rank(row):
+    return _number_or_none(_first(row, "rank", "displayed_rank"))
+
+
+def _rank_score(current_rank, max_score):
+    if current_rank is None or max_score <= 0:
+        return None
+    # Rank 1 is full score and rank 100+ approaches zero.
+    return _clamp((100 - current_rank) / 99 * max_score, 0, max_score)
+
+
+def _rank_gap(row, current_rank):
+    direct_gap = _number_or_none(_first(row, "rank_diff"))
+    if direct_gap is not None:
+        return direct_gap
+    prev_rank = _number_or_none(_first(row, "prev_rank"))
+    if prev_rank is None or current_rank is None:
+        return None
+    return prev_rank - current_rank
+
+
+def _rank_gap_score(rank_gap, max_score):
+    if rank_gap is None or max_score <= 0:
+        return None
+    if rank_gap <= 0:
+        return 0
+    return _clamp(rank_gap, 0, max_score)
+
+
+def _candidate_grade(score):
+    if score is None:
+        return ("F", "f")
+    if score >= 90:
+        return ("A", "a")
+    if score >= 80:
+        return ("B", "b")
+    if score >= 60:
+        return ("C", "c")
+    if score >= 40:
+        return ("D", "d")
+    return ("F", "f")
+
+
+def _trend_status(row):
+    price = _number_or_none(_first(row, "price", "realtime_price"))
+    ohlc = _first(row, "realtime_ohlc", "ohlc")
+    open_price = None
+    if isinstance(ohlc, dict):
+        open_price = _number_or_none(ohlc.get("open"))
+    if price is None or open_price is None:
+        return (None, "시가 원천 부족")
+    if price > open_price:
+        return (True, "현재가가 시가 위")
+    return (False, "현재가가 시가 아래")
+
+
+def _candidate_status(score, trend_ok):
+    if score is None or score < 40:
+        return "WEAK"
+    if trend_ok is True and score >= 60:
+        return "READY"
+    return "WATCH"
+
+
+def _score_text(number):
+    if number is None:
+        return None
+    if number == int(number):
+        return str(int(number))
+    return f"{number:.1f}".rstrip("0").rstrip(".")
+
+
+def _candidate_text(row, current_rank, rank_gap, trend_ok):
+    reason_parts = []
+    momentum_parts = ["거래대금상위"]
+    if current_rank is not None:
+        reason_parts.append(f"거래대금순위 {int(current_rank)}위")
+    if rank_gap is None:
+        reason_parts.append("전일순위부족")
+        momentum_parts.append("전일순위부족")
+    elif rank_gap > 0:
+        reason_parts.append(f"전일대비 {int(rank_gap)}계단 상승")
+        momentum_parts.append("순위급상승" if rank_gap >= 20 else "순위개선")
+    else:
+        reason_parts.append("전일대비 순위개선 없음")
+    if trend_ok is True:
+        momentum_parts.append("시가위")
+    elif trend_ok is False:
+        momentum_parts.append("시가아래")
+    else:
+        momentum_parts.append("시가부족")
+    return " + ".join(momentum_parts), " + ".join(reason_parts)
+
+
+def enrich_candidate_fields(rows, model=None):
+    model = model or CANDIDATE_SCORE_MODEL
+    score_max = _candidate_score_max(model)
+    rank_max = _item_max_score("trade_value_rank", model)
+    rank_gap_max = _item_max_score("rank_gap", model)
+    enriched_rows = []
+
+    for row in rows:
+        current_rank = _current_rank(row)
+        rank_gap = _rank_gap(row, current_rank)
+        rank_score = _rank_score(current_rank, rank_max)
+        rank_gap_score = _rank_gap_score(rank_gap, rank_gap_max)
+        item_scores = {
+            "trade_value_rank": rank_score,
+            "rank_gap": rank_gap_score,
+        }
+        available_scores = [
+            score for score in item_scores.values() if score is not None
+        ]
+        raw_score = sum(available_scores)
+        score = (raw_score / score_max * 100) if score_max else None
+        if score is not None:
+            score = round(score, 2)
+        grade, grade_class = _candidate_grade(score)
+        trend_ok, trend_reason = _trend_status(row)
+        status = _candidate_status(score, trend_ok)
+        momentum, reason = _candidate_text(row, current_rank, rank_gap, trend_ok)
+
+        row["candidate_score_raw"] = round(raw_score, 2)
+        row["candidate_score_max"] = score_max
+        row["candidate_score"] = score
+        row["candidate_grade"] = grade
+        row["candidate_grade_text"] = f"{grade}{int(round(score or 0))}"
+        row["candidate_grade_class"] = grade_class
+        row["candidate_reason"] = reason
+        row["candidate_reason_tokens"] = [
+            token.strip() for token in reason.split("+") if token.strip()
+        ]
+        row["trend_ok"] = trend_ok
+        row["trend_reason"] = trend_reason
+        row["momentum"] = momentum
+        row["candidate_status"] = status
+        row["candidate_score_version"] = model.get("version")
+        row["candidate_score_coverage"] = (
+            round(len(available_scores) / len(model.get("items", [])), 2)
+            if model.get("items")
+            else None
+        )
+        row["candidate_score_items"] = item_scores
+        row["is_candidate"] = False
+        row["candidate_rank"] = None
+        enriched_rows.append(row)
+
+    candidate_rows = sorted(
+        enriched_rows,
+        key=lambda row: (
+            -(_number_or_none(row.get("candidate_score")) or -1),
+            _current_rank(row) or float("inf"),
+        ),
+    )[:5]
+    for candidate_rank, row in enumerate(candidate_rows, start=1):
+        row["is_candidate"] = True
+        row["candidate_rank"] = candidate_rank
+    return enriched_rows
 
 
 def _clean_number(value):

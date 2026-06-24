@@ -20,6 +20,7 @@ from stockboard_engine import (
     _query_date,
     _request_sleep_sec,
     build_top100_filter_report,
+    enrich_candidate_fields,
     prepare_display_rows,
 )
 from stockboard_store import RealtimeStore, _load_tradable_stock_codes
@@ -641,7 +642,9 @@ def make_handler(
                     self.end_headers()
                     self.wfile.write(body)
                     return
-                response_rows = _top100_with_realtime(rows, realtime_store)
+                response_rows = enrich_candidate_fields(
+                    _top100_with_realtime(rows, realtime_store)
+                )
                 body = json.dumps(response_rows, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")

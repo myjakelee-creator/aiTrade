@@ -39,7 +39,7 @@
   .blue{color:var(--blue)}.plus{color:var(--red)}.minus{color:var(--blue)}
   .foreign-zero{color:#7f8c8d}
   .grade{display:inline-block;border-radius:4px;color:#fff;padding:2px 7px;font-weight:900}
-  .a{background:#d71920}.b{background:#f08a24}.c{background:#f4c430;color:#111}.d{background:#1266d6}
+  .a{background:#d71920}.b{background:#f08a24}.c{background:#f4c430;color:#111}.d{background:#1266d6}.f{background:#7f8c8d}
   .market-overview{display:grid;grid-template-columns:minmax(0,1fr) 250px;align-items:stretch;min-width:0}
   .market-tables{min-width:0}
   .market{width:100%;min-width:0;table-layout:fixed}
@@ -1313,8 +1313,22 @@
     return Number.isFinite(number) ? number : null;
   }
 
+  function candidateRankNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function normalizeGradeClass(value) {
+    const normalized = String(value || '').toLowerCase().replace(/^grade-/, '');
+    return ['a', 'b', 'c', 'd', 'f'].includes(normalized) ? normalized : '';
+  }
+
   function selectCandidateRows(rows) {
     const indexedRows = rows.map((row, index) => ({ row, index }));
+    const hasCandidateRank = indexedRows.some(
+      item => candidateRankNumber(item.row.candidateRank) !== null
+    );
     const hasCandidate = indexedRows.some(item => isCandidateFlag(item.row.isCandidate));
     const hasCandidateScore = indexedRows.some(
       item => candidateScoreNumber(item.row.candidateScore) !== null
@@ -1322,10 +1336,16 @@
     const hasGradeScore = indexedRows.some(
       item => candidateScoreNumber(item.row.gradeScore) !== null
     );
-    if (!hasCandidate && !hasCandidateScore && !hasGradeScore) return rows.slice(0, 5);
+    if (!hasCandidateRank && !hasCandidate && !hasCandidateScore && !hasGradeScore) return rows.slice(0, 5);
 
     return indexedRows
       .sort((left, right) => {
+        if (hasCandidateRank) {
+          const leftRank = candidateRankNumber(left.row.candidateRank) ?? Infinity;
+          const rightRank = candidateRankNumber(right.row.candidateRank) ?? Infinity;
+          const rankDifference = leftRank - rightRank;
+          if (rankDifference) return rankDifference;
+        }
         if (hasCandidate) {
           const flagDifference = Number(isCandidateFlag(right.row.isCandidate))
             - Number(isCandidateFlag(left.row.isCandidate));
@@ -1348,13 +1368,18 @@
   }
   function normalizeRankingRow(row) {
     const gradeValue = firstValue(row, ['grade', 'grade_score', '등급']);
-    const explicitGradeClass = String(firstValue(row, ['grade_class', 'grade_tone']) || '').toLowerCase();
-    const inferredGradeClass = String(gradeValue ?? '').trim().charAt(0).toLowerCase();
-    const gradeClass = gradeValue === null
+    const explicitGradeClass = normalizeGradeClass(firstValue(row, [
+      'candidate_grade_class',
+      'grade_class',
+      'grade_tone'
+    ]));
+    const displayGradeValue = firstValue(row, ['candidate_grade_text']) ?? gradeValue;
+    const inferredGradeClass = String(displayGradeValue ?? '').trim().charAt(0).toLowerCase();
+    const gradeClass = displayGradeValue === null
       ? ''
-      : ['a', 'b', 'c', 'd'].includes(explicitGradeClass)
+      : ['a', 'b', 'c', 'd', 'f'].includes(explicitGradeClass)
         ? explicitGradeClass
-        : ['a', 'b', 'c', 'd'].includes(inferredGradeClass) ? inferredGradeClass : 'd';
+        : ['a', 'b', 'c', 'd', 'f'].includes(inferredGradeClass) ? inferredGradeClass : 'd';
     const changeRate = firstValue(row, ['change_rate', '등락률']);
     const balanceValue = firstValue(row, [
       'balance_ratio',
@@ -1420,12 +1445,29 @@
     const originalRankValue = firstValue(row, ['original_rank', 'rank']);
     const displayRankValue = firstValue(row, ['rank', '현재순위', '순위']);
     const rankMovement = rankMovementView(previousRankValue, originalRankValue);
+    const candidateStatus = firstValue(row, ['candidate_status']);
+    const noteValue = displayValue(firstValue(row, ['momentum', 'momentum_text', '모멘텀']));
+    const candidateGradeTooltip = [
+      firstValue(row, ['candidate_reason']),
+      firstValue(row, ['trend_reason']),
+      firstValue(row, ['candidate_score']) !== null
+        ? `score: ${firstValue(row, ['candidate_score'])}` : null,
+      firstValue(row, ['candidate_score_raw']) !== null
+        ? `raw: ${firstValue(row, ['candidate_score_raw'])}` : null,
+      firstValue(row, ['candidate_score_max']) !== null
+        ? `max: ${firstValue(row, ['candidate_score_max'])}` : null,
+      firstValue(row, ['candidate_score_version']),
+      firstValue(row, ['candidate_score_coverage']) !== null
+        ? `coverage: ${firstValue(row, ['candidate_score_coverage'])}` : null
+    ].filter(Boolean).join('\n');
     return {
       code: normalizeCode(firstValue(row, ['stock_code', '종목코드', 'code'])),
       marketGroup: stockMarketGroup(row),
       isCandidate: firstValue(row, ['is_candidate', 'candidate']),
       candidateScore: firstValue(row, ['candidate_score']),
+      candidateRank: firstValue(row, ['candidate_rank']),
       gradeScore: firstValue(row, ['grade_score']),
+      candidateGradeTooltip,
       ohlc: row.ohlc,
       realtime_ohlc: firstValue(row, ['realtime_ohlc', 'realtimeOhlc']),
       realtimeOhlc: firstValue(row, ['realtime_ohlc', 'realtimeOhlc']),
@@ -1439,7 +1481,7 @@
       previousRank: rankMovement.display,
       rankMovementClass: rankMovement.className,
       rankTooltip: rankMovement.tooltip,
-      grade: displayValue(gradeValue),
+      grade: displayValue(displayGradeValue),
       gradeClass,
       name: displayValue(firstValue(row, ['stock_name', '종목명'])),
       price: formatInteger(firstValue(row, ['price', '현재가'])),
@@ -1477,7 +1519,8 @@
       bigHand: bigHand.display,
       bigHandClass: bigHand.className,
       bigHandTooltip: bigHand.tooltip,
-      note: displayValue(firstValue(row, ['momentum', 'momentum_text', '모멘텀']))
+      candidateStatus,
+      note: candidateStatus ? `${candidateStatus} · ${noteValue}` : noteValue
     };
   }
 
@@ -1681,7 +1724,7 @@
     const cells = tableRow.cells;
     setCell(cells[0], escapeHtml(row.rank), 'rank-cell', row.rankCellTooltip);
     setCell(cells[1], escapeHtml(row.previousRank), `rank-cell ${row.rankMovementClass}`.trim(), row.rankTooltip);
-    setCell(cells[2], grade);
+    setCell(cells[2], grade, '', row.candidateGradeTooltip || '');
     setCell(cells[3], escapeHtml(row.name), 'stock-name', `종목코드: ${row.code}`);
     setCell(cells[4], escapeHtml(row.price), 'number-cell', '', flashRealtime);
     setCell(cells[5], escapeHtml(row.changeRate), `number-cell ${row.changeClass}`.trim(), '', flashRealtime);
@@ -1929,13 +1972,13 @@
   }
 
   function updateGradeDistribution(rows) {
-    const gradeCounts = { a: 0, b: 0, c: 0, d: 0 };
+    const gradeCounts = { a: 0, b: 0, c: 0, d: 0, f: 0 };
     rows.forEach(row => {
       if (Object.hasOwn(gradeCounts, row.gradeClass)) gradeCounts[row.gradeClass] += 1;
     });
 
     const gradeTotal = Object.values(gradeCounts).reduce((sum, count) => sum + count, 0);
-    const colors = { a: '#d71920', b: '#f08a24', c: '#f4c430', d: '#1266d6' };
+    const colors = { a: '#d71920', b: '#f08a24', c: '#f4c430', d: '#1266d6', f: '#7f8c8d' };
     let boundary = 0;
     const segments = Object.entries(gradeCounts).map(([grade, count]) => {
       const start = boundary;
