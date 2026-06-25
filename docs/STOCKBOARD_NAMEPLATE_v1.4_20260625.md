@@ -124,6 +124,8 @@ Source 필드 후보:
 | 필드 | 대상 |
 |---|---|
 | price_source | 현재가 |
+| display_price | 장상태별 표시 현재가 |
+| display_change_rate | 장상태별 표시 등락률 |
 | trade_value_source | 금액(억) |
 | ohlc_source | 일봉 |
 | realtime_ohlc_source | 실시간 일봉 |
@@ -149,6 +151,26 @@ Fallback 원칙:
 - 잔량비는 realtime 호가가 없으면 `unavailable`.
 - 순간강도는 realtime FID228이 없으면 `unavailable`.
 - 세션강도는 서버 시작 이후 실시간 체결 누적이므로 fallback 금지.
+
+가격 불가침 원칙:
+
+- FID10 현재가 normalize 로직을 임의 수정하지 않는다.
+- FID12 등락률 normalize 로직을 임의 수정하지 않는다.
+- `price`/`change_rate`를 후보5, 등급, 모멘텀 계산에서 덮어쓰지 않는다.
+- HTML에서 가격을 계산하지 않는다.
+- 가격 불일치를 보정식으로 해결하지 않는다.
+- 표시 가격은 반드시 source가 명시된 서버 산출값만 사용한다.
+- 장마감/애프터마켓 문제는 가격 보정이 아니라 `price_source`/`display_price`/`display_change_rate` 선택 정책으로 해결한다.
+- 후보5/등급/모멘텀은 가격을 읽기만 하고 원천값을 변경하지 않는다.
+
+2026-06-25 관찰/WIP:
+
+- 애프터마켓 가격은 HTS와 비교적 잘 맞는 것으로 관찰했다.
+- 정규장 동시호가 중 가격도 대체로 맞는 것으로 관찰했다.
+- 15:30 정규장 마감 직후 가격 불일치가 다시 나타났다.
+- 현재 판단은 가격 파싱 회귀보다 `regular_close_snapshot` / 장상태별 `price_source` 정책 부재 가능성이 크다.
+- `/api/top100`은 root 배열 189개 row로 정상이며, `stock_code`는 6자리, `realtime_source_code`는 `_AL`을 유지한다.
+- PowerShell 빈 표시는 API 문제가 아니라 `{rows: [...]}`를 기대한 파싱 가정 문제였다.
 
 ---
 
@@ -201,6 +223,7 @@ Fallback 원칙:
 | 실시간 등록 원천 | setrealreg_codes_sample | Provider status | DONE/진단 | `_AL` 등록 확인 |
 | 등록 정규화 샘플 | register_code_map_sample | Provider status | DONE/진단 | `_AL` → 6자리 |
 | suffix 실험 | suffix_realreg_* | Provider status | 진단 | 기본 실행 OFF |
+| suffix Store 오염 방지 | kiwoom_data_provider.py WIP | Provider 진단 보완 | WIP/내일 정규장 검증 필요 | 진단 ON 상태의 6자리 KRX / `_NX` sample이 운영 RealtimeStore를 덮지 않도록 분리하는 의도. OFF -> ON -> OFF 최종 검증 전까지 DONE 금지 |
 | 예상체결/시간외 진단 | expected_realreg_*, after_single_realreg_* | Provider status | 진단 | 기본 실행 OFF |
 
 ---
@@ -261,6 +284,13 @@ Fallback 원칙:
 | 호가흡수 | orderbook_absorption | 체결 + 호가 |
 | patch delta | realtime_patch_delta | since_sequence 기반 경량 patch |
 | 선발기준 레고블럭 | candidate_model_registry | 후보 모델 추가/삭제/가중치 변경 관리 |
+| suffix 진단 Store 오염 방지 검증 | suffix_store_isolation_verification | 내일 정규장 OFF -> ON -> OFF 재검증 |
+| 정규장 가격 대조 | regular_session_price_compare | HTS와 6자리 key / `_AL` source 대조 |
+| 정규장 마감 snapshot | regular_close_snapshot | 15:30 마감값 고정 구조 설계/구현 |
+| 마감 직후 고정 표시 | regular_close_display_lock | 15:30~15:40 `regular_close_snapshot` 고정 표시 |
+| 애프터마켓 fallback | aftermarket_price_policy | 15:40 이후 aftermarket_realtime / regular_close_snapshot fallback 정책 |
+| 표시 가격 필드 정식화 | display_price_policy | `price_source` / `display_price` / `display_change_rate` 필드 정식화 |
+| 렌더링 최적화 | realtime_render_optimization | 변경된 셀만 그리기, 일봉/색상바 throttle |
 
 ---
 

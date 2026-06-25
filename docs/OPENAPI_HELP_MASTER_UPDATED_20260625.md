@@ -51,6 +51,19 @@ StockBoard 운영 기준:
 내부 key / DOM key / Store key / 주문 code = 6자리 유지
 ```
 
+가격 불가침 원칙:
+
+```text
+FID10 현재가 normalize 로직 임의 수정 금지
+FID12 등락률 normalize 로직 임의 수정 금지
+price/change_rate를 후보5, 등급, 모멘텀 계산에서 덮어쓰기 금지
+HTML 가격 계산 금지
+가격 불일치를 보정식으로 해결 금지
+표시 가격은 source가 명시된 서버 산출값만 사용
+장마감/애프터마켓 문제는 가격 보정이 아니라 source 선택 정책으로 해결
+후보5/등급/모멘텀은 가격을 읽기만 하고 원천값을 변경하지 않음
+```
+
 ---
 
 ## 2. 실시간 종목코드 규칙
@@ -284,6 +297,20 @@ real_type 수신은 확인
 
 ```text
 표시 가격은 _AL 통합 실시간으로 처리
+```
+
+2026-06-25 WIP 관찰:
+
+```text
+애프터마켓 가격은 HTS와 비교적 잘 맞는 것으로 관찰
+정규장 동시호가 중 가격도 대체로 맞는 것으로 관찰
+15:30 정규장 마감 직후 가격 불일치 재관찰
+현재 판단은 FID10/FID12 파싱 회귀보다 regular_close_snapshot / 장상태별 price_source 정책 부재 가능성이 큼
+/api/top100은 root 배열 189개 row로 정상
+stock_code는 6자리 유지
+realtime_source_code는 _AL 유지
+PowerShell 빈 표시는 API 문제가 아니라 파싱 가정 문제
+suffix Store 오염 방지 보완 패치는 WIP이며 내일 정규장 OFF -> ON -> OFF 검증 전까지 DONE 아님
 ```
 
 ---

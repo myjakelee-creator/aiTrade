@@ -1145,9 +1145,9 @@ class KiwoomOpenApiRealtimeProvider:
     _SUFFIX_REALREG_FIDS = "10;12;20;15;13;14;290"
     _SUFFIX_REALREG_GROUPS = (
         ("KRX", "9100", ("005930", "000660", "402340")),
-        ("AL", "9110", ("005930_AL", "000660_AL", "402340_AL")),
         ("NX", "9120", ("005930_NX", "000660_NX", "402340_NX")),
     )
+    _SUFFIX_OPERATING_AL_CODES = ("005930_AL", "000660_AL", "402340_AL")
     _ORDERBOOK_REAL_TYPE = "주식호가잔량"
     _TRADE_REALDATA_FIDS = (
         (10, "price_raw"),
@@ -1265,7 +1265,8 @@ class KiwoomOpenApiRealtimeProvider:
         self._suffix_realreg_screens = []
         self._suffix_realreg_codes = []
         self._suffix_realreg_fids = self._SUFFIX_REALREG_FIDS
-        self._suffix_code_set = set()
+        self._suffix_sample_codes = set()
+        self._suffix_store_skip_codes = set()
         self._suffix_last_samples = {}
         self._realdata_received_count = 0
         self._realdata_last_received_at = None
@@ -1600,7 +1601,8 @@ class KiwoomOpenApiRealtimeProvider:
                 self._suffix_realreg_succeeded = False
                 self._suffix_realreg_screens = []
                 self._suffix_realreg_codes = []
-                self._suffix_code_set = set()
+                self._suffix_sample_codes = set()
+                self._suffix_store_skip_codes = set()
                 self._unregister_succeeded = True
                 self._unregister_error = None
             else:
@@ -1649,11 +1651,14 @@ class KiwoomOpenApiRealtimeProvider:
         after_single_error = None
         suffix_screens = []
         suffix_error = None
-        suffix_codes = [
+        suffix_registered_codes = [
             code
             for _, _, group_codes in self._SUFFIX_REALREG_GROUPS
             for code in group_codes
         ]
+        suffix_sample_codes = suffix_registered_codes + list(
+            self._SUFFIX_OPERATING_AL_CODES
+        )
         try:
             for screen, batch in self._registration_batches(codes):
                 screens.append(screen)
@@ -1784,10 +1789,15 @@ class KiwoomOpenApiRealtimeProvider:
             self._suffix_realreg_error = suffix_error
             self._suffix_realreg_screens = suffix_screens
             self._suffix_realreg_codes = (
-                suffix_codes if suffix_realreg_enabled else []
+                suffix_sample_codes if suffix_realreg_enabled else []
             )
             self._suffix_realreg_fids = self._SUFFIX_REALREG_FIDS
-            self._suffix_code_set = set(suffix_codes) if suffix_realreg_enabled else set()
+            self._suffix_sample_codes = (
+                set(suffix_sample_codes) if suffix_realreg_enabled else set()
+            )
+            self._suffix_store_skip_codes = (
+                set(suffix_registered_codes) if suffix_realreg_enabled else set()
+            )
 
     def _mark_realreg_failed(self, error_message):
         with self._lock:
@@ -2066,21 +2076,18 @@ class KiwoomOpenApiRealtimeProvider:
         if real_type == self._REALREG_REAL_TYPE:
             try:
                 with self._lock:
-                    is_suffix_code = received_code in self._suffix_code_set
-                if is_suffix_code:
+                    is_suffix_sample_code = received_code in self._suffix_sample_codes
+                    is_suffix_store_skip_code = (
+                        received_code in self._suffix_store_skip_codes
+                    )
+                if is_suffix_sample_code:
                     suffix_sample = self._parse_suffix_real_data(
                         stock_code, real_type, received_code, received_at
                     )
                     with self._lock:
                         self._suffix_last_samples[received_code] = suffix_sample
                     sample = suffix_sample
-                    if "_" not in received_code:
-                        trade_sample = self._parse_trade_real_data(
-                            stock_code, real_type
-                        )
-                        sample = trade_sample
-                        self._store_trade_tick(trade_sample, received_at)
-                else:
+                if not is_suffix_store_skip_code:
                     sample = self._parse_trade_real_data(stock_code, real_type)
                     self._store_trade_tick(sample, received_at)
             except Exception as error:
