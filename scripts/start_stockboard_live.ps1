@@ -7,6 +7,11 @@ $Top100Url = "http://127.0.0.1:8000/api/top100"
 $ProviderStatusUrl = "http://127.0.0.1:8000/api/realtime_provider_status"
 $RealtimeStatusUrl = "http://127.0.0.1:8000/api/realtime_status"
 $RealtimePatchUrl = "http://127.0.0.1:8000/api/realtime_patch"
+$AhkAdminLauncher = Join-Path $ProjectRoot "scripts\run_stockboard_kiwoom_link_v1_admin.cmd"
+$AhkBridgeScriptName = "stockboard_kiwoom_link_v1.ahk"
+$RuntimeDir = Join-Path $ProjectRoot "data\runtime"
+$ServerWindowPidFile = Join-Path $RuntimeDir "stockboard_server_window.pid"
+$launcherWarnings = New-Object System.Collections.Generic.List[string]
 
 function Write-Step {
     param([string]$Message)
@@ -56,6 +61,21 @@ function Require-True {
     }
 }
 
+function Write-WarningAndContinue {
+    param([string]$Message)
+    $script:launcherWarnings.Add($Message) | Out-Null
+    Write-Host "WARNING: $Message" -ForegroundColor Yellow
+}
+
+function Get-StockBoardAhkBridgeProcesses {
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.Name -like "AutoHotkey*" -and
+            $_.CommandLine -and
+            $_.CommandLine -like "*$AhkBridgeScriptName*"
+        }
+}
+
 Write-Step "StockBoard live launcher"
 Set-Location -LiteralPath $ProjectRoot
 Write-Host "Project root: $ProjectRoot"
@@ -90,6 +110,10 @@ if ($remainingPids) {
 }
 
 Write-Step "Starting StockBoard server with realtime flags"
+if (-not (Test-Path -LiteralPath $RuntimeDir)) {
+    New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
+}
+
 $serverCommand = @"
 Set-Location -LiteralPath '$ProjectRoot'
 `$env:STOCKBOARD_ENABLE_COM_REALTIME='1'
@@ -105,6 +129,8 @@ $serverWindow = Start-Process `
     -PassThru
 
 Write-Host "Server window PID: $($serverWindow.Id)"
+Set-Content -LiteralPath $ServerWindowPidFile -Value ([string]$serverWindow.Id) -Encoding ASCII
+Write-Host "Server window PID file: $ServerWindowPidFile"
 Write-Host "Realtime env: STOCKBOARD_ENABLE_COM_REALTIME=1, STOCKBOARD_REGISTER_TOP100_REALTIME=1"
 
 Write-Step "Waiting for /api/top100"
@@ -195,11 +221,33 @@ Write-Host "orderbook_realreg_succeeded=$($provider.orderbook_realreg_succeeded)
 Write-Host "realdata_received_count=$($provider.realdata_received_count)"
 Write-Host "last_error=$($provider.last_error)"
 
-Require-True ($provider.running -eq $true) "Realtime provider is not running."
-Require-True ($provider.login_state -eq "connected") "Realtime provider login_state is not connected."
-Require-True ([int]$provider.registered_count -gt 0) "Realtime provider registered_count is not greater than 0."
-Require-True ($provider.realreg_succeeded -eq $true) "Realtime SetRealReg did not succeed."
-Require-True ($provider.orderbook_realreg_succeeded -eq $true) "Realtime orderbook SetRealReg did not succeed."
+if (-not $providerReady) {
+    Write-WarningAndContinue "realtime provider is not fully ready. Server/UI startup will continue."
+}
+if ($provider.running -ne $true) {
+    Write-WarningAndContinue "realtime provider running is not true."
+}
+if ($provider.login_state -ne "connected") {
+    Write-WarningAndContinue "realtime provider login_state is '$($provider.login_state)'."
+}
+$registeredCount = if ($null -ne $provider.registered_count) { [int]$provider.registered_count } else { 0 }
+$realdataReceivedCount = if ($null -ne $provider.realdata_received_count) { [int]$provider.realdata_received_count } else { 0 }
+
+if ($registeredCount -le 0) {
+    Write-WarningAndContinue "realtime provider registered_count is 0."
+}
+if ($provider.realreg_succeeded -ne $true) {
+    Write-WarningAndContinue "realtime SetRealReg is not confirmed."
+}
+if ($provider.orderbook_realreg_succeeded -ne $true) {
+    Write-WarningAndContinue "realtime orderbook SetRealReg is not confirmed."
+}
+if ($realdataReceivedCount -le 0) {
+    Write-WarningAndContinue "realdata_received_count is 0. This may be normal before active realtime ticks."
+}
+if ($provider.last_error) {
+    Write-WarningAndContinue "realtime provider last_error: $($provider.last_error)"
+}
 
 Write-Step "Checking realtime status and patch"
 $rt1 = Invoke-RestMethod $RealtimeStatusUrl -TimeoutSec 10
@@ -208,16 +256,29 @@ $rt2 = Invoke-RestMethod $RealtimeStatusUrl -TimeoutSec 10
 $patch = Invoke-RestMethod $RealtimePatchUrl -TimeoutSec 10
 
 $sequenceMoved = ([int64]$rt2.sequence -ge [int64]$rt1.sequence)
+$rt1Sequence = if ($null -ne $rt1.sequence) { [int64]$rt1.sequence } else { 0 }
+$rt2Sequence = if ($null -ne $rt2.sequence) { [int64]$rt2.sequence } else { 0 }
+$quoteCount = if ($null -ne $rt2.quote_count) { [int]$rt2.quote_count } else { 0 }
 Write-Host "realtime_sequence_1=$($rt1.sequence)"
 Write-Host "realtime_sequence_2=$($rt2.sequence)"
 Write-Host "quote_count=$($rt2.quote_count)"
 Write-Host "realtime_patch_sequence=$($patch.sequence)"
 Write-Host "realtime_patch_rows=$($patch.rows.Count)"
 
-Require-True ($sequenceMoved) "Realtime sequence check failed."
-Require-True ([int]$rt2.quote_count -gt 0) "Realtime quote_count is not greater than 0."
+if (-not $sequenceMoved) {
+    Write-WarningAndContinue "realtime sequence did not move as expected."
+}
+if ($rt1Sequence -eq 0) {
+    Write-WarningAndContinue "realtime_sequence_1 is 0."
+}
+if ($rt2Sequence -eq 0) {
+    Write-WarningAndContinue "realtime_sequence_2 is 0."
+}
+if ($quoteCount -le 0) {
+    Write-WarningAndContinue "quote_count is 0. This may be normal outside active realtime ticks."
+}
 if ([int]$patch.rows.Count -le 0) {
-    Write-Host "Realtime patch rows are currently 0. This can be delayed by market/session state; sequence=$($patch.sequence), quote_count=$($rt2.quote_count)." -ForegroundColor Yellow
+    Write-WarningAndContinue "realtime_patch_rows is 0. This can be delayed by market/session state; sequence=$($patch.sequence), quote_count=$($rt2.quote_count)."
 }
 
 Write-Step "Opening StockBoard"
@@ -228,6 +289,17 @@ try {
     Write-Host "Opened: $BoardUrl" -ForegroundColor Green
 } catch {
     Write-Host "Browser open failed: $($_.Exception.Message)" -ForegroundColor Yellow
+}
+
+Write-Step "Starting Kiwoom HTS bridge"
+$existingAhkBridge = @(Get-StockBoardAhkBridgeProcesses)
+if ($existingAhkBridge.Count -gt 0) {
+    Write-Host "AHK bridge already running: $($existingAhkBridge.ProcessId -join ', ')" -ForegroundColor Yellow
+} elseif (Test-Path -LiteralPath $AhkAdminLauncher) {
+    Write-Host "Requesting administrator launch for AHK bridge. Approve the UAC prompt if shown." -ForegroundColor Yellow
+    Start-Process -FilePath $AhkAdminLauncher -WorkingDirectory $ProjectRoot
+} else {
+    Write-Host "AHK admin launcher was not found: $AhkAdminLauncher" -ForegroundColor Yellow
 }
 
 Start-Sleep -Seconds 1
@@ -246,5 +318,12 @@ Write-Host "login_state: $($provider.login_state)"
 Write-Host "registered_count: $($provider.registered_count)"
 Write-Host "realtime_patch rows: $($patch.rows.Count)"
 Write-Host "browser opened: $browserOpened"
+Write-Host "AHK bridge admin launcher: $AhkAdminLauncher"
+if ($launcherWarnings.Count -gt 0) {
+    Write-Host "launcher result: finished with warnings" -ForegroundColor Yellow
+    $launcherWarnings | ForEach-Object { Write-Host " - $_" -ForegroundColor Yellow }
+} else {
+    Write-Host "launcher result: finished successfully" -ForegroundColor Green
+}
 Write-Host ""
 Write-Host "Done. Keep the visible server PowerShell window open while using StockBoard." -ForegroundColor Green

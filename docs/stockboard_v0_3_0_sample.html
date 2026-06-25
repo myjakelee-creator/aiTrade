@@ -131,6 +131,46 @@
   #candidate-board .stock-name{text-align:left}
   #candidate-board td:nth-child(5),#candidate-board td:nth-child(6),#candidate-board td:nth-child(7){text-align:right;font-variant-numeric:tabular-nums}
   #candidate-board .note{min-width:0}
+  .active-stock-row {
+    outline: 1px solid rgba(255, 214, 102, 0.95);
+    outline-offset: -1px;
+    background: rgba(255, 214, 102, 0.13) !important;
+  }
+
+  .active-stock-name {
+    background: rgba(255, 214, 102, 0.28) !important;
+    color: inherit;
+    border-radius: 4px;
+  }
+
+  .stock-selectable-name {
+    cursor: pointer;
+  }
+
+  .stock-link-status {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 2000;
+    max-width: min(360px, calc(100vw - 36px));
+    padding: 8px 12px;
+    border: 1px solid rgba(255, 214, 102, 0.45);
+    background: rgba(24, 28, 34, 0.94);
+    color: #f7f1d0;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.35;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(4px);
+    transition: opacity 140ms ease, transform 140ms ease;
+  }
+
+  .stock-link-status.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
 </style>
 </head>
 <body>
@@ -2601,6 +2641,257 @@
   }
 
   window.setInterval(loadRealtimePatch, REALTIME_PATCH_REFRESH_MS);
+</script>
+<script>
+(function () {
+  const STOCK_CODE_PATTERN = /^\d{6}(?:_(?:AL|NX))?$/;
+  const ACTIVE_ROW_CLASS = 'active-stock-row';
+  const ACTIVE_NAME_CLASS = 'active-stock-name';
+  const SELECTABLE_NAME_CLASS = 'stock-selectable-name';
+  const STATUS_CLASS = 'stock-link-status';
+  const STOCK_NAME_KEYS = ['stockName', 'stock_name', 'name'];
+  const STOCK_CODE_KEYS = ['stockCode', 'stock_code', 'code'];
+  let activeStockCode = null;
+  let statusTimer = null;
+  let mutationApplyQueued = false;
+
+  function normalizeStockCode(value) {
+    const text = String(value || '').trim();
+    return STOCK_CODE_PATTERN.test(text) ? text : null;
+  }
+
+  function getStatusElement() {
+    let status = document.querySelector(`.${STATUS_CLASS}`);
+    if (!status) {
+      status = document.createElement('div');
+      status.className = STATUS_CLASS;
+      status.setAttribute('role', 'status');
+      status.setAttribute('aria-live', 'polite');
+      document.body.appendChild(status);
+    }
+    return status;
+  }
+
+  function showStockLinkStatus(message) {
+    const status = getStatusElement();
+    status.textContent = message;
+    status.classList.add('visible');
+    window.clearTimeout(statusTimer);
+    statusTimer = window.setTimeout(() => {
+      status.classList.remove('visible');
+    }, 2400);
+  }
+
+  function candidateDatasetCode(element) {
+    if (!element) return null;
+    for (const key of STOCK_CODE_KEYS) {
+      const code = normalizeStockCode(element.dataset && element.dataset[key]);
+      if (code) return code;
+    }
+    return null;
+  }
+
+  function findStockCodeFromElement(element) {
+    let node = element;
+    while (node && node !== document.body) {
+      const code = candidateDatasetCode(node);
+      if (code) return code;
+      node = node.parentElement;
+    }
+    const row = element && element.closest ? element.closest('tr, [data-stock-code], [data-stockCode]') : null;
+    return candidateDatasetCode(row);
+  }
+
+  function isLikelyStockNameElement(element) {
+    if (!element || element === document.body) return false;
+    if (element.matches('[data-stock-code], [data-stockCode], [data-stock_name], [data-stockName]')) return true;
+    const className = String(element.className || '').toLowerCase();
+    if (className.includes('stock') && (className.includes('name') || className.includes('title'))) return true;
+    const row = element.closest && element.closest('tr');
+    if (!row) return false;
+    const cells = Array.from(row.children || []);
+    const cellIndex = cells.indexOf(element.closest('td, th'));
+    const cellText = String(element.textContent || '').trim();
+    const rowCode = findStockCodeFromElement(row);
+    return Boolean(rowCode && cellIndex >= 0 && cellIndex <= 3 && cellText && !STOCK_CODE_PATTERN.test(cellText));
+  }
+
+  function findNameElementForRow(row) {
+    if (!row) return null;
+    const explicit = row.querySelector('[data-stock-name], [data-stockName], .stock-name, .stockName');
+    if (explicit) return explicit;
+    const cells = Array.from(row.children || []);
+    return cells.find((cell) => {
+      const text = String(cell.textContent || '').trim();
+      return text && !STOCK_CODE_PATTERN.test(text) && !/^\d+$/.test(text);
+    }) || cells[1] || cells[0] || row;
+  }
+
+  function getStockRows() {
+    const rows = Array.from(document.querySelectorAll('tr, [data-stock-code], [data-stockCode]'));
+    const seen = new Set();
+    return rows.filter((row) => {
+      const code = findStockCodeFromElement(row);
+      if (!code || seen.has(row)) return false;
+      seen.add(row);
+      return row.offsetParent !== null;
+    });
+  }
+
+  function getMainTableRows() {
+    const tradingBoard = document.getElementById('trading-board');
+    if (!tradingBoard) return [];
+    const seenCodes = new Set();
+    return Array.from(tradingBoard.querySelectorAll('tr')).filter((row) => {
+      if (row.querySelector('th')) return false;
+      if (row.offsetParent === null) return false;
+      const code = findStockCodeFromElement(row);
+      if (!code || seenCodes.has(code)) return false;
+      seenCodes.add(code);
+      return true;
+    });
+  }
+
+  function clearActiveClasses() {
+    document.querySelectorAll(`.${ACTIVE_ROW_CLASS}`).forEach((node) => {
+      node.classList.remove(ACTIVE_ROW_CLASS);
+    });
+    document.querySelectorAll(`.${ACTIVE_NAME_CLASS}`).forEach((node) => {
+      node.classList.remove(ACTIVE_NAME_CLASS);
+    });
+  }
+
+  function markSelectableNames() {
+    getStockRows().forEach((row) => {
+      const nameElement = findNameElementForRow(row);
+      if (nameElement) nameElement.classList.add(SELECTABLE_NAME_CLASS);
+    });
+  }
+
+  function applyActiveStockClass(options = {}) {
+    clearActiveClasses();
+    markSelectableNames();
+    if (!activeStockCode) return false;
+    const matchedRows = getStockRows().filter((row) => findStockCodeFromElement(row) === activeStockCode);
+    if (!matchedRows.length) {
+      if (!options.silentMissing) {
+      showStockLinkStatus(`${activeStockCode} 선택 종목이 현재 목록에서 사라짐`);
+      }
+      if (!options.keepActiveOnMissing) activeStockCode = null;
+      return false;
+    }
+    matchedRows.forEach((row) => {
+      row.classList.add(ACTIVE_ROW_CLASS);
+      const nameElement = findNameElementForRow(row);
+      if (nameElement) nameElement.classList.add(ACTIVE_NAME_CLASS);
+    });
+    return true;
+  }
+
+  async function writeStockCodeToClipboard(stockCode) {
+    if (!STOCK_CODE_PATTERN.test(stockCode)) {
+      showStockLinkStatus(`${stockCode || '종목'} 선택됨 / 허용 종목코드 아님`);
+      return false;
+    }
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      showStockLinkStatus(`${stockCode} 선택됨 / 클립보드 API 사용 불가`);
+      return false;
+    }
+    try {
+      await navigator.clipboard.writeText(stockCode);
+      showStockLinkStatus(`${stockCode} 복사 / HTS 연동 대기`);
+      return true;
+    } catch (error) {
+      showStockLinkStatus(`${stockCode} 선택됨 / 클립보드 저장 실패`);
+      return false;
+    }
+  }
+
+  function activateStock(stockCode, options = {}) {
+    const normalizedCode = normalizeStockCode(stockCode);
+    if (!normalizedCode) {
+      showStockLinkStatus('선택 실패 / 6자리 종목코드 없음');
+      return;
+    }
+    activeStockCode = normalizedCode;
+    applyActiveStockClass({ silentMissing: true });
+    if (options.scroll) {
+      const row = getMainTableRows().find((candidate) => findStockCodeFromElement(candidate) === activeStockCode)
+        || getStockRows().find((candidate) => findStockCodeFromElement(candidate) === activeStockCode);
+      if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+    }
+    writeStockCodeToClipboard(activeStockCode);
+  }
+
+  function isEditableTarget(target) {
+    if (!target || !target.closest) return false;
+    return Boolean(target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]'));
+  }
+
+  function moveActiveStock(direction) {
+    if (!activeStockCode) {
+      showStockLinkStatus('활성 종목 없음');
+      return;
+    }
+    const rows = getMainTableRows();
+    if (!rows.length) {
+      showStockLinkStatus('이동 실패 / 표시 row 없음');
+      return;
+    }
+    const currentIndex = rows.findIndex((row) => findStockCodeFromElement(row) === activeStockCode);
+    if (currentIndex < 0) {
+      showStockLinkStatus('Active stock is not in the main table');
+      applyActiveStockClass();
+      return;
+    }
+    const nextIndex = currentIndex + direction;
+    if (nextIndex < 0 || nextIndex >= rows.length) {
+      showStockLinkStatus(direction < 0 ? 'Already at first row' : 'Already at last row');
+      return;
+    }
+    activateStock(findStockCodeFromElement(rows[nextIndex]), { scroll: true });
+  }
+
+  function queueApplyActiveStockClass() {
+    if (mutationApplyQueued) return;
+    mutationApplyQueued = true;
+    window.requestAnimationFrame(() => {
+      mutationApplyQueued = false;
+      applyActiveStockClass({ silentMissing: true, keepActiveOnMissing: true });
+    });
+  }
+
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!isLikelyStockNameElement(target)) return;
+    const code = findStockCodeFromElement(target);
+    if (!code) return;
+    activateStock(code);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    if (isEditableTarget(event.target)) return;
+    if (!activeStockCode) return;
+    event.preventDefault();
+    moveActiveStock(event.key === 'ArrowUp' ? -1 : 1);
+  });
+
+  const observer = new MutationObserver(queueApplyActiveStockClass);
+  if (document.body) {
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  window.StockBoardSelection = {
+    activateStock,
+    applyActiveStockClass,
+    get activeStockCode() {
+      return activeStockCode;
+    },
+  };
+
+  markSelectableNames();
+})();
 </script>
 </body>
 </html>

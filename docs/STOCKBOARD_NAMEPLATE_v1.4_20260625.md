@@ -364,3 +364,30 @@ HTML은 보여준다.
 화면 표시 실시간 가격은 _AL 통합 원천을 사용한다.
 내부 식별자와 주문 코드는 6자리 코드를 유지한다.
 ```
+
+---
+
+# 9. 2026-06-25 운영/UI 조작 추가 항목
+
+| 화면/운영 항목 | 내부키/파일명 | 의미 | 상태 | 비고 |
+|---|---|---|---|---|
+| 종목 선택 active 상태 | `activeStockCode` | 현재 StockBoard에서 선택된 종목 코드 상태 | DONE | DOM node가 아니라 코드 문자열 기준으로 유지 |
+| active 종목 표시 | `active-stock-row`, `active-stock-name` | 후보5와 하단 종목표에서 선택 종목을 강조 표시 | DONE | refresh/realtime_patch 이후 같은 코드가 있으면 복원 |
+| 종목명 클릭 선택 | stock name cell click | 후보5와 하단 종목표 종목명 클릭으로 active 지정 | DONE | 가격/등락률/거래대금/후보점수/등급/모멘텀 계산 변경 없음 |
+| 클립보드 연동 | clipboard stock code | 선택 종목 코드를 클립보드에 저장 | DONE | HTML은 `005930`, `005930_AL`, `005930_NX`만 허용 |
+| Up/Down 이동 | keyboard navigation | 하단 표시 순서 기준으로 active 종목 이동 | DONE | 정렬/역정렬 후 현재 DOM 표시 순서 기준 |
+| 영웅문 HTS 연동 | HTS Edit6 bridge | 클립보드 종목코드를 영웅문 차트 입력 컨트롤에 전달 | DONE | HTS 입력 최종값은 항상 6자리 |
+| AHK v1 bridge | `stockboard_kiwoom_link_v1.ahk` | AutoHotkey v1 기반 영웅문 HTS bridge | DONE | `_AL`, `_NX` suffix는 AHK가 입력 직전에 제거 |
+| AHK 관리자 실행 | `run_stockboard_kiwoom_link_v1_admin.cmd` | AHK v1 bridge를 관리자 권한으로 실행 | DONE | 일반 권한은 `Edit6 set failed`로 운영 제외 |
+| 시작 런처 | `start_stockboard_live.cmd` | 대표 시작 파일 | DONE | 서버/OpenAPI/브라우저/AHK 관리자 bridge 통합 시작 |
+| 시작 본체 | `scripts/start_stockboard_live.ps1` | live 시작 로직 본체 | DONE | warning 완료 시에도 launcher 자동 닫힘 |
+| 종료 런처 | `stop_stockboard_live.cmd` | 대표 종료 파일 | DONE | AHK, 8000번 서버, 서버 PowerShell 로그 창 종료 |
+| 서버 창 PID | `data/runtime/stockboard_server_window.pid` | visible server PowerShell window PID 저장 | DONE | stop 런처가 이 PID 기준으로 로그 창 종료 |
+
+운영 원칙:
+
+- 화면 표시 실시간 원천 `_AL` 원칙은 변경하지 않는다.
+- DOM/Store/주문 key 6자리 원칙은 변경하지 않는다.
+- HTS 입력 최종값은 6자리이다.
+- HTML은 가격/등락률/거래대금/후보점수/등급/모멘텀/OHLC를 새로 계산하거나 보정하지 않는다.
+- realtime_patch / 스트리밍 표시 경로는 변경하지 않는다.

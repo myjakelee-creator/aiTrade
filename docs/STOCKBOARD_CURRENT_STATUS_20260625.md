@@ -50,6 +50,71 @@ suffix Store 오염 방지 WIP:
 - 내일 정규장 중 OFF -> ON -> OFF 검증을 재시도한다.
 - 검증 성공 전에는 이 항목을 DONE으로 이동하지 않는다.
 
+## 1C. 2026-06-25 StockBoard UI 선택 / HTS 연동 / 통합 런처 완료
+
+상태: DONE / 대표 PC 실행 테스트 완료.
+
+### StockBoard 종목 선택 UI
+
+- 종목명 클릭 시 선택 종목을 `activeStockCode`로 저장하고 active 표시를 적용한다.
+- active row/name은 배경 강조로 표시하며 기존 active 표시는 제거된다.
+- 후보5와 하단 거래대금 상위 종목표 모두 종목명 클릭으로 같은 선택 로직을 사용한다.
+- 클립보드에는 `005930`, `005930_AL`, `005930_NX` 패턴만 저장 가능하다.
+- HTML은 `_AL`, `_NX` suffix를 HTS 입력용으로 강제 제거하지 않는다.
+- Up/Down 키 이동은 하단 표시 순서 기준으로 한 행씩 이동한다.
+- 정렬/역정렬, `/api/top100` refresh, `/api/realtime_patch` 갱신 이후에도 같은 `stock_code`가 있으면 active 상태를 복원한다.
+- 가격/등락률/거래대금/후보점수/등급/모멘텀 계산은 변경하지 않았다.
+- realtime_patch / 스트리밍 표시 경로는 변경하지 않았다.
+
+### 영웅문 HTS 연동
+
+- 최종 AHK bridge는 `scripts/stockboard_kiwoom_link_v1.ahk`이다.
+- AutoHotkey v1을 사용하며, 영웅문 HTS 제어를 위해 관리자 권한 실행이 운영 기준이다.
+- 관리자 실행 보조 파일은 `scripts/run_stockboard_kiwoom_link_v1_admin.cmd`이다.
+- Window Spy 기준 운영 식별값은 `ahk_class _NKHeroMainClass`, 대상 컨트롤은 `Edit6`이다.
+- AHK는 클립보드의 `005930`, `005930_AL`, `005930_NX`만 유효 입력으로 처리한다.
+- AHK가 HTS 입력 직전에 `_AL`, `_NX` suffix를 제거하며, HTS `Edit6`에는 항상 최종 6자리 코드만 입력한다.
+- `ControlSetText` 후 `ControlGetText` readback으로 성공/실패를 구분한다.
+- 빠른 Up/Down 조작 중 Windows 우측 하단 성공 알림이 누적되지 않도록 성공 알림은 운영 기본 OFF이다.
+- 실패 알림은 유지한다.
+- 일반 권한 실행은 `Edit6 set failed`가 확인되어 운영에서 제외한다.
+
+### 통합 시작/종료 런처
+
+- 대표 시작 파일은 `start_stockboard_live.cmd`이다.
+- 시작 본체는 `scripts/start_stockboard_live.ps1`이다.
+- 시작 흐름은 서버 실행, OpenAPI provider 준비, 브라우저 열기, AHK v1 관리자 bridge 실행이다.
+- realtime `quote_count`, `realtime_patch` rows가 0이어도 장상태/체결 부재 상황에서는 fatal이 아니라 warning으로 처리한다.
+- 시작 런처는 정상 완료 또는 warning 완료 시 자동으로 닫힌다.
+- 서버 PowerShell window PID는 `data/runtime/stockboard_server_window.pid`에 저장한다.
+- 대표 종료 파일은 `stop_stockboard_live.cmd`이다.
+- 종료 흐름은 AHK bridge 종료, 8000번 StockBoard 서버 종료, 저장된 server PowerShell window PID 기준 로그 창 종료이다.
+- 브라우저는 자동 종료하지 않는다.
+- 종료 런처는 정상 완료 시 자동으로 닫히며, 오류/위험 상황에서만 pause를 유지한다.
+
+### scripts 폴더 정리
+
+현재 `scripts` 폴더 운영 파일:
+
+```text
+scripts/start_stockboard_live.ps1
+scripts/stockboard_kiwoom_link_v1.ahk
+scripts/run_stockboard_kiwoom_link_v1_admin.cmd
+```
+
+삭제된 실패/중복 파일:
+
+```text
+scripts/stockboard_kiwoom_link.ahk
+scripts/run_stockboard_kiwoom_link_v1.cmd
+```
+
+정책:
+
+- `scripts/_zz_`는 생성하지 않는다.
+- 실패 AHK 파일은 보관하지 않고 삭제한다.
+- `start_stockboard_full.cmd`, `stop_stockboard_full.cmd` 같은 full launcher 이름은 추가 생성하지 않는다.
+
 ## 2. 최종 목표 구조
 
 ```text
@@ -136,6 +201,17 @@ DONE 67. 상·하한가 잔량비·강도 표시 예외처리
 DONE 68. 상단 상태등 통합 / 갱신지연 숫자표시
 DONE 69. 상단 시장정보·파이그래프 레이아웃 압축
 DONE 70. 일봉·잔량비 tooltip 문구/폰트 정리
+
+2026-06-25 추가 완료:
+
+DONE 83. 종목명 클릭 active 표시
+DONE 84. 클립보드 종목코드 저장
+DONE 85. Up/Down keyboard navigation
+DONE 86. 영웅문 HTS AHK v1 관리자 연동
+DONE 87. AHK 성공 알림 OFF / 실패 알림 유지
+DONE 88. 통합 시작 런처
+DONE 89. 통합 종료 런처
+DONE 90. scripts 폴더 중복 AHK 파일 정리
 
 ### TODO
 
