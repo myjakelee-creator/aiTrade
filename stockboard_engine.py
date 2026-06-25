@@ -170,6 +170,57 @@ def _candidate_status(score, trend_ok):
     return "WATCH"
 
 
+def detect_price_limit_state(row):
+    price = _number_or_none(_first(row, "price", "realtime_price"))
+    change_rate = _number_or_none(_first(row, "change_rate", "realtime_change_rate"))
+    upper_limit = _number_or_none(
+        _first(row, "upper_limit_price", "high_limit", "up_limit_price")
+    )
+    lower_limit = _number_or_none(
+        _first(row, "lower_limit_price", "low_limit", "down_limit_price")
+    )
+
+    if price is not None and upper_limit is not None and price >= upper_limit:
+        return {
+            "price_limit_state": "upper",
+            "price_limit_reason": "상한가",
+            "price_limit_source": "limit_price",
+        }
+    if price is not None and lower_limit is not None and price <= lower_limit:
+        return {
+            "price_limit_state": "lower",
+            "price_limit_reason": "하한가",
+            "price_limit_source": "limit_price",
+        }
+    if change_rate is not None and change_rate >= 29.5:
+        return {
+            "price_limit_state": "upper",
+            "price_limit_reason": "상한가 추정",
+            "price_limit_source": "change_rate_threshold",
+        }
+    if change_rate is not None and change_rate <= -29.5:
+        return {
+            "price_limit_state": "lower",
+            "price_limit_reason": "하한가 추정",
+            "price_limit_source": "change_rate_threshold",
+        }
+    return {
+        "price_limit_state": "none",
+        "price_limit_reason": None,
+        "price_limit_source": (
+            "unavailable"
+            if upper_limit is None and lower_limit is None
+            else "limit_price"
+        ),
+    }
+
+
+def enrich_limit_state_fields(rows):
+    for row in rows:
+        row.update(detect_price_limit_state(row))
+    return rows
+
+
 def _score_text(number):
     if number is None:
         return None
@@ -202,6 +253,7 @@ def _candidate_text(row, current_rank, rank_gap, trend_ok):
 
 def enrich_candidate_fields(rows, model=None):
     model = model or CANDIDATE_SCORE_MODEL
+    enrich_limit_state_fields(rows)
     score_max = _candidate_score_max(model)
     rank_max = _item_max_score("trade_value_rank", model)
     rank_gap_max = _item_max_score("rank_gap", model)

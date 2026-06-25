@@ -10,6 +10,16 @@
   :root{
     --bg:#f3f6f8; --line:#c8d0d8; --head:#e7edf3;
     --text:#17202a; --red:#d71920; --blue:#1266d6; --green:#18a558;
+    --board-font-size:14px; --board-header-font-size:13px; --board-row-height:34px;
+    --board-cell-padding-y:4px; --board-cell-padding-x:6px;
+    --grade-padding-y:2px; --grade-padding-x:7px;
+    --ohlc-height:24px; --ohlc-range-top:11px; --ohlc-body-top:5px; --ohlc-body-height:14px; --ohlc-level-top:2px; --ohlc-level-height:20px; --ohlc-open-top:4px; --ohlc-open-height:16px;
+    --metric-height:26px; --metric-font-size:14px; --balance-box-height:28px; --balance-side-inset:4px; --balance-cell-padding:2px;
+    --title-height:26px; --title-font-size:13px; --title-font-weight:600; --title-padding-x:8px;
+    --topbar-height:34px; --top-font-size:13px; --top-button-font-size:11px; --top-font-weight:500; --top-cell-padding-x:7px; --lamp-size:13px;
+    --market-font-size:13px; --market-header-font-size:12px; --market-font-weight:500; --market-cell-padding-x:6px;
+    --section-height:22px; --section-title-font-size:13px; --section-title-font-weight:600; --section-padding-x:7px;
+    --grade-distribution-padding-y:6px; --grade-distribution-chart-size:70px; --grade-distribution-hole-inset:17px; --grade-distribution-font-size:11px; --grade-distribution-title-size:12px; --grade-distribution-font-weight:500;
   }
   *{box-sizing:border-box}
   html,body{height:100%;overflow:hidden}
@@ -18,88 +28,104 @@
     width:96vw; min-width:0; max-width:1600px; height:calc(100vh - 20px);
     overflow:auto; margin:10px auto; border:1px solid #9aa8b5; background:#fff; box-shadow:0 2px 12px #999;
   }
-  .title{height:30px;background:linear-gradient(#dfe7ee,#cbd6df);display:flex;align-items:center;padding:0 10px;font-weight:700;color:#19324a}
-  .data-diagnostics{margin-left:auto;font-size:12px;font-weight:700;color:#4b6175;font-variant-numeric:tabular-nums;white-space:nowrap}
-  .topbar{display:grid;grid-template-columns:250px 48px 48px 48px 120px 86px minmax(298px,1fr);align-items:center;height:42px;border-bottom:1px solid var(--line);font-size:14px;font-weight:700;min-width:898px}
-  .topbar>div:nth-child(2),.topbar>div:nth-child(3),.topbar>div:nth-child(4){padding:0 5px}
-  .topbar>div{position:relative;height:100%;min-width:0;padding:0 10px;display:flex;align-items:center;justify-content:center;border-right:1px solid var(--line);white-space:nowrap;overflow:hidden}
+  .title{height:var(--title-height);background:linear-gradient(#dfe7ee,#cbd6df);display:flex;align-items:center;gap:8px;padding:0 var(--title-padding-x);font-size:var(--title-font-size);font-weight:var(--title-font-weight);color:#19324a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .data-diagnostics{margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:calc(var(--title-font-size) - 1px);font-weight:500;color:#4b6175;font-variant-numeric:tabular-nums;white-space:nowrap}
+  body[data-density="compact"]{--board-font-size:12px;--board-header-font-size:12px;--board-row-height:27px;--board-cell-padding-y:2px;--board-cell-padding-x:4px;--grade-padding-y:1px;--grade-padding-x:5px;--ohlc-height:20px;--ohlc-range-top:9px;--ohlc-body-top:4px;--ohlc-body-height:12px;--ohlc-level-top:2px;--ohlc-level-height:16px;--ohlc-open-top:3px;--ohlc-open-height:14px;--metric-height:22px;--metric-font-size:12px;--balance-box-height:23px;--balance-side-inset:3px;--balance-cell-padding:1px;--title-height:23px;--title-font-size:12px;--title-padding-x:7px;--topbar-height:30px;--top-font-size:12px;--top-button-font-size:11px;--top-cell-padding-x:5px;--lamp-size:11px;--market-font-size:12px;--market-header-font-size:11px;--market-cell-padding-x:5px;--section-height:20px;--section-title-font-size:12px;--section-padding-x:6px;--grade-distribution-padding-y:5px;--grade-distribution-chart-size:62px;--grade-distribution-hole-inset:15px;--grade-distribution-font-size:10px;--grade-distribution-title-size:11px}
+  body[data-density="ultra"]{--board-font-size:11px;--board-header-font-size:11px;--board-row-height:23px;--board-cell-padding-y:1px;--board-cell-padding-x:3px;--grade-padding-y:1px;--grade-padding-x:4px;--ohlc-height:18px;--ohlc-range-top:8px;--ohlc-body-top:3px;--ohlc-body-height:11px;--ohlc-level-top:1px;--ohlc-level-height:16px;--ohlc-open-top:2px;--ohlc-open-height:14px;--metric-height:20px;--metric-font-size:11px;--balance-box-height:21px;--balance-side-inset:3px;--balance-cell-padding:1px;--title-height:21px;--title-font-size:11px;--title-padding-x:6px;--topbar-height:27px;--top-font-size:11px;--top-button-font-size:10px;--top-cell-padding-x:4px;--lamp-size:9px;--market-font-size:11px;--market-header-font-size:10px;--market-cell-padding-x:4px;--section-height:18px;--section-title-font-size:11px;--section-padding-x:5px;--grade-distribution-padding-y:4px;--grade-distribution-chart-size:54px;--grade-distribution-hole-inset:13px;--grade-distribution-font-size:10px;--grade-distribution-title-size:10px}
+  .topbar{display:grid;grid-template-columns:max-content max-content max-content max-content max-content max-content minmax(0,1fr);align-items:center;width:100%;min-width:0;height:var(--topbar-height);border-bottom:1px solid var(--line);font-size:var(--top-font-size);font-weight:var(--top-font-weight)}
+  .topbar>div:nth-child(2){padding:0 5px}
+  .topbar>div{position:relative;height:100%;min-width:0;padding:0 var(--top-cell-padding-x);display:flex;align-items:center;justify-content:center;border-right:1px solid var(--line);white-space:nowrap;overflow:hidden}
   .topbar>div:first-child,.topbar>div:last-child{justify-content:flex-start}
-  .topbar>div:first-child{font-size:17px;font-variant-numeric:tabular-nums}
-  .lamp{display:inline-block;width:17px;height:17px;border-radius:50%;margin-left:7px;background:#d3a900;box-shadow:0 0 7px #d3a900}
+  .topbar>div:first-child{justify-content:flex-start;padding-left:4px;padding-right:2px;font-size:var(--board-font-size);font-weight:700;font-variant-numeric:tabular-nums}
+  .lamp{display:inline-block;width:var(--lamp-size);height:var(--lamp-size);border-radius:50%;margin-left:6px;background:#d3a900;box-shadow:0 0 5px #d3a900}
+  .combined-lamp{margin-left:0}
+  .status-detail-lamps{display:none}
   .lamp.ok{background:var(--green);box-shadow:0 0 7px var(--green)}
   .lamp.waiting{background:#d3a900;box-shadow:0 0 7px #d3a900}
   .lamp.error{background:var(--red);box-shadow:0 0 7px var(--red)}
-  .speed{color:#b8860b}.market-open{color:#168000}.focus-name{color:var(--red)}.momentum{color:#b8860b;font-size:14px}
+  .density-toggle{width:100%;height:calc(var(--topbar-height) - 8px);border:1px solid #9aa8b5;border-radius:3px;background:#f8fbff;color:#19324a;font:inherit;font-size:var(--top-button-font-size);font-weight:600;cursor:pointer}
+  .density-toggle:hover{background:#e7edf3}
+  .width-reset{width:100%;height:calc(var(--topbar-height) - 8px);border:1px solid #9aa8b5;border-radius:3px;background:#fff;color:#19324a;font:inherit;font-size:var(--top-button-font-size);font-weight:600;cursor:pointer}
+  .width-reset:hover{background:#eef4fa}
+  .speed{color:#b8860b}.market-open{color:#168000}.focus-name{color:var(--red)}.momentum{color:#b8860b;font-size:var(--top-font-size);font-weight:500}
   .focus-momentum{gap:14px}.focus-momentum .momentum{overflow:hidden;text-overflow:ellipsis}
   .grid{width:100%;border-collapse:collapse;table-layout:auto;min-width:1150px}
-  th,td{border:1px solid var(--line);padding:4px 6px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  th{background:var(--head);font-weight:800;color:#263747}
-  .section{height:26px;background:#f8fbff;border-top:2px solid #aab7c4;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 9px;font-weight:800;white-space:nowrap}
+  th,td{border:1px solid var(--line);padding:var(--board-cell-padding-y) var(--board-cell-padding-x);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  th{background:var(--head);font-weight:700;color:#263747}
+  .section{height:var(--section-height);background:#f8fbff;border-top:2px solid #aab7c4;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 var(--section-padding-x);font-size:var(--section-title-font-size);font-weight:var(--section-title-font-weight);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .sec-orange{color:#d46b00}.sec-blue{color:#1f65c2}
   .blue{color:var(--blue)}.plus{color:var(--red)}.minus{color:var(--blue)}
   .foreign-zero{color:#7f8c8d}
-  .grade{display:inline-block;border-radius:4px;color:#fff;padding:2px 7px;font-weight:900}
+  .grade{display:inline-block;border-radius:4px;color:#fff;padding:var(--grade-padding-y) var(--grade-padding-x);font-weight:900;min-width:2.6em}
   .a{background:#d71920}.b{background:#f08a24}.c{background:#f4c430;color:#111}.d{background:#1266d6}.f{background:#7f8c8d}
-  .market-overview{display:grid;grid-template-columns:minmax(0,1fr) 250px;align-items:stretch;min-width:0}
-  .market-tables{min-width:0}
-  .market{width:100%;min-width:0;table-layout:fixed}
-  .market th,.market td{padding-left:8px;padding-right:8px;white-space:nowrap}
-  .market th{font-size:13px}.market td{font-size:14px;font-weight:700}
+  .market-overview{display:block;min-width:0}
+  .market-supply-row{display:flex;align-items:stretch;width:100%;min-width:0;overflow:hidden}
+  .market{flex:0 0 auto;width:max-content;min-width:0;table-layout:fixed}
+  .market th,.market td{padding-left:var(--market-cell-padding-x);padding-right:var(--market-cell-padding-x);white-space:nowrap}
+  .market th{font-size:var(--market-header-font-size);font-weight:600}.market td{font-size:var(--market-font-size);font-weight:var(--market-font-weight)}
   .market th{position:relative;overflow:visible}
   .upper-column-resizer{position:absolute;top:0;right:0;width:8px;height:100%;z-index:9;cursor:col-resize;touch-action:none;user-select:none}
   .us{width:100%;min-width:0;table-layout:fixed}
-  .us td{position:relative;font-size:14px;font-weight:800;background:var(--head)}
+  .us td{text-align:left}
+  .market th,.market td{text-align:center}
+  .us td{position:relative;font-size:var(--market-font-size);font-weight:var(--market-font-weight);background:var(--head)}
   .us td span{margin-left:8px}
-  .us-impact-cell{max-width:180px}
-  .us-impact-value{display:inline-block;max-width:110px;margin-left:0!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
-  .grade-distribution{display:flex;align-items:center;gap:10px;min-width:0;padding:8px 10px;border:1px solid var(--line);background:#f8fbff}
-  .grade-distribution-chart{width:82px;height:82px;flex:0 0 82px;border-radius:50%;background:#e3e8ec;box-shadow:inset 0 0 0 1px #b7c1ca;position:relative}
-  .grade-distribution-chart::after{content:"";position:absolute;inset:20px;border-radius:50%;background:#fff;box-shadow:0 0 0 1px #d4dbe1}
-  .grade-distribution-info{min-width:0;font-size:12px;font-weight:800}
-  .grade-distribution-title{margin-bottom:5px;color:#263747;font-size:13px;white-space:nowrap}
+  .us-impact-cell{max-width:none}
+  .us-impact-value{display:inline-block;max-width:100%;margin-left:0!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
+  .grade-distribution{display:flex;align-items:center;justify-content:center;flex:0 0 calc(var(--grade-distribution-chart-size) + 16px);min-width:calc(var(--grade-distribution-chart-size) + 16px);margin-left:6px;padding:var(--grade-distribution-padding-y) 8px;border:1px solid var(--line);background:#f8fbff}
+  .grade-distribution-chart{width:var(--grade-distribution-chart-size);height:var(--grade-distribution-chart-size);flex:0 0 var(--grade-distribution-chart-size);border-radius:50%;background:#e3e8ec;box-shadow:inset 0 0 0 1px #b7c1ca;position:relative}
+  .grade-distribution-chart::after{content:"";position:absolute;inset:var(--grade-distribution-hole-inset);border-radius:50%;background:#fff;box-shadow:0 0 0 1px #d4dbe1}
+  .grade-distribution-info{display:none}
+  .grade-distribution-title{margin-bottom:4px;color:#263747;font-size:var(--grade-distribution-title-size);font-weight:600;white-space:nowrap}
   .grade-distribution-legend{display:grid;grid-template-columns:repeat(2,minmax(36px,1fr));gap:3px 7px}
   .grade-distribution-item{white-space:nowrap;font-variant-numeric:tabular-nums}
   .grade-dot{display:inline-block;width:8px;height:8px;margin-right:4px;border-radius:2px}
-  .board td{font-size:14px;height:34px;font-weight:700}.board th{font-size:13px;font-weight:800}
+  .board td{font-size:var(--board-font-size);height:var(--board-row-height);font-weight:700}.board th{font-size:var(--board-header-font-size);font-weight:700}
   .enhanced-board td:nth-child(3){text-align:center;vertical-align:middle}
-  .note{text-align:left!important;font-size:12px;min-width:210px}
+  .note{text-align:left!important;font-size:12px;min-width:0}
+  .note .momentum{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #trading-board,#candidate-board{table-layout:fixed;min-width:0}
   #trading-board th,#candidate-board th{position:relative;overflow:visible}
   #trading-board .column-label,#candidate-board .column-label{display:block;overflow:hidden;text-overflow:ellipsis}
   #trading-board .column-resizer,#candidate-board .column-resizer{position:absolute;top:0;right:-4px;width:8px;height:100%;z-index:5;cursor:col-resize;touch-action:none;user-select:none}
-  #trading-board .metric{min-width:0}
-  #trading-board .note{min-width:0}
+  #trading-board .metric,#candidate-board .metric{min-width:0}
+  #trading-board .note,#candidate-board .note{min-width:0}
   #trading-board .rank-cell{text-align:center}
   #trading-board .stock-name{text-align:left}
   #trading-board .number-cell{text-align:right;font-variant-numeric:tabular-nums}
+  #trading-board th[data-sort-key]{cursor:pointer}
+  #trading-board th.sorted{background:#dbe7f3}
+  #trading-board .sort-indicator{display:inline-block;min-width:12px;margin-left:3px;color:#1266d6;font-size:11px}
   #trading-board td.realtime-flash,#candidate-board td.realtime-flash{background:#fff3b0;transition:background-color .18s ease}
   .enhanced-board .flow-number{text-align:right;font-variant-numeric:tabular-nums}
   .flow-zero{color:#7f8c8d}
   body.column-resizing{cursor:col-resize;user-select:none}
   .enhanced-board .stock-name{cursor:help;text-decoration:underline dotted #7b8a97;text-underline-offset:3px}
-  .enhanced-board .ohlc-chart{position:relative;width:100%;min-width:0;height:24px;margin:auto;background:linear-gradient(90deg,#eef3f8,#fff);border-radius:3px;overflow:hidden}
-  .enhanced-board .ohlc-range{position:absolute;left:var(--low);right:calc(100% - var(--high));top:11px;height:2px;background:#17202a;z-index:1}
-  .enhanced-board .ohlc-body{position:absolute;left:var(--body-left);right:var(--body-right);top:5px;min-width:2px;min-height:14px;height:14px;background:var(--red);border:1px solid #cf666d;z-index:2}
+  .enhanced-board .ohlc-cell{cursor:pointer}
+  .enhanced-board .ohlc-chart{position:relative;width:100%;min-width:0;height:var(--ohlc-height);margin:auto;background:linear-gradient(90deg,#eef3f8,#fff);border-radius:3px;overflow:hidden}
+  .enhanced-board .ohlc-range{position:absolute;left:var(--low);right:calc(100% - var(--high));top:var(--ohlc-range-top);height:2px;background:#17202a;z-index:1}
+  .enhanced-board .ohlc-body{position:absolute;left:var(--body-left);right:var(--body-right);top:var(--ohlc-body-top);min-width:2px;min-height:10px;height:var(--ohlc-body-height);background:var(--red);border:1px solid #cf666d;z-index:2}
   .enhanced-board .ohlc-down .ohlc-body{background:var(--blue);border-color:#5f8fd7}
   .enhanced-board .ohlc-doji .ohlc-body{background:#d9dee3;border-color:#89939c}
-  .enhanced-board .ohlc-open{position:absolute;left:var(--open);top:4px;width:3px;height:16px;background:#17202a;z-index:4}
-  .enhanced-board .ohlc-level{position:absolute;top:2px;width:2px;height:20px;opacity:1}
+  .enhanced-board .ohlc-open{position:absolute;left:var(--open);top:var(--ohlc-open-top);width:3px;height:var(--ohlc-open-height);background:#17202a;z-index:4}
+  .enhanced-board .ohlc-level{position:absolute;top:var(--ohlc-level-top);width:2px;height:var(--ohlc-level-height);opacity:1}
   .enhanced-board .ohlc-vwap{left:var(--vwap);background:#d3a900;z-index:8}
   .enhanced-board .ohlc-prev-high{left:var(--prev-high);background:var(--red);z-index:7}
   .enhanced-board .ohlc-prev-close{left:var(--prev-close);background:var(--green);z-index:6}
   .enhanced-board .ohlc-prev-low{left:var(--prev-low);background:var(--blue);z-index:5}
   .enhanced-board .ohlc-proportional-center{left:50%;background:var(--green);z-index:6}
-  .enhanced-board .metric{position:relative;display:flex;align-items:center;justify-content:center;min-width:105px;height:26px;overflow:hidden;background:#e5e9ed;border:1px solid #c5cdd4;border-radius:2px}
+  .enhanced-board .metric{position:relative;display:flex;align-items:center;justify-content:center;min-width:0;height:var(--metric-height);overflow:hidden;background:#e5e9ed;border:1px solid #c5cdd4;border-radius:2px;font-size:var(--metric-font-size)}
   .enhanced-board .metric-track{position:absolute;inset:0;width:100%;height:100%;overflow:hidden}
   .enhanced-board .metric-fill{display:block;width:var(--bar-width);height:100%;background:var(--bar-color)}
   .enhanced-board .metric-value{position:relative;z-index:2;width:100%;text-align:center;font-variant-numeric:tabular-nums;text-shadow:0 0 2px #fff,0 0 2px #fff;pointer-events:none}
-  .enhanced-board .balance-cell{padding:2px}
-  .enhanced-board .balance-box{position:relative;width:100%;height:28px;overflow:hidden;background:#edf1f4;border:1px solid #c5cdd4;border-radius:2px}
-  .enhanced-board .balance-side{position:absolute;top:4px;bottom:4px;opacity:.88}
+  .enhanced-board .price-limit-metric .metric-value{color:#fff;text-shadow:none}
+  .enhanced-board .balance-cell{padding:var(--balance-cell-padding)}
+  .enhanced-board .balance-box{position:relative;width:100%;height:var(--balance-box-height);overflow:hidden;background:#edf1f4;border:1px solid #c5cdd4;border-radius:2px;font-size:var(--metric-font-size)}
+  .enhanced-board .balance-side{position:absolute;top:var(--balance-side-inset);bottom:var(--balance-side-inset);opacity:.88}
   .enhanced-board .balance-side-blue{left:0;width:var(--blue-width);background:var(--blue)}
   .enhanced-board .balance-side-red{right:0;width:var(--red-width);background:var(--red)}
   .enhanced-board .balance-meeting{position:absolute;z-index:1;left:var(--blue-width);top:1px;bottom:1px;width:2px;background:#5f676e;transform:translateX(-1px)}
-  .balance-tooltip{position:fixed;z-index:10000;display:none;max-width:260px;padding:7px 9px;border:1px solid rgba(148,163,184,.8);border-radius:3px;background:#fff;color:#111827;font-size:12px;font-weight:700;line-height:1.45;white-space:pre-line;box-shadow:0 6px 18px rgba(15,23,42,.18);pointer-events:none}
+  .balance-tooltip{position:fixed;z-index:10000;display:none;max-width:260px;padding:7px 9px;border:1px solid rgba(148,163,184,.8);border-radius:3px;background:#fff;color:#111827;font-size:12px;font-weight:400;line-height:1.45;white-space:pre-line;box-shadow:0 6px 18px rgba(15,23,42,.18);pointer-events:none}
   .ohlc-tooltip{position:fixed;z-index:10000;display:none;max-width:280px;padding:7px 9px;border:1px solid rgba(148,163,184,.8);border-radius:3px;background:#fff;color:#111827;font-size:12px;font-weight:400;line-height:1.45;white-space:pre-line;box-shadow:0 6px 18px rgba(15,23,42,.18);pointer-events:none}
   .balance-tooltip.visible,.ohlc-tooltip.visible{display:block}
   #candidate-board .stock-name{text-align:left}
@@ -111,18 +137,16 @@
 <div class="window">
   <div class="title">▣ StockBoard v0.3.6 Prev Close Proportional <span class="data-diagnostics" id="data-diagnostics">apiRows 0 · apiOhlc 0 · normalizedRows 0 · normalizedOhlc 0 · renderOhlc 0 · domOhlc 0</span></div>
 
+  <div class="market-overview" id="market-overview">
   <div class="topbar">
     <div id="current-date-time">-</div>
-    <div>A <span class="lamp waiting" id="api-status-lamp" title="API 서버 대기"></span></div>
-    <div>K <span class="lamp waiting" id="kiwoom-status-lamp" title="Kiwoom 데이터 대기"></span></div>
-    <div>W <span class="lamp waiting" id="web-status-lamp" title="Web 화면 갱신 대기"></span></div>
-    <div>갱신 <span class="speed" id="refresh-delay">-</span></div>
+    <div><span class="lamp combined-lamp waiting" id="combined-status-lamp" title="A: 대기 / K: 대기 / W: 대기"></span><span class="status-detail-lamps" aria-hidden="true"><span class="lamp waiting" id="api-status-lamp" title="API 서버 대기"></span><span class="lamp waiting" id="kiwoom-status-lamp" title="Kiwoom 데이터 대기"></span><span class="lamp waiting" id="web-status-lamp" title="Web 화면 갱신 대기"></span></span></div>
+    <div><span class="speed" id="refresh-delay" title="마지막 API 응답 이후 경과시간">-</span></div>
+    <div><button type="button" class="density-toggle" id="density-toggle">화면: 기본</button></div>
+    <div><button type="button" class="width-reset" id="width-reset">폭 초기화</button></div>
     <div><span class="market-open" id="market-session">장마감</span></div>
     <div class="focus-momentum"><span class="focus-name">삼성전기</span><span class="momentum">VWAP돌파 + 시가위 + 전고돌파</span></div>
   </div>
-
-  <div class="market-overview" id="market-overview">
-  <div class="market-tables">
   <table class="grid us">
     <tr>
       <td>나스닥 <span class="plus">+1.85%</span></td>
@@ -135,12 +159,12 @@
     </tr>
   </table>
 
+  <div class="market-supply-row">
   <table class="grid market">
     <tr><th>시장</th><th>지수</th><th>등락률</th><th>상승/하락</th><th>개인(억)</th><th>외인(억)</th><th>기관(억)</th><th>프로(억)</th><th>외선(억)</th></tr>
     <tr><td class="blue" id="market-kospi-name">-</td><td id="market-kospi-index">-</td><td id="market-kospi-change">-</td><td><span class="plus" id="market-kospi-advance">-</span> / <span class="blue" id="market-kospi-decline">-</span></td><td id="market-kospi-individual">-</td><td id="market-kospi-foreign-spot">-</td><td id="market-kospi-institution">-</td><td id="market-kospi-program">-</td><td id="market-kospi-foreign-futures">-</td></tr>
     <tr><td class="blue" id="market-kosdaq-name">-</td><td id="market-kosdaq-index">-</td><td id="market-kosdaq-change">-</td><td><span class="plus" id="market-kosdaq-advance">-</span> / <span class="blue" id="market-kosdaq-decline">-</span></td><td id="market-kosdaq-individual">-</td><td id="market-kosdaq-foreign-spot">-</td><td id="market-kosdaq-institution">-</td><td id="market-kosdaq-program">-</td><td id="market-kosdaq-foreign-futures">-</td></tr>
   </table>
-  </div>
   <aside class="grade-distribution" aria-label="거래대금 상위 등급분포">
     <div class="grade-distribution-chart" id="grade-distribution-chart" role="img"></div>
     <div class="grade-distribution-info">
@@ -148,6 +172,7 @@
       <div class="grade-distribution-legend" id="grade-distribution-legend"></div>
     </div>
   </aside>
+  </div>
   </div>
 
   <div class="section sec-orange">▶ 유력 후보 상위 5종목</div>
@@ -163,12 +188,15 @@
 <script>
   const board = document.getElementById('trading-board');
   const candidateBoard = document.getElementById('candidate-board');
+  const densityToggle = document.getElementById('density-toggle');
+  const widthReset = document.getElementById('width-reset');
   const rankingRowCount = document.getElementById('ranking-row-count');
   const dataDiagnostics = document.getElementById('data-diagnostics');
   const topbar = document.querySelector('.topbar');
   const currentDateTime = document.getElementById('current-date-time');
   const refreshDelay = document.getElementById('refresh-delay');
   const marketSession = document.getElementById('market-session');
+  const combinedStatusLamp = document.getElementById('combined-status-lamp');
   const statusLamps = {
     api: document.getElementById('api-status-lamp'),
     kiwoom: document.getElementById('kiwoom-status-lamp'),
@@ -195,16 +223,43 @@
     program: document.getElementById(`market-${key}-program`)
   }]));
   const columnWidthStorageKey = 'stockboard.tradingBoard.columnWidths.v1';
-  const topbarWidthStorageKey = 'stockboard.topbar.columnWidths.v1';
-  const usMarketWidthStorageKey = 'stockboard.usMarket.columnWidths.v1';
-  const marketWidthStorageKey = 'stockboard.marketSupply.columnWidths.v1';
+  const boardSortStorageKey = 'stockboard.tradingBoard.sortState.v1';
+  const displayDensityStorageKey = 'stockboard.displayDensity.v1';
+  const topbarWidthStorageKey = 'stockboard.topbar.columnWidths.v4';
+  const usMarketWidthStorageKey = 'stockboard.usMarket.columnWidths.v2';
+  const marketWidthStorageKey = 'stockboard.marketSupply.columnWidths.v2';
   const candleModeStorageKey = 'stockboard.candleMode.v1';
+  const candleModeToggleTitle = '클릭: 캔들모드 전환 / C: 전환';
   const candleModes = new Set(['full', 'proportional']);
+  const displayDensityModes = ['normal', 'compact', 'ultra'];
+  const displayDensityLabels = { normal: '기본', compact: '압축', ultra: '초압축' };
   const marketSessions = new Set(['프리마켓', '정규장', '애프터마켓', '장마감']);
   let topbarColumnResizeController = null;
   let usMarketColumnResizeController = null;
   let marketColumnResizeController = null;
   let lastSuccessfulUpdateAt = null;
+
+  function statusLabel(state) {
+    if (state === 'ok') return '정상';
+    if (state === 'error') return '오류';
+    return '대기';
+  }
+
+  function updateCombinedStatusLamp() {
+    const states = ['api', 'kiwoom', 'web'].map(name =>
+      statusLamps[name]?.dataset.state || 'waiting'
+    );
+    const okCount = states.filter(state => state === 'ok').length;
+    const state = okCount === 3 ? 'ok' : okCount === 0 ? 'error' : 'waiting';
+    combinedStatusLamp.classList.remove('ok', 'waiting', 'error');
+    combinedStatusLamp.classList.add(state);
+    combinedStatusLamp.dataset.state = state;
+    combinedStatusLamp.title = [
+      `A: ${statusLabel(states[0])}`,
+      `K: ${statusLabel(states[1])}`,
+      `W: ${statusLabel(states[2])}`
+    ].join(' / ');
+  }
 
   function setStatusLamp(name, state, message) {
     const lamp = statusLamps[name];
@@ -212,6 +267,7 @@
     lamp.classList.add(state);
     lamp.dataset.state = state;
     lamp.title = message;
+    updateCombinedStatusLamp();
   }
 
   function markSuccessfulUpdate() {
@@ -222,10 +278,12 @@
   function updateRefreshDelay() {
     if (lastSuccessfulUpdateAt === null) {
       refreshDelay.textContent = '-';
+      refreshDelay.title = '마지막 API 응답 이후 경과시간';
       return;
     }
     const delaySeconds = Math.max(0, (performance.now() - lastSuccessfulUpdateAt) / 1000);
     refreshDelay.textContent = `${delaySeconds.toFixed(1)}초`;
+    refreshDelay.title = '마지막 API 응답 이후 경과시간';
     if (delaySeconds >= 10 && statusLamps.web.dataset.state !== 'error') {
       setStatusLamp('web', 'waiting', 'Web 화면 갱신 지연');
     }
@@ -238,6 +296,7 @@
     currentDateTime.textContent = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} (${weekdays[now.getDay()]}) ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
   }
 
+  updateCombinedStatusLamp();
   updateCurrentDateTime();
   window.setInterval(updateCurrentDateTime, 1000);
   window.setInterval(updateRefreshDelay, 100);
@@ -319,6 +378,34 @@
       localStorage.setItem(candleModeStorageKey, mode);
     } catch (error) {
       console.warn('Candle mode could not be saved.', error);
+    }
+  }
+
+  function loadDisplayDensity() {
+    try {
+      const savedDensity = localStorage.getItem(displayDensityStorageKey);
+      return displayDensityModes.includes(savedDensity) ? savedDensity : 'normal';
+    } catch (error) {
+      return 'normal';
+    }
+  }
+
+  function saveDisplayDensity(mode) {
+    try {
+      localStorage.setItem(displayDensityStorageKey, mode);
+    } catch (error) {
+      console.warn('Display density could not be saved.', error);
+    }
+  }
+
+  let currentDisplayDensity = loadDisplayDensity();
+
+  function applyDisplayDensity(mode) {
+    currentDisplayDensity = displayDensityModes.includes(mode) ? mode : 'normal';
+    document.body.dataset.density = currentDisplayDensity;
+    if (densityToggle) {
+      densityToggle.textContent = `화면: ${displayDensityLabels[currentDisplayDensity] || displayDensityLabels.normal}`;
+      densityToggle.title = '전광판 밀도 전환: 기본 → 압축 → 초압축';
     }
   }
 
@@ -440,12 +527,12 @@
 
   function initializeTopbarColumnResize() {
     const columns = [
-      { defaultWidth: 250, minWidth: 220 },
-      { defaultWidth: 48, minWidth: 36 },
-      { defaultWidth: 48, minWidth: 36 },
-      { defaultWidth: 48, minWidth: 36 },
-      { defaultWidth: 120, minWidth: 78 },
-      { defaultWidth: 86, minWidth: 68 },
+      { defaultWidth: 154, minWidth: 136 },
+      { defaultWidth: 32, minWidth: 26 },
+      { defaultWidth: 54, minWidth: 42 },
+      { defaultWidth: 92, minWidth: 78 },
+      { defaultWidth: 86, minWidth: 72 },
+      { defaultWidth: 76, minWidth: 58 },
       { defaultWidth: 298, minWidth: 180 }
     ];
     const cells = () => Array.from(topbar.children);
@@ -455,10 +542,15 @@
       storageKey: topbarWidthStorageKey,
       getHandleCells: cells,
       applyWidths(widths) {
-        const renderedWidths = [...widths];
-        const requestedWidth = renderedWidths.reduce((sum, width) => sum + width, 0);
-        renderedWidths[renderedWidths.length - 1] += Math.max(0, topbar.clientWidth - requestedWidth);
-        topbar.style.gridTemplateColumns = renderedWidths.map(width => `${width}px`).join(' ');
+        topbar.style.gridTemplateColumns = [
+          'max-content',
+          'max-content',
+          'max-content',
+          'max-content',
+          'max-content',
+          'max-content',
+          'minmax(0,1fr)'
+        ].join(' ');
       },
       measureWidth(columnIndex) {
         const source = cells()[columnIndex];
@@ -503,12 +595,14 @@
       storageKey: usMarketWidthStorageKey,
       getHandleCells: cells,
       applyWidths(widths) {
+        const renderedWidths = [...widths];
+        const requestedWidth = renderedWidths.reduce((sum, width) => sum + width, 0);
+        const availableWidth = usMarketTable.parentElement.clientWidth;
+        renderedWidths[renderedWidths.length - 1] += Math.max(0, availableWidth - requestedWidth);
         Array.from(colgroup.children).forEach((column, index) => {
-          column.style.width = `${widths[index]}px`;
+          column.style.width = `${renderedWidths[index]}px`;
         });
-        const requestedWidth = widths.reduce((sum, width) => sum + width, 0);
-        usMarketTable.style.width = `${requestedWidth}px`;
-        marketOverview.style.gridTemplateColumns = `${requestedWidth}px minmax(250px,1fr)`;
+        usMarketTable.style.width = `${Math.max(requestedWidth, availableWidth)}px`;
       },
       measureWidth(columnIndex) {
         const source = cells()[columnIndex];
@@ -563,14 +657,11 @@
       storageKey: marketWidthStorageKey,
       getHandleCells: headerCells,
       applyWidths(widths) {
-        const renderedWidths = [...widths];
-        const requestedWidth = renderedWidths.reduce((sum, width) => sum + width, 0);
-        const availableWidth = marketTable.parentElement.clientWidth;
-        renderedWidths[renderedWidths.length - 1] += Math.max(0, availableWidth - requestedWidth);
         Array.from(colgroup.children).forEach((column, index) => {
-          column.style.width = `${renderedWidths[index]}px`;
+          column.style.width = `${widths[index]}px`;
         });
-        marketTable.style.width = `${Math.max(requestedWidth, availableWidth)}px`;
+        const requestedWidth = widths.reduce((sum, width) => sum + width, 0);
+        marketTable.style.width = `${requestedWidth}px`;
       },
       measureWidth(columnIndex) {
         const measurementTable = document.createElement('table');
@@ -607,47 +698,116 @@
   }
 
   const boardColumns = [
-    { label: '순위', defaultWidth: 36, minWidth: 30 },
-    { label: '전일', defaultWidth: 46, minWidth: 36 },
-    { label: '등급', defaultWidth: 54, minWidth: 48 },
-    { label: '종목명', defaultWidth: 125, minWidth: 95 },
-    { label: '현재가', defaultWidth: 80, minWidth: 68 },
-    { label: '등락률', defaultWidth: 64, minWidth: 56 },
-    { label: '금액(억)', defaultWidth: 82, minWidth: 68 },
+    { label: '순위', defaultWidth: 36, minWidth: 30, sortKey: 'rank', sortDefault: 'asc' },
+    { label: '전일', defaultWidth: 46, minWidth: 36, sortKey: 'previousRank', sortDefault: 'asc' },
+    { label: '등급', defaultWidth: 54, minWidth: 48, sortKey: 'grade', sortDefault: 'desc' },
+    { label: '종목명', defaultWidth: 125, minWidth: 95, sortKey: 'name', sortDefault: 'asc' },
+    { label: '현재가', defaultWidth: 80, minWidth: 68, sortKey: 'price', sortDefault: 'desc' },
+    { label: '등락률', defaultWidth: 64, minWidth: 56, sortKey: 'changeRate', sortDefault: 'desc' },
+    { label: '금액(억)', defaultWidth: 82, minWidth: 68, sortKey: 'amount', sortDefault: 'desc' },
     { label: '일봉', defaultWidth: 86, minWidth: 70 },
-    { label: '잔량비', defaultWidth: 56, minWidth: 48 },
-    { label: '순간강도', defaultWidth: 56, minWidth: 48 },
-    { label: '세션강도', defaultWidth: 56, minWidth: 48 },
-    { label: '외합(억)', defaultWidth: 64, minWidth: 54 },
-    { label: '프로(억)', defaultWidth: 64, minWidth: 54 },
-    { label: '큰손', defaultWidth: 56, minWidth: 48 },
-    { label: '모멘텀', defaultWidth: 90, minWidth: 70 }
+    { label: '잔량비', defaultWidth: 56, minWidth: 48, sortKey: 'bidAskRatio', sortDefault: 'desc' },
+    { label: '순간강도', defaultWidth: 56, minWidth: 48, sortKey: 'realtimeStrength', sortDefault: 'desc' },
+    { label: '세션강도', defaultWidth: 56, minWidth: 48, sortKey: 'sessionStrength', sortDefault: 'desc' },
+    { label: '외합(억)', defaultWidth: 64, minWidth: 54, sortKey: 'foreign', sortDefault: 'desc' },
+    { label: '프로(억)', defaultWidth: 64, minWidth: 54, sortKey: 'program', sortDefault: 'desc' },
+    { label: '큰손', defaultWidth: 56, minWidth: 48, sortKey: 'bigHand', sortDefault: 'desc' },
+    { label: '모멘텀', defaultWidth: 90, minWidth: 70, sortKey: 'note', sortDefault: 'asc' }
   ];
+  const boardSortDefaults = Object.fromEntries(
+    boardColumns
+      .filter(column => column.sortKey)
+      .map(column => [column.sortKey, column.sortDefault || 'asc'])
+  );
+  const boardColumnDensityWidths = {
+    normal: [44, 46, 54, 125, 78, 64, 78, 86, 56, 56, 56, 64, 64, 58, 90],
+    compact: [38, 40, 48, 108, 68, 56, 68, 72, 50, 50, 50, 56, 56, 52, 72],
+    ultra: [34, 36, 44, 96, 62, 50, 62, 62, 46, 46, 46, 50, 50, 46, 62]
+  };
+  const boardColumnDensityMinWidths = {
+    normal: [30, 36, 48, 95, 66, 54, 66, 70, 48, 48, 48, 54, 54, 48, 70],
+    compact: [28, 32, 44, 86, 58, 48, 58, 60, 44, 44, 44, 48, 48, 44, 56],
+    ultra: [26, 30, 40, 78, 54, 44, 54, 54, 40, 40, 40, 44, 44, 40, 48]
+  };
 
-  function loadColumnWidths() {
+  function densityKey() {
+    return displayDensityModes.includes(currentDisplayDensity) ? currentDisplayDensity : 'normal';
+  }
+
+  function densityColumnWidths() {
+    return boardColumnDensityWidths[densityKey()] || boardColumnDensityWidths.normal;
+  }
+
+  function densityColumnMinWidths() {
+    return boardColumnDensityMinWidths[densityKey()] || boardColumnDensityMinWidths.normal;
+  }
+
+  function boardColumnDefaultWidth(index) {
+    return densityColumnWidths()[index] || boardColumns[index]?.defaultWidth || 56;
+  }
+
+  function boardColumnMinWidth(index) {
+    return densityColumnMinWidths()[index] || boardColumns[index]?.minWidth || 36;
+  }
+
+  function normalizeSortDirection(value) {
+    return value === 'desc' ? 'desc' : 'asc';
+  }
+
+  function loadBoardSortState() {
+    try {
+      const savedState = JSON.parse(localStorage.getItem(boardSortStorageKey));
+      if (!savedState || !Object.hasOwn(boardSortDefaults, savedState.key)) {
+        return { key: null, direction: 'asc' };
+      }
+      return {
+        key: savedState.key,
+        direction: normalizeSortDirection(savedState.direction)
+      };
+    } catch (error) {
+      return { key: null, direction: 'asc' };
+    }
+  }
+
+  function saveBoardSortState() {
+    try {
+      localStorage.setItem(boardSortStorageKey, JSON.stringify(top100State.boardSort));
+    } catch (error) {
+      console.warn('Board sort state could not be saved.', error);
+    }
+  }
+
+  function normalizeManualColumnWidth(value, index) {
+    if (value === null || value === undefined) return null;
+    const width = Number(value);
+    if (!Number.isFinite(width) || width <= 0 || width > 2000) return null;
+    return Math.max(boardColumnMinWidth(index), Math.round(width));
+  }
+
+  function loadManualColumnWidths() {
     try {
       const savedWidths = JSON.parse(localStorage.getItem(columnWidthStorageKey));
       if (!Array.isArray(savedWidths) || savedWidths.length !== boardColumns.length) return null;
-      const widths = savedWidths.map(Number);
-      if (!widths.every(width => Number.isFinite(width) && width > 0 && width <= 2000)) return null;
-      const normalizedWidths = widths.map((width, index) =>
-        Math.max(boardColumns[index].minWidth, Math.round(width))
-      );
-      normalizedWidths[9] = normalizedWidths[8];
-      normalizedWidths[10] = normalizedWidths[8];
-      return normalizedWidths;
+      return savedWidths.map((width, index) => normalizeManualColumnWidth(width, index));
     } catch (error) {
       return null;
     }
   }
 
-  let boardColumnWidths = loadColumnWidths()
-    || boardColumns.map(column => column.defaultWidth);
+  function hasManualColumnWidths(widths) {
+    return Array.isArray(widths) && widths.some(width => Number.isFinite(width));
+  }
+
+  const savedBoardColumnManualWidths = loadManualColumnWidths();
+  let boardColumnManualWidths = savedBoardColumnManualWidths || boardColumns.map(() => null);
+  let boardColumnWidths = boardColumns.map((column, index) =>
+    boardColumnManualWidths[index] ?? boardColumnDefaultWidth(index)
+  );
   const columnGroupMarkup = `<colgroup>${boardColumns.map((column, index) =>
     `<col style="width:var(--trading-column-${index}-width)">`).join('')}</colgroup>`;
   function buildBoardHeader() {
     return `${columnGroupMarkup}<tr>${boardColumns.map((column, index) =>
-      `<th><span class="column-label">${column.label}</span><span class="column-resizer" data-column-index="${index}" aria-hidden="true"></span></th>`).join('')}</tr>`;
+      `<th${column.sortKey ? ` data-sort-key="${column.sortKey}"` : ''}><span class="column-label">${column.label}${column.sortKey ? '<span class="sort-indicator"></span>' : ''}</span><span class="column-resizer" data-column-index="${index}" aria-hidden="true"></span></th>`).join('')}</tr>`;
   }
   let boardHeader = buildBoardHeader();
   board.innerHTML = `${boardHeader}<tr><td colspan="15">거래 가능 종목 마스터를 불러오는 중입니다.</td></tr>`;
@@ -662,16 +822,38 @@
       });
       table.style.width = `${totalWidth}px`;
     });
-    topbar.style.width = `${totalWidth}px`;
     marketOverview.style.width = `${totalWidth}px`;
+  }
+
+  function applyDensityColumnWidths() {
+    boardColumnWidths = boardColumns.map((column, index) =>
+      boardColumnManualWidths[index] ?? boardColumnDefaultWidth(index)
+    );
+    applyColumnWidths();
   }
 
   function saveColumnWidths() {
     try {
-      localStorage.setItem(columnWidthStorageKey, JSON.stringify(boardColumnWidths));
+      if (hasManualColumnWidths(boardColumnManualWidths)) {
+        localStorage.setItem(columnWidthStorageKey, JSON.stringify(boardColumnManualWidths));
+      } else {
+        localStorage.removeItem(columnWidthStorageKey);
+      }
     } catch (error) {
       console.warn('Column widths could not be saved.', error);
     }
+  }
+
+  function resetAllColumnWidths() {
+    boardColumnManualWidths = boardColumns.map(() => null);
+    applyDensityColumnWidths();
+    saveColumnWidths();
+  }
+
+  function resetColumnWidth(columnIndex) {
+    boardColumnManualWidths[columnIndex] = null;
+    applyDensityColumnWidths();
+    saveColumnWidths();
   }
 
   applyColumnWidths();
@@ -695,73 +877,37 @@
     event.preventDefault();
   }
 
-  function measureColumnWidth(columnIndex) {
-    const measurementTable = document.createElement('table');
-    measurementTable.className = 'grid board enhanced-board';
-    measurementTable.style.cssText = [
-      'position:fixed',
-      'left:-10000px',
-      'top:0',
-      'visibility:hidden',
-      'width:auto',
-      'min-width:0',
-      'table-layout:auto'
-    ].join(';');
-    const tableBody = measurementTable.createTBody();
-
-    [candidateBoard, board].forEach(table => {
-      Array.from(table.rows).forEach(sourceRow => {
-        if (sourceRow.cells.length !== boardColumns.length) return;
-        const sourceCell = sourceRow.cells[columnIndex];
-        const measurementRow = tableBody.insertRow();
-        const measurementCell = sourceCell.cloneNode(true);
-        measurementCell.querySelectorAll('.column-resizer').forEach(resizer => resizer.remove());
-        measurementCell.style.width = 'auto';
-        measurementCell.style.maxWidth = 'none';
-        measurementCell.style.overflow = 'visible';
-        measurementRow.appendChild(measurementCell);
-      });
-    });
-
-    document.body.appendChild(measurementTable);
-    const measuredWidth = Math.ceil(measurementTable.getBoundingClientRect().width) + 2;
-    measurementTable.remove();
-    return Math.min(2000, Math.max(boardColumns[columnIndex].minWidth, measuredWidth));
-  }
-
-  function autoFitColumn(event) {
+  function restoreColumnWidth(event) {
     const table = event.currentTarget;
     const resizer = event.target.closest('.column-resizer');
     if (!resizer || !table.contains(resizer)) return;
     const columnIndex = Number(resizer.dataset.columnIndex);
     if (!Number.isInteger(columnIndex) || !boardColumns[columnIndex]) return;
-    boardColumnWidths[columnIndex] = measureColumnWidth(columnIndex);
-    applyColumnWidths();
-    saveColumnWidths();
+    resetColumnWidth(columnIndex);
     event.preventDefault();
     event.stopPropagation();
   }
 
   [board, candidateBoard].forEach(table => {
     table.addEventListener('pointerdown', startColumnResize);
-    table.addEventListener('dblclick', autoFitColumn);
+    table.addEventListener('dblclick', restoreColumnWidth);
   });
 
   window.addEventListener('pointermove', event => {
     if (!columnResize || event.pointerId !== columnResize.pointerId) return;
     const { columnIndex, startX, startWidth } = columnResize;
     const width = Math.max(
-      boardColumns[columnIndex].minWidth,
+      boardColumnMinWidth(columnIndex),
       Math.round(startWidth + event.clientX - startX)
     );
     if (width === boardColumnWidths[columnIndex]) return;
+    boardColumnManualWidths[columnIndex] = width;
     boardColumnWidths[columnIndex] = width;
     const totalWidth = boardColumnWidths.reduce((total, value) => total + value, 0);
     [board, candidateBoard].forEach(table => {
       table.style.setProperty(`--trading-column-${columnIndex}-width`, `${width}px`);
       table.style.width = `${totalWidth}px`;
     });
-    topbar.style.width = `${totalWidth}px`;
     marketOverview.style.width = `${totalWidth}px`;
   });
 
@@ -784,6 +930,8 @@
     renderedRows: [],
     candidateRows: [],
     lastRealtimePatchSequence: null,
+    boardSort: loadBoardSortState(),
+    displayDensity: currentDisplayDensity,
     candleMode: loadCandleMode(),
     candleDomain: null,
     diagnostics: {
@@ -796,6 +944,19 @@
       renderedOhlc: 0
     }
   };
+  applyDisplayDensity(top100State.displayDensity);
+  densityToggle?.addEventListener('click', () => {
+    const currentIndex = displayDensityModes.indexOf(top100State.displayDensity);
+    const nextMode = displayDensityModes[(currentIndex + 1) % displayDensityModes.length];
+    top100State.displayDensity = nextMode;
+    applyDisplayDensity(nextMode);
+    applyDensityColumnWidths();
+    saveDisplayDensity(nextMode);
+  });
+  if (widthReset) {
+    widthReset.title = '저장된 전광판 열폭을 지우고 현재 밀도 기준폭으로 복귀';
+    widthReset.addEventListener('click', resetAllColumnWidths);
+  }
 
   function hasOhlc(row) {
     return Boolean(
@@ -1173,11 +1334,12 @@
       `시가: ${formatOhlcTooltipPrice(prices.open, prices.prevClose)}`,
       `고가: ${formatOhlcTooltipPrice(prices.high, prices.prevClose)}`,
       `저가: ${formatOhlcTooltipPrice(prices.low, prices.prevClose)}`,
-      `종가/현재: ${formatOhlcTooltipPrice(prices.close, prices.prevClose)}`,
+      `종가: ${formatOhlcTooltipPrice(prices.close, prices.prevClose)}`,
       `VWAP: ${formatOhlcTooltipNumber(prices.vwap, 2)}`,
       `전일고가: ${formatOhlcTooltipNumber(prices.prevHigh)}`,
       `전일종가: ${formatOhlcTooltipNumber(prices.prevClose)}`,
       `전일저가: ${formatOhlcTooltipNumber(prices.prevLow)}`,
+      candleModeToggleTitle,
       `source: ${source}`
     ].join('\n');
   }
@@ -1230,7 +1392,27 @@
     </div>`;
   }
 
-  function balanceMarkup(balance) {
+  function priceLimitMetricMarkup(row, originalLabel, originalValue) {
+    if (!row || !['upper', 'lower'].includes(row.priceLimitState)) return null;
+    const upper = row.priceLimitState === 'upper';
+    const display = upper ? '상한' : '하한';
+    const color = upper ? 'var(--red)' : 'var(--blue)';
+    const reason = row.priceLimitReason || display;
+    const source = row.priceLimitSource || '-';
+    const tooltip = [
+      `${reason} 예외표시: 일반 수식보다 가격제한 상태 우선`,
+      `source: ${source}`,
+      `${originalLabel}: ${originalValue ?? '-'}`
+    ].join('\n');
+    return `<div class="metric price-limit-metric" data-balance-tooltip="${escapeHtml(tooltip)}" title="${escapeHtml(tooltip)}" role="img" aria-label="${escapeHtml(tooltip)}" style="--bar-width:100%;--bar-color:${color}">
+      <span class="metric-track"><i class="metric-fill"></i></span>
+      <span class="metric-value">${display}</span>
+    </div>`;
+  }
+
+  function balanceMarkup(balance, row = null) {
+    const limitMarkup = priceLimitMetricMarkup(row, '원본 잔량비', row?.bid_ask_ratio ?? row?.sortBidAskRatio ?? balance?.value);
+    if (limitMarkup) return limitMarkup;
     if (!balance) return '-';
     return `<div class="balance-box" data-balance-tooltip="${escapeHtml(balance.tooltip)}" role="img" aria-label="${escapeHtml(balance.tooltip)}" style="--blue-width:${balance.blueWidth}%;--red-width:${balance.redWidth}%">
       <span class="balance-side balance-side-blue"></span>
@@ -1239,7 +1421,9 @@
     </div>`;
   }
 
-  function minuteStrengthMarkup(strength) {
+  function minuteStrengthMarkup(strength, row = null) {
+    const limitMarkup = priceLimitMetricMarkup(row, '원본 순간강도', row?.realtimeStrength ?? row?.realtime_strength ?? row?.sortRealtimeStrength ?? strength?.value);
+    if (limitMarkup) return limitMarkup;
     if (!strength) return '-';
     return `<div class="balance-box" title="${escapeHtml(strength.tooltip)}" role="img" aria-label="${escapeHtml(strength.tooltip)}" style="--blue-width:${strength.blueWidth}%;--red-width:${strength.redWidth}%">
       <span class="balance-side balance-side-blue"></span>
@@ -1248,7 +1432,9 @@
     </div>`;
   }
 
-  function dailyStrengthMarkup(strength) {
+  function dailyStrengthMarkup(strength, row = null) {
+    const limitMarkup = priceLimitMetricMarkup(row, '원본 세션강도', row?.sessionStrength ?? row?.session_strength ?? row?.sortSessionStrength ?? strength?.value);
+    if (limitMarkup) return limitMarkup;
     if (!strength) return '-';
     return `<div class="balance-box" title="${escapeHtml(strength.tooltip)}" role="img" aria-label="${escapeHtml(strength.tooltip)}" style="--blue-width:${strength.blueWidth}%;--red-width:${strength.redWidth}%">
       <span class="balance-side balance-side-blue"></span>
@@ -1311,6 +1497,90 @@
     if (value === null || value === undefined || value === '') return null;
     const number = Number(value);
     return Number.isFinite(number) ? number : null;
+  }
+
+  function sortableNumber(value) {
+    if (value === null || value === undefined || value === '' || value === '-') return null;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    const normalized = String(value)
+      .replace(/,/g, '')
+      .replace(/%/g, '')
+      .replace(/[↑↓]/g, '')
+      .trim();
+    const number = Number(normalized);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function sortableText(value) {
+    const text = String(value ?? '').trim();
+    return text === '-' ? '' : text;
+  }
+
+  function getBoardSortValue(row, key) {
+    switch (key) {
+      case 'rank':
+        return sortableNumber(row.sortRank ?? row.rank);
+      case 'previousRank':
+        return sortableNumber(row.sortPreviousRank ?? row.previousRank);
+      case 'grade':
+        return sortableNumber(row.candidateScore)
+          ?? sortableNumber(row.gradeScore)
+          ?? sortableNumber(String(row.grade ?? '').replace(/^[A-Za-z]/, ''));
+      case 'name':
+        return sortableText(row.name);
+      case 'price':
+        return sortableNumber(row.sortPrice ?? row.price);
+      case 'changeRate':
+        return sortableNumber(row.changeRateNumber ?? row.changeRate);
+      case 'amount':
+        return sortableNumber(row.sortAmount ?? row.amount);
+      case 'bidAskRatio':
+        return sortableNumber(row.sortBidAskRatio ?? row.balanceForce?.value);
+      case 'realtimeStrength':
+        return sortableNumber(row.sortRealtimeStrength ?? row.realtimeStrength);
+      case 'sessionStrength':
+        return sortableNumber(row.sortSessionStrength ?? row.sessionStrength);
+      case 'foreign':
+        return sortableNumber(row.sortForeign ?? row.foreign);
+      case 'program':
+        return sortableNumber(row.sortProgram ?? row.program);
+      case 'bigHand':
+        return sortableNumber(row.sortBigHand ?? row.bigHand);
+      case 'note':
+        return sortableText(row.note);
+      default:
+        return null;
+    }
+  }
+
+  function compareBoardRows(left, right, key, direction) {
+    const leftValue = getBoardSortValue(left, key);
+    const rightValue = getBoardSortValue(right, key);
+    const multiplier = direction === 'desc' ? -1 : 1;
+    const leftMissing = leftValue === null || leftValue === '';
+    const rightMissing = rightValue === null || rightValue === '';
+    if (leftMissing && rightMissing) return 0;
+    if (leftMissing) return 1;
+    if (rightMissing) return -1;
+    if (typeof leftValue === 'number' && typeof rightValue === 'number') {
+      return (leftValue - rightValue) * multiplier;
+    }
+    return String(leftValue).localeCompare(String(rightValue), 'ko-KR', {
+      numeric: true,
+      sensitivity: 'base'
+    }) * multiplier;
+  }
+
+  function sortBoardRows(rows) {
+    const { key, direction } = top100State.boardSort;
+    if (!key || !Object.hasOwn(boardSortDefaults, key)) return rows.slice();
+    return rows
+      .map((row, index) => ({ row, index }))
+      .sort((left, right) => {
+        const compared = compareBoardRows(left.row, right.row, key, direction);
+        return compared || left.index - right.index;
+      })
+      .map(item => item.row);
   }
 
   function candidateRankNumber(value) {
@@ -1446,6 +1716,9 @@
     const displayRankValue = firstValue(row, ['rank', '현재순위', '순위']);
     const rankMovement = rankMovementView(previousRankValue, originalRankValue);
     const candidateStatus = firstValue(row, ['candidate_status']);
+    const priceLimitState = firstValue(row, ['price_limit_state', 'priceLimitState']);
+    const priceLimitReason = firstValue(row, ['price_limit_reason', 'priceLimitReason']);
+    const priceLimitSource = firstValue(row, ['price_limit_source', 'priceLimitSource']);
     const noteValue = displayValue(firstValue(row, ['momentum', 'momentum_text', '모멘텀']));
     const candidateGradeTooltip = [
       firstValue(row, ['candidate_reason']),
@@ -1463,6 +1736,9 @@
     return {
       code: normalizeCode(firstValue(row, ['stock_code', '종목코드', 'code'])),
       marketGroup: stockMarketGroup(row),
+      priceLimitState,
+      priceLimitReason,
+      priceLimitSource,
       isCandidate: firstValue(row, ['is_candidate', 'candidate']),
       candidateScore: firstValue(row, ['candidate_score']),
       candidateRank: firstValue(row, ['candidate_rank']),
@@ -1477,6 +1753,8 @@
       ]),
       rank: displayValue(displayRankValue),
       originalRank: originalRankValue,
+      sortRank: sortableNumber(displayRankValue),
+      sortPreviousRank: sortableNumber(previousRankValue),
       rankCellTooltip: rankCellTooltip(displayRankValue, originalRankValue),
       previousRank: rankMovement.display,
       rankMovementClass: rankMovement.className,
@@ -1484,17 +1762,22 @@
       grade: displayValue(displayGradeValue),
       gradeClass,
       name: displayValue(firstValue(row, ['stock_name', '종목명'])),
+      sortPrice: sortableNumber(firstValue(row, ['price', '현재가'])),
       price: formatInteger(firstValue(row, ['price', '현재가'])),
       changeRate: formatPercent(changeRate),
       changeRateNumber: Number(String(changeRate ?? '').replace(/[%+,]/g, '').trim()),
       changeClass: toneClass(firstValue(row, ['change_tone']), changeRate),
+      sortAmount: sortableNumber(amountValue),
       amount: formatInteger(amountValue),
       realtimeAccTradeValueEokCandidate,
       realtime_acc_trade_value_eok_candidate: realtimeAccTradeValueEokCandidate,
       bidVolume,
       askVolume,
+      sortBidAskRatio: sortableNumber(balanceValue),
       balanceForce: balanceView(balanceValue, { bidVolume, askVolume }),
+      sortRealtimeStrength: sortableNumber(minuteStrengthValue),
       minuteForce: minuteStrengthView(minuteStrengthValue),
+      sortSessionStrength: sortableNumber(sessionStrengthValue),
       sessionStrength: sessionStrengthValue,
       session_strength: sessionStrengthValue,
       sessionBuyQtyLive,
@@ -1510,13 +1793,16 @@
         sellVolume: sessionSellQtyLive
       }),
       foreign: foreign.display,
+      sortForeign: sortableNumber(foreignValue),
       foreignLabel,
       foreignClass: foreign.className,
       foreignTooltip: foreign.tooltip,
       program: program.display,
+      sortProgram: sortableNumber(programValue),
       programClass: program.className,
       programTooltip: program.tooltip,
       bigHand: bigHand.display,
+      sortBigHand: sortableNumber(bigHandValue),
       bigHandClass: bigHand.className,
       bigHandTooltip: bigHand.tooltip,
       candidateStatus,
@@ -1729,12 +2015,12 @@
     setCell(cells[4], escapeHtml(row.price), 'number-cell', '', flashRealtime);
     setCell(cells[5], escapeHtml(row.changeRate), `number-cell ${row.changeClass}`.trim(), '', flashRealtime);
     setCell(cells[6], escapeHtml(row.amount), 'number-cell');
-    setCell(cells[7], candle);
+    setCell(cells[7], candle, 'ohlc-cell', candleModeToggleTitle);
     refreshOhlcTooltip(cells[7]);
-    setCell(cells[8], balanceMarkup(row.balanceForce), 'balance-cell');
+    setCell(cells[8], balanceMarkup(row.balanceForce, row), 'balance-cell');
     refreshBalanceTooltip(cells[8]);
-    setCell(cells[9], minuteStrengthMarkup(row.minuteForce), 'balance-cell');
-    setCell(cells[10], dailyStrengthMarkup(row.sessionForce), 'balance-cell');
+    setCell(cells[9], minuteStrengthMarkup(row.minuteForce, row), 'balance-cell');
+    setCell(cells[10], dailyStrengthMarkup(row.sessionForce, row), 'balance-cell');
     setCell(cells[11], escapeHtml(row.foreign), `flow-number ${row.foreignClass}`.trim(), row.foreignTooltip);
     setCell(cells[12], escapeHtml(row.program), `flow-number ${row.programClass}`.trim(), row.programTooltip);
     setCell(cells[13], escapeHtml(row.bigHand), `flow-number ${row.bigHandClass}`.trim(), row.bigHandTooltip);
@@ -1769,7 +2055,10 @@
     const price = firstValue(patch, ['price', 'realtime_price']);
     if (price !== null) {
       const displayPrice = formatInteger(price);
-      if (row) row.price = displayPrice;
+      if (row) {
+        row.price = displayPrice;
+        row.sortPrice = sortableNumber(price);
+      }
       setCell(tableRow.cells[4], escapeHtml(displayPrice), 'number-cell', '', true);
     }
     if (changeRate !== null) {
@@ -1791,8 +2080,9 @@
     if (realtimeStrength !== null) {
       row.realtimeStrength = realtimeStrength;
       row.realtime_strength = realtimeStrength;
+      row.sortRealtimeStrength = sortableNumber(realtimeStrength);
       row.minuteForce = minuteStrengthView(realtimeStrength);
-      setCell(tableRow.cells[9], minuteStrengthMarkup(row.minuteForce), 'balance-cell');
+      setCell(tableRow.cells[9], minuteStrengthMarkup(row.minuteForce, row), 'balance-cell');
     }
     const sessionStrength = firstValue(patch, [
       'session_strength',
@@ -1825,11 +2115,12 @@
     if (sessionStrength !== null || Object.hasOwn(patch, 'session_strength')) {
       row.sessionStrength = sessionStrength;
       row.session_strength = sessionStrength;
+      row.sortSessionStrength = sortableNumber(sessionStrength);
       row.sessionForce = sessionStrengthView(sessionStrength, {
         buyVolume: row.sessionBuyQtyLive,
         sellVolume: row.sessionSellQtyLive
       });
-      setCell(tableRow.cells[10], dailyStrengthMarkup(row.sessionForce), 'balance-cell');
+      setCell(tableRow.cells[10], dailyStrengthMarkup(row.sessionForce, row), 'balance-cell');
     }
     row.realtimeAccVolume = firstValue(patch, ['realtime_acc_volume']);
     row.realtimeAccTradeValue = firstValue(patch, ['realtime_acc_trade_value']);
@@ -1840,6 +2131,7 @@
     if (realtimeAccTradeValueEokCandidate !== null) {
       row.realtimeAccTradeValueEokCandidate = realtimeAccTradeValueEokCandidate;
       row.realtime_acc_trade_value_eok_candidate = realtimeAccTradeValueEokCandidate;
+      row.sortAmount = sortableNumber(realtimeAccTradeValueEokCandidate);
       row.amount = formatInteger(realtimeAccTradeValueEokCandidate);
       setCell(tableRow.cells[6], escapeHtml(row.amount), 'number-cell');
     }
@@ -1854,7 +2146,7 @@
       if (realtimeOhlcSource !== null) {
         row.realtime_ohlc_source = realtimeOhlcSource;
       }
-      setCell(tableRow.cells[7], rowOhlcMarkup(row));
+      setCell(tableRow.cells[7], rowOhlcMarkup(row), 'ohlc-cell', candleModeToggleTitle);
       refreshOhlcTooltip(tableRow.cells[7]);
     }
     row.bidVolume = firstValue(patch, ['bid_volume']);
@@ -1870,7 +2162,8 @@
       bidVolume: row.bidVolume,
       askVolume: row.askVolume
     });
-    setCell(tableRow.cells[8], balanceMarkup(row.balanceForce), 'balance-cell');
+    row.sortBidAskRatio = sortableNumber(row.bid_ask_ratio);
+    setCell(tableRow.cells[8], balanceMarkup(row.balanceForce, row), 'balance-cell');
     refreshBalanceTooltip(tableRow.cells[8]);
     row.bestBidPrice = firstValue(patch, ['best_bid_price']);
     row.bestAskPrice = firstValue(patch, ['best_ask_price']);
@@ -1882,16 +2175,20 @@
     if (!nextRow || !previousRow) return nextRow;
     [
       'price',
+      'sortPrice',
       'changeRate',
       'changeRateNumber',
       'changeClass',
       'amount',
+      'sortAmount',
       'bidVolume',
       'askVolume',
       'bid_ask_ratio',
+      'sortBidAskRatio',
       'balanceForce',
       'minuteForce',
       'sessionStrength',
+      'sortSessionStrength',
       'session_strength',
       'sessionBuyQtyLive',
       'session_buy_qty_live',
@@ -1903,6 +2200,7 @@
       'bestBidPrice',
       'bestAskPrice',
       'realtimeStrength',
+      'sortRealtimeStrength',
       'realtime_strength',
       'realtimeAccVolume',
       'realtimeAccTradeValue',
@@ -1945,7 +2243,7 @@
     top100State.candidateRows.forEach(row => {
       const tableRow = top100State.candidateRowByCode.get(row.code);
       if (tableRow) {
-        setCell(tableRow.cells[7], rowOhlcMarkup(row));
+        setCell(tableRow.cells[7], rowOhlcMarkup(row), 'ohlc-cell', candleModeToggleTitle);
         refreshOhlcTooltip(tableRow.cells[7]);
       }
     });
@@ -1955,7 +2253,7 @@
     top100State.renderedRows.forEach(row => {
       const tableRow = top100State.rowByCode.get(row.code);
       if (tableRow) {
-        setCell(tableRow.cells[7], rowOhlcMarkup(row));
+        setCell(tableRow.cells[7], rowOhlcMarkup(row), 'ohlc-cell', candleModeToggleTitle);
         refreshOhlcTooltip(tableRow.cells[7]);
       }
     });
@@ -1970,6 +2268,47 @@
     saveCandleMode(top100State.candleMode);
     updateVisibleCandleCells();
   }
+
+  function handleCandleCellClick(event) {
+    const cell = event.target?.closest?.('td.ohlc-cell');
+    if (!cell || !cell.closest('#candidate-board,#trading-board')) return;
+    toggleCandleMode();
+  }
+
+  candidateBoard.addEventListener('click', handleCandleCellClick);
+  board.addEventListener('click', handleCandleCellClick);
+
+  function updateBoardSortIndicators() {
+    board.querySelectorAll('th[data-sort-key]').forEach(header => {
+      const active = header.dataset.sortKey === top100State.boardSort.key;
+      header.classList.toggle('sorted', active);
+      const indicator = header.querySelector('.sort-indicator');
+      if (indicator) {
+        indicator.textContent = active
+          ? top100State.boardSort.direction === 'asc' ? '▲' : '▼'
+          : '';
+      }
+    });
+  }
+
+  function handleBoardSortHeaderClick(event) {
+    if (event.target?.closest?.('.column-resizer')) return;
+    const header = event.target?.closest?.('#trading-board th[data-sort-key]');
+    if (!header) return;
+    const key = header.dataset.sortKey;
+    if (!Object.hasOwn(boardSortDefaults, key)) return;
+    const current = top100State.boardSort;
+    top100State.boardSort = {
+      key,
+      direction: current.key === key
+        ? current.direction === 'asc' ? 'desc' : 'asc'
+        : boardSortDefaults[key]
+    };
+    saveBoardSortState();
+    renderBoard(top100State.renderedRows);
+  }
+
+  board.addEventListener('click', handleBoardSortHeaderClick);
 
   function updateGradeDistribution(rows) {
     const gradeCounts = { a: 0, b: 0, c: 0, d: 0, f: 0 };
@@ -1988,10 +2327,13 @@
     gradeDistributionChart.style.background = gradeTotal
       ? `conic-gradient(${segments.join(',')})`
       : '#e3e8ec';
-    gradeDistributionChart.setAttribute('aria-label', `등급분포 ${Object.entries(gradeCounts).map(([grade, count]) => `${grade.toUpperCase()} ${count}`).join(', ')}`);
-    gradeDistributionLegend.innerHTML = Object.entries(gradeCounts).map(([grade, count]) =>
-      `<span class="grade-distribution-item"><i class="grade-dot ${grade}"></i>${grade.toUpperCase()} ${count}</span>`
-    ).join('');
+    const tooltip = [
+      '거래대금 상위 등급분포',
+      ...Object.entries(gradeCounts).map(([grade, count]) => `${grade.toUpperCase()}: ${count}`)
+    ].join('\n');
+    gradeDistributionChart.setAttribute('aria-label', tooltip);
+    gradeDistributionChart.title = tooltip;
+    gradeDistributionLegend.innerHTML = '';
   }
 
   function renderBoard(rows) {
@@ -2002,12 +2344,14 @@
     }
     rankingRowCount.textContent = `${rows.length}개`;
     updateGradeDistribution(rows);
-    top100State.renderedRows = rows;
+    const displayRows = sortBoardRows(rows);
+    top100State.renderedRows = displayRows;
     top100State.diagnostics.renderOhlc = rows.filter(hasDisplayOhlc).length;
     top100State.candleDomain = candleDomain(rows);
     renderCandidateBoard(rows);
     if (!rows.length) {
       showBoardMessage('표시할 거래대금 순위 종목이 없습니다.');
+      updateBoardSortIndicators();
       top100State.diagnostics.domOhlc = 0;
       top100State.diagnostics.renderedOhlc = 0;
       updateDataDiagnostics();
@@ -2016,11 +2360,12 @@
 
     top100State.rowByCode.clear();
     board.innerHTML = boardHeader;
-    rows.forEach(row => {
+    displayRows.forEach(row => {
       const tableRow = createBoardRow(row);
       board.tBodies[0].appendChild(tableRow);
       top100State.rowByCode.set(row.code, tableRow);
     });
+    updateBoardSortIndicators();
     top100State.diagnostics.domOhlc = board.querySelectorAll('.ohlc-chart').length;
     top100State.diagnostics.renderedOhlc = top100State.diagnostics.domOhlc;
     updateDataDiagnostics();
@@ -2093,6 +2438,10 @@
       normalizedRows.forEach(row => preserveRealtimeFields(row, previousRowByCode.get(row.code)));
       top100State.diagnostics.normalizedRows = normalizedRows.length;
       top100State.diagnostics.normalizedOhlc = normalizedRows.filter(hasOhlc).length;
+      if (top100State.boardSort.key) {
+        renderBoard(normalizedRows);
+        return { received: rows.length, displayed: normalizedRows.length, missing: 0 };
+      }
       top100State.renderedRows = normalizedRows;
       top100State.diagnostics.renderOhlc = normalizedRows.filter(hasOhlc).length;
       top100State.candleDomain = candleDomain(normalizedRows);

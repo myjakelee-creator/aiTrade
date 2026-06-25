@@ -445,6 +445,12 @@ def make_handler(
             parsed_url = urlparse(self.path)
             request_path = parsed_url.path
             query = parse_qs(parsed_url.query, keep_blank_values=True)
+            if request_path in ("", "/"):
+                self.send_response(302)
+                self.send_header("Location", "/stockboard_v0_3_0_sample.html")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                return
             if request_path == "/api/realtime":
                 if "codes" in query:
                     codes = [
