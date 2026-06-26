@@ -14,6 +14,7 @@ echo   1 Start
 echo   2 Stop
 echo   3 Restart
 echo   4 Status
+echo   5 Start HTS Bridge only
 echo   0 Exit
 echo.
 set /p "CHOICE=Select: "
@@ -21,6 +22,7 @@ if "%CHOICE%"=="1" set "ACTION=start"
 if "%CHOICE%"=="2" set "ACTION=stop"
 if "%CHOICE%"=="3" set "ACTION=restart"
 if "%CHOICE%"=="4" set "ACTION=status"
+if "%CHOICE%"=="5" set "ACTION=ahk"
 if "%CHOICE%"=="0" exit /b 0
 if "%ACTION%"=="" (
   echo Invalid selection.
@@ -49,8 +51,17 @@ $PidFile = Join-Path $RuntimeDir "stockboard_server.pid"
 $Top100Url = "http://127.0.0.1:8000/api/top100"
 $ProviderStatusUrl = "http://127.0.0.1:8000/api/realtime_provider_status"
 $BoardUrl = "http://127.0.0.1:8000/"
-$AhkExe = "C:\Program Files\AutoHotkey\AutoHotkey.exe"
 $AhkScript = Join-Path $ProjectRoot "scripts\stockboard_kiwoom_link_v1.ahk"
+$AhkPidFile = Join-Path $RuntimeDir "stockboard_ahk.pid"
+$AhkExeCandidates = @(
+    "C:\Program Files\AutoHotkey\v1.1.37.02\AutoHotkeyU64.exe",
+    "C:\Program Files\AutoHotkey\v1.1.37.02\AutoHotkeyU32.exe",
+    "C:\Program Files\AutoHotkey\v1.1.37.02\AutoHotkeyA32.exe",
+    "C:\Program Files\AutoHotkey\v1.1\AutoHotkeyU64.exe",
+    "C:\Program Files\AutoHotkey\v1.1\AutoHotkeyU32.exe",
+    "C:\Program Files\AutoHotkey\AutoHotkey.exe",
+    "C:\Program Files (x86)\AutoHotkey\AutoHotkey.exe"
+)
 $TargetCodes = @("000660", "005930", "402340")
 $ExpectedSources = @{
     "000660" = "000660_AL"
@@ -148,6 +159,44 @@ function Invoke-Top100WithHeaders {
     }
 }
 
+function Resolve-AhkExe {
+    foreach ($candidate in $AhkExeCandidates) {
+        if (Test-Path -LiteralPath $candidate) {
+            return $candidate
+        }
+    }
+    return $null
+}
+
+function Get-AhkBridgeStatus {
+    $pidText = $null
+    $pidValue = 0
+    $running = "False"
+    if (Test-Path -LiteralPath $AhkPidFile) {
+        $pidText = [string](Get-Content -LiteralPath $AhkPidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ([int]::TryParse($pidText, [ref]$pidValue)) {
+            try {
+                $process = Get-Process -Id $pidValue -ErrorAction Stop
+                if ($process.ProcessName -like "AutoHotkey*") {
+                    $running = "True"
+                } else {
+                    $running = "Unknown"
+                }
+            } catch {
+                $running = "False"
+            }
+        } else {
+            $running = "Unknown"
+        }
+    }
+    return @{
+        pid_file = $AhkPidFile
+        pid = if ($pidValue -gt 0) { $pidValue } else { $pidText }
+        running = $running
+        script = $AhkScript
+    }
+}
+
 function Get-StatusSnapshot {
     $listenPids = Get-ListenPid8000
     $top = $null
@@ -191,6 +240,8 @@ function Get-StatusSnapshot {
         }
     }
 
+    $ahk = Get-AhkBridgeStatus
+
     return @{
         listen_pids = @($listenPids)
         x_stockboard_pid = if ($top) { $top.HeaderPid } else { $null }
@@ -203,6 +254,7 @@ function Get-StatusSnapshot {
         top100_error = $topError
         provider_error = $providerError
         target_rows = $targetRows
+        ahk = $ahk
     }
 }
 
@@ -216,6 +268,10 @@ function Write-Status {
     Write-Host "top100_row_count=$($snapshot.top100_row_count)"
     Write-Host "suffix_realreg_requested=$($snapshot.suffix_realreg_requested)"
     Write-Host "suffix_realreg_succeeded=$($snapshot.suffix_realreg_succeeded)"
+    Write-Host "AHK_PID_FILE=$($snapshot.ahk.pid_file)"
+    Write-Host "AHK_PID=$($snapshot.ahk.pid)"
+    Write-Host "AHK_RUNNING=$($snapshot.ahk.running)"
+    Write-Host "AHK_SCRIPT=$($snapshot.ahk.script)"
     if ($snapshot.top100_error) {
         Write-Host "top100_error=$($snapshot.top100_error)" -ForegroundColor Yellow
     }
@@ -307,43 +363,73 @@ function Write-StartupValidationFailure {
 }
 
 function Stop-StockBoardAhkBridge {
-    if (-not (Test-Path -LiteralPath $AhkScript)) {
-        Write-Host "AHK bridge script not found: $AhkScript"
+    if (-not (Test-Path -LiteralPath $AhkPidFile)) {
+        Write-Host "AHK bridge PID file not found: $AhkPidFile" -ForegroundColor Yellow
         return
     }
-    $scriptName = Split-Path -Leaf $AhkScript
-    $processes = @()
+    $rawPid = [string](Get-Content -LiteralPath $AhkPidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+    $storedPid = 0
+    if (-not [int]::TryParse($rawPid, [ref]$storedPid)) {
+        Write-Host "AHK bridge PID file is invalid: $AhkPidFile" -ForegroundColor Yellow
+        return
+    }
     try {
-        $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop |
-            Where-Object {
-                $_.Name -like "AutoHotkey*" -and
-                $_.CommandLine -and
-                $_.CommandLine -like "*$scriptName*"
-            })
+        $process = Get-Process -Id $storedPid -ErrorAction Stop
     } catch {
-        Write-Host "Could not inspect AutoHotkey command lines. AHK bridge was not stopped: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "AHK bridge PID is not running: $storedPid" -ForegroundColor Yellow
         return
     }
-    if ($processes.Count -eq 0) {
-        Write-Host "No StockBoard AHK bridge process found."
+    if ($process.ProcessName -notlike "AutoHotkey*") {
+        Write-Host "PID $storedPid is not an AutoHotkey process. AHK bridge was not stopped." -ForegroundColor Yellow
         return
     }
-    foreach ($process in $processes) {
-        Write-Host "Stopping AHK bridge PID: $($process.ProcessId)"
-        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+    Write-Host "Stopping AHK bridge PID: $storedPid"
+    try {
+        Stop-Process -Id $storedPid -Force -ErrorAction Stop
+        Remove-Item -LiteralPath $AhkPidFile -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Host "Could not stop AHK bridge PID $storedPid`: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 
 function Start-StockBoardAhkBridge {
-    if (-not (Test-Path -LiteralPath $AhkExe)) {
-        Write-Host "AutoHotkey v1 executable not found: $AhkExe" -ForegroundColor Yellow
-        return
-    }
     if (-not (Test-Path -LiteralPath $AhkScript)) {
         Write-Host "AHK bridge script not found: $AhkScript" -ForegroundColor Yellow
-        return
+        return $false
     }
-    Start-Process -FilePath $AhkExe -ArgumentList "`"$AhkScript`"" -Verb RunAs | Out-Null
+    $ahkExe = Resolve-AhkExe
+    if (-not $ahkExe) {
+        Write-Host "AutoHotkey v1 executable not found." -ForegroundColor Yellow
+        return $false
+    }
+    try {
+        Write-Host "Starting AHK bridge as administrator. Approve the UAC prompt if Windows asks."
+        $process = Start-Process -FilePath $ahkExe -ArgumentList "`"$AhkScript`"" -Verb RunAs -PassThru -ErrorAction Stop
+        if ($process -and $process.Id) {
+            Set-Content -LiteralPath $AhkPidFile -Value ([string]$process.Id) -Encoding ASCII
+            Write-Host "AHK_PID=$($process.Id)"
+        } else {
+            Write-Host "AHK bridge started, but PID was not returned." -ForegroundColor Yellow
+        }
+        Write-Host "AHK_EXE=$ahkExe"
+        Write-Host "AHK_SCRIPT=$AhkScript"
+        return $true
+    } catch {
+        Write-Host "AHK bridge start failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    }
+}
+
+function Start-AhkBridgeOnly {
+    Write-Step "Starting HTS Bridge only"
+    Ensure-RuntimeDir
+    $ahkStarted = Start-StockBoardAhkBridge
+    if ($ahkStarted) {
+        Write-Host "HTS bridge started."
+    } else {
+        Write-Host "HTS bridge start warning. StockBoard server was not changed." -ForegroundColor Yellow
+        exit 2
+    }
 }
 
 function Start-StockBoard {
@@ -458,8 +544,13 @@ function Start-StockBoard {
     }
 
     Start-Process $BoardUrl | Out-Null
-    Start-StockBoardAhkBridge
-    Write-Host "StockBoard started."
+    $ahkStarted = Start-StockBoardAhkBridge
+    if ($ahkStarted) {
+        Write-Host "StockBoard started."
+    } else {
+        Write-Host "StockBoard started with warning: AHK bridge was not started." -ForegroundColor Yellow
+        exit 2
+    }
 }
 
 function Stop-StockBoard {
@@ -482,11 +573,13 @@ function Stop-StockBoard {
 
 switch ($Action) {
     "start" { Start-StockBoard }
+    "ahk" { Start-AhkBridgeOnly }
+    "link" { Start-AhkBridgeOnly }
     "stop" { Stop-StockBoard }
     "restart" { Stop-StockBoard; Start-StockBoard }
     "status" { Write-Step "StockBoard status"; [void](Write-Status) }
     default {
-        Write-Host "Usage: stockboard_live.cmd [start|stop|restart|status]"
+        Write-Host "Usage: stockboard_live.cmd [start|stop|restart|status|ahk|link]"
         exit 1
     }
 }
