@@ -30,6 +30,12 @@
   }
   .title{height:var(--title-height);background:linear-gradient(#dfe7ee,#cbd6df);display:flex;align-items:center;gap:8px;padding:0 var(--title-padding-x);font-size:var(--title-font-size);font-weight:var(--title-font-weight);color:#19324a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .data-diagnostics{margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:calc(var(--title-font-size) - 1px);font-weight:500;color:#4b6175;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .direct-api-debug{display:grid;grid-template-columns:max-content repeat(5,minmax(118px,1fr));gap:4px;align-items:center;min-height:22px;padding:2px 8px;border-bottom:1px solid var(--line);background:#fff7df;color:#263747;font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.2;overflow:hidden}
+  .direct-api-debug-title{color:#8a5a00;white-space:nowrap}
+  .direct-api-debug-item{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .direct-api-debug-ok{color:var(--green)}
+  .direct-api-debug-lag{color:var(--red)}
+  .direct-api-debug-wait{color:#7f8c8d}
   body[data-density="compact"]{--board-font-size:12px;--board-header-font-size:12px;--board-row-height:27px;--board-cell-padding-y:2px;--board-cell-padding-x:4px;--grade-padding-y:1px;--grade-padding-x:5px;--ohlc-height:20px;--ohlc-range-top:9px;--ohlc-body-top:4px;--ohlc-body-height:12px;--ohlc-level-top:2px;--ohlc-level-height:16px;--ohlc-open-top:3px;--ohlc-open-height:14px;--metric-height:22px;--metric-font-size:12px;--balance-box-height:23px;--balance-side-inset:3px;--balance-cell-padding:1px;--title-height:23px;--title-font-size:12px;--title-padding-x:7px;--topbar-height:30px;--top-font-size:12px;--top-button-font-size:11px;--top-cell-padding-x:5px;--lamp-size:11px;--market-font-size:12px;--market-header-font-size:11px;--market-cell-padding-x:5px;--section-height:20px;--section-title-font-size:12px;--section-padding-x:6px;--grade-distribution-padding-y:5px;--grade-distribution-chart-size:62px;--grade-distribution-hole-inset:15px;--grade-distribution-font-size:10px;--grade-distribution-title-size:11px}
   body[data-density="ultra"]{--board-font-size:11px;--board-header-font-size:11px;--board-row-height:23px;--board-cell-padding-y:1px;--board-cell-padding-x:3px;--grade-padding-y:1px;--grade-padding-x:4px;--ohlc-height:18px;--ohlc-range-top:8px;--ohlc-body-top:3px;--ohlc-body-height:11px;--ohlc-level-top:1px;--ohlc-level-height:16px;--ohlc-open-top:2px;--ohlc-open-height:14px;--metric-height:20px;--metric-font-size:11px;--balance-box-height:21px;--balance-side-inset:3px;--balance-cell-padding:1px;--title-height:21px;--title-font-size:11px;--title-padding-x:6px;--topbar-height:27px;--top-font-size:11px;--top-button-font-size:10px;--top-cell-padding-x:4px;--lamp-size:9px;--market-font-size:11px;--market-header-font-size:10px;--market-cell-padding-x:4px;--section-height:18px;--section-title-font-size:11px;--section-padding-x:5px;--grade-distribution-padding-y:4px;--grade-distribution-chart-size:54px;--grade-distribution-hole-inset:13px;--grade-distribution-font-size:10px;--grade-distribution-title-size:10px}
   .topbar{display:grid;grid-template-columns:max-content max-content max-content max-content max-content max-content minmax(0,1fr);align-items:center;width:100%;min-width:0;height:var(--topbar-height);border-bottom:1px solid var(--line);font-size:var(--top-font-size);font-weight:var(--top-font-weight)}
@@ -45,6 +51,8 @@
   .lamp.error{background:var(--red);box-shadow:0 0 7px var(--red)}
   .density-toggle{width:100%;height:calc(var(--topbar-height) - 8px);border:1px solid #9aa8b5;border-radius:3px;background:#f8fbff;color:#19324a;font:inherit;font-size:var(--top-button-font-size);font-weight:600;cursor:pointer}
   .density-toggle:hover{background:#e7edf3}
+  .display-mode-toggle{width:100%;height:calc(var(--topbar-height) - 8px);border:1px solid #9aa8b5;border-radius:3px;background:#fff7df;color:#19324a;font:inherit;font-size:var(--top-button-font-size);font-weight:700;cursor:pointer}
+  .display-mode-toggle:hover{background:#ffe9ad}
   .width-reset{width:100%;height:calc(var(--topbar-height) - 8px);border:1px solid #9aa8b5;border-radius:3px;background:#fff;color:#19324a;font:inherit;font-size:var(--top-button-font-size);font-weight:600;cursor:pointer}
   .width-reset:hover{background:#eef4fa}
   .speed{color:#b8860b}.market-open{color:#168000}.focus-name{color:var(--red)}.momentum{color:#b8860b;font-size:var(--top-font-size);font-weight:500}
@@ -125,6 +133,8 @@
   .enhanced-board .balance-side-blue{left:0;width:var(--blue-width);background:var(--blue)}
   .enhanced-board .balance-side-red{right:0;width:var(--red-width);background:var(--red)}
   .enhanced-board .balance-meeting{position:absolute;z-index:1;left:var(--blue-width);top:1px;bottom:1px;width:2px;background:#5f676e;transform:translateX(-1px)}
+  .enhanced-board .visual-cell{padding:3px 4px!important;border-radius:3px}
+  .fast-metric-text{display:block;text-align:center;font-variant-numeric:tabular-nums;line-height:1.25}
   .balance-tooltip{position:fixed;z-index:10000;display:none;max-width:260px;padding:7px 9px;border:1px solid rgba(148,163,184,.8);border-radius:3px;background:#fff;color:#111827;font-size:12px;font-weight:400;line-height:1.45;white-space:pre-line;box-shadow:0 6px 18px rgba(15,23,42,.18);pointer-events:none}
   .ohlc-tooltip{position:fixed;z-index:10000;display:none;max-width:280px;padding:7px 9px;border:1px solid rgba(148,163,184,.8);border-radius:3px;background:#fff;color:#111827;font-size:12px;font-weight:400;line-height:1.45;white-space:pre-line;box-shadow:0 6px 18px rgba(15,23,42,.18);pointer-events:none}
   .balance-tooltip.visible,.ohlc-tooltip.visible{display:block}
@@ -177,12 +187,22 @@
 <div class="window">
   <div class="title">▣ StockBoard v0.3.6 Prev Close Proportional <span class="data-diagnostics" id="data-diagnostics">apiRows 0 · apiOhlc 0 · normalizedRows 0 · normalizedOhlc 0 · renderOhlc 0 · domOhlc 0</span></div>
 
+  <div class="direct-api-debug" id="direct-api-debug-panel" title="Direct /api/realtime debug only. This panel does not update table cells.">
+    <span class="direct-api-debug-title">Direct API</span>
+    <span class="direct-api-debug-item direct-api-debug-wait">000660 waiting</span>
+    <span class="direct-api-debug-item direct-api-debug-wait">005930 waiting</span>
+    <span class="direct-api-debug-item direct-api-debug-wait">009150 waiting</span>
+    <span class="direct-api-debug-item direct-api-debug-wait">402340 waiting</span>
+    <span class="direct-api-debug-item direct-api-debug-wait">005380 waiting</span>
+  </div>
+
   <div class="market-overview" id="market-overview">
   <div class="topbar">
     <div id="current-date-time">-</div>
     <div><span class="lamp combined-lamp waiting" id="combined-status-lamp" title="A: 대기 / K: 대기 / W: 대기"></span><span class="status-detail-lamps" aria-hidden="true"><span class="lamp waiting" id="api-status-lamp" title="API 서버 대기"></span><span class="lamp waiting" id="kiwoom-status-lamp" title="Kiwoom 데이터 대기"></span><span class="lamp waiting" id="web-status-lamp" title="Web 화면 갱신 대기"></span></span></div>
     <div><span class="speed" id="refresh-delay" title="마지막 API 응답 이후 경과시간">-</span></div>
     <div><button type="button" class="density-toggle" id="density-toggle">화면: 기본</button></div>
+    <div><button type="button" class="display-mode-toggle" id="display-mode-toggle">Fast</button></div>
     <div><button type="button" class="width-reset" id="width-reset">폭 초기화</button></div>
     <div><span class="market-open" id="market-session">장마감</span></div>
     <div class="focus-momentum"><span class="focus-name">삼성전기</span><span class="momentum">VWAP돌파 + 시가위 + 전고돌파</span></div>
@@ -217,21 +237,23 @@
 
   <div class="section sec-orange">▶ 유력 후보 상위 5종목</div>
   <table class="grid board enhanced-board" id="candidate-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>세션강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>5분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
   </table>
 
   <div class="section sec-blue">▶ 거래대금 상위 종목 <span id="ranking-row-count">0개</span></div>
   <table class="grid board enhanced-board" id="trading-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>세션강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>5분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
   </table>
 </div>
 <script>
   const board = document.getElementById('trading-board');
   const candidateBoard = document.getElementById('candidate-board');
   const densityToggle = document.getElementById('density-toggle');
+  const displayModeToggle = document.getElementById('display-mode-toggle');
   const widthReset = document.getElementById('width-reset');
   const rankingRowCount = document.getElementById('ranking-row-count');
   const dataDiagnostics = document.getElementById('data-diagnostics');
+  const directApiDebugPanel = document.getElementById('direct-api-debug-panel');
   const topbar = document.querySelector('.topbar');
   const currentDateTime = document.getElementById('current-date-time');
   const refreshDelay = document.getElementById('refresh-delay');
@@ -265,6 +287,7 @@
   const columnWidthStorageKey = 'stockboard.tradingBoard.columnWidths.v1';
   const boardSortStorageKey = 'stockboard.tradingBoard.sortState.v1';
   const displayDensityStorageKey = 'stockboard.displayDensity.v1';
+  const displayModeStorageKey = 'stockboardDisplayMode';
   const topbarWidthStorageKey = 'stockboard.topbar.columnWidths.v4';
   const usMarketWidthStorageKey = 'stockboard.usMarket.columnWidths.v2';
   const marketWidthStorageKey = 'stockboard.marketSupply.columnWidths.v2';
@@ -436,6 +459,27 @@
     } catch (error) {
       console.warn('Display density could not be saved.', error);
     }
+  }
+
+  function loadDisplayMode() {
+    try {
+      const savedMode = localStorage.getItem(displayModeStorageKey);
+      return savedMode === 'graphic' ? 'graphic' : 'fast';
+    } catch (error) {
+      return 'fast';
+    }
+  }
+
+  function saveDisplayMode(mode) {
+    try {
+      localStorage.setItem(displayModeStorageKey, mode);
+    } catch (error) {
+      console.warn('Display mode could not be saved.', error);
+    }
+  }
+
+  function isFastDisplayMode() {
+    return top100State.displayMode === 'fast';
   }
 
   let currentDisplayDensity = loadDisplayDensity();
@@ -748,7 +792,7 @@
     { label: '일봉', defaultWidth: 86, minWidth: 70 },
     { label: '잔량비', defaultWidth: 56, minWidth: 48, sortKey: 'bidAskRatio', sortDefault: 'desc' },
     { label: '순간강도', defaultWidth: 56, minWidth: 48, sortKey: 'realtimeStrength', sortDefault: 'desc' },
-    { label: '세션강도', defaultWidth: 56, minWidth: 48, sortKey: 'sessionStrength', sortDefault: 'desc' },
+    { label: '5분강도', defaultWidth: 56, minWidth: 48, sortKey: 'sessionStrength', sortDefault: 'desc' },
     { label: '외합(억)', defaultWidth: 64, minWidth: 54, sortKey: 'foreign', sortDefault: 'desc' },
     { label: '프로(억)', defaultWidth: 64, minWidth: 54, sortKey: 'program', sortDefault: 'desc' },
     { label: '큰손', defaultWidth: 56, minWidth: 48, sortKey: 'bigHand', sortDefault: 'desc' },
@@ -963,15 +1007,18 @@
   const TOP100_REFRESH_MS = 30000;
   const REALTIME_PATCH_REFRESH_MS = 500;
   const REALTIME_PATCH_DELTA_ENABLED = true;
+  const FIVE_MIN_STRENGTH_WINDOW_MS = 5 * 60 * 1000;
   const top100State = {
     rowByCode: new Map(),
     candidateRowByCode: new Map(),
     apiError: null,
     renderedRows: [],
     candidateRows: [],
+    fiveMinuteStrengthSamples: new Map(),
     lastRealtimePatchSequence: null,
     boardSort: loadBoardSortState(),
     displayDensity: currentDisplayDensity,
+    displayMode: loadDisplayMode(),
     candleMode: loadCandleMode(),
     candleDomain: null,
     diagnostics: {
@@ -985,6 +1032,13 @@
     }
   };
   applyDisplayDensity(top100State.displayDensity);
+  applyDisplayMode(top100State.displayMode);
+  displayModeToggle?.addEventListener('click', () => {
+    const nextMode = top100State.displayMode === 'fast' ? 'graphic' : 'fast';
+    applyDisplayMode(nextMode);
+    saveDisplayMode(nextMode);
+    renderBoard(top100State.renderedRows);
+  });
   densityToggle?.addEventListener('click', () => {
     const currentIndex = displayDensityModes.indexOf(top100State.displayDensity);
     const nextMode = displayDensityModes[(currentIndex + 1) % displayDensityModes.length];
@@ -1389,6 +1443,69 @@
     return `<i class="ohlc-level ${className}" style="left:${position}%"></i>`;
   }
 
+  const visualCellColors = Object.freeze({
+    red: '#E75F5F',
+    blue: '#5F9EF5',
+    neutral: '#E2E8F0',
+    wick: '#111827'
+  });
+  const visualCellInset = 'center / calc(100% - 8px) calc(100% - 6px) no-repeat';
+  const visualCandleWidth = 'calc(100% - 6px)';
+  const visualCandleBodyHeight = '50%';
+
+  function splitCellBackground(blueWidth, redWidth) {
+    const blue = Math.max(0, Math.min(100, Number(blueWidth)));
+    const red = Math.max(0, Math.min(100, Number(redWidth)));
+    if (!Number.isFinite(blue) || !Number.isFinite(red)) {
+      return `linear-gradient(${visualCellColors.neutral},${visualCellColors.neutral}) ${visualCellInset}`;
+    }
+    const boundary = Math.max(0, Math.min(100, blue));
+    return `linear-gradient(90deg,${visualCellColors.blue} 0 ${boundary}%,${visualCellColors.red} ${boundary}% 100%) ${visualCellInset}`;
+  }
+
+  function visualMetricView(metric, fallbackTooltip = '') {
+    if (!metric) return {
+      html: '',
+      background: `linear-gradient(${visualCellColors.neutral},${visualCellColors.neutral}) ${visualCellInset}`,
+      tooltip: fallbackTooltip || '-'
+    };
+    return {
+      html: '',
+      background: splitCellBackground(metric.blueWidth, metric.redWidth),
+      tooltip: metric.tooltip || fallbackTooltip || '-'
+    };
+  }
+
+  function ohlcCellView(row) {
+    const source = hasRealtimeOhlc(row) ? 'realtime_ohlc' : 'base ohlc';
+    const emptyCandle = {
+      html: '',
+      background: `linear-gradient(${visualCellColors.neutral},${visualCellColors.neutral}) ${visualCellInset}`,
+      tooltip: '-'
+    };
+    if (!hasDisplayOhlc(row)) return emptyCandle;
+    const candle = candleView(displayOhlc(row));
+    if (!candle) return emptyCandle;
+    const positions = candlePositions(candle, top100State.candleDomain);
+    if (!positions) return { ...emptyCandle, tooltip: ohlcTooltip(candle, source) };
+    const bodyEnd = 100 - positions.bodyRight;
+    const directionColor = candle.direction === 'down'
+      ? visualCellColors.blue
+      : candle.direction === 'up'
+        ? visualCellColors.red
+        : 'rgba(148,163,184,.58)';
+    const background = [
+      `linear-gradient(90deg,transparent 0 ${positions.low}%,${visualCellColors.wick} ${positions.low}% ${positions.high}%,transparent ${positions.high}% 100%) center/${visualCandleWidth} 2px no-repeat`,
+      `linear-gradient(90deg,transparent 0 ${positions.bodyLeft}%,${directionColor} ${positions.bodyLeft}% ${bodyEnd}%,transparent ${bodyEnd}% 100%) center/${visualCandleWidth} ${visualCandleBodyHeight} no-repeat`,
+      `linear-gradient(${visualCellColors.neutral},${visualCellColors.neutral}) ${visualCellInset}`
+    ].join(',');
+    return {
+      html: '',
+      background,
+      tooltip: ohlcTooltip(candle, source)
+    };
+  }
+
   function ohlcMarkup(candle, sharedDomain = top100State.candleDomain, source = 'base ohlc') {
     if (!candle) return '-';
     const { direction, prices } = candle;
@@ -1454,6 +1571,11 @@
     const limitMarkup = priceLimitMetricMarkup(row, '원본 잔량비', row?.bid_ask_ratio ?? row?.sortBidAskRatio ?? balance?.value);
     if (limitMarkup) return limitMarkup;
     if (!balance) return '-';
+    if (isFastDisplayMode()) {
+      const age = Number(row?.orderbookAgeSec ?? row?.orderbook_age_sec);
+      const ageText = Number.isFinite(age) ? ` / ${Math.round(age)}s` : '';
+      return `<span class="fast-metric-text" title="${escapeHtml(balance.tooltip)}">${escapeHtml(balance.value)}${escapeHtml(ageText)}</span>`;
+    }
     return `<div class="balance-box" data-balance-tooltip="${escapeHtml(balance.tooltip)}" role="img" aria-label="${escapeHtml(balance.tooltip)}" style="--blue-width:${balance.blueWidth}%;--red-width:${balance.redWidth}%">
       <span class="balance-side balance-side-blue"></span>
       <span class="balance-side balance-side-red"></span>
@@ -1465,6 +1587,10 @@
     const limitMarkup = priceLimitMetricMarkup(row, '원본 순간강도', row?.realtimeStrength ?? row?.realtime_strength ?? row?.sortRealtimeStrength ?? strength?.value);
     if (limitMarkup) return limitMarkup;
     if (!strength) return '-';
+    if (isFastDisplayMode()) {
+      const value = row?.realtimeStrength ?? row?.realtime_strength ?? row?.sortRealtimeStrength ?? '-';
+      return `<span class="fast-metric-text" title="${escapeHtml(strength.tooltip)}">${escapeHtml(displayValue(value))}</span>`;
+    }
     return `<div class="balance-box" title="${escapeHtml(strength.tooltip)}" role="img" aria-label="${escapeHtml(strength.tooltip)}" style="--blue-width:${strength.blueWidth}%;--red-width:${strength.redWidth}%">
       <span class="balance-side balance-side-blue"></span>
       <span class="balance-side balance-side-red"></span>
@@ -1476,6 +1602,10 @@
     const limitMarkup = priceLimitMetricMarkup(row, '원본 세션강도', row?.sessionStrength ?? row?.session_strength ?? row?.sortSessionStrength ?? strength?.value);
     if (limitMarkup) return limitMarkup;
     if (!strength) return '-';
+    if (isFastDisplayMode()) {
+      const value = row?.strength5m ?? row?.strength_5m ?? row?.sessionStrength ?? row?.session_strength ?? '-';
+      return `<span class="fast-metric-text" title="${escapeHtml(strength.tooltip)}">${escapeHtml(displayValue(value))}</span>`;
+    }
     return `<div class="balance-box" title="${escapeHtml(strength.tooltip)}" role="img" aria-label="${escapeHtml(strength.tooltip)}" style="--blue-width:${strength.blueWidth}%;--red-width:${strength.redWidth}%">
       <span class="balance-side balance-side-blue"></span>
       <span class="balance-side balance-side-red"></span>
@@ -1676,6 +1806,69 @@
       .slice(0, 5)
       .map(item => item.row);
   }
+
+  function cumulativeStrengthVolume(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(String(value).replace(/,/g, ''));
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function fiveMinuteCollectingStrength() {
+    return {
+      value: null,
+      force: null,
+      sortValue: null,
+      tooltip: [
+        '5분강도: 수집중',
+        '기준: 브라우저 수신 기준 최근 5분 delta',
+        '주의: opt10046 체결강도5분 아님'
+      ].join('\n')
+    };
+  }
+
+  function updateFiveMinuteStrengthSample(code, buyValue, sellValue) {
+    const normalizedCode = normalizeCode(code);
+    if (!normalizedCode) return fiveMinuteCollectingStrength();
+    const buy = cumulativeStrengthVolume(buyValue);
+    const sell = cumulativeStrengthVolume(sellValue);
+    if (buy === null || sell === null) return fiveMinuteCollectingStrength();
+    const now = Date.now();
+    const cutoff = now - FIVE_MIN_STRENGTH_WINDOW_MS;
+    const samples = (top100State.fiveMinuteStrengthSamples.get(normalizedCode) || [])
+      .filter(sample => sample.at >= cutoff);
+    const latest = samples[samples.length - 1];
+    if (!latest || latest.buy !== buy || latest.sell !== sell || now - latest.at >= 1000) {
+      samples.push({ at: now, buy, sell });
+    }
+    top100State.fiveMinuteStrengthSamples.set(normalizedCode, samples);
+    if (samples.length < 2) return fiveMinuteCollectingStrength();
+    const first = samples[0];
+    const last = samples[samples.length - 1];
+    const buyDelta = last.buy - first.buy;
+    const sellDelta = last.sell - first.sell;
+    if (!Number.isFinite(buyDelta) || !Number.isFinite(sellDelta) || buyDelta < 0 || sellDelta <= 0) {
+      return fiveMinuteCollectingStrength();
+    }
+    const value = buyDelta / sellDelta * 100;
+    const displayValueText = Number.isFinite(value) ? value.toFixed(2) : '-';
+    const tooltip = [
+      `5분강도: ${displayValueText}`,
+      `최근5분 매수체결량: ${formatInteger(buyDelta)}`,
+      `최근5분 매도체결량: ${formatInteger(sellDelta)}`,
+      '계산: 최근5분 매수체결량 / 최근5분 매도체결량 * 100',
+      '기준: 브라우저 수신 기준 최근 5분 delta',
+      '주의: opt10046 체결강도5분 아님'
+    ].join('\n');
+    return {
+      value,
+      force: sessionStrengthView(value),
+      sortValue: sortableNumber(value),
+      tooltip,
+      buyDelta,
+      sellDelta
+    };
+  }
+
   function normalizeRankingRow(row) {
     const gradeValue = firstValue(row, ['grade', 'grade_score', '등급']);
     const explicitGradeClass = normalizeGradeClass(firstValue(row, [
@@ -1720,6 +1913,8 @@
       '1분강도'
     ]);
     const sessionStrengthValue = firstValue(row, [
+      'strength_5m',
+      'strength5m',
       'session_strength',
       'sessionStrength',
       'strength_day',
@@ -1734,6 +1929,9 @@
       'session_sell_qty_live',
       'sessionSellQtyLive'
     ]);
+    const strength5mValue = firstValue(row, ['strength_5m', 'strength5m']);
+    const strength20mValue = firstValue(row, ['strength_20m', 'strength20m']);
+    const strength60mValue = firstValue(row, ['strength_60m', 'strength60m']);
     const foreignLabel = firstValue(row, ['foreign_display_label']) || '외합(억)';
     const foreignSource = firstValue(row, ['foreign_display_source']) || 'foreign_sum';
     const foreignValue = Object.hasOwn(row, 'foreign_display_value')
@@ -1773,8 +1971,14 @@
       firstValue(row, ['candidate_score_coverage']) !== null
         ? `coverage: ${firstValue(row, ['candidate_score_coverage'])}` : null
     ].filter(Boolean).join('\n');
+    const normalizedCode = normalizeCode(firstValue(row, ['stock_code', '종목코드', 'code']));
+    const fiveMinuteStrength = updateFiveMinuteStrengthSample(
+      normalizedCode,
+      sessionBuyQtyLive,
+      sessionSellQtyLive
+    );
     return {
-      code: normalizeCode(firstValue(row, ['stock_code', '종목코드', 'code'])),
+      code: normalizedCode,
       marketGroup: stockMarketGroup(row),
       priceLimitState,
       priceLimitReason,
@@ -1813,13 +2017,27 @@
       realtime_acc_trade_value_eok_candidate: realtimeAccTradeValueEokCandidate,
       bidVolume,
       askVolume,
+      orderbookAgeSec: firstValue(row, ['orderbook_age_sec', 'orderbookAgeSec']),
+      orderbookSource: firstValue(row, ['orderbook_source', 'orderbookSource']),
       sortBidAskRatio: sortableNumber(balanceValue),
       balanceForce: balanceView(balanceValue, { bidVolume, askVolume }),
       sortRealtimeStrength: sortableNumber(minuteStrengthValue),
       minuteForce: minuteStrengthView(minuteStrengthValue),
-      sortSessionStrength: sortableNumber(sessionStrengthValue),
-      sessionStrength: sessionStrengthValue,
-      session_strength: sessionStrengthValue,
+      sortSessionStrength: fiveMinuteStrength.sortValue,
+      sessionStrength: fiveMinuteStrength.value,
+      session_strength: fiveMinuteStrength.value,
+      strength5m: strength5mValue,
+      strength_5m: strength5mValue,
+      strength20m: strength20mValue,
+      strength_20m: strength20mValue,
+      strength60m: strength60mValue,
+      strength_60m: strength60mValue,
+      strengthSnapshotAt: firstValue(row, ['strength_snapshot_at', 'strengthSnapshotAt']),
+      strength_snapshot_at: firstValue(row, ['strength_snapshot_at', 'strengthSnapshotAt']),
+      strengthSource: firstValue(row, ['strength_source', 'strengthSource']),
+      strength_source: firstValue(row, ['strength_source', 'strengthSource']),
+      strengthStaleSec: firstValue(row, ['strength_stale_sec', 'strengthStaleSec']),
+      strength_stale_sec: firstValue(row, ['strength_stale_sec', 'strengthStaleSec']),
       sessionBuyQtyLive,
       session_buy_qty_live: sessionBuyQtyLive,
       sessionSellQtyLive,
@@ -1828,10 +2046,10 @@
         'session_strength_source',
         'sessionStrengthSource'
       ]),
-      sessionForce: sessionStrengthView(sessionStrengthValue, {
-        buyVolume: sessionBuyQtyLive,
-        sellVolume: sessionSellQtyLive
-      }),
+      fiveMinuteStrengthTooltip: fiveMinuteStrength.tooltip,
+      fiveMinuteStrengthBuyDelta: fiveMinuteStrength.buyDelta,
+      fiveMinuteStrengthSellDelta: fiveMinuteStrength.sellDelta,
+      sessionForce: fiveMinuteStrength.force,
       foreign: foreign.display,
       sortForeign: sortableNumber(foreignValue),
       foreignLabel,
@@ -1866,6 +2084,69 @@
     if (changed && flashOnChange) flashRealtimeCell(cell);
   }
 
+  function setVisualCell(cell, view, className, tooltipKind = 'balance') {
+    const html = view?.html ?? '';
+    const tooltip = view?.tooltip || '';
+    setCell(cell, html, className, '');
+    cell.removeAttribute('title');
+    cell.querySelectorAll('[title]').forEach(element => element.removeAttribute('title'));
+    const background = view?.background || '';
+    if (cell.dataset.visualBackground !== background) {
+      cell.style.background = background;
+      cell.dataset.visualBackground = background;
+    }
+    if (cell.dataset.tooltip !== tooltip) cell.dataset.tooltip = tooltip;
+    if (tooltip) {
+      cell.setAttribute('aria-label', tooltip);
+    } else {
+      cell.removeAttribute('aria-label');
+    }
+    delete cell.dataset.tooltipHtml;
+    delete cell.dataset.balanceTooltip;
+    delete cell.dataset.ohlcTooltip;
+    if (tooltipKind === 'ohlc') {
+      cell.dataset.tooltipKind = 'ohlc';
+    } else {
+      cell.dataset.tooltipKind = 'balance';
+    }
+  }
+
+  function extendedMetricTooltip(baseTooltip, lines) {
+    return [baseTooltip || '-', ...lines.filter(line => line !== null && line !== undefined && line !== '')].join('\n');
+  }
+
+  function orderbookMetricView(balance, row) {
+    const age = Number(row?.orderbookAgeSec ?? row?.orderbook_age_sec);
+    return visualMetricView(balance, extendedMetricTooltip(balance?.tooltip, [
+      `orderbook_source: ${row?.orderbookSource ?? row?.orderbook_source ?? '-'}`,
+      `age_sec: ${Number.isFinite(age) ? Math.round(age) : '-'}`
+    ]));
+  }
+
+  function instantStrengthMetricView(strength, row) {
+    return visualMetricView(strength, extendedMetricTooltip(strength?.tooltip, [
+      `raw: ${row?.realtimeStrength ?? row?.realtime_strength ?? row?.sortRealtimeStrength ?? '-'}`,
+      'baseline: 100',
+      `received_at: ${row?.receivedAt ?? row?.received_at ?? row?.updated_at ?? '-'}`
+    ]));
+  }
+
+  function fiveMinuteStrengthMetricView(strength, row) {
+    const tooltip = row?.fiveMinuteStrengthTooltip || [
+      '5분강도: 수집중',
+      '기준: 브라우저 수신 기준 최근 5분 delta',
+      '주의: opt10046 체결강도5분 아님'
+    ].join('\n');
+    if (!strength) {
+      return {
+        html: '',
+        background: `linear-gradient(${visualCellColors.neutral},${visualCellColors.neutral}) ${visualCellInset}`,
+        tooltip
+      };
+    }
+    return visualMetricView(strength, tooltip);
+  }
+
   function flashRealtimeCell(cell) {
     if (!cell) return;
     if (cell.dataset.flashTimer) window.clearTimeout(Number(cell.dataset.flashTimer));
@@ -1892,7 +2173,9 @@
   let lastOhlcTooltipEvent = null;
 
   function balanceTooltipText(cell) {
-    return cell?.querySelector('[data-balance-tooltip]')?.dataset.balanceTooltip || '';
+    return cell?.dataset?.tooltipHtml
+      || cell?.dataset?.tooltip
+      || '';
   }
 
   function positionBalanceTooltip(event) {
@@ -1940,7 +2223,9 @@
   }
 
   function ohlcTooltipText(cell) {
-    return cell?.querySelector('[data-ohlc-tooltip]')?.dataset.ohlcTooltip || '';
+    return cell?.dataset?.tooltipHtml
+      || cell?.dataset?.tooltip
+      || '';
   }
 
   function positionOhlcTooltip(event) {
@@ -1973,7 +2258,9 @@
   }
 
   function ohlcTooltipCellFromTarget(target) {
-    const source = target?.closest?.('[data-ohlc-tooltip]');
+    const directCell = target?.closest?.('td.ohlc-cell[data-tooltip]');
+    if (directCell) return directCell;
+    const source = target?.closest?.('[data-tooltip]');
     return source?.closest('td') || null;
   }
 
@@ -1999,7 +2286,9 @@
   }
 
   function balanceTooltipCellFromTarget(target) {
-    const source = target?.closest?.('[data-balance-tooltip]');
+    const directCell = target?.closest?.('td.balance-cell[data-tooltip]');
+    if (directCell) return directCell;
+    const source = target?.closest?.('[data-tooltip]');
     return source?.closest('td.balance-cell') || null;
   }
 
@@ -2046,7 +2335,6 @@
 
   function updateBoardRow(tableRow, row, flashRealtime = false) {
     const grade = row.grade === '-' ? '-' : `<span class="grade ${row.gradeClass}">${escapeHtml(row.grade)}</span>`;
-    const candle = rowOhlcMarkup(row);
     const cells = tableRow.cells;
     setCell(cells[0], escapeHtml(row.rank), 'rank-cell', row.rankCellTooltip);
     setCell(cells[1], escapeHtml(row.previousRank), `rank-cell ${row.rankMovementClass}`.trim(), row.rankTooltip);
@@ -2055,12 +2343,12 @@
     setCell(cells[4], escapeHtml(row.price), 'number-cell', '', flashRealtime);
     setCell(cells[5], escapeHtml(row.changeRate), `number-cell ${row.changeClass}`.trim(), '', flashRealtime);
     setCell(cells[6], escapeHtml(row.amount), 'number-cell');
-    setCell(cells[7], candle, 'ohlc-cell', candleModeToggleTitle);
+    setVisualCell(cells[7], ohlcCellView(row), 'ohlc-cell visual-cell', 'ohlc');
     refreshOhlcTooltip(cells[7]);
-    setCell(cells[8], balanceMarkup(row.balanceForce, row), 'balance-cell');
+    setVisualCell(cells[8], orderbookMetricView(row.balanceForce, row), 'balance-cell visual-cell');
     refreshBalanceTooltip(cells[8]);
-    setCell(cells[9], minuteStrengthMarkup(row.minuteForce, row), 'balance-cell');
-    setCell(cells[10], dailyStrengthMarkup(row.sessionForce, row), 'balance-cell');
+    setVisualCell(cells[9], instantStrengthMetricView(row.minuteForce, row), 'balance-cell visual-cell');
+    setVisualCell(cells[10], fiveMinuteStrengthMetricView(row.sessionForce, row), 'balance-cell visual-cell');
     setCell(cells[11], escapeHtml(row.foreign), `flow-number ${row.foreignClass}`.trim(), row.foreignTooltip);
     setCell(cells[12], escapeHtml(row.program), `flow-number ${row.programClass}`.trim(), row.programTooltip);
     setCell(cells[13], escapeHtml(row.bigHand), `flow-number ${row.bigHandClass}`.trim(), row.bigHandTooltip);
@@ -2122,9 +2410,11 @@
       row.realtime_strength = realtimeStrength;
       row.sortRealtimeStrength = sortableNumber(realtimeStrength);
       row.minuteForce = minuteStrengthView(realtimeStrength);
-      setCell(tableRow.cells[9], minuteStrengthMarkup(row.minuteForce, row), 'balance-cell');
+      setVisualCell(tableRow.cells[9], instantStrengthMetricView(row.minuteForce, row), 'balance-cell visual-cell');
     }
     const sessionStrength = firstValue(patch, [
+      'strength_5m',
+      'strength5m',
       'session_strength',
       'sessionStrength'
     ]);
@@ -2155,13 +2445,32 @@
     if (sessionStrength !== null || Object.hasOwn(patch, 'session_strength')) {
       row.sessionStrength = sessionStrength;
       row.session_strength = sessionStrength;
-      row.sortSessionStrength = sortableNumber(sessionStrength);
-      row.sessionForce = sessionStrengthView(sessionStrength, {
-        buyVolume: row.sessionBuyQtyLive,
-        sellVolume: row.sessionSellQtyLive
-      });
-      setCell(tableRow.cells[10], dailyStrengthMarkup(row.sessionForce, row), 'balance-cell');
+      row.strength5m = firstValue(patch, ['strength_5m', 'strength5m']) ?? row.strength5m;
+      row.strength_5m = row.strength5m;
+      row.strength20m = firstValue(patch, ['strength_20m', 'strength20m']) ?? row.strength20m;
+      row.strength_20m = row.strength20m;
+      row.strength60m = firstValue(patch, ['strength_60m', 'strength60m']) ?? row.strength60m;
+      row.strength_60m = row.strength60m;
+      row.strengthSnapshotAt = firstValue(patch, ['strength_snapshot_at', 'strengthSnapshotAt']) ?? row.strengthSnapshotAt;
+      row.strength_snapshot_at = row.strengthSnapshotAt;
+      row.strengthSource = firstValue(patch, ['strength_source', 'strengthSource']) ?? row.strengthSource;
+      row.strength_source = row.strengthSource;
+      row.strengthStaleSec = firstValue(patch, ['strength_stale_sec', 'strengthStaleSec']) ?? row.strengthStaleSec;
+      row.strength_stale_sec = row.strengthStaleSec;
     }
+    const fiveMinuteStrength = updateFiveMinuteStrengthSample(
+      row.code,
+      row.sessionBuyQtyLive,
+      row.sessionSellQtyLive
+    );
+    row.sessionStrength = fiveMinuteStrength.value;
+    row.session_strength = fiveMinuteStrength.value;
+    row.sortSessionStrength = fiveMinuteStrength.sortValue;
+    row.fiveMinuteStrengthTooltip = fiveMinuteStrength.tooltip;
+    row.fiveMinuteStrengthBuyDelta = fiveMinuteStrength.buyDelta;
+    row.fiveMinuteStrengthSellDelta = fiveMinuteStrength.sellDelta;
+    row.sessionForce = fiveMinuteStrength.force;
+    setVisualCell(tableRow.cells[10], fiveMinuteStrengthMetricView(row.sessionForce, row), 'balance-cell visual-cell');
     row.realtimeAccVolume = firstValue(patch, ['realtime_acc_volume']);
     row.realtimeAccTradeValue = firstValue(patch, ['realtime_acc_trade_value']);
     const realtimeAccTradeValueEokCandidate = firstValue(patch, [
@@ -2186,11 +2495,15 @@
       if (realtimeOhlcSource !== null) {
         row.realtime_ohlc_source = realtimeOhlcSource;
       }
-      setCell(tableRow.cells[7], rowOhlcMarkup(row), 'ohlc-cell', candleModeToggleTitle);
+      setVisualCell(tableRow.cells[7], ohlcCellView(row), 'ohlc-cell visual-cell', 'ohlc');
       refreshOhlcTooltip(tableRow.cells[7]);
     }
     row.bidVolume = firstValue(patch, ['bid_volume']);
     row.askVolume = firstValue(patch, ['ask_volume']);
+    row.orderbookAgeSec = firstValue(patch, ['orderbook_age_sec', 'orderbookAgeSec']);
+    row.orderbook_age_sec = row.orderbookAgeSec;
+    row.orderbookSource = firstValue(patch, ['orderbook_source', 'orderbookSource']);
+    row.orderbook_source = row.orderbookSource;
     row.bid_ask_ratio = firstValue(patch, [
       'balance_ratio',
       'order_balance_ratio',
@@ -2203,7 +2516,7 @@
       askVolume: row.askVolume
     });
     row.sortBidAskRatio = sortableNumber(row.bid_ask_ratio);
-    setCell(tableRow.cells[8], balanceMarkup(row.balanceForce, row), 'balance-cell');
+    setVisualCell(tableRow.cells[8], orderbookMetricView(row.balanceForce, row), 'balance-cell visual-cell');
     refreshBalanceTooltip(tableRow.cells[8]);
     row.bestBidPrice = firstValue(patch, ['best_bid_price']);
     row.bestAskPrice = firstValue(patch, ['best_ask_price']);
@@ -2223,6 +2536,10 @@
       'sortAmount',
       'bidVolume',
       'askVolume',
+      'orderbookAgeSec',
+      'orderbook_age_sec',
+      'orderbookSource',
+      'orderbook_source',
       'bid_ask_ratio',
       'sortBidAskRatio',
       'balanceForce',
@@ -2230,12 +2547,27 @@
       'sessionStrength',
       'sortSessionStrength',
       'session_strength',
+      'strength5m',
+      'strength_5m',
+      'strength20m',
+      'strength_20m',
+      'strength60m',
+      'strength_60m',
+      'strengthSnapshotAt',
+      'strength_snapshot_at',
+      'strengthSource',
+      'strength_source',
+      'strengthStaleSec',
+      'strength_stale_sec',
       'sessionBuyQtyLive',
       'session_buy_qty_live',
       'sessionSellQtyLive',
       'session_sell_qty_live',
       'sessionStrengthSource',
       'session_strength_source',
+      'fiveMinuteStrengthTooltip',
+      'fiveMinuteStrengthBuyDelta',
+      'fiveMinuteStrengthSellDelta',
       'sessionForce',
       'bestBidPrice',
       'bestAskPrice',
@@ -2283,7 +2615,7 @@
     top100State.candidateRows.forEach(row => {
       const tableRow = top100State.candidateRowByCode.get(row.code);
       if (tableRow) {
-        setCell(tableRow.cells[7], rowOhlcMarkup(row), 'ohlc-cell', candleModeToggleTitle);
+        setVisualCell(tableRow.cells[7], ohlcCellView(row), 'ohlc-cell visual-cell', 'ohlc');
         refreshOhlcTooltip(tableRow.cells[7]);
       }
     });
@@ -2293,7 +2625,7 @@
     top100State.renderedRows.forEach(row => {
       const tableRow = top100State.rowByCode.get(row.code);
       if (tableRow) {
-        setCell(tableRow.cells[7], rowOhlcMarkup(row), 'ohlc-cell', candleModeToggleTitle);
+        setVisualCell(tableRow.cells[7], ohlcCellView(row), 'ohlc-cell visual-cell', 'ohlc');
         refreshOhlcTooltip(tableRow.cells[7]);
       }
     });
@@ -2640,6 +2972,143 @@
     }
   }
 
+  const DIRECT_API_DEBUG_CODES = ['000660', '005930', '009150', '402340', '005380'];
+  const DIRECT_API_DEBUG_REFRESH_MS = 500;
+  let directApiDebugLoading = false;
+
+  function directApiDebugFirstValue(row, keys) {
+    return row && typeof row === 'object' ? firstValue(row, keys) : null;
+  }
+
+  function directApiDebugQuote(payload, code) {
+    const quotes = payload && payload.quotes && typeof payload.quotes === 'object'
+      ? payload.quotes
+      : {};
+    if (Object.prototype.hasOwnProperty.call(quotes, code)) return quotes[code];
+    const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+    return rows.find(row => normalizeCode(directApiDebugFirstValue(row, ['stock_code', 'code', 'normalized_code'])) === code) || null;
+  }
+
+  function readTableDomPriceForCode(code) {
+    try {
+      const tableRow = document.querySelector(`#candidate-board tr[data-stock-code="${code}"], #trading-board tr[data-stock-code="${code}"]`);
+      return tableRow?.cells?.[4]?.textContent?.trim() || '';
+    } catch (error) {
+      console.warn(error);
+      return '';
+    }
+  }
+
+  function applyDisplayMode(mode) {
+    top100State.displayMode = mode === 'graphic' ? 'graphic' : 'fast';
+    document.body.dataset.displayMode = top100State.displayMode;
+    if (displayModeToggle) {
+      displayModeToggle.textContent = top100State.displayMode === 'fast' ? 'Fast' : 'Graphic';
+      displayModeToggle.title = 'Graphic/Fast display mode';
+    }
+  }
+
+  function readTableDomChangeRateForCode(code) {
+    try {
+      const tableRow = document.querySelector(`#candidate-board tr[data-stock-code="${code}"], #trading-board tr[data-stock-code="${code}"]`);
+      return tableRow?.cells?.[5]?.textContent?.trim() || '';
+    } catch (error) {
+      console.warn(error);
+      return '';
+    }
+  }
+
+  function directApiDebugSource(quote) {
+    return directApiDebugFirstValue(quote, ['realtime_source_code', 'source_code', 'registered_code', 'received_code']) || '';
+  }
+
+  function directApiDebugSequence(payload, quote) {
+    return directApiDebugFirstValue(quote, ['sequence']) ?? directApiDebugFirstValue(payload, ['sequence']);
+  }
+
+  function directApiDebugTimeText(value) {
+    if (!value) return '-';
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleTimeString('ko-KR', { hour12: false });
+    return String(value);
+  }
+
+  function updateDirectApiDebugPanel(payload, fetchStartedAt, fetchDurationMs) {
+    if (!directApiDebugPanel) return;
+    try {
+      const fetchTime = new Date(fetchStartedAt).toLocaleTimeString('ko-KR', { hour12: false });
+      const items = DIRECT_API_DEBUG_CODES.map(code => {
+        const quote = directApiDebugQuote(payload, code);
+        const directPrice = directApiDebugFirstValue(quote, ['price', 'realtime_price']);
+        const directChangeRate = directApiDebugFirstValue(quote, ['change_rate', 'realtime_change_rate']);
+        const directPriceText = formatInteger(directPrice);
+        const directChangeRateText = formatPercent(directChangeRate);
+        const source = directApiDebugSource(quote);
+        const sequence = directApiDebugSequence(payload, quote);
+        const receivedAt = directApiDebugFirstValue(quote, ['received_at', 'updated_at']) || directApiDebugFirstValue(payload, ['updated_at']);
+        const domPrice = readTableDomPriceForCode(code);
+        const domChangeRate = readTableDomChangeRateForCode(code);
+        const matched = Boolean(domPrice)
+          && domPrice === directPriceText
+          && domChangeRate === directChangeRateText;
+        const statusClass = quote ? matched ? 'direct-api-debug-ok' : 'direct-api-debug-lag' : 'direct-api-debug-wait';
+        const statusText = quote ? matched ? 'OK' : 'DIFF' : 'WAIT';
+        const sourceText = source ? source.replace(/^\d{6}/, '') || source : '-';
+        const itemText = `${code} D ${directPriceText} ${directChangeRateText} T ${domPrice || '-'} ${domChangeRate || '-'} ${sourceText} #${sequence ?? '-'} ${fetchTime} ${statusText}`;
+        const titleText = [
+          `code=${code}`,
+          `direct_price=${directPriceText}`,
+          `direct_change_rate=${directChangeRateText}`,
+          `realtime_source_code=${source || '-'}`,
+          `received_at=${receivedAt || '-'}`,
+          `sequence=${sequence ?? '-'}`,
+          `fetch_time=${fetchTime}`,
+          `fetch_ms=${Math.round(fetchDurationMs)}`,
+          `table_dom_price=${domPrice || '-'}`,
+          `table_dom_change_rate=${domChangeRate || '-'}`,
+          `dom_equals_direct=${matched}`
+        ].join('\n');
+        return `<span class="direct-api-debug-item ${statusClass}" title="${escapeHtml(titleText)}">${escapeHtml(itemText)}</span>`;
+      });
+      directApiDebugPanel.innerHTML = [
+        '<span class="direct-api-debug-title">Direct API</span>',
+        ...items
+      ].join('');
+      directApiDebugPanel.title = `Direct API Debug only. Last fetch ${fetchTime}, ${Math.round(fetchDurationMs)}ms. This panel does not update table cells.`;
+    } catch (error) {
+      console.warn(error);
+    }
+  }
+
+  async function loadDirectApiDebug() {
+    if (directApiDebugLoading) return null;
+    directApiDebugLoading = true;
+    const fetchStartedAt = Date.now();
+    const started = performance.now();
+    try {
+      const response = await fetch(`/api/realtime?codes=${DIRECT_API_DEBUG_CODES.join(',')}`, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`Direct API debug failed: ${response.status}`);
+      const payload = await response.json();
+      updateDirectApiDebugPanel(payload, fetchStartedAt, performance.now() - started);
+      return payload;
+    } catch (error) {
+      console.warn(error);
+      return null;
+    } finally {
+      directApiDebugLoading = false;
+    }
+  }
+
+  function startDirectApiDebugPanel() {
+    try {
+      loadDirectApiDebug();
+      window.setInterval(loadDirectApiDebug, DIRECT_API_DEBUG_REFRESH_MS);
+    } catch (error) {
+      console.warn(error);
+    }
+  }
+
+  startDirectApiDebugPanel();
   window.setInterval(loadRealtimePatch, REALTIME_PATCH_REFRESH_MS);
 </script>
 <script>

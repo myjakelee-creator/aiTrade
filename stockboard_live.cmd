@@ -172,6 +172,20 @@ function Get-AhkBridgeStatus {
     $pidText = $null
     $pidValue = 0
     $running = "False"
+    $bridgePids = @()
+    $bridgePidsError = $null
+    $scriptName = Split-Path -Leaf $AhkScript
+    try {
+        $bridgePids = @(Get-CimInstance Win32_Process -ErrorAction Stop |
+            Where-Object {
+                $_.Name -like "AutoHotkey*" -and
+                $_.CommandLine -and
+                $_.CommandLine -like "*$scriptName*"
+            } |
+            Select-Object -ExpandProperty ProcessId -Unique)
+    } catch {
+        $bridgePidsError = $_.Exception.Message
+    }
     if (Test-Path -LiteralPath $AhkPidFile) {
         $pidText = [string](Get-Content -LiteralPath $AhkPidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
         if ([int]::TryParse($pidText, [ref]$pidValue)) {
@@ -189,11 +203,16 @@ function Get-AhkBridgeStatus {
             $running = "Unknown"
         }
     }
+    if ($bridgePids.Count -gt 0) {
+        $running = "True"
+    }
     return @{
         pid_file = $AhkPidFile
         pid = if ($pidValue -gt 0) { $pidValue } else { $pidText }
         running = $running
         script = $AhkScript
+        bridge_pids = @($bridgePids)
+        bridge_pids_error = $bridgePidsError
     }
 }
 
@@ -248,6 +267,28 @@ function Get-StatusSnapshot {
         running = if ($provider) { [bool]$provider.running } else { $false }
         login_state = if ($provider) { $provider.login_state } else { $null }
         registered_count = if ($provider -and $null -ne $provider.registered_count) { [int]$provider.registered_count } else { 0 }
+        price_fast_mode = if ($provider -and $null -ne $provider.price_fast_mode) { [bool]$provider.price_fast_mode } else { $false }
+        realtime_code_limit = if ($provider -and $null -ne $provider.realtime_code_limit) { [int]$provider.realtime_code_limit } else { 0 }
+        orderbook_realtime_enabled = if ($provider -and $null -ne $provider.orderbook_realtime_enabled) { [bool]$provider.orderbook_realtime_enabled } else { $true }
+        display_mode = if ($provider) { $provider.display_mode } else { $null }
+        orderbook_mode = if ($provider) { $provider.orderbook_mode } else { $null }
+        orderbook_hot_source = if ($provider) { $provider.orderbook_hot_source } else { $null }
+        orderbook_hot_limit = if ($provider -and $null -ne $provider.orderbook_hot_limit) { [int]$provider.orderbook_hot_limit } else { 0 }
+        orderbook_rotate_batch = if ($provider -and $null -ne $provider.orderbook_rotate_batch) { [int]$provider.orderbook_rotate_batch } else { 0 }
+        orderbook_rotate_interval_sec = if ($provider -and $null -ne $provider.orderbook_rotate_interval_sec) { [int]$provider.orderbook_rotate_interval_sec } else { 0 }
+        orderbook_registered_count = if ($provider -and $null -ne $provider.orderbook_registered_count) { [int]$provider.orderbook_registered_count } else { 0 }
+        orderbook_hot_codes_sample = if ($provider) { @($provider.orderbook_hot_codes_sample) } else { @() }
+        orderbook_rotate_codes_sample = if ($provider) { @($provider.orderbook_rotate_codes_sample) } else { @() }
+        orderbook_last_rotate_at = if ($provider) { $provider.orderbook_last_rotate_at } else { $null }
+        strength_5m_enabled = if ($provider -and $null -ne $provider.strength_5m_enabled) { [bool]$provider.strength_5m_enabled } else { $false }
+        strength_5m_queue_size = if ($provider -and $null -ne $provider.strength_5m_queue_size) { [int]$provider.strength_5m_queue_size } else { 0 }
+        strength_5m_last_cycle_at = if ($provider) { $provider.strength_5m_last_cycle_at } else { $null }
+        stale_trade_drop_seconds = if ($provider -and $null -ne $provider.stale_trade_drop_seconds) { [int]$provider.stale_trade_drop_seconds } else { 0 }
+        stale_trade_drop_count = if ($provider -and $null -ne $provider.stale_trade_drop_count) { [int]$provider.stale_trade_drop_count } else { 0 }
+        last_stale_trade_lag_sec = if ($provider) { $provider.last_stale_trade_lag_sec } else { $null }
+        last_trade_lag_sec = if ($provider) { $provider.last_trade_lag_sec } else { $null }
+        max_trade_lag_sec = if ($provider) { $provider.max_trade_lag_sec } else { $null }
+        avg_trade_lag_sec_recent = if ($provider) { $provider.avg_trade_lag_sec_recent } else { $null }
         top100_row_count = $rows.Count
         suffix_realreg_requested = if ($provider) { [bool]$provider.suffix_realreg_requested } else { $false }
         suffix_realreg_succeeded = if ($provider) { [bool]$provider.suffix_realreg_succeeded } else { $false }
@@ -265,6 +306,28 @@ function Write-Status {
     Write-Host "running=$($snapshot.running)"
     Write-Host "login_state=$($snapshot.login_state)"
     Write-Host "registered_count=$($snapshot.registered_count)"
+    Write-Host "display_mode=$($snapshot.display_mode)"
+    Write-Host "PRICE_FAST_MODE=$($snapshot.price_fast_mode)"
+    Write-Host "REALTIME_CODE_LIMIT=$($snapshot.realtime_code_limit)"
+    Write-Host "ENABLE_ORDERBOOK_REALTIME=$($snapshot.orderbook_realtime_enabled)"
+    Write-Host "orderbook_mode=$($snapshot.orderbook_mode)"
+    Write-Host "orderbook_hot_source=$($snapshot.orderbook_hot_source)"
+    Write-Host "orderbook_hot_limit=$($snapshot.orderbook_hot_limit)"
+    Write-Host "orderbook_rotate_batch=$($snapshot.orderbook_rotate_batch)"
+    Write-Host "orderbook_rotate_interval_sec=$($snapshot.orderbook_rotate_interval_sec)"
+    Write-Host "orderbook_registered_count=$($snapshot.orderbook_registered_count)"
+    Write-Host "orderbook_hot_codes_sample=$($snapshot.orderbook_hot_codes_sample -join ',')"
+    Write-Host "orderbook_rotate_codes_sample=$($snapshot.orderbook_rotate_codes_sample -join ',')"
+    Write-Host "orderbook_last_rotate_at=$($snapshot.orderbook_last_rotate_at)"
+    Write-Host "strength_5m_enabled=$($snapshot.strength_5m_enabled)"
+    Write-Host "strength_5m_queue_size=$($snapshot.strength_5m_queue_size)"
+    Write-Host "strength_5m_last_cycle_at=$($snapshot.strength_5m_last_cycle_at)"
+    Write-Host "DROP_STALE_TRADE_SECONDS=$($snapshot.stale_trade_drop_seconds)"
+    Write-Host "stale_trade_drop_count=$($snapshot.stale_trade_drop_count)"
+    Write-Host "last_stale_trade_lag_sec=$($snapshot.last_stale_trade_lag_sec)"
+    Write-Host "last_trade_lag_sec=$($snapshot.last_trade_lag_sec)"
+    Write-Host "max_trade_lag_sec=$($snapshot.max_trade_lag_sec)"
+    Write-Host "avg_trade_lag_sec_recent=$($snapshot.avg_trade_lag_sec_recent)"
     Write-Host "top100_row_count=$($snapshot.top100_row_count)"
     Write-Host "suffix_realreg_requested=$($snapshot.suffix_realreg_requested)"
     Write-Host "suffix_realreg_succeeded=$($snapshot.suffix_realreg_succeeded)"
@@ -272,6 +335,10 @@ function Write-Status {
     Write-Host "AHK_PID=$($snapshot.ahk.pid)"
     Write-Host "AHK_RUNNING=$($snapshot.ahk.running)"
     Write-Host "AHK_SCRIPT=$($snapshot.ahk.script)"
+    Write-Host "AHK_BRIDGE_PIDS=$($snapshot.ahk.bridge_pids -join ',')"
+    if ($snapshot.ahk.bridge_pids_error) {
+        Write-Host "AHK_BRIDGE_PIDS_WARNING=$($snapshot.ahk.bridge_pids_error)" -ForegroundColor Yellow
+    }
     if ($snapshot.top100_error) {
         Write-Host "top100_error=$($snapshot.top100_error)" -ForegroundColor Yellow
     }
@@ -296,7 +363,11 @@ function Test-StartupSnapshot {
     if ($Snapshot.top100_row_count -lt 160 -or $Snapshot.top100_row_count -gt 220) {
         $errors.Add("top100_row_count is outside 160..220: $($Snapshot.top100_row_count)") | Out-Null
     }
-    if ([math]::Abs($Snapshot.registered_count - $Snapshot.top100_row_count) -gt 5) {
+    if ($Snapshot.realtime_code_limit -gt 0) {
+        if ([math]::Abs($Snapshot.registered_count - $Snapshot.realtime_code_limit) -gt 5) {
+            $errors.Add("registered_count differs from realtime_code_limit: registered=$($Snapshot.registered_count), limit=$($Snapshot.realtime_code_limit)") | Out-Null
+        }
+    } elseif ([math]::Abs($Snapshot.registered_count - $Snapshot.top100_row_count) -gt 5) {
         $errors.Add("registered_count differs from top100_row_count: registered=$($Snapshot.registered_count), top100=$($Snapshot.top100_row_count)") | Out-Null
     }
     foreach ($code in $TargetCodes) {
@@ -325,7 +396,11 @@ function Test-ConnectedRealtimeRegistrationSnapshot {
     if ($Snapshot.running -ne $true) { $errors.Add("realtime provider running is not true") | Out-Null }
     if ($Snapshot.login_state -ne "connected") { $errors.Add("login_state is '$($Snapshot.login_state)'") | Out-Null }
     if ($Snapshot.suffix_realreg_requested -ne $false) { $errors.Add("suffix_realreg_requested is not false") | Out-Null }
-    if ([math]::Abs($Snapshot.registered_count - $Snapshot.top100_row_count) -gt 5) {
+    if ($Snapshot.realtime_code_limit -gt 0) {
+        if ([math]::Abs($Snapshot.registered_count - $Snapshot.realtime_code_limit) -gt 5) {
+            $errors.Add("registered_count differs from realtime_code_limit: registered=$($Snapshot.registered_count), limit=$($Snapshot.realtime_code_limit)") | Out-Null
+        }
+    } elseif ([math]::Abs($Snapshot.registered_count - $Snapshot.top100_row_count) -gt 5) {
         $errors.Add("registered_count differs from top100_row_count: registered=$($Snapshot.registered_count), top100=$($Snapshot.top100_row_count)") | Out-Null
     }
     foreach ($code in $TargetCodes) {
@@ -363,32 +438,59 @@ function Write-StartupValidationFailure {
 }
 
 function Stop-StockBoardAhkBridge {
-    if (-not (Test-Path -LiteralPath $AhkPidFile)) {
-        Write-Host "AHK bridge PID file not found: $AhkPidFile" -ForegroundColor Yellow
-        return
+    Ensure-RuntimeDir
+    $scriptName = Split-Path -Leaf $AhkScript
+    $escapedScriptName = $scriptName.Replace("'", "''")
+    $escapedPidFile = $AhkPidFile.Replace("'", "''")
+    $cleanupScript = @"
+`$ErrorActionPreference = 'Continue'
+`$scriptName = '$escapedScriptName'
+`$pidFile = '$escapedPidFile'
+`$ids = New-Object System.Collections.Generic.HashSet[int]
+try {
+    Get-CimInstance Win32_Process |
+        Where-Object { `$_.Name -like 'AutoHotkey*' -and `$_.CommandLine -and `$_.CommandLine -like "*`$scriptName*" } |
+        ForEach-Object { [void]`$ids.Add([int]`$_.ProcessId) }
+} catch {
+    Write-Host "AHK bridge command line lookup failed: `$(`$_.Exception.Message)"
+}
+if (Test-Path -LiteralPath `$pidFile) {
+    `$rawPid = [string](Get-Content -LiteralPath `$pidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+    `$storedPid = 0
+    if ([int]::TryParse(`$rawPid, [ref]`$storedPid)) {
+        try {
+            `$process = Get-Process -Id `$storedPid -ErrorAction Stop
+            if (`$process.ProcessName -like 'AutoHotkey*') {
+                [void]`$ids.Add(`$storedPid)
+            }
+        } catch {}
     }
-    $rawPid = [string](Get-Content -LiteralPath $AhkPidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
-    $storedPid = 0
-    if (-not [int]::TryParse($rawPid, [ref]$storedPid)) {
-        Write-Host "AHK bridge PID file is invalid: $AhkPidFile" -ForegroundColor Yellow
-        return
-    }
+}
+foreach (`$id in `$ids) {
     try {
-        $process = Get-Process -Id $storedPid -ErrorAction Stop
+        Write-Host "Stopping AHK bridge PID: `$id"
+        Stop-Process -Id `$id -Force -ErrorAction Stop
     } catch {
-        Write-Host "AHK bridge PID is not running: $storedPid" -ForegroundColor Yellow
-        return
+        Write-Host "Could not stop AHK bridge PID `${id}: `$(`$_.Exception.Message)"
     }
-    if ($process.ProcessName -notlike "AutoHotkey*") {
-        Write-Host "PID $storedPid is not an AutoHotkey process. AHK bridge was not stopped." -ForegroundColor Yellow
-        return
-    }
-    Write-Host "Stopping AHK bridge PID: $storedPid"
+}
+Remove-Item -LiteralPath `$pidFile -Force -ErrorAction SilentlyContinue
+Write-Host "AHK bridge cleanup target count: `$(`$ids.Count)"
+"@
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cleanupScript))
     try {
-        Stop-Process -Id $storedPid -Force -ErrorAction Stop
-        Remove-Item -LiteralPath $AhkPidFile -Force -ErrorAction SilentlyContinue
+        Write-Host "Stopping AHK bridge as administrator. Approve the UAC prompt if Windows asks."
+        $process = Start-Process -FilePath "powershell.exe" `
+            -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encoded `
+            -Verb RunAs `
+            -Wait `
+            -PassThru `
+            -ErrorAction Stop
+        if ($process.ExitCode -ne 0) {
+            Write-Host "AHK bridge cleanup exited with code $($process.ExitCode)" -ForegroundColor Yellow
+        }
     } catch {
-        Write-Host "Could not stop AHK bridge PID $storedPid`: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "Could not start elevated AHK bridge cleanup: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 
@@ -423,6 +525,7 @@ function Start-StockBoardAhkBridge {
 function Start-AhkBridgeOnly {
     Write-Step "Starting HTS Bridge only"
     Ensure-RuntimeDir
+    Stop-StockBoardAhkBridge
     $ahkStarted = Start-StockBoardAhkBridge
     if ($ahkStarted) {
         Write-Host "HTS bridge started."
@@ -452,6 +555,18 @@ function Start-StockBoard {
     $env:PYTHONUNBUFFERED = "1"
     $env:STOCKBOARD_ENABLE_COM_REALTIME = "1"
     $env:STOCKBOARD_REGISTER_TOP100_REALTIME = "1"
+    $env:STOCKBOARD_PRICE_FAST_MODE = "1"
+    $env:STOCKBOARD_REALTIME_CODE_LIMIT = "100"
+    $env:STOCKBOARD_ENABLE_ORDERBOOK_REALTIME = "1"
+    $env:STOCKBOARD_DISPLAY_MODE = "fast"
+    $env:STOCKBOARD_ORDERBOOK_MODE = "hybrid"
+    $env:STOCKBOARD_ORDERBOOK_HOT_SOURCE = "top5"
+    $env:STOCKBOARD_ORDERBOOK_HOT_LIMIT = "5"
+    $env:STOCKBOARD_ORDERBOOK_ROTATE_BATCH = "20"
+    $env:STOCKBOARD_ORDERBOOK_ROTATE_INTERVAL_SEC = "5"
+    $env:STOCKBOARD_ORDERBOOK_DISPLAY = "numeric"
+    $env:STOCKBOARD_STRENGTH_5M_ENABLED = "0"
+    $env:STOCKBOARD_DROP_STALE_TRADE_SECONDS = "5"
     Remove-Item Env:\STOCKBOARD_ENABLE_SUFFIX_REALREG_EXPERIMENT -ErrorAction SilentlyContinue
     Remove-Item Env:\STOCKBOARD_ENABLE_DIAGNOSTIC_REALREG -ErrorAction SilentlyContinue
     Remove-Item Env:\STOCKBOARD_ENABLE_EXPECTED_REALREG_EXPERIMENT -ErrorAction SilentlyContinue
@@ -469,6 +584,17 @@ function Start-StockBoard {
     Write-Host "SERVER_PID=$($process.Id)"
     Write-Host "STDOUT_LOG=$stdout"
     Write-Host "STDERR_LOG=$stderr"
+    Write-Host "PRICE_FAST_MODE=$env:STOCKBOARD_PRICE_FAST_MODE"
+    Write-Host "REALTIME_CODE_LIMIT=$env:STOCKBOARD_REALTIME_CODE_LIMIT"
+    Write-Host "ENABLE_ORDERBOOK_REALTIME=$env:STOCKBOARD_ENABLE_ORDERBOOK_REALTIME"
+    Write-Host "DISPLAY_MODE=$env:STOCKBOARD_DISPLAY_MODE"
+    Write-Host "ORDERBOOK_MODE=$env:STOCKBOARD_ORDERBOOK_MODE"
+    Write-Host "ORDERBOOK_HOT_SOURCE=$env:STOCKBOARD_ORDERBOOK_HOT_SOURCE"
+    Write-Host "ORDERBOOK_HOT_LIMIT=$env:STOCKBOARD_ORDERBOOK_HOT_LIMIT"
+    Write-Host "ORDERBOOK_ROTATE_BATCH=$env:STOCKBOARD_ORDERBOOK_ROTATE_BATCH"
+    Write-Host "ORDERBOOK_ROTATE_INTERVAL_SEC=$env:STOCKBOARD_ORDERBOOK_ROTATE_INTERVAL_SEC"
+    Write-Host "ORDERBOOK_DISPLAY=$env:STOCKBOARD_ORDERBOOK_DISPLAY"
+    Write-Host "DROP_STALE_TRADE_SECONDS=$env:STOCKBOARD_DROP_STALE_TRADE_SECONDS"
 
     $serverBasicReady = $false
     $snapshot = $null
@@ -544,6 +670,7 @@ function Start-StockBoard {
     }
 
     Start-Process $BoardUrl | Out-Null
+    Stop-StockBoardAhkBridge
     $ahkStarted = Start-StockBoardAhkBridge
     if ($ahkStarted) {
         Write-Host "StockBoard started."
@@ -575,11 +702,14 @@ switch ($Action) {
     "start" { Start-StockBoard }
     "ahk" { Start-AhkBridgeOnly }
     "link" { Start-AhkBridgeOnly }
+    "ahk-stop" { Write-Step "Stopping HTS Bridge only"; Stop-StockBoardAhkBridge }
+    "unlink" { Write-Step "Stopping HTS Bridge only"; Stop-StockBoardAhkBridge }
+    "ahk-clean" { Write-Step "Stopping HTS Bridge only"; Stop-StockBoardAhkBridge }
     "stop" { Stop-StockBoard }
     "restart" { Stop-StockBoard; Start-StockBoard }
     "status" { Write-Step "StockBoard status"; [void](Write-Status) }
     default {
-        Write-Host "Usage: stockboard_live.cmd [start|stop|restart|status|ahk|link]"
+        Write-Host "Usage: stockboard_live.cmd [start|stop|restart|status|ahk|link|ahk-stop|unlink|ahk-clean]"
         exit 1
     }
 }

@@ -212,6 +212,16 @@ DONE 87. AHK 성공 알림 OFF / 실패 알림 유지
 DONE 88. 통합 시작 런처
 DONE 89. 통합 종료 런처
 DONE 90. scripts 폴더 중복 AHK 파일 정리
+DONE 91. StockBoard 단일 live launcher / AHK bridge control
+DONE 92. Price Fast Mode / realtime 100종목 제한
+DONE 93. stale tick drop 진단
+DONE 94. hybrid orderbook hot5 + rotate20
+DONE 95. Graphic/Fast display mode
+DONE 96. visual-cell 경량 렌더링
+DONE 97. E palette visual cells
+DONE 98. visual-cell tooltip native title 제거
+DONE 99. 5분강도 헤더/tooltip 정리
+DONE 100. 브라우저 수신 기준 최근 5분강도 임시 계산
 
 ### TODO
 
@@ -239,6 +249,12 @@ TODO 79. 15:30~15:40 regular_close_snapshot 고정 표시
 TODO 80. 15:40 이후 aftermarket_realtime / regular_close_snapshot fallback 정책
 TODO 81. price_source / display_price / display_change_rate 필드 정식화
 TODO 82. 실시간 렌더링 최적화, 변경된 셀만 그리기, 일봉/색상바 throttle
+TODO 101. opt10046 close_5m_strength 장마감 조회/저장
+TODO 102. HTML module split
+TODO 103. Direct API Debug panel 운영 toggle
+TODO 104. regular_close_snapshot
+TODO 105. price_source/display_price/display_change_rate 정식화
+TODO 106. realtime_patch payload delta 경량화
 
 ## 4. 현재 완료 상태
 
@@ -521,3 +537,95 @@ TOP100 refresh = 30000ms
 - 2026-06-24: 순간강도 0~200 clamp 및 gamma 0.6 비선형 색상바 스케일 개선 완료 상태를 반영.
 - 2026-06-25: 후보5 v0.1 점수모델, candidate fields, 원클릭 라이브 런처, 루트 redirect, UI 밀도/정렬/상단 레이아웃 개선, 상·하한가 표시 예외처리를 반영.
 - 2026-06-25: 가격 불가침 원칙, `/api/top100` root 배열 189개 구조 진단, 15:30 장마감 가격 불일치 관찰, suffix Store 오염 방지 패치 WIP 상태와 내일 정규장 검증 필요 항목을 반영.
+- 2026-06-26: 단일 `stockboard_live.cmd` 런처, AHK bridge 제어, Price Fast Mode, realtime 100종목 제한, stale tick drop 진단, hybrid orderbook, Graphic/Fast display mode, visual-cell E palette, tooltip single path, 브라우저 수신 기준 5분강도 임시 표시 상태를 반영.
+
+## 12. 2026-06-26 최신 운영 상태
+
+작성 기준: 2026-06-26 장중 Price Fast Mode, Hybrid Orderbook, visual-cell 경량 UI 적용 후 검증 결과.
+
+### 현재 장중 요약
+
+- 대표 실행 파일은 `stockboard_live.cmd` 하나로 통합한다.
+- `stockboard_live.cmd`는 server start/status/stop/restart와 AutoHotkey v1 bridge start/clean/status를 담당한다.
+- AHK bridge 본체는 `scripts/stockboard_kiwoom_link_v1.ahk`를 유지한다.
+- 삭제했던 보조 관리자 실행 cmd는 재생성하지 않는다.
+- 가격 원천 정책은 `_AL` 통합 source 유지다.
+- Store/API/DOM/order key는 6자리 stock code 유지다.
+- Price Fast Mode는 장중 현재가/등락률 우선 모드다.
+- realtime 등록 제한은 `STOCKBOARD_REALTIME_CODE_LIMIT=100`이다.
+- stale tick drop 진단은 `STOCKBOARD_DROP_STALE_TRADE_SECONDS=5` 기준이다.
+- orderbook은 `STOCKBOARD_ORDERBOOK_MODE=hybrid`로 운영한다.
+- hybrid orderbook은 hot Top5 + rotate 20개/5초 구조다.
+- 화면은 Graphic/Fast display mode를 지원한다.
+- Fast Mode는 visual-cell 경량 렌더링을 사용한다.
+- visual-cell 색상은 E palette로 고정한다.
+- visual-cell native `title`은 제거하고 custom tooltip `data-tooltip` 단일 경로를 사용한다.
+- 5분강도 화면 컬럼은 현재 opt10046 공식값이 아니라 브라우저 수신 기준 최근 5분 delta 임시 표시다.
+
+### 검증 결과
+
+```text
+git diff --check: pass
+python -m py_compile kiwoom_data_provider.py stockboard_server.py stockboard_store.py: pass
+running=True
+login_state=connected
+registered_count=100
+price_fast_mode=True
+realtime_code_limit=100
+orderbook_mode=hybrid
+orderbook_registered_count=25
+avg_trade_lag_sec_recent=0.635
+max_trade_lag_sec=3.251
+stale_trade_drop_count=0
+000660_source=000660_AL
+005930_source=005930_AL
+402340_source=402340_AL
+price/change_rate equality=True
+AHK_RUNNING=True
+```
+
+### 5분강도 주의
+
+- 현재 화면의 `5분강도`는 opt10046 공식 체결강도5분이 아니다.
+- 현재 화면의 값은 브라우저가 수신한 `session_buy_qty_live` / `session_sell_qty_live` 누적 샘플의 최근 5분 delta로 임시 계산한다.
+- 계산식은 `최근5분 매수체결량 delta / 최근5분 매도체결량 delta * 100`이다.
+- `strength_5m_enabled=False` 상태에서는 opt10046 backend 조회/저장은 꺼져 있다.
+- 장마감 공식 5분강도는 `opt10046 close_5m_strength` backend 조회/저장 TODO로 남긴다.
+
+### HTML 분리 TODO
+
+- 현재 `docs/stockboard_v0_3_0_sample.html`은 즉시 분리하지 않는다.
+- 안정화 후 별도 작업으로 CSS/JS 분리를 진행한다.
+- 분리 후보: `stockboard.css`, `stockboard_state.js`, `stockboard_render.js`, `stockboard_realtime.js`, `stockboard_tooltip.js`, `stockboard_selection.js`, `stockboard_debug.js`.
+- 번들러 없이 `script`/`link` 분리부터 우선 검토한다.
+- 분리 후 Headless Chrome과 실제 브라우저 검증이 필수다.
+
+### Coding keyword TODO list
+
+| 번호 | 키워드 | 상태 |
+|---:|---|---|
+| 01 | PriceFastMode | DONE |
+| 02 | RealtimeLimit100 | DONE |
+| 03 | StaleTickDrop | DONE |
+| 04 | HybridOrderbookHot5Rotate20 | DONE |
+| 05 | UnifiedLauncher | DONE |
+| 06 | AHKBridgeControl | DONE |
+| 07 | GraphicFastToggle | DONE |
+| 08 | VisualCellRendering | DONE |
+| 09 | EPaletteVisualCells | DONE |
+| 10 | TooltipSinglePath | DONE |
+| 11 | FiveMinuteStrengthBrowserDelta | DONE/임시 |
+| 12 | opt10046Close5mStrength | TODO |
+| 13 | RegularCloseSnapshot1530 | TODO |
+| 14 | PriceSourceDisplayPolicy | TODO |
+| 15 | AftermarketFallbackPolicy | TODO |
+| 16 | SuffixStoreIsolationRegularVerify | WIP |
+| 17 | RealtimePatchPayloadDelta | TODO |
+| 18 | DirectDebugPanelToggle | TODO |
+| 19 | HTMLModuleSplit | TODO |
+| 20 | CandidateModelV02 | TODO |
+| 21 | ForeignFuturesSource | TODO |
+| 22 | BigHandKRT | TODO |
+| 23 | DayStrengthBackfill | TODO |
+| 24 | MarketSupplyRefresh | TODO |
+| 25 | SignalRankingStrategyFormalize | TODO |

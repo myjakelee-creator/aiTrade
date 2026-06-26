@@ -26,10 +26,19 @@ QUOTE_FIELDS = (
     "total_bid_qty",
     "total_ask_qty",
     "bid_ask_ratio",
+    "orderbook_received_at",
+    "orderbook_age_sec",
+    "orderbook_source",
     "session_buy_qty_live",
     "session_sell_qty_live",
     "session_strength",
     "session_strength_source",
+    "strength_5m",
+    "strength_20m",
+    "strength_60m",
+    "strength_snapshot_at",
+    "strength_source",
+    "strength_stale_sec",
     "foreign_line_raw",
     "cumulative_volume",
     "cumulative_value",
@@ -239,6 +248,13 @@ class RealtimeStore:
         original_registered_code=None,
         realtime_source_code=None,
         source_code=None,
+        price_first=False,
+        strength_5m=None,
+        strength_20m=None,
+        strength_60m=None,
+        strength_snapshot_at=None,
+        strength_source=None,
+        strength_stale_sec=None,
     ):
         code = self._normalized_code(stock_code)
         values = {
@@ -257,7 +273,34 @@ class RealtimeStore:
             "original_registered_code": original_registered_code,
             "realtime_source_code": realtime_source_code,
             "source_code": source_code,
+            "strength_5m": strength_5m,
+            "strength_20m": strength_20m,
+            "strength_60m": strength_60m,
+            "strength_snapshot_at": strength_snapshot_at,
+            "strength_source": strength_source,
+            "strength_stale_sec": strength_stale_sec,
         }
+        if price_first:
+            first_values = {
+                key: values.get(key)
+                for key in (
+                    "price",
+                    "change_rate",
+                    "trade_qty",
+                    "trade_time",
+                    "cumulative_volume",
+                    "cumulative_value",
+                    "received_code",
+                    "normalized_code",
+                    "registered_code",
+                    "original_registered_code",
+                    "realtime_source_code",
+                    "source_code",
+                )
+            }
+            with self._lock:
+                self._ensure_quote(code)
+                self._apply_update(code, first_values)
         with self._lock:
             quote = self._ensure_quote(code)
             realtime_ohlc = self._realtime_ohlc(code, price)
@@ -313,6 +356,7 @@ class RealtimeStore:
         original_registered_code=None,
         realtime_source_code=None,
         source_code=None,
+        orderbook_source=None,
     ):
         code = self._normalized_code(stock_code)
         if orderbook is not None:
@@ -331,6 +375,7 @@ class RealtimeStore:
             "total_bid_qty": total_bid_qty,
             "total_ask_qty": total_ask_qty,
             "bid_ask_ratio": bid_ask_ratio,
+            "orderbook_source": orderbook_source,
             "received_code": received_code,
             "normalized_code": normalized_code,
             "registered_code": registered_code,
@@ -345,6 +390,8 @@ class RealtimeStore:
             quote["bid_volume"] = total_bid_qty
             quote["ask_volume"] = total_ask_qty
             quote["bid_ask_ratio"] = bid_ask_ratio
+            quote["orderbook_received_at"] = timestamp_text
+            quote["orderbook_source"] = orderbook_source
             events = self._orderbook_events.setdefault(
                 code, deque(maxlen=self._orderbook_event_limit)
             )
@@ -352,6 +399,8 @@ class RealtimeStore:
             event["bid_volume"] = total_bid_qty
             event["ask_volume"] = total_ask_qty
             event["bid_ask_ratio"] = bid_ask_ratio
+            event["orderbook_received_at"] = timestamp_text
+            event["orderbook_source"] = orderbook_source
             events.append(event)
             return deepcopy(quote)
 
@@ -475,6 +524,10 @@ class RealtimeStore:
                 self._orderbook_events.pop(code, None)
                 self._last_seen.pop(code, None)
             return stale_codes
+
+    def clear_orderbook_events(self):
+        with self._lock:
+            self._orderbook_events.clear()
 
     def clear(self):
         with self._lock:

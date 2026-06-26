@@ -391,3 +391,61 @@ HTML은 보여준다.
 - HTS 입력 최종값은 6자리이다.
 - HTML은 가격/등락률/거래대금/후보점수/등급/모멘텀/OHLC를 새로 계산하거나 보정하지 않는다.
 - realtime_patch / 스트리밍 표시 경로는 변경하지 않는다.
+
+---
+
+# 10. 2026-06-26 Fast/Graphic visual-cell 및 5분강도 정리
+
+작성 기준: 2026-06-26 Price Fast Mode, Hybrid Orderbook, visual-cell 경량 렌더링 적용 후 상태.
+
+## 화면 표시명
+
+| 화면 표시명 | 내부 이름 / 필드 | 데이터 원천 | 상태 | 비고 |
+|---|---|---|---|---|
+| 5분강도 | browser_5m_strength / fiveMinuteStrength | 브라우저 수신 기준 최근 5분 delta | DONE/임시 | opt10046 공식 체결강도5분 아님 |
+| 순간강도 | realtime_strength | OpenAPI `_AL` FID228 | DONE | 100 기준 visual-cell 배경 표시 |
+| 잔량비 | bid_ask_ratio | Hybrid orderbook `_AL` 121/125 | DONE | hot5 + rotate20 |
+| 일봉 | realtime_ohlc | ka10086 base + realtime tick | DONE | 기준선 제거, 경량 candle background |
+
+## 5분강도 명명 정책
+
+- 화면 컬럼명은 `5분강도`로 표시한다.
+- `strength_5m`, `strength_20m`, `strength_60m`은 opt10046 공식값 예약 필드다.
+- `strength_source=opt10046`이고 `strength_5m` 값이 있을 때만 공식 5분강도라고 부른다.
+- 현재 `STOCKBOARD_STRENGTH_5M_ENABLED=0`이므로 opt10046 공식값은 비활성이다.
+- 현재 화면의 `5분강도`는 브라우저 수신 기준 최근 5분 delta 임시 표시다.
+- 계산식은 `최근5분 매수체결량 delta / 최근5분 매도체결량 delta * 100`이다.
+- tooltip에는 `주의: opt10046 체결강도5분 아님`을 표시한다.
+- 장마감 공식 값은 `close_5m_strength`로 opt10046 조회/저장 TODO에 둔다.
+
+## 최신 운영/진단 필드
+
+| 이름 | 의미 | 상태 |
+|---|---|---|
+| price_fast_mode | 현재가/등락률 우선 수신 모드 | DONE |
+| realtime_code_limit | 실시간 체결 등록 제한. 현재 100 | DONE |
+| orderbook_mode | orderbook 등록 정책. 현재 hybrid | DONE |
+| orderbook_hot_limit | hot orderbook 대상 수. 현재 5 | DONE |
+| orderbook_rotate_batch | 순환 orderbook batch. 현재 20 | DONE |
+| orderbook_rotate_interval_sec | 순환 주기. 현재 5초 | DONE |
+| display_mode | `fast` / `graphic` 화면 모드 | DONE |
+| visual_cell_palette | E palette | DONE |
+| strength_5m_enabled | opt10046 5분강도 backend 조회 활성 여부. 현재 False | DONE/진단 |
+| close_5m_strength | 장마감 opt10046 5분강도 snapshot | TODO |
+
+## E palette 고정값
+
+| 역할 | 색상 |
+|---|---|
+| red | `#E75F5F` |
+| blue | `#5F9EF5` |
+| neutral | `#E2E8F0` |
+| wick | `#111827` |
+
+## tooltip 정책
+
+- visual-cell은 native `title`을 사용하지 않는다.
+- custom tooltip은 `data-tooltip` 단일 경로를 사용한다.
+- 접근성 문구는 `aria-label`로 유지할 수 있다.
+- visual-cell 내부 자식 element에도 `title`을 남기지 않는다.
+- 잔량비, 순간강도, 5분강도, 일봉은 숫자 본문보다 셀 배경과 tooltip 중심으로 표시한다.

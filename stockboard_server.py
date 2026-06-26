@@ -188,6 +188,17 @@ def _latest_event(events_by_code, stock_code):
     return event if isinstance(event, dict) else None
 
 
+def _age_seconds(timestamp_text):
+    if not timestamp_text:
+        return None
+    try:
+        timestamp = datetime.fromisoformat(str(timestamp_text).replace("Z", "+00:00"))
+        now = datetime.now(timestamp.tzinfo) if timestamp.tzinfo else datetime.now()
+        return max(0.0, round((now - timestamp).total_seconds(), 3))
+    except (TypeError, ValueError):
+        return None
+
+
 def _top100_with_realtime(rows, realtime_store):
     response_rows = [deepcopy(row) for row in rows]
     codes = [row.get("stock_code") for row in response_rows]
@@ -248,6 +259,16 @@ def _top100_with_realtime(rows, realtime_store):
             row["session_strength_source"] = trade_event.get(
                 "session_strength_source"
             )
+            for field in (
+                "strength_5m",
+                "strength_20m",
+                "strength_60m",
+                "strength_snapshot_at",
+                "strength_source",
+                "strength_stale_sec",
+            ):
+                if field in trade_event:
+                    row[field] = trade_event.get(field)
             realtime_ohlc = trade_event.get("realtime_ohlc")
             if realtime_ohlc is not None:
                 row["realtime_ohlc"] = deepcopy(realtime_ohlc)
@@ -289,7 +310,13 @@ def _top100_with_realtime(rows, realtime_store):
                 orderbook_event.get("best_ask")
             )
             row["orderbook_received_at"] = orderbook_event.get("received_at")
-            row["orderbook_source"] = "orderbook"
+            row["orderbook_age_sec"] = _age_seconds(
+                orderbook_event.get("orderbook_received_at")
+                or orderbook_event.get("received_at")
+            )
+            row["orderbook_source"] = (
+                orderbook_event.get("orderbook_source") or "orderbook"
+            )
     return response_rows
 
 
@@ -363,6 +390,14 @@ def _realtime_patch_payload(
                     quote.get("session_sell_qty_live")
                 ),
                 "session_strength_source": quote.get("session_strength_source"),
+                "strength_5m": _realtime_number(quote.get("strength_5m")),
+                "strength_20m": _realtime_number(quote.get("strength_20m")),
+                "strength_60m": _realtime_number(quote.get("strength_60m")),
+                "strength_snapshot_at": quote.get("strength_snapshot_at"),
+                "strength_source": quote.get("strength_source"),
+                "strength_stale_sec": _realtime_number(
+                    quote.get("strength_stale_sec")
+                ),
                 "realtime_ohlc": (
                     deepcopy(realtime_ohlc)
                     if realtime_ohlc is not None
@@ -382,6 +417,11 @@ def _realtime_patch_payload(
                 "bid_ask_ratio": _realtime_number(quote.get("bid_ask_ratio")),
                 "best_bid_price": best_bid,
                 "best_ask_price": best_ask,
+                "orderbook_received_at": quote.get("orderbook_received_at"),
+                "orderbook_age_sec": _age_seconds(
+                    quote.get("orderbook_received_at") or quote.get("received_at")
+                ),
+                "orderbook_source": quote.get("orderbook_source"),
                 "received_at": quote.get("received_at"),
                 "sequence": quote.get("sequence"),
             }

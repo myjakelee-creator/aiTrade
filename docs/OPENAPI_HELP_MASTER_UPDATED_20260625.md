@@ -208,6 +208,43 @@ COM realtime Provider가 꺼질 수 있다.
 
 ---
 
+## 7. 2026-06-26 StockBoard 운영 메모
+
+이 섹션은 OpenAPI 원문 보관 영역을 수정하지 않고, StockBoard 장중 운영 기준만 요약한다.
+
+### 실시간 등록/부하 기준
+
+- OpenAPI 실시간 등록 제한은 화면번호당 100종목이다.
+- StockBoard 장중 운영은 Price Fast Mode 기준 `STOCKBOARD_REALTIME_CODE_LIMIT=100`으로 맞춘다.
+- 주식체결은 현재가/등락률을 최우선으로 처리한다.
+- 과도한 장초반/급락장 부하를 줄이기 위해 stale tick drop 진단을 유지한다.
+- `_AL` 통합 source 정책은 유지한다.
+- Store/API/DOM/order key는 6자리 종목코드를 유지한다.
+
+### 호가잔량 운영 기준
+
+- 전체 100종목 호가잔량 실시간 등록은 장중 부하가 커질 수 있다.
+- StockBoard는 hybrid orderbook mode를 사용한다.
+- hybrid orderbook은 hot Top5 + rotate 20개/5초 구조다.
+- 잔량비는 hot 또는 rotate 대상에서 숫자/visual-cell 배경으로 갱신된다.
+- 호가잔량이 늦거나 일부 unavailable이어도 Price Fast Mode에서는 현재가/등락률 우선 정책을 유지한다.
+
+### opt10046 5분강도 기준
+
+- opt10046 체결강도추이시간별 요청은 공식 5분/20분/60분 강도 후보 원천이다.
+- 현재 장중 운영에서는 `STOCKBOARD_STRENGTH_5M_ENABLED=0`으로 opt10046 조회 루프를 켜지 않는다.
+- 현재 화면의 `5분강도`는 공식 opt10046 값이 아니라 브라우저 수신 기준 최근 5분 delta 임시 표시다.
+- 장마감 `close_5m_strength`는 opt10046 backend 조회/저장 TODO다.
+
+### 가격 원천 정책
+
+- 가격 보정식은 추가하지 않는다.
+- FID10 현재가 normalize와 FID12 등락률 normalize는 임의 수정하지 않는다.
+- 표시 가격 원천은 `_AL`을 유지한다.
+- 장마감/애프터마켓 불일치는 보정식이 아니라 `price_source`, `display_price`, `display_change_rate`, `regular_close_snapshot` 정책으로 해결한다.
+
+---
+
 # StockBoard 최신 결론
 
 ## 1. 가격 원천 문제 결론

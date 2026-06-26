@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -16,6 +17,23 @@ from stockboard_engine import (
     _recent_dates, _required_market_count, _required_market_number,
     _select_daily_rows, _stock_code, normalize_kiwoom_price,
 )
+
+
+def _env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name, default=0):
+    value = os.getenv(name)
+    if value is None or str(value).strip() == "":
+        return default
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        return default
 
 
 def _load_dotenv():
@@ -1134,6 +1152,8 @@ class KiwoomOpenApiRealtimeProvider:
     _REALREG_FIDS = "10;12;20;15;228;13;14;290"
     _REALREG_REAL_TYPE = "주식체결"
     _ORDERBOOK_REALREG_SCREEN_START = 9010
+    _ORDERBOOK_HOT_SCREEN = "9010"
+    _ORDERBOOK_ROTATE_SCREEN = "9011"
     _ORDERBOOK_REALREG_FIDS = "41;51;121;125"
     _ECN_ORDERBOOK_REAL_TYPE = "ECN\uc8fc\uc2dd\ud638\uac00\uc794\ub7c9"
     _EXPECTED_REALREG_SCREEN_START = 9020
@@ -1311,6 +1331,63 @@ class KiwoomOpenApiRealtimeProvider:
         self._unregister_requested = False
         self._unregister_succeeded = False
         self._unregister_error = None
+        self._price_fast_mode = _env_bool("STOCKBOARD_PRICE_FAST_MODE", False)
+        self._realtime_code_limit = max(
+            0, _env_int("STOCKBOARD_REALTIME_CODE_LIMIT", 0)
+        )
+        self._orderbook_realtime_enabled = _env_bool(
+            "STOCKBOARD_ENABLE_ORDERBOOK_REALTIME", True
+        )
+        self._display_mode = (
+            os.getenv("STOCKBOARD_DISPLAY_MODE", "fast").strip().lower()
+            or "fast"
+        )
+        self._orderbook_mode = (
+            os.getenv("STOCKBOARD_ORDERBOOK_MODE", "off").strip().lower()
+            or "off"
+        )
+        if not self._orderbook_realtime_enabled:
+            self._orderbook_mode = "off"
+        if self._orderbook_mode not in {"off", "hybrid", "hot_only"}:
+            self._orderbook_mode = "off"
+        self._orderbook_hot_source = (
+            os.getenv("STOCKBOARD_ORDERBOOK_HOT_SOURCE", "top5").strip().lower()
+            or "top5"
+        )
+        self._orderbook_hot_limit = max(
+            0, _env_int("STOCKBOARD_ORDERBOOK_HOT_LIMIT", 5)
+        )
+        self._orderbook_rotate_batch = max(
+            1, _env_int("STOCKBOARD_ORDERBOOK_ROTATE_BATCH", 20)
+        )
+        self._orderbook_rotate_interval_sec = max(
+            1, _env_int("STOCKBOARD_ORDERBOOK_ROTATE_INTERVAL_SEC", 5)
+        )
+        self._orderbook_display = (
+            os.getenv("STOCKBOARD_ORDERBOOK_DISPLAY", "numeric").strip().lower()
+            or "numeric"
+        )
+        self._orderbook_hot_codes = []
+        self._orderbook_rotate_pool = []
+        self._orderbook_current_rotate_codes = []
+        self._orderbook_next_rotate_index = 0
+        self._orderbook_last_rotate_at = None
+        self._orderbook_last_rotate_at_text = None
+        self._orderbook_registered_count = 0
+        self._strength_5m_enabled = _env_bool(
+            "STOCKBOARD_STRENGTH_5M_ENABLED", False
+        )
+        self._strength_5m_queue_size = 0
+        self._strength_5m_last_cycle_at = None
+        self._stale_trade_drop_seconds = max(
+            0, _env_int("STOCKBOARD_DROP_STALE_TRADE_SECONDS", 0)
+        )
+        self._stale_trade_drop_count = 0
+        self._last_stale_trade_lag_sec = None
+        self._last_trade_lag_sec = None
+        self._max_trade_lag_sec = None
+        self._recent_trade_lags = deque(maxlen=200)
+        self._latest_trade_lag_by_code = {}
 
     def _check_availability(self):
         if self._availability_checked:
@@ -1445,6 +1522,7 @@ class KiwoomOpenApiRealtimeProvider:
                 try:
                     app.processEvents()
                     self._process_pending_realtime_requests()
+                    self._process_orderbook_rotation()
                     pump_time = datetime.now().isoformat(timespec="seconds")
                     with self._lock:
                         self._qt_pump_running = True
@@ -1527,6 +1605,181 @@ class KiwoomOpenApiRealtimeProvider:
                 + index // self._REALREG_BATCH_SIZE
             )
             yield screen, codes[index : index + self._REALREG_BATCH_SIZE]
+
+    def _orderbook_groups(self, codes):
+        if self._orderbook_mode == "off":
+            return [], []
+        unique_codes = list(dict.fromkeys(codes))
+        hot_codes = unique_codes[: self._orderbook_hot_limit]
+        if self._orderbook_mode == "hot_only":
+            return hot_codes, []
+        rotate_pool = [
+            code for code in unique_codes if code not in set(hot_codes)
+        ]
+        return hot_codes, rotate_pool
+
+    def _next_orderbook_rotate_batch(self):
+        pool = list(self._orderbook_rotate_pool)
+        if not pool:
+            return []
+        start = self._orderbook_next_rotate_index % len(pool)
+        batch = []
+        for offset in range(min(self._orderbook_rotate_batch, len(pool))):
+            batch.append(pool[(start + offset) % len(pool)])
+        self._orderbook_next_rotate_index = (
+            start + len(batch)
+        ) % len(pool)
+        return batch
+
+    def _disconnect_realdata_screen(self, screen):
+        with self._lock:
+            control = self._control
+        if control is None:
+            return
+        control.dynamicCall("DisconnectRealData(QString)", screen)
+
+    def _register_orderbook_screen(self, screen, codes):
+        if not codes:
+            return False
+        with self._lock:
+            control = self._control
+        if control is None:
+            raise RuntimeError("QAx control is not available")
+        result = control.dynamicCall(
+            "SetRealReg(QString, QString, QString, QString)",
+            screen,
+            ";".join(codes),
+            self._ORDERBOOK_REALREG_FIDS,
+            "0",
+        )
+        if not self._is_success_result(result):
+            raise RuntimeError(
+                f"SetRealReg orderbook screen {screen} returned {result!r}"
+            )
+        return True
+
+    def _process_orderbook_rotation(self):
+        if self._orderbook_mode != "hybrid":
+            return
+        with self._lock:
+            pool = list(self._orderbook_rotate_pool)
+            last_rotate_at = self._orderbook_last_rotate_at
+        if not pool:
+            return
+        now = time.monotonic()
+        if (
+            last_rotate_at is not None
+            and now - last_rotate_at < self._orderbook_rotate_interval_sec
+        ):
+            return
+        with self._lock:
+            batch = self._next_orderbook_rotate_batch()
+        try:
+            self._disconnect_realdata_screen(self._ORDERBOOK_ROTATE_SCREEN)
+            if batch:
+                self._register_orderbook_screen(
+                    self._ORDERBOOK_ROTATE_SCREEN, batch
+                )
+            with self._lock:
+                self._orderbook_current_rotate_codes = list(batch)
+                self._orderbook_last_rotate_at = now
+                self._orderbook_last_rotate_at_text = datetime.now().isoformat(
+                    timespec="seconds"
+                )
+                self._orderbook_registered_count = len(
+                    set(self._orderbook_hot_codes) | set(batch)
+                )
+        except Exception as error:
+            with self._lock:
+                self._last_error = f"orderbook rotation failed: {error}"
+
+    def _limited_realtime_codes(self, codes):
+        limit = self._realtime_code_limit
+        if limit <= 0:
+            return list(codes)
+        return list(codes)[:limit]
+
+    @staticmethod
+    def _trade_lag_seconds(trade_time_raw, now=None):
+        if trade_time_raw in (None, ""):
+            return None
+        digits = "".join(char for char in str(trade_time_raw).strip() if char.isdigit())
+        if len(digits) < 6:
+            return None
+        digits = digits[:6]
+        try:
+            hour = int(digits[0:2])
+            minute = int(digits[2:4])
+            second = int(digits[4:6])
+            current = now or datetime.now()
+            trade_time = current.replace(
+                hour=hour,
+                minute=minute,
+                second=second,
+                microsecond=0,
+            )
+        except ValueError:
+            return None
+        return round((current - trade_time).total_seconds(), 3)
+
+    def _record_trade_lag(self, normalized_code, lag_sec):
+        if lag_sec is None:
+            return
+        with self._lock:
+            self._last_trade_lag_sec = lag_sec
+            if self._max_trade_lag_sec is None or lag_sec > self._max_trade_lag_sec:
+                self._max_trade_lag_sec = lag_sec
+            self._recent_trade_lags.append(lag_sec)
+            if normalized_code is not None:
+                self._latest_trade_lag_by_code[normalized_code] = lag_sec
+                if len(self._latest_trade_lag_by_code) > 40:
+                    for stale_code in list(self._latest_trade_lag_by_code)[:10]:
+                        self._latest_trade_lag_by_code.pop(stale_code, None)
+
+    def _stale_trade_drop_sample(self, stock_code, real_type, received_code):
+        if self._stale_trade_drop_seconds <= 0:
+            return None
+        with self._lock:
+            control = self._control
+            registered_codes = set(self._registered_codes)
+            original_registered_codes = dict(self._original_registered_codes)
+            registered_code_to_normalized = dict(
+                self._registered_code_to_normalized
+            )
+        if control is None:
+            return None
+        trade_time_raw = control.dynamicCall(
+            "GetCommRealData(QString, int)",
+            stock_code,
+            20,
+        )
+        lag_sec = self._trade_lag_seconds(trade_time_raw)
+        normalized_code = registered_code_to_normalized.get(
+            received_code, _stock_code(stock_code)
+        )
+        self._record_trade_lag(normalized_code, lag_sec)
+        if lag_sec is None or lag_sec <= self._stale_trade_drop_seconds:
+            return None
+        registered_code = received_code if received_code in registered_codes else None
+        sample = {
+            "stock_code": normalized_code,
+            "received_code": received_code,
+            "normalized_code": normalized_code,
+            "registered_code": registered_code,
+            "original_registered_code": original_registered_codes.get(
+                normalized_code
+            ),
+            "realtime_source_code": registered_code,
+            "source_code": registered_code,
+            "real_type": real_type,
+            "trade_time_raw": trade_time_raw,
+            "stale_trade_dropped": True,
+            "trade_lag_sec": lag_sec,
+        }
+        with self._lock:
+            self._stale_trade_drop_count += 1
+            self._last_stale_trade_lag_sec = lag_sec
+        return sample
 
     def _expected_registration_batches(self, codes):
         for index in range(0, len(codes), self._REALREG_BATCH_SIZE):
@@ -1630,9 +1883,16 @@ class KiwoomOpenApiRealtimeProvider:
             self._mark_realreg_failed(f"login_state={login_state}")
             return
 
-        codes = list(pending_codes)
+        codes = self._limited_realtime_codes(pending_codes)
         screens = []
         orderbook_screens = []
+        orderbook_realtime_enabled = self._orderbook_mode != "off"
+        orderbook_hot_codes, orderbook_rotate_pool = self._orderbook_groups(codes)
+        orderbook_rotate_codes = (
+            orderbook_rotate_pool[: self._orderbook_rotate_batch]
+            if self._orderbook_mode == "hybrid"
+            else []
+        )
         diagnostic_realreg_enabled = (
             os.getenv("STOCKBOARD_ENABLE_DIAGNOSTIC_REALREG", "")
             .strip()
@@ -1673,19 +1933,28 @@ class KiwoomOpenApiRealtimeProvider:
                     raise RuntimeError(
                         f"SetRealReg screen {screen} returned {result!r}"
                     )
-            for screen, batch in self._orderbook_registration_batches(codes):
-                orderbook_screens.append(screen)
-                result = control.dynamicCall(
-                    "SetRealReg(QString, QString, QString, QString)",
-                    screen,
-                    ";".join(batch),
-                    self._ORDERBOOK_REALREG_FIDS,
-                    "0",
-                )
-                if not self._is_success_result(result):
-                    raise RuntimeError(
-                        f"SetRealReg orderbook screen {screen} returned {result!r}"
+            if orderbook_realtime_enabled:
+                if orderbook_hot_codes:
+                    self._register_orderbook_screen(
+                        self._ORDERBOOK_HOT_SCREEN, orderbook_hot_codes
                     )
+                    orderbook_screens.append(self._ORDERBOOK_HOT_SCREEN)
+                if orderbook_rotate_codes:
+                    self._register_orderbook_screen(
+                        self._ORDERBOOK_ROTATE_SCREEN, orderbook_rotate_codes
+                    )
+                    orderbook_screens.append(self._ORDERBOOK_ROTATE_SCREEN)
+            else:
+                self._orderbook_seen_codes.clear()
+                if self.store is not None:
+                    try:
+                        self.store.clear_orderbook_events()
+                    except AttributeError:
+                        pass
+                    except Exception as error:
+                        self._last_error = (
+                            f"RealtimeStore.clear_orderbook_events failed: {error}"
+                        )
         except Exception as error:
             self._mark_realreg_failed(str(error))
             return
@@ -1756,14 +2025,32 @@ class KiwoomOpenApiRealtimeProvider:
             self._realreg_fids = self._REALREG_FIDS
             self._realreg_real_type = self._REALREG_REAL_TYPE
             self._realreg_screens = screens
-            self._orderbook_realreg_requested = True
-            self._orderbook_realreg_succeeded = True
-            self._orderbook_realreg_error = None
+            self._orderbook_realreg_requested = orderbook_realtime_enabled
+            self._orderbook_realreg_succeeded = orderbook_realtime_enabled
+            self._orderbook_realreg_error = (
+                None if orderbook_realtime_enabled else "disabled_by_env"
+            )
             self._orderbook_realreg_screen_count = len(orderbook_screens)
             self._orderbook_realreg_code_count = len(codes)
             self._orderbook_realreg_fids = self._ORDERBOOK_REALREG_FIDS
             self._orderbook_realreg_real_type = self._ORDERBOOK_REAL_TYPE
             self._orderbook_realreg_screens = orderbook_screens
+            self._orderbook_hot_codes = list(orderbook_hot_codes)
+            self._orderbook_rotate_pool = list(orderbook_rotate_pool)
+            self._orderbook_current_rotate_codes = list(orderbook_rotate_codes)
+            self._orderbook_next_rotate_index = len(orderbook_rotate_codes)
+            self._orderbook_last_rotate_at = (
+                time.monotonic() if orderbook_rotate_codes else None
+            )
+            self._orderbook_last_rotate_at_text = (
+                datetime.now().isoformat(timespec="seconds")
+                if orderbook_rotate_codes
+                else None
+            )
+            self._orderbook_registered_count = len(
+                set(orderbook_hot_codes) | set(orderbook_rotate_codes)
+            )
+            self._strength_5m_queue_size = len(codes)
             self._expected_realreg_succeeded = (
                 diagnostic_realreg_enabled and expected_error is None
             )
@@ -1836,13 +2123,46 @@ class KiwoomOpenApiRealtimeProvider:
                             "setrealreg_code": register_code,
                         }
                     )
+        register_codes = self._limited_realtime_codes(register_codes)
+        limited_register_set = set(register_codes)
+        normalized_codes = [
+            register_to_normalized[register_code]
+            for register_code in register_codes
+            if register_code in register_to_normalized
+        ]
+        original_codes = {
+            code: register_code
+            for code, register_code in original_codes.items()
+            if register_code in limited_register_set
+        }
+        register_to_normalized = {
+            register_code: code
+            for register_code, code in register_to_normalized.items()
+            if register_code in limited_register_set
+        }
+        code_map_sample = [
+            item
+            for item in code_map_sample
+            if item["input_code"] in limited_register_set
+        ][:20]
         screens = [
             screen
             for screen, _ in self._registration_batches(register_codes)
         ]
-        orderbook_screens = [
-            screen for screen, _ in self._orderbook_registration_batches(register_codes)
-        ]
+        orderbook_hot_codes, orderbook_rotate_pool = self._orderbook_groups(
+            register_codes
+        )
+        orderbook_rotate_codes = (
+            orderbook_rotate_pool[: self._orderbook_rotate_batch]
+            if self._orderbook_mode == "hybrid"
+            else []
+        )
+        orderbook_screens = []
+        if self._orderbook_mode != "off":
+            if orderbook_hot_codes:
+                orderbook_screens.append(self._ORDERBOOK_HOT_SCREEN)
+            if orderbook_rotate_codes:
+                orderbook_screens.append(self._ORDERBOOK_ROTATE_SCREEN)
         diagnostic_realreg_enabled = (
             os.getenv("STOCKBOARD_ENABLE_DIAGNOSTIC_REALREG", "")
             .strip()
@@ -1884,14 +2204,25 @@ class KiwoomOpenApiRealtimeProvider:
             self._realreg_fids = self._REALREG_FIDS
             self._realreg_real_type = self._REALREG_REAL_TYPE
             self._realreg_screens = screens
-            self._orderbook_realreg_requested = True
+            self._orderbook_realreg_requested = self._orderbook_mode != "off"
             self._orderbook_realreg_succeeded = False
-            self._orderbook_realreg_error = None
+            self._orderbook_realreg_error = (
+                None if self._orderbook_mode != "off" else "disabled_by_env"
+            )
             self._orderbook_realreg_screen_count = len(orderbook_screens)
-            self._orderbook_realreg_code_count = len(register_codes)
+            self._orderbook_realreg_code_count = len(
+                set(orderbook_hot_codes) | set(orderbook_rotate_codes)
+            )
             self._orderbook_realreg_fids = self._ORDERBOOK_REALREG_FIDS
             self._orderbook_realreg_real_type = self._ORDERBOOK_REAL_TYPE
             self._orderbook_realreg_screens = orderbook_screens
+            self._orderbook_hot_codes = list(orderbook_hot_codes)
+            self._orderbook_rotate_pool = list(orderbook_rotate_pool)
+            self._orderbook_current_rotate_codes = list(orderbook_rotate_codes)
+            self._orderbook_registered_count = len(
+                set(orderbook_hot_codes) | set(orderbook_rotate_codes)
+            )
+            self._strength_5m_queue_size = len(register_codes)
             self._expected_realreg_succeeded = False
             self._expected_realreg_error = None
             self._expected_realreg_screen_count = len(expected_screens)
@@ -1922,10 +2253,48 @@ class KiwoomOpenApiRealtimeProvider:
 
     def status(self):
         with self._lock:
+            recent_lags = list(self._recent_trade_lags)
+            avg_trade_lag = (
+                round(sum(recent_lags) / len(recent_lags), 3)
+                if recent_lags
+                else None
+            )
             return {
                 "available": self._check_availability(),
                 "running": self._running,
                 "registered_count": len(self._registered_codes),
+                "display_mode": self._display_mode,
+                "price_fast_mode": self._price_fast_mode,
+                "realtime_code_limit": self._realtime_code_limit,
+                "orderbook_realtime_enabled": self._orderbook_realtime_enabled,
+                "orderbook_mode": self._orderbook_mode,
+                "orderbook_hot_source": self._orderbook_hot_source,
+                "orderbook_hot_limit": self._orderbook_hot_limit,
+                "orderbook_rotate_batch": self._orderbook_rotate_batch,
+                "orderbook_rotate_interval_sec": (
+                    self._orderbook_rotate_interval_sec
+                ),
+                "orderbook_display": self._orderbook_display,
+                "orderbook_registered_count": self._orderbook_registered_count,
+                "orderbook_hot_codes_sample": list(
+                    self._orderbook_hot_codes[:20]
+                ),
+                "orderbook_rotate_codes_sample": list(
+                    self._orderbook_current_rotate_codes[:20]
+                ),
+                "orderbook_last_rotate_at": self._orderbook_last_rotate_at_text,
+                "strength_5m_enabled": self._strength_5m_enabled,
+                "strength_5m_queue_size": self._strength_5m_queue_size,
+                "strength_5m_last_cycle_at": self._strength_5m_last_cycle_at,
+                "stale_trade_drop_seconds": self._stale_trade_drop_seconds,
+                "stale_trade_drop_count": self._stale_trade_drop_count,
+                "last_stale_trade_lag_sec": self._last_stale_trade_lag_sec,
+                "last_trade_lag_sec": self._last_trade_lag_sec,
+                "max_trade_lag_sec": self._max_trade_lag_sec,
+                "avg_trade_lag_sec_recent": avg_trade_lag,
+                "latest_trade_lag_by_code_sample": dict(
+                    list(self._latest_trade_lag_by_code.items())[:20]
+                ),
                 "last_error": self._last_error,
                 "last_received_at": self._last_received_at,
                 "qt_ready": self._qt_ready,
@@ -2088,8 +2457,18 @@ class KiwoomOpenApiRealtimeProvider:
                         self._suffix_last_samples[received_code] = suffix_sample
                     sample = suffix_sample
                 if not is_suffix_store_skip_code:
-                    sample = self._parse_trade_real_data(stock_code, real_type)
-                    self._store_trade_tick(sample, received_at)
+                    stale_sample = self._stale_trade_drop_sample(
+                        stock_code, real_type, received_code
+                    )
+                    if stale_sample is not None:
+                        sample = stale_sample
+                    else:
+                        sample = self._parse_trade_real_data(stock_code, real_type)
+                        self._record_trade_lag(
+                            sample.get("normalized_code"),
+                            self._trade_lag_seconds(sample.get("trade_time_raw")),
+                        )
+                        self._store_trade_tick(sample, received_at)
             except Exception as error:
                 parse_error = f"{type(error).__name__}: {error}"
         elif real_type == self._ORDERBOOK_REAL_TYPE:
@@ -2342,6 +2721,7 @@ class KiwoomOpenApiRealtimeProvider:
                 original_registered_code=tick["original_registered_code"],
                 realtime_source_code=tick["realtime_source_code"],
                 source_code=tick["source_code"],
+                price_first=self._price_fast_mode,
             )
         except Exception as error:
             with self._lock:
@@ -2376,6 +2756,13 @@ class KiwoomOpenApiRealtimeProvider:
             "source_code": registered_code,
             "real_type": real_type,
         }
+        with self._lock:
+            if received_code in set(self._orderbook_hot_codes):
+                sample["orderbook_source"] = "live_hot"
+            elif received_code in set(self._orderbook_current_rotate_codes):
+                sample["orderbook_source"] = "rotating"
+            else:
+                sample["orderbook_source"] = "unavailable"
         for fid, key in self._ORDERBOOK_REALDATA_FIDS:
             sample[key] = control.dynamicCall(
                 "GetCommRealData(QString, int)",
@@ -2417,6 +2804,7 @@ class KiwoomOpenApiRealtimeProvider:
             "original_registered_code": sample.get("original_registered_code"),
             "realtime_source_code": sample.get("realtime_source_code"),
             "source_code": sample.get("source_code"),
+            "orderbook_source": sample.get("orderbook_source"),
             "bid_volume": self._realdata_number(sample.get("bid_volume_raw")),
             "ask_volume": self._realdata_number(sample.get("ask_volume_raw")),
             "best_bid_price": normalize_kiwoom_price(
@@ -2438,6 +2826,7 @@ class KiwoomOpenApiRealtimeProvider:
                 original_registered_code=orderbook["original_registered_code"],
                 realtime_source_code=orderbook["realtime_source_code"],
                 source_code=orderbook["source_code"],
+                orderbook_source=orderbook.get("orderbook_source"),
             )
         except Exception as error:
             with self._lock:
