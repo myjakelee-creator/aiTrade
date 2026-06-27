@@ -38,7 +38,7 @@
   .direct-api-debug-wait{color:#7f8c8d}
   body[data-density="compact"]{--board-font-size:12px;--board-header-font-size:12px;--board-row-height:27px;--board-cell-padding-y:2px;--board-cell-padding-x:4px;--grade-padding-y:1px;--grade-padding-x:5px;--ohlc-height:20px;--ohlc-range-top:9px;--ohlc-body-top:4px;--ohlc-body-height:12px;--ohlc-level-top:2px;--ohlc-level-height:16px;--ohlc-open-top:3px;--ohlc-open-height:14px;--metric-height:22px;--metric-font-size:12px;--balance-box-height:23px;--balance-side-inset:3px;--balance-cell-padding:1px;--title-height:23px;--title-font-size:12px;--title-padding-x:7px;--topbar-height:30px;--top-font-size:12px;--top-button-font-size:11px;--top-cell-padding-x:5px;--lamp-size:11px;--market-font-size:12px;--market-header-font-size:11px;--market-cell-padding-x:5px;--section-height:20px;--section-title-font-size:12px;--section-padding-x:6px;--grade-distribution-padding-y:5px;--grade-distribution-chart-size:62px;--grade-distribution-hole-inset:15px;--grade-distribution-font-size:10px;--grade-distribution-title-size:11px}
   body[data-density="ultra"]{--board-font-size:11px;--board-header-font-size:11px;--board-row-height:23px;--board-cell-padding-y:1px;--board-cell-padding-x:3px;--grade-padding-y:1px;--grade-padding-x:4px;--ohlc-height:18px;--ohlc-range-top:8px;--ohlc-body-top:3px;--ohlc-body-height:11px;--ohlc-level-top:1px;--ohlc-level-height:16px;--ohlc-open-top:2px;--ohlc-open-height:14px;--metric-height:20px;--metric-font-size:11px;--balance-box-height:21px;--balance-side-inset:3px;--balance-cell-padding:1px;--title-height:21px;--title-font-size:11px;--title-padding-x:6px;--topbar-height:27px;--top-font-size:11px;--top-button-font-size:10px;--top-cell-padding-x:4px;--lamp-size:9px;--market-font-size:11px;--market-header-font-size:10px;--market-cell-padding-x:4px;--section-height:18px;--section-title-font-size:11px;--section-padding-x:5px;--grade-distribution-padding-y:4px;--grade-distribution-chart-size:54px;--grade-distribution-hole-inset:13px;--grade-distribution-font-size:10px;--grade-distribution-title-size:10px}
-  .topbar{display:grid;grid-template-columns:max-content max-content max-content max-content max-content max-content minmax(0,1fr);align-items:center;width:100%;min-width:0;height:var(--topbar-height);border-bottom:1px solid var(--line);font-size:var(--top-font-size);font-weight:var(--top-font-weight)}
+  .topbar{display:grid;grid-template-columns:max-content max-content max-content max-content max-content max-content max-content max-content minmax(0,1fr);align-items:center;width:100%;min-width:0;height:var(--topbar-height);border-bottom:1px solid var(--line);font-size:var(--top-font-size);font-weight:var(--top-font-weight)}
   .topbar>div:nth-child(2){padding:0 5px}
   .topbar>div{position:relative;height:100%;min-width:0;padding:0 var(--top-cell-padding-x);display:flex;align-items:center;justify-content:center;border-right:1px solid var(--line);white-space:nowrap;overflow:hidden}
   .topbar>div:first-child,.topbar>div:last-child{justify-content:flex-start}
@@ -53,6 +53,8 @@
   .density-toggle:hover{background:#e7edf3}
   .display-mode-toggle{width:100%;height:calc(var(--topbar-height) - 8px);border:1px solid #9aa8b5;border-radius:3px;background:#fff7df;color:#19324a;font:inherit;font-size:var(--top-button-font-size);font-weight:700;cursor:pointer}
   .display-mode-toggle:hover{background:#ffe9ad}
+  .next-scroll{width:100%;height:calc(var(--topbar-height) - 8px);border:1px solid #9aa8b5;border-radius:3px;background:#eef6ff;color:#19324a;font:inherit;font-size:var(--top-button-font-size);font-weight:700;cursor:pointer}
+  .next-scroll:hover{background:#dcecff}
   .width-reset{width:100%;height:calc(var(--topbar-height) - 8px);border:1px solid #9aa8b5;border-radius:3px;background:#fff;color:#19324a;font:inherit;font-size:var(--top-button-font-size);font-weight:600;cursor:pointer}
   .width-reset:hover{background:#eef4fa}
   .speed{color:#b8860b}.market-open{color:#168000}.focus-name{color:var(--red)}.momentum{color:#b8860b;font-size:var(--top-font-size);font-weight:500}
@@ -110,6 +112,7 @@
   body.column-resizing{cursor:col-resize;user-select:none}
   .enhanced-board .stock-name{cursor:help;text-decoration:underline dotted #7b8a97;text-underline-offset:3px}
   .enhanced-board .ohlc-cell{cursor:pointer}
+  .ohlc-fast-text{display:block;width:100%;text-align:left}
   .enhanced-board .ohlc-chart{position:relative;width:100%;min-width:0;height:var(--ohlc-height);margin:auto;background:linear-gradient(90deg,#eef3f8,#fff);border-radius:3px;overflow:hidden}
   .enhanced-board .ohlc-range{position:absolute;left:var(--low);right:calc(100% - var(--high));top:var(--ohlc-range-top);height:2px;background:#17202a;z-index:1}
   .enhanced-board .ohlc-body{position:absolute;left:var(--body-left);right:var(--body-right);top:var(--ohlc-body-top);min-width:2px;min-height:10px;height:var(--ohlc-body-height);background:var(--red);border:1px solid #cf666d;z-index:2}
@@ -206,6 +209,7 @@
     <div><span class="speed" id="refresh-delay" aria-label="마지막 API 응답 이후 경과시간">-</span></div>
     <div><button type="button" class="density-toggle" id="density-toggle">화면: 기본</button></div>
     <div><button type="button" class="display-mode-toggle" id="display-mode-toggle">Fast</button></div>
+    <div><button type="button" class="next-scroll" id="next-scroll">다음</button></div>
     <div><button type="button" class="width-reset" id="width-reset">폭 초기화</button></div>
     <div><span class="market-open" id="market-session">장마감</span></div>
     <div class="focus-momentum"><span class="focus-name">삼성전기</span><span class="momentum">VWAP돌파 + 시가위 + 전고돌파</span></div>
@@ -253,6 +257,7 @@
   const candidateBoard = document.getElementById('candidate-board');
   const densityToggle = document.getElementById('density-toggle');
   const displayModeToggle = document.getElementById('display-mode-toggle');
+  const nextScrollButton = document.getElementById('next-scroll');
   const widthReset = document.getElementById('width-reset');
   const rankingRowCount = document.getElementById('ranking-row-count');
   const dataDiagnostics = document.getElementById('data-diagnostics');
@@ -619,6 +624,7 @@
       { defaultWidth: 54, minWidth: 42 },
       { defaultWidth: 92, minWidth: 78 },
       { defaultWidth: 86, minWidth: 72 },
+      { defaultWidth: 54, minWidth: 42 },
       { defaultWidth: 76, minWidth: 58 },
       { defaultWidth: 298, minWidth: 180 }
     ];
@@ -630,6 +636,8 @@
       getHandleCells: cells,
       applyWidths(widths) {
         topbar.style.gridTemplateColumns = [
+          'max-content',
+          'max-content',
           'max-content',
           'max-content',
           'max-content',
@@ -1011,6 +1019,10 @@
   const REALTIME_PATCH_REFRESH_MS = 500;
   const REALTIME_PATCH_DELTA_ENABLED = true;
   const FIVE_MIN_STRENGTH_WINDOW_MS = 5 * 60 * 1000;
+  const CLOSE_METRICS_LAZY_BATCH_SIZE = 20;
+  const CLOSE_METRICS_LAZY_THROTTLE_MS = 1000;
+  const CLOSE_METRICS_SCROLL_TRIGGER_PX = 150;
+  const CLOSE_METRICS_LAZY_REFRESH_DELAY_MS = 10000;
   const top100State = {
     rowByCode: new Map(),
     candidateRowByCode: new Map(),
@@ -1024,6 +1036,14 @@
     displayMode: loadDisplayMode(),
     candleMode: loadCandleMode(),
     candleDomain: null,
+    closeMetricsRequestedCodes: new Set(),
+    closeMetricsPendingCodes: new Set(),
+    closeMetricsCompletedCodes: new Set(),
+    closeMetricsLazyLastRequestedAt: 0,
+    closeMetricsLazyInFlight: false,
+    closeMetricsLazyRefreshTimer: null,
+    closeMetricsLastScrollY: window.scrollY || 0,
+    closeMetricsScrollDelta: 0,
     diagnostics: {
       apiRows: 0,
       apiOhlc: 0,
@@ -1042,6 +1062,7 @@
     saveDisplayMode(nextMode);
     renderBoard(top100State.renderedRows);
   });
+  nextScrollButton?.addEventListener('click', () => requestNextCloseMetricsBatch('button'));
   densityToggle?.addEventListener('click', () => {
     const currentIndex = displayDensityModes.indexOf(top100State.displayDensity);
     const nextMode = displayDensityModes[(currentIndex + 1) % displayDensityModes.length];
@@ -1711,7 +1732,7 @@
     if (!candle) return emptyCandle;
     if (isFastDisplayMode()) {
       return {
-        html: `<span class="fast-metric-text ${fastOhlcClass(row, candle)}">${escapeHtml(fastOhlcText(row, candle))}</span>`,
+        html: `<span class="ohlc-fast-text fast-metric-text ${fastOhlcClass(row, candle)}">${escapeHtml(fastOhlcText(row, candle))}</span>`,
         background: '',
         tooltip: ohlcTooltip(candle, source)
       };
@@ -2374,7 +2395,13 @@
     const tooltip = view?.tooltip || '';
     setCell(cell, html, className, '');
     cell.removeAttribute('title');
-    cell.querySelectorAll('[title]').forEach(element => element.removeAttribute('title'));
+    cell.querySelectorAll('[title],[data-tooltip],[data-tooltip-html],[data-balance-tooltip],[data-ohlc-tooltip]').forEach(element => {
+      element.removeAttribute('title');
+      element.removeAttribute('data-tooltip');
+      element.removeAttribute('data-tooltip-html');
+      element.removeAttribute('data-balance-tooltip');
+      element.removeAttribute('data-ohlc-tooltip');
+    });
     const background = view?.background || '';
     if (cell.dataset.visualBackground !== background) {
       cell.style.background = background;
@@ -2590,7 +2617,7 @@
     const directCell = target?.closest?.('td.ohlc-cell[data-tooltip]');
     if (directCell) return directCell;
     const source = target?.closest?.('[data-tooltip]');
-    return source?.closest('td') || null;
+    return source?.closest('td.ohlc-cell') || null;
   }
 
   function currentOhlcTooltipCell() {
@@ -2654,6 +2681,7 @@
   document.addEventListener('scroll', () => {
     hideBalanceTooltip();
     hideOhlcTooltip();
+    handleCloseMetricsScrollTrigger();
   }, true);
 
   function updateBoardRow(tableRow, row, flashRealtime = false) {
@@ -2908,6 +2936,7 @@
     row.sortBidAskRatio = sortableNumber(row.bid_ask_ratio);
     setVisualCell(tableRow.cells[8], orderbookMetricView(row.balanceForce, row), 'balance-cell visual-cell');
     refreshBalanceTooltip(tableRow.cells[8]);
+    syncCloseMetricsCompletion([row]);
     row.bestBidPrice = firstValue(patch, ['best_bid_price']);
     row.bestAskPrice = firstValue(patch, ['best_ask_price']);
     row.realtimeReceivedAt = firstValue(patch, ['received_at']);
@@ -3116,6 +3145,7 @@
   }
 
   function renderBoard(rows) {
+    syncCloseMetricsCompletion(rows);
     const foreignLabel = rows.find(row => row.foreignLabel)?.foreignLabel || '외합(억)';
     if (boardColumns[11].label !== foreignLabel) {
       boardColumns[11].label = foreignLabel;
@@ -3160,6 +3190,108 @@
     top100State.diagnostics.normalizedOhlc = normalizedRows.filter(hasDisplayOhlc).length;
     renderBoard(normalizedRows);
     return { received: inputRows.length, displayed: normalizedRows.length };
+  }
+
+  function hasCloseMetricsSnapshot(row) {
+    return row?.strength_source === 'opt10046'
+      && row?.orderbook_source === 'opt10004';
+  }
+
+  function syncCloseMetricsCompletion(rows) {
+    rows.forEach(row => {
+      if (!row?.code) return;
+      if (!hasCloseMetricsSnapshot(row)) return;
+      top100State.closeMetricsCompletedCodes.add(row.code);
+      top100State.closeMetricsPendingCodes.delete(row.code);
+    });
+  }
+
+  function rowNeedsCloseMetrics(row) {
+    if (!row?.code) return false;
+    if (hasCloseMetricsSnapshot(row)) return false;
+    if (top100State.closeMetricsCompletedCodes.has(row.code)) return false;
+    if (top100State.closeMetricsRequestedCodes.has(row.code)) return false;
+    if (top100State.closeMetricsPendingCodes.has(row.code)) return false;
+    return true;
+  }
+
+  function collectNextCloseMetricCodes() {
+    const codes = [];
+    const rowByCode = new Map(top100State.renderedRows.map(row => [row.code, row]));
+    for (const tableRow of board.querySelectorAll('tbody tr[data-stock-code]')) {
+      const code = normalizeCode(tableRow.dataset.stockCode);
+      if (!code) continue;
+      const row = rowByCode.get(code);
+      if (!rowNeedsCloseMetrics(row)) continue;
+      codes.push(code);
+      if (codes.length >= CLOSE_METRICS_LAZY_BATCH_SIZE) break;
+    }
+    return codes;
+  }
+
+  function scheduleCloseMetricsLazyRefresh() {
+    if (top100State.closeMetricsLazyRefreshTimer) return;
+    top100State.closeMetricsLazyRefreshTimer = window.setTimeout(() => {
+      top100State.closeMetricsLazyRefreshTimer = null;
+      refreshTop100();
+    }, CLOSE_METRICS_LAZY_REFRESH_DELAY_MS);
+  }
+
+  async function requestLazyCloseMetrics(codes, trigger = 'manual') {
+    if (!codes.length) return null;
+    codes.forEach(code => {
+      top100State.closeMetricsRequestedCodes.add(code);
+      top100State.closeMetricsPendingCodes.add(code);
+    });
+    const query = new URLSearchParams({
+      codes: codes.join(','),
+      priority: 'lazy',
+      force: '0'
+    });
+    try {
+      const response = await fetch(`/api/close_metrics_request?${query}`, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`close metrics lazy request failed: ${response.status}`);
+      const payload = await response.json();
+      console.debug('close metrics lazy queued', trigger, payload);
+      scheduleCloseMetricsLazyRefresh();
+      return payload;
+    } catch (error) {
+      console.warn(error);
+      return null;
+    }
+  }
+
+  async function requestNextCloseMetricsBatch(trigger = 'manual') {
+    if (top100State.closeMetricsLazyInFlight) return null;
+    const now = Date.now();
+    if (now - top100State.closeMetricsLazyLastRequestedAt < CLOSE_METRICS_LAZY_THROTTLE_MS) {
+      return null;
+    }
+    const codes = collectNextCloseMetricCodes();
+    if (!codes.length) return null;
+    top100State.closeMetricsLazyLastRequestedAt = now;
+    top100State.closeMetricsLazyInFlight = true;
+    if (nextScrollButton) nextScrollButton.disabled = true;
+    try {
+      return await requestLazyCloseMetrics(codes, trigger);
+    } finally {
+      top100State.closeMetricsLazyInFlight = false;
+      if (nextScrollButton) nextScrollButton.disabled = false;
+    }
+  }
+
+  function handleCloseMetricsScrollTrigger() {
+    const currentY = window.scrollY || document.documentElement.scrollTop || 0;
+    const delta = currentY - top100State.closeMetricsLastScrollY;
+    top100State.closeMetricsLastScrollY = currentY;
+    if (delta <= 0) {
+      top100State.closeMetricsScrollDelta = 0;
+      return;
+    }
+    top100State.closeMetricsScrollDelta += delta;
+    if (top100State.closeMetricsScrollDelta < CLOSE_METRICS_SCROLL_TRIGGER_PX) return;
+    top100State.closeMetricsScrollDelta = 0;
+    requestNextCloseMetricsBatch('scroll');
   }
 
   document.addEventListener('keydown', event => {
@@ -3215,6 +3347,7 @@
       }).filter(Boolean);
       const previousRowByCode = new Map(top100State.renderedRows.map(row => [row.code, row]));
       normalizedRows.forEach(row => preserveRealtimeFields(row, previousRowByCode.get(row.code)));
+      syncCloseMetricsCompletion(normalizedRows);
       top100State.diagnostics.normalizedRows = normalizedRows.length;
       top100State.diagnostics.normalizedOhlc = normalizedRows.filter(hasOhlc).length;
       if (top100State.boardSort.key) {
