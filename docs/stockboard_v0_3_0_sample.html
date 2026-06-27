@@ -77,6 +77,7 @@
   </table>
 </div>
 <script src="assets/stockboard_format.js?v=5f_format_split_20260627"></script>
+<script src="assets/stockboard_state.js?v=5g_state_constants_20260627"></script>
 <script>
   /*
    * JS split map for 5B+:
@@ -110,6 +111,28 @@
   const formatOhlcTooltipNumber = StockBoardFormat.formatOhlcTooltipNumber;
   const formatOhlcMove = StockBoardFormat.formatOhlcMove;
   const formatOhlcTooltipPrice = StockBoardFormat.formatOhlcTooltipPrice;
+  const StockBoardState = window.StockBoardState || {};
+  const STOCKBOARD_STORAGE_KEYS = StockBoardState.STORAGE_KEYS || {
+    tradingBoardColumnWidths: 'stockboard.tradingBoard.columnWidths.v1',
+    tradingBoardSortState: 'stockboard.tradingBoard.sortState.v1',
+    displayDensity: 'stockboard.displayDensity.v1',
+    displayMode: 'stockboardDisplayMode',
+    topbarColumnWidths: 'stockboard.topbar.columnWidths.v4',
+    usMarketColumnWidths: 'stockboard.usMarket.columnWidths.v2',
+    marketSupplyColumnWidths: 'stockboard.marketSupply.columnWidths.v2',
+    candleMode: 'stockboard.candleMode.v1',
+    debugPanelVisible: 'stockboard.debugPanelVisible'
+  };
+  const STOCKBOARD_DISPLAY_MODES = StockBoardState.DISPLAY_MODES || {
+    fast: 'fast',
+    graphic: 'graphic'
+  };
+  const STOCKBOARD_CLOSE_METRICS = StockBoardState.CLOSE_METRICS || {
+    batchSize: 20,
+    throttleMs: 1000,
+    scrollDeltaTriggerPx: 150,
+    refreshDelayMs: 10000
+  };
 
   const board = document.getElementById('trading-board');
   const candidateBoard = document.getElementById('candidate-board');
@@ -151,7 +174,7 @@
     institution: document.getElementById(`market-${key}-institution`),
     program: document.getElementById(`market-${key}-program`)
   }]));
-  const columnWidthStorageKey = 'stockboard.tradingBoard.columnWidths.v1';
+  const columnWidthStorageKey = STOCKBOARD_STORAGE_KEYS.tradingBoardColumnWidths;
   /*
    * localStorage keys:
    * - stockboard.tradingBoard.columnWidths.v1
@@ -164,14 +187,14 @@
    * - stockboard.candleMode.v1
    * - stockboard.debugPanelVisible
    */
-  const boardSortStorageKey = 'stockboard.tradingBoard.sortState.v1';
-  const displayDensityStorageKey = 'stockboard.displayDensity.v1';
-  const displayModeStorageKey = 'stockboardDisplayMode';
-  const topbarWidthStorageKey = 'stockboard.topbar.columnWidths.v4';
-  const usMarketWidthStorageKey = 'stockboard.usMarket.columnWidths.v2';
-  const marketWidthStorageKey = 'stockboard.marketSupply.columnWidths.v2';
-  const candleModeStorageKey = 'stockboard.candleMode.v1';
-  const debugPanelVisibleStorageKey = 'stockboard.debugPanelVisible';
+  const boardSortStorageKey = STOCKBOARD_STORAGE_KEYS.tradingBoardSortState;
+  const displayDensityStorageKey = STOCKBOARD_STORAGE_KEYS.displayDensity;
+  const displayModeStorageKey = STOCKBOARD_STORAGE_KEYS.displayMode;
+  const topbarWidthStorageKey = STOCKBOARD_STORAGE_KEYS.topbarColumnWidths;
+  const usMarketWidthStorageKey = STOCKBOARD_STORAGE_KEYS.usMarketColumnWidths;
+  const marketWidthStorageKey = STOCKBOARD_STORAGE_KEYS.marketSupplyColumnWidths;
+  const candleModeStorageKey = STOCKBOARD_STORAGE_KEYS.candleMode;
+  const debugPanelVisibleStorageKey = STOCKBOARD_STORAGE_KEYS.debugPanelVisible;
   const candleModeToggleTitle = '클릭: 캔들모드 전환 / C: 전환';
   const candleModes = new Set(['full', 'proportional']);
   const displayDensityModes = ['normal', 'compact', 'ultra'];
@@ -344,9 +367,11 @@
   function loadDisplayMode() {
     try {
       const savedMode = localStorage.getItem(displayModeStorageKey);
-      return savedMode === 'graphic' ? 'graphic' : 'fast';
+      return savedMode === STOCKBOARD_DISPLAY_MODES.graphic
+        ? STOCKBOARD_DISPLAY_MODES.graphic
+        : STOCKBOARD_DISPLAY_MODES.fast;
     } catch (error) {
-      return 'fast';
+      return STOCKBOARD_DISPLAY_MODES.fast;
     }
   }
 
@@ -385,7 +410,7 @@
   }
 
   function isFastDisplayMode() {
-    return top100State.displayMode === 'fast';
+    return top100State.displayMode === STOCKBOARD_DISPLAY_MODES.fast;
   }
 
   let currentDisplayDensity = loadDisplayDensity();
@@ -920,10 +945,10 @@
   const REALTIME_PATCH_REFRESH_MS = 500;
   const REALTIME_PATCH_DELTA_ENABLED = true;
   const FIVE_MIN_STRENGTH_WINDOW_MS = 5 * 60 * 1000;
-  const CLOSE_METRICS_LAZY_BATCH_SIZE = 20;
-  const CLOSE_METRICS_LAZY_THROTTLE_MS = 1000;
-  const CLOSE_METRICS_SCROLL_TRIGGER_PX = 150;
-  const CLOSE_METRICS_LAZY_REFRESH_DELAY_MS = 10000;
+  const CLOSE_METRICS_LAZY_BATCH_SIZE = STOCKBOARD_CLOSE_METRICS.batchSize;
+  const CLOSE_METRICS_LAZY_THROTTLE_MS = STOCKBOARD_CLOSE_METRICS.throttleMs;
+  const CLOSE_METRICS_SCROLL_TRIGGER_PX = STOCKBOARD_CLOSE_METRICS.scrollDeltaTriggerPx;
+  const CLOSE_METRICS_LAZY_REFRESH_DELAY_MS = STOCKBOARD_CLOSE_METRICS.refreshDelayMs;
   const top100State = {
     rowByCode: new Map(),
     candidateRowByCode: new Map(),
@@ -960,7 +985,9 @@
   applyDebugPanelVisible(loadDebugPanelVisible());
   /* JS: controls / event binding */
   displayModeToggle?.addEventListener('click', () => {
-    const nextMode = top100State.displayMode === 'fast' ? 'graphic' : 'fast';
+    const nextMode = top100State.displayMode === STOCKBOARD_DISPLAY_MODES.fast
+      ? STOCKBOARD_DISPLAY_MODES.graphic
+      : STOCKBOARD_DISPLAY_MODES.fast;
     applyDisplayMode(nextMode);
     saveDisplayMode(nextMode);
     renderBoard(top100State.renderedRows);
@@ -3290,10 +3317,12 @@
   }
 
   function applyDisplayMode(mode) {
-    top100State.displayMode = mode === 'graphic' ? 'graphic' : 'fast';
+    top100State.displayMode = mode === STOCKBOARD_DISPLAY_MODES.graphic
+      ? STOCKBOARD_DISPLAY_MODES.graphic
+      : STOCKBOARD_DISPLAY_MODES.fast;
     document.body.dataset.displayMode = top100State.displayMode;
     if (displayModeToggle) {
-      displayModeToggle.textContent = top100State.displayMode === 'fast' ? 'Fast' : 'Graphic';
+      displayModeToggle.textContent = top100State.displayMode === STOCKBOARD_DISPLAY_MODES.fast ? 'Fast' : 'Graphic';
       displayModeToggle.setAttribute('aria-label', 'Graphic/Fast display mode');
     }
   }

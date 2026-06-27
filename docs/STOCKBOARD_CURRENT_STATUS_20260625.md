@@ -630,13 +630,14 @@ AHK_RUNNING=True
 | 22 | HTMLJsSafeDedup | DONE |
 | 23 | HTMLJsSplitDesign | WIP |
 | 24 | HTMLFormatJsSplit | WIP |
-| 25 | HTMLModuleSplit | TODO |
-| 26 | CandidateModelV02 | TODO |
-| 27 | ForeignFuturesSource | TODO |
-| 28 | BigHandKRT | TODO |
-| 29 | DayStrengthBackfill | TODO |
-| 30 | MarketSupplyRefresh | TODO |
-| 31 | SignalRankingStrategyFormalize | TODO |
+| 25 | HTMLStateConstantsSplit | WIP |
+| 26 | HTMLModuleSplit | TODO |
+| 27 | CandidateModelV02 | TODO |
+| 28 | ForeignFuturesSource | TODO |
+| 29 | BigHandKRT | TODO |
+| 30 | DayStrengthBackfill | TODO |
+| 31 | MarketSupplyRefresh | TODO |
+| 32 | SignalRankingStrategyFormalize | TODO |
 
 ## 13. 2026-06-27 장마감 조회 snapshot 확정
 
@@ -865,3 +866,25 @@ AHK_RUNNING=True
   - `sortableNumber`, `sortableText`: sort/render 경로와 함께 후속 단계에서 검토한다.
 - render, tooltip, close metrics, Direct API debug, controls, main loop는 아직 inline 유지다.
 - 5E+5F는 검증 후 하나의 묶음 커밋으로 처리한다.
+
+## 21. state/constants 최소 분리 5G
+
+- 5G에서 `docs/assets/stockboard_state.js`를 생성했다.
+- ES module은 아직 사용하지 않으며, `script type="module"` 전환과 `import/export` 추가는 수행하지 않았다.
+- 외부 파일은 `window.StockBoardState` namespace를 사용한다.
+- HTML은 `assets/stockboard_format.js`, `assets/stockboard_state.js`, 기존 inline main script 순서로 로드한다.
+- 분리한 상수:
+  - localStorage key 목록: trading board column widths, sort state, display density, display mode, topbar widths, US market widths, market supply widths, candle mode, debug panel visibility
+  - display mode constants: `fast`, `graphic`
+  - close metrics constants: batch size 20, throttle 1000ms, scroll delta 150px, refresh delay 10000ms
+- inline main script는 `STOCKBOARD_STORAGE_KEYS`, `STOCKBOARD_DISPLAY_MODES`, `STOCKBOARD_CLOSE_METRICS` compatibility alias로 기존 호출부 변경을 최소화한다.
+- 이동하지 않은 mutable runtime state:
+  - `top100State`
+  - `renderedRows`, `candidateRows`, `rowByCode`
+  - close metrics requested/pending/completed Set과 lazy timer/inflight state
+  - tooltip root/state
+  - Direct API debug runtime state
+  - selection/clipboard bridge state
+  - column resize runtime controller state
+- render, tooltip, close metrics functions, Direct API debug functions, controls, main loop는 아직 inline 유지다.
+- 다음 단계는 visual-cell 또는 tooltip 분리 검토다.
