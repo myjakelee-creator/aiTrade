@@ -638,13 +638,15 @@ AHK_RUNNING=True
 | 30 | HTMLCloseMetricsHelperSplit | WIP |
 | 31 | HTMLDirectApiDebugSplitDesign | WIP |
 | 32 | HTMLDirectApiDebugHelperSplit | WIP |
-| 33 | HTMLModuleSplit | TODO |
-| 34 | CandidateModelV02 | TODO |
-| 35 | ForeignFuturesSource | TODO |
-| 36 | BigHandKRT | TODO |
-| 37 | DayStrengthBackfill | TODO |
-| 38 | MarketSupplyRefresh | TODO |
-| 39 | SignalRankingStrategyFormalize | TODO |
+| 33 | HTMLSelectionControlsSplitDesign | WIP |
+| 34 | HTMLControlsHelperSplit | WIP |
+| 35 | HTMLModuleSplit | TODO |
+| 36 | CandidateModelV02 | TODO |
+| 37 | ForeignFuturesSource | TODO |
+| 38 | BigHandKRT | TODO |
+| 39 | DayStrengthBackfill | TODO |
+| 40 | MarketSupplyRefresh | TODO |
+| 41 | SignalRankingStrategyFormalize | TODO |
 
 ## 13. 2026-06-27 장마감 조회 snapshot 확정
 
@@ -1364,3 +1366,285 @@ AHK_RUNNING=True
 - table DOM compare helper는 cell index 4/5 의존이 있어 보류한다.
 - topbar controls/event binding 분리는 controls 단계까지 보류한다.
 - hidden 상태 DOM update 최소화는 fetch skip으로 대부분 해소되지만, 추가 최적화는 브라우저 검증 후 별도 단계에서 판단한다.
+
+## 29. selection/controls 분리 설계/위험점 점검 5Q
+
+- 5Q는 selection/controls 분리 설계와 위험점 점검 단계다.
+- 실제 JS 파일 생성, selection/controls 함수 이동, `script type="module"` 전환, `import/export` 추가는 수행하지 않는다.
+- selection, clipboard, topbar controls, sort, column resize, localStorage, event binding 의존성을 조사하고 5R 최소 분리 범위를 정리한다.
+
+### selection / clipboard state와 함수
+
+- 현재 selection/clipboard는 HTML 하단의 별도 IIFE `/* JS: selection / clipboard bridge helper */` 안에 남아 있다.
+- state/constants:
+  - `STOCK_CODE_PATTERN = /^\d{6}(?:_(?:AL|NX))?$/`: 6자리 code와 `_AL`/`_NX` suffix 허용.
+  - `ACTIVE_ROW_CLASS = 'active-stock-row'`
+  - `ACTIVE_NAME_CLASS = 'active-stock-name'`
+  - `SELECTABLE_NAME_CLASS = 'stock-selectable-name'`
+  - `STATUS_CLASS = 'stock-link-status'`
+  - `STOCK_NAME_KEYS`, `STOCK_CODE_KEYS`
+  - `activeStockCode`: 현재 선택 종목 code.
+  - `statusTimer`: clipboard/status toast hide timer.
+  - `mutationApplyQueued`: MutationObserver 재적용 requestAnimationFrame gate.
+- 함수:
+  - `normalizeStockCode(value)`: selection IIFE 내부 code 정규화. inline main의 `normalizeCode(value)`와 별도이며 5Q에서는 통합하지 않는다.
+  - `getStatusElement()` / `showStockLinkStatus(message)`: selection 상태 표시 DOM 생성/갱신.
+  - `candidateDatasetCode(element)` / `findStockCodeFromElement(element)`: dataset 기반 code 탐색.
+  - `isLikelyStockNameElement(element)` / `findNameElementForRow(row)`: 클릭 대상과 종목명 cell 추정.
+  - `getStockRows()` / `getMainTableRows()`: 현재 DOM row 기반 visible stock row 수집.
+  - `clearActiveClasses()` / `markSelectableNames()` / `applyActiveStockClass(options)`: active highlight 재적용.
+  - `writeStockCodeToClipboard(stockCode)`: `navigator.clipboard.writeText()` 경로.
+  - `activateStock(stockCode, options)`: active code 저장, highlight, 필요 시 scroll, clipboard write.
+  - `isEditableTarget(target)` / `moveActiveStock(direction)` / `queueApplyActiveStockClass()`.
+- event/export:
+  - document click: stock name/code 후보 클릭 시 `activateStock(code)`.
+  - document keydown: ArrowUp/ArrowDown으로 active stock 이동.
+  - MutationObserver: render 후 DOM 변경 시 active class 재적용.
+  - `window.StockBoardSelection = { activateStock, applyActiveStockClass, activeStockCode getter }`.
+- 의존성:
+  - rendered DOM의 `data-stock-code` / `data-stockCode` / `data-stock_name` / `data-stockName`.
+  - 6자리 key 정책과 `_AL`/`_NX` suffix 허용 정책.
+  - `navigator.clipboard` 권한/브라우저 정책.
+  - renderBoard가 DOM을 다시 만들면 MutationObserver가 active class를 재적용한다.
+
+### controls DOM/state와 함수
+
+- DOM refs:
+  - `densityToggle = #density-toggle`
+  - `displayModeToggle = #display-mode-toggle`
+  - `nextScrollButton = #next-scroll`
+  - `debugToggle = #debug-toggle`
+  - `widthReset = #width-reset`
+- localStorage keys:
+  - `stockboardDisplayMode` via `displayModeStorageKey`
+  - `stockboard.displayDensity.v1` via `displayDensityStorageKey`
+  - `stockboard.candleMode.v1` via `candleModeStorageKey`
+  - `stockboard.debugPanelVisible` via `debugPanelVisibleStorageKey`
+- StockBoardState aliases:
+  - `STOCKBOARD_STORAGE_KEYS`
+  - `STOCKBOARD_DISPLAY_MODES`
+- functions/state:
+  - `loadCandleMode()` / `saveCandleMode(mode)`
+  - `loadDisplayDensity()` / `saveDisplayDensity(mode)` / `applyDisplayDensity(mode)`
+  - `loadDisplayMode()` / `saveDisplayMode(mode)` / `applyDisplayMode(mode)`
+  - `loadDebugPanelVisible()` / `saveDebugPanelVisible(visible)` / `applyDebugPanelVisible(visible)`
+  - `toggleCandleMode()` / `handleCandleCellClick(event)`
+- event bindings:
+  - Fast/Graphic: `displayModeToggle.click` -> mode toggle, save, `renderBoard(top100State.renderedRows)`.
+  - 다음: `nextScrollButton.click` -> `requestNextCloseMetricsBatch('button')`.
+  - 진단: `debugToggle.click` -> panel visible toggle, save, ON이면 `loadDirectApiDebug()` 즉시 호출.
+  - density: `densityToggle.click` -> density mode rotation, apply widths, save.
+  - width reset: `widthReset.click` -> `resetAllColumnWidths()`.
+  - candle cell click: candidate/trading board `click` -> `handleCandleCellClick()`.
+  - keyboard `c`: document keydown -> `toggleCandleMode()`.
+- 의존성:
+  - Fast/Graphic은 `top100State.displayMode`, visual-cell rendering, `renderBoard()`와 결합.
+  - 다음 버튼은 close metrics `requestNextCloseMetricsBatch()`와 결합.
+  - 진단 버튼은 `StockBoardDebug` helper, localStorage, Direct API debug fetch gate와 결합.
+  - density는 board column widths와 render layout에 결합.
+
+### sort / column resize state와 함수
+
+- sort state:
+  - `boardColumns`: label, defaultWidth, minWidth, sortKey, sortDefault 정의.
+  - `boardSortDefaults`: `sortKey -> default direction` map.
+  - `top100State.boardSort`: current sort key/direction.
+  - `boardSortStorageKey = stockboard.tradingBoard.sortState.v1`.
+- sort functions:
+  - `normalizeSortDirection(value)`
+  - `loadBoardSortState()` / `saveBoardSortState()`
+  - `sortValueForKey(row, key)` / `compareBoardRows(left, right, key, direction)` / `sortBoardRows(rows)`
+  - `updateBoardSortIndicators()`
+  - `handleBoardSortHeaderClick(event)`
+- sort event/render 연결:
+  - `board.addEventListener('click', handleBoardSortHeaderClick)`.
+  - `renderBoard(rows)`가 `sortBoardRows(rows)`로 displayRows를 만들고, header를 재생성한 뒤 `updateBoardSortIndicators()`를 호출한다.
+- trading/candidate board column width state:
+  - `columnWidthStorageKey = stockboard.tradingBoard.columnWidths.v1`
+  - `boardColumnDensityWidths`, `boardColumnDensityMinWidths`
+  - `boardColumnManualWidths`, `boardColumnWidths`, `columnResize`
+  - `columnGroupMarkup`, `boardHeader`
+- trading/candidate width functions:
+  - `normalizeManualColumnWidth(value, index)`
+  - `loadManualColumnWidths()` / `saveColumnWidths()`
+  - `hasManualColumnWidths(widths)`
+  - `applyColumnWidths()` / `applyDensityColumnWidths()`
+  - `resetAllColumnWidths()` / `resetColumnWidth(columnIndex)`
+  - `startColumnResize(event)` / `restoreColumnWidth(event)` / `finishColumnResize(event)`
+- trading/candidate width events:
+  - `[board, candidateBoard].pointerdown` -> `startColumnResize`.
+  - `[board, candidateBoard].dblclick` -> `restoreColumnWidth`.
+  - `window.pointermove` -> active resize update.
+  - `window.pointerup` / `window.pointercancel` -> `finishColumnResize`.
+- upper layout resize:
+  - `initializeUpperColumnResize({ root, columns, storageKey, getHandleCells, applyWidths, measureWidth })`.
+  - `initializeTopbarColumnResize()` uses `stockboard.topbar.columnWidths.v4`.
+  - `initializeUsMarketColumnResize()` uses `stockboard.usMarket.columnWidths.v2`.
+  - `initializeMarketColumnResize()` uses `stockboard.marketSupply.columnWidths.v2`.
+  - each setup uses `upper-column-resizer`, pointer/dblclick/window pointer events, localStorage, `ResizeObserver`.
+- 의존성:
+  - board header HTML includes sort indicators and column resizers.
+  - renderBoard can rebuild board header, so sort indicators/column resizer markup must survive header regeneration.
+  - density changes recalculate board widths unless manual widths exist.
+
+### event binding 위치 요약
+
+- inline main 초기화 직후:
+  - `displayModeToggle.click`, `nextScrollButton.click`, `debugToggle.click`, `densityToggle.click`, `widthReset.click`.
+- inline resize section:
+  - upper tables `pointerdown`/`dblclick`, window `pointermove`/`pointerup`/`pointercancel`.
+  - board/candidate `pointerdown`/`dblclick`, window `pointermove`/`pointerup`/`pointercancel`.
+- tooltip/scroll section:
+  - document `mousemove`, `click`, `keydown`, `scroll` for tooltip and close metrics scroll trigger.
+- candle/sort section:
+  - candidate/trading board `click` for OHLC candle mode toggle.
+  - trading board `click` for sort header.
+  - document keydown `c` for candle mode.
+- selection IIFE:
+  - document `click` for stock activation/copy.
+  - document `keydown` for ArrowUp/ArrowDown.
+  - MutationObserver for active class reapply after render.
+- refresh/main loop:
+  - intervals for top100/market/realtime patch/debug remain inline.
+
+### 위험 의존성
+
+- `renderBoard()`가 board DOM과 header를 다시 만들기 때문에 selection active class, sort indicator, column resizer markup, row data attributes가 모두 render 결과에 의존한다.
+- column width는 localStorage, density mode, board/candidate CSS variables, marketOverview width, board header colgroup에 동시에 의존한다.
+- sort state는 `top100State.boardSort`, `top100State.renderedRows`, `sortValueForKey()`의 normalized row fields와 결합되어 있다.
+- selection은 DOM dataset과 `normalizeStockCode()`의 6자리/`_AL`/`_NX` 허용 정책에 의존한다. inline main의 `normalizeCode()`와 비슷하지만 역할이 달라 5R에서 통합하면 위험하다.
+- 다음 버튼은 close metrics request flow와 연결되어 있어 controls로 성급히 이동하면 lazy request, throttle, disabled state가 깨질 수 있다.
+- 진단 버튼은 debug helper, hidden fetch gate, localStorage, `loadDirectApiDebug()` 즉시 호출과 연결된다.
+- Fast/Graphic mode는 visual-cell rendering, `renderBoard()`, localStorage와 연결된다.
+- document keydown은 tooltip hide/candle mode/selection navigation이 여러 위치에서 쓰므로 분리 순서가 꼬이면 단축키 충돌이 생길 수 있다.
+- MutationObserver 기반 selection reapply는 render churn에 민감하다.
+
+### 5R 최소 분리 후보
+
+- `docs/assets/stockboard_controls.js` 생성은 가능하지만 5R 범위는 순수 helper 중심으로 제한한다.
+- 5R 이동 후보:
+  - localStorage string read/write helper: key/fallback/validator를 인자로 받는 형태.
+  - localStorage JSON read/write helper: sort/width state용 generic helper.
+  - button pressed/active helper: button, active boolean -> class/aria-pressed 반영.
+  - safe event binding helper: nullable target에 event listener를 붙이고 cleanup handle을 반환하는 정도.
+  - class toggle helper: element/className/enabled 인자 기반.
+- 5R 보류 후보:
+  - row selection 전체.
+  - clipboard bridge 전체.
+  - sort 전체.
+  - column resize 전체.
+  - 다음 버튼 event binding.
+  - 진단 버튼 event binding.
+  - Fast/Graphic toggle 전체.
+  - candle mode toggle 전체.
+  - renderBoard와 연결된 sort/resize/selection 재적용 로직.
+
+### selection/controls 분리 위험도 표
+
+| 구성요소 | 현재 위치 | DOM 의존도 | localStorage 의존도 | render 의존도 | 분리 위험도 | 5R 이동 여부 | 보류 사유 |
+|---|---|---:|---:|---:|---:|---|---|
+| localStorage read/write wrappers | inline localStorage helpers | 낮음 | 높음 | 낮음 | 낮음 | 후보 | key/validator를 인자로 받으면 안전 |
+| button active/aria helper | inline controls/debug helpers | 중간 | 낮음 | 낮음 | 낮음~중간 | 후보 | DOM element를 인자로 받는 순수 DOM helper 가능 |
+| nullable event binding helper | inline event binding | 중간 | 없음 | 낮음 | 낮음~중간 | 후보 | 실제 binding 대상과 callback은 inline 유지 |
+| Fast/Graphic toggle | inline controls | 중간 | 중간 | 높음 | 높음 | 보류 | `renderBoard()`와 visual-cell mode 결합 |
+| 다음 버튼 binding | inline controls | 중간 | 없음 | 중간 | 높음 | 보류 | close metrics request flow 결합 |
+| 진단 버튼 binding | inline controls | 중간 | 중간 | 낮음 | 중간~높음 | 보류 | debug fetch gate/localStorage 결합 |
+| density toggle | inline controls | 중간 | 중간 | 높음 | 높음 | 보류 | board width/density 재계산 결합 |
+| candle mode toggle | inline render/controls | 높음 | 중간 | 높음 | 높음 | 보류 | OHLC render/updateVisibleCandleCells 결합 |
+| board sort | inline sort/render | 높음 | 중간 | 높음 | 높음 | 보류 | normalized rows/renderBoard/header indicator 결합 |
+| trading column resize | inline resize section | 매우 높음 | 높음 | 높음 | 매우 높음 | 보류 | board/candidate CSS vars/header/localStorage 결합 |
+| upper column resize | inline resize section | 매우 높음 | 높음 | 중간 | 높음 | 보류 | measurement DOM/ResizeObserver/localStorage 결합 |
+| selection active state | selection IIFE | 매우 높음 | 없음 | 높음 | 높음 | 보류 | render DOM 재생성/MutationObserver 의존 |
+| clipboard bridge | selection IIFE | 높음 | 없음 | 중간 | 높음 | 보류 | navigator.clipboard 권한과 status UI 결합 |
+| `normalizeStockCode` | selection IIFE | 낮음 | 없음 | 낮음 | 중간 | 보류 | 6자리/_AL/_NX 정책과 `normalizeCode` 차이 유지 필요 |
+
+- 다음 5R에서는 controls 전체 이동이 아니라, storage/button/event/class helper처럼 콜백과 runtime state를 인자로 받는 작은 helper만 분리하는 방향이 안전하다.
+
+## 30. controls 순수 helper 최소 분리 5R
+
+- 5R에서 `docs/assets/stockboard_controls.js`를 생성했다.
+- ES module은 아직 사용하지 않으며 `script type="module"` 전환과 `import/export` 추가는 수행하지 않는다.
+- 외부 파일은 `window.StockBoardControls` namespace를 사용한다.
+- HTML 로드 순서:
+  1. `assets/stockboard_format.js`
+  2. `assets/stockboard_state.js`
+  3. `assets/stockboard_visual_cells.js`
+  4. `assets/stockboard_tooltip.js`
+  5. `assets/stockboard_close_metrics.js`
+  6. `assets/stockboard_debug.js`
+  7. `assets/stockboard_controls.js`
+  8. 기존 inline main script
+
+### 분리한 controls helper
+
+- `readStoredValue(storageKey, fallback)`
+- `writeStoredValue(storageKey, value)`
+- `readStoredBoolean(storageKey, fallback)`
+- `writeStoredBoolean(storageKey, value)`
+- `applyButtonPressed(button, pressed)`
+- `toggleElementHidden(element, hidden)`
+- `safeAddEventListener(target, type, handler, options)`
+- `setElementText(element, text)`
+
+### inline compatibility alias
+
+- inline main script는 `window.StockBoardControls || {}`를 `StockBoardControls`로 받는다.
+- 사용 alias:
+  - `readStoredValue`
+  - `writeStoredValue`
+  - `safeAddEventListener`
+  - `setElementText`
+- localStorage read/write 중 단순 문자열 저장/복원만 controls helper를 사용한다.
+- 실제 controls callback은 inline에 남겨두고, nullable event attachment만 `safeAddEventListener()`로 감싼다.
+
+### inline 유지 항목
+
+- selection IIFE 전체:
+  - `activeStockCode`
+  - `normalizeStockCode`
+  - `findStockCodeFromElement`
+  - `activateStock`
+  - `writeStockCodeToClipboard`
+  - ArrowUp/Down 이동
+  - MutationObserver 재적용
+  - `window.StockBoardSelection` export
+- sort 관련 전체:
+  - `boardColumns`
+  - `boardSortDefaults`
+  - `top100State.boardSort`
+  - `loadBoardSortState`
+  - `saveBoardSortState`
+  - `sortBoardRows`
+  - `handleBoardSortHeaderClick`
+- column resize 관련 전체:
+  - upper column resize runtime
+  - trading/candidate board resize runtime
+  - pointer/dblclick/window resize handlers
+  - width localStorage save/restore/reset logic
+- actual controls callback:
+  - Fast/Graphic toggle callback
+  - 다음 버튼 callback -> `requestNextCloseMetricsBatch('button')`
+  - 진단 버튼 callback -> debug visible/fetch gate
+  - density toggle callback
+  - candle mode callback
+  - width reset callback
+- render/main loop:
+  - `renderBoard`
+  - `refreshTop100`
+  - realtime patch loop
+  - Direct API debug loop
+
+### 적용한 안전 사용 범위
+
+- `loadCandleMode`, `loadDisplayDensity`, `loadDisplayMode`는 `readStoredValue()`를 사용한다.
+- `saveCandleMode`, `saveDisplayDensity`, `saveDisplayMode`는 `writeStoredValue()`를 사용한다.
+- `displayModeToggle`, `nextScrollButton`, `debugToggle`, `densityToggle`, `widthReset` event attachment는 `safeAddEventListener()`를 사용한다.
+- `densityToggle`과 `displayModeToggle` text update는 `setElementText()`를 사용한다.
+- selection, clipboard, sort, column resize, renderBoard 연결은 이동하지 않는다.
+
+### 남은 보류
+
+- selection helper 분리는 6자리 key, `_AL`/`_NX` 허용, clipboard 권한, MutationObserver 재적용 정책 때문에 보류한다.
+- sort 분리는 normalized row field, `top100State.boardSort`, `renderBoard()` header regeneration 의존 때문에 보류한다.
+- column resize 분리는 DOM measurement, CSS variable, localStorage, `ResizeObserver`, pointer state 의존 때문에 보류한다.
+- 다음 단계에서는 selection 또는 sort/resize 분리 여부를 별도 설계 단계로 다시 판단한다.

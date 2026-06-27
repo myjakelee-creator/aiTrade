@@ -82,6 +82,7 @@
 <script src="assets/stockboard_tooltip.js?v=5j_tooltip_core_20260627"></script>
 <script src="assets/stockboard_close_metrics.js?v=5l_close_metrics_helpers_20260627"></script>
 <script src="assets/stockboard_debug.js?v=5o_debug_helpers_20260627"></script>
+<script src="assets/stockboard_controls.js?v=5r_controls_helpers_20260627"></script>
 <script>
   /*
    * JS split map for 5B+:
@@ -92,6 +93,7 @@
    * - stockboard_tooltip.js: custom tooltip roots and hover state
    * - stockboard_close_metrics.js: next-batch close metrics request state/functions
    * - stockboard_debug.js: Direct API diagnostic helper functions
+   * - stockboard_controls.js: null-safe control/storage DOM helpers
    * - stockboard_controls.js: topbar buttons, resize, sort, candle mode, debug toggle
    * - stockboard_main.js: boot, refresh loops, public window adapters
    */
@@ -154,6 +156,11 @@
   const buildDirectApiDebugUrl = StockBoardDebug.buildDirectApiDebugUrl;
   const pickDirectApiValue = StockBoardDebug.pickDirectApiValue;
   const applyDebugPanelVisibility = StockBoardDebug.applyDebugPanelVisibility;
+  const StockBoardControls = window.StockBoardControls || {};
+  const readStoredValue = StockBoardControls.readStoredValue;
+  const writeStoredValue = StockBoardControls.writeStoredValue;
+  const safeAddEventListener = StockBoardControls.safeAddEventListener;
+  const setElementText = StockBoardControls.setElementText;
 
   const board = document.getElementById('trading-board');
   const candidateBoard = document.getElementById('candidate-board');
@@ -352,55 +359,37 @@
   }
 
   function loadCandleMode() {
-    try {
-      const savedMode = localStorage.getItem(candleModeStorageKey);
-      return candleModes.has(savedMode) ? savedMode : 'full';
-    } catch (error) {
-      return 'full';
-    }
+    const savedMode = readStoredValue(candleModeStorageKey, 'full');
+    return candleModes.has(savedMode) ? savedMode : 'full';
   }
 
   function saveCandleMode(mode) {
-    try {
-      localStorage.setItem(candleModeStorageKey, mode);
-    } catch (error) {
-      console.warn('Candle mode could not be saved.', error);
+    if (!writeStoredValue(candleModeStorageKey, mode)) {
+      console.warn('Candle mode could not be saved.');
     }
   }
 
   function loadDisplayDensity() {
-    try {
-      const savedDensity = localStorage.getItem(displayDensityStorageKey);
-      return displayDensityModes.includes(savedDensity) ? savedDensity : 'normal';
-    } catch (error) {
-      return 'normal';
-    }
+    const savedDensity = readStoredValue(displayDensityStorageKey, 'normal');
+    return displayDensityModes.includes(savedDensity) ? savedDensity : 'normal';
   }
 
   function saveDisplayDensity(mode) {
-    try {
-      localStorage.setItem(displayDensityStorageKey, mode);
-    } catch (error) {
-      console.warn('Display density could not be saved.', error);
+    if (!writeStoredValue(displayDensityStorageKey, mode)) {
+      console.warn('Display density could not be saved.');
     }
   }
 
   function loadDisplayMode() {
-    try {
-      const savedMode = localStorage.getItem(displayModeStorageKey);
-      return savedMode === STOCKBOARD_DISPLAY_MODES.graphic
-        ? STOCKBOARD_DISPLAY_MODES.graphic
-        : STOCKBOARD_DISPLAY_MODES.fast;
-    } catch (error) {
-      return STOCKBOARD_DISPLAY_MODES.fast;
-    }
+    const savedMode = readStoredValue(displayModeStorageKey, STOCKBOARD_DISPLAY_MODES.fast);
+    return savedMode === STOCKBOARD_DISPLAY_MODES.graphic
+      ? STOCKBOARD_DISPLAY_MODES.graphic
+      : STOCKBOARD_DISPLAY_MODES.fast;
   }
 
   function saveDisplayMode(mode) {
-    try {
-      localStorage.setItem(displayModeStorageKey, mode);
-    } catch (error) {
-      console.warn('Display mode could not be saved.', error);
+    if (!writeStoredValue(displayModeStorageKey, mode)) {
+      console.warn('Display mode could not be saved.');
     }
   }
 
@@ -426,7 +415,7 @@
     currentDisplayDensity = displayDensityModes.includes(mode) ? mode : 'normal';
     document.body.dataset.density = currentDisplayDensity;
     if (densityToggle) {
-      densityToggle.textContent = `화면: ${displayDensityLabels[currentDisplayDensity] || displayDensityLabels.normal}`;
+      setElementText(densityToggle, `화면: ${displayDensityLabels[currentDisplayDensity] || displayDensityLabels.normal}`);
       densityToggle.setAttribute('aria-label', '전광판 밀도 전환: 기본 → 압축 → 초압축');
     }
   }
@@ -991,7 +980,7 @@
   applyDisplayMode(top100State.displayMode);
   applyDebugPanelVisible(loadDebugPanelVisible());
   /* JS: controls / event binding */
-  displayModeToggle?.addEventListener('click', () => {
+  safeAddEventListener(displayModeToggle, 'click', () => {
     const nextMode = top100State.displayMode === STOCKBOARD_DISPLAY_MODES.fast
       ? STOCKBOARD_DISPLAY_MODES.graphic
       : STOCKBOARD_DISPLAY_MODES.fast;
@@ -999,8 +988,8 @@
     saveDisplayMode(nextMode);
     renderBoard(top100State.renderedRows);
   });
-  nextScrollButton?.addEventListener('click', () => requestNextCloseMetricsBatch('button'));
-  debugToggle?.addEventListener('click', () => {
+  safeAddEventListener(nextScrollButton, 'click', () => requestNextCloseMetricsBatch('button'));
+  safeAddEventListener(debugToggle, 'click', () => {
     const nextVisible = directApiDebugPanel?.hidden !== false;
     applyDebugPanelVisible(nextVisible);
     saveDebugPanelVisible(nextVisible);
@@ -1008,7 +997,7 @@
       loadDirectApiDebug();
     }
   });
-  densityToggle?.addEventListener('click', () => {
+  safeAddEventListener(densityToggle, 'click', () => {
     const currentIndex = displayDensityModes.indexOf(top100State.displayDensity);
     const nextMode = displayDensityModes[(currentIndex + 1) % displayDensityModes.length];
     top100State.displayDensity = nextMode;
@@ -1018,7 +1007,7 @@
   });
   if (widthReset) {
     widthReset.setAttribute('aria-label', '저장된 전광판 열폭을 지우고 현재 밀도 기준폭으로 복귀');
-    widthReset.addEventListener('click', resetAllColumnWidths);
+    safeAddEventListener(widthReset, 'click', resetAllColumnWidths);
   }
 
   /* JS: normalize / format helpers */
@@ -3214,7 +3203,7 @@
       : STOCKBOARD_DISPLAY_MODES.fast;
     document.body.dataset.displayMode = top100State.displayMode;
     if (displayModeToggle) {
-      displayModeToggle.textContent = top100State.displayMode === STOCKBOARD_DISPLAY_MODES.fast ? 'Fast' : 'Graphic';
+      setElementText(displayModeToggle, top100State.displayMode === STOCKBOARD_DISPLAY_MODES.fast ? 'Fast' : 'Graphic');
       displayModeToggle.setAttribute('aria-label', 'Graphic/Fast display mode');
     }
   }
