@@ -269,12 +269,12 @@ def fetch_program_net(access_token, query_date):
             page_rows = [row for row in raw_rows if isinstance(row, dict)]
             row_count += len(page_rows)
             for row in page_rows:
-                stock_code = _stock_code(_first(row, "stk_cd", "stock_code", "종목코드"))
+                stock_code = _stock_code(_first(row, "stk_cd", "stock_code", "\uc885\ubaa9\ucf54\ub4dc"))
                 raw_value = _first(
                     row,
                     "netprps_prica",
                     "program_net",
-                    "프로그램순매수대금",
+                    "\ud504\ub85c\uadf8\ub7a8\uc21c\ub9e4\uc218\ub300\uae08",
                 )
                 converted_value = _program_net_eok(raw_value, divisor)
                 if stock_code and converted_value is not None:
@@ -755,7 +755,7 @@ def _fetch_market_investor_flow(access_token, market_name, market_type, base_dat
             for row in rows
             if isinstance(row, dict)
             and (
-                "종합" in str(row.get("inds_nm", ""))
+                "\uc885\ud569" in str(row.get("inds_nm", ""))
                 or str(row.get("inds_cd", "")).split("_", 1)[0]
                 == ("001" if market_type == "0" else "101")
             )
@@ -1150,10 +1150,19 @@ class KiwoomOpenApiRealtimeProvider:
     _REALREG_BATCH_SIZE = 100
     _REALREG_SCREEN_START = 9000
     _REALREG_FIDS = "10;12;20;15;228;13;14;290"
-    _REALREG_REAL_TYPE = "주식체결"
+    _REALREG_REAL_TYPE = "\uc8fc\uc2dd\uccb4\uacb0"
     _ORDERBOOK_REALREG_SCREEN_START = 9010
     _ORDERBOOK_HOT_SCREEN = "9010"
     _ORDERBOOK_ROTATE_SCREEN = "9011"
+    _STRENGTH_PROBE_SCREEN = "9020"
+    _STRENGTH_PROBE_RQNAME = "stockboard_opt10046_probe"
+    _STRENGTH_PROBE_TRCODE = "opt10046"
+    _STRENGTH_PROBE_FIELDS = (
+        "\uccb4\uacb0\uac15\ub3c4",
+        "\uccb4\uacb0\uac15\ub3c45\ubd84",
+        "\uccb4\uacb0\uac15\ub3c420\ubd84",
+        "\uccb4\uacb0\uac15\ub3c460\ubd84",
+    )
     _ORDERBOOK_REALREG_FIDS = "41;51;121;125"
     _ECN_ORDERBOOK_REAL_TYPE = "ECN\uc8fc\uc2dd\ud638\uac00\uc794\ub7c9"
     _EXPECTED_REALREG_SCREEN_START = 9020
@@ -1168,7 +1177,7 @@ class KiwoomOpenApiRealtimeProvider:
         ("NX", "9120", ("005930_NX", "000660_NX", "402340_NX")),
     )
     _SUFFIX_OPERATING_AL_CODES = ("005930_AL", "000660_AL", "402340_AL")
-    _ORDERBOOK_REAL_TYPE = "주식호가잔량"
+    _ORDERBOOK_REAL_TYPE = "\uc8fc\uc2dd\ud638\uac00\uc794\ub7c9"
     _TRADE_REALDATA_FIDS = (
         (10, "price_raw"),
         (12, "change_rate_raw"),
@@ -1238,6 +1247,7 @@ class KiwoomOpenApiRealtimeProvider:
         self._original_registered_codes = {}
         self._qt_ready = False
         self._control_created = False
+        self._tr_event_connected = False
         self._login_requested = False
         self._login_state = "not_requested"
         self._login_error_code = None
@@ -1379,6 +1389,40 @@ class KiwoomOpenApiRealtimeProvider:
         )
         self._strength_5m_queue_size = 0
         self._strength_5m_last_cycle_at = None
+        self._close_metrics_queue = deque()
+        self._close_metrics_queued = set()
+        self._close_metrics_cache = {}
+        self._close_metrics_attempts = {}
+        self._close_metrics_last_request_at = 0.0
+        self._close_metrics_query_interval_sec = max(
+            0.34, float(os.getenv("STOCKBOARD_CLOSE_METRICS_INTERVAL_SEC", "0.34"))
+        )
+        self._close_metrics_max_attempts = max(
+            1, _env_int("STOCKBOARD_CLOSE_METRICS_MAX_ATTEMPTS", 1)
+        )
+        self._close_metrics_last_cycle_at = None
+        self._close_metrics_last_error = None
+        self._close_metrics_tr_notes = {
+            "strength": (
+                "opt10046 strength queue enabled for active/candidate/top20; "
+                "provider-ready gated"
+            ),
+            "orderbook": "opt10004 candidate is unconfirmed in local docs",
+        }
+        self._strength_probe_pending = deque()
+        self._strength_probe_pending_codes = set()
+        self._strength_probe_inflight = None
+        self._strength_probe_cache = {}
+        self._strength_probe_last_request_at = 0.0
+        self._strength_probe_last_by_code = {}
+        self._strength_probe_last_result = None
+        self._strength_probe_last_error = None
+        self._strength_probe_last_raw_sample = []
+        self._strength_probe_min_interval_sec = 1.0
+        self._strength_probe_duplicate_window_sec = 30.0
+        self._strength_probe_timeout_sec = 10.0
+        self._strength_probe_not_ready_retry_sec = 5.0
+        self._strength_probe_not_ready_reason = "not_checked"
         self._stale_trade_drop_seconds = max(
             0, _env_int("STOCKBOARD_DROP_STALE_TRADE_SECONDS", 0)
         )
@@ -1497,10 +1541,12 @@ class KiwoomOpenApiRealtimeProvider:
                 )
             control.OnEventConnect.connect(self._on_event_connect)
             control.OnReceiveRealData.connect(self._on_receive_real_data)
+            control.OnReceiveTrData.connect(self._on_receive_tr_data)
 
             with self._lock:
                 self._control = control
                 self._control_created = True
+                self._tr_event_connected = True
                 self._running = True
 
             login_request_succeeded = self._request_login()
@@ -1523,6 +1569,8 @@ class KiwoomOpenApiRealtimeProvider:
                     app.processEvents()
                     self._process_pending_realtime_requests()
                     self._process_orderbook_rotation()
+                    self._process_strength_probe_queue()
+                    self._process_close_metrics_queue()
                     pump_time = datetime.now().isoformat(timespec="seconds")
                     with self._lock:
                         self._qt_pump_running = True
@@ -1692,6 +1740,551 @@ class KiwoomOpenApiRealtimeProvider:
         except Exception as error:
             with self._lock:
                 self._last_error = f"orderbook rotation failed: {error}"
+
+    def enqueue_close_metrics(self, codes, priority="background", force=False):
+        normalized_codes = []
+        for code in codes or []:
+            normalized_code = _stock_code(code)
+            if normalized_code is None:
+                continue
+            normalized_codes.append(normalized_code)
+        if not normalized_codes:
+            return {
+                "accepted": 0,
+                "queued": 0,
+                "priority": priority,
+                "strength_probe_queued": 0,
+            }
+        queued = 0
+        deferred = 0
+        skipped_cached = 0
+        already_pending = 0
+        for code in normalized_codes:
+            response = self.enqueue_strength_probe(
+                code,
+                priority=priority,
+                force=force,
+            )
+            message = response.get("message")
+            status = response.get("status")
+            if status == "cached":
+                skipped_cached += 1
+            elif message == "strength probe already pending":
+                already_pending += 1
+            elif status in {"pending", "requested"}:
+                queued += 1
+            elif status == "deferred":
+                queued += 1
+                deferred += 1
+        return {
+            "accepted": len(normalized_codes),
+            "queued": queued,
+            "priority": priority,
+            "strength_probe_queued": queued,
+            "strength_probe_deferred": deferred,
+            "strength_probe_already_pending": already_pending,
+            "strength_probe_skipped_cached": skipped_cached,
+            "orderbook_status": "not_implemented",
+            "message": "strength probes queued; orderbook TR remains disabled",
+        }
+
+    def close_metrics_status(self, codes=None):
+        with self._lock:
+            ready, ready_reason = self._strength_probe_ready_state_locked()
+            now = time.monotonic()
+            pending_items = list(self._strength_probe_pending)
+            deferred_items = [
+                item
+                for item in pending_items
+                if (item.get("next_retry_at_monotonic") or 0) > now
+                or ready is not True
+            ]
+            requested_codes = [
+                _stock_code(code)
+                for code in (codes or [])
+                if _stock_code(code) is not None
+            ]
+            snapshots = (
+                self.store.close_metrics_snapshot(requested_codes)
+                if self.store is not None
+                else {}
+            )
+            return {
+                "queue_size": len(self._close_metrics_queue),
+                "queued_codes_sample": list(self._close_metrics_queue)[:20],
+                "cache_size": len(self._close_metrics_cache),
+                "strength_probe_cache_size": len(self._strength_probe_cache),
+                "attempts_sample": dict(list(self._close_metrics_attempts.items())[:20]),
+                "last_cycle_at": self._close_metrics_last_cycle_at,
+                "last_error": self._close_metrics_last_error,
+                "strength_probe_ready": ready,
+                "provider_ready_reason": ready_reason,
+                "provider_not_ready_reason": None if ready else ready_reason,
+                "strength_probe_pending_count": len(self._strength_probe_pending),
+                "strength_probe_pending_sample": [
+                    item.get("stock_code")
+                    for item in pending_items[:20]
+                ],
+                "strength_probe_deferred_count": len(deferred_items),
+                "strength_probe_deferred_sample": [
+                    item.get("stock_code")
+                    for item in deferred_items[:20]
+                ],
+                "strength_probe_inflight_code": (
+                    self._strength_probe_inflight.get("stock_code")
+                    if self._strength_probe_inflight
+                    else None
+                ),
+                "strength_probe_last_result": (
+                    dict(self._strength_probe_last_result)
+                    if isinstance(self._strength_probe_last_result, dict)
+                    else self._strength_probe_last_result
+                ),
+                "strength_probe_last_error": self._strength_probe_last_error,
+                "strength_probe_last_raw_sample": list(
+                    self._strength_probe_last_raw_sample
+                ),
+                "rate_limit_per_sec": round(
+                    1 / self._close_metrics_query_interval_sec, 3
+                ),
+                "tr_notes": dict(self._close_metrics_tr_notes),
+                "snapshots": snapshots,
+            }
+
+    def _process_close_metrics_queue(self):
+        with self._lock:
+            if not self._close_metrics_queue:
+                return
+            now = time.monotonic()
+            if now - self._close_metrics_last_request_at < (
+                self._close_metrics_query_interval_sec
+            ):
+                return
+            code = self._close_metrics_queue.popleft()
+            self._close_metrics_queued.discard(code)
+            self._close_metrics_last_request_at = now
+        try:
+            snapshot = self._query_close_metrics_snapshot(code)
+            if self.store is not None:
+                self.store.update_close_metrics(code, snapshot)
+            with self._lock:
+                self._close_metrics_cache[(code, "close_metrics")] = snapshot
+                self._close_metrics_last_cycle_at = datetime.now().isoformat(
+                    timespec="seconds"
+                )
+                self._close_metrics_last_error = None
+        except Exception as error:
+            with self._lock:
+                attempts = self._close_metrics_attempts.get(code, 0) + 1
+                self._close_metrics_attempts[code] = attempts
+                self._close_metrics_last_error = str(error)
+                should_retry = attempts < self._close_metrics_max_attempts
+                if should_retry:
+                    self._close_metrics_queue.append(code)
+                    self._close_metrics_queued.add(code)
+            if self.store is not None:
+                self.store.update_close_metrics(
+                    code,
+                    {
+                        "orderbook_source": "query_snapshot",
+                        "orderbook_status": "pending" if should_retry else "error",
+                        "strength_source": "opt10046",
+                        "strength_status": "pending" if should_retry else "error",
+                        "status_detail": str(error),
+                    },
+                )
+
+    def _query_close_metrics_snapshot(self, code):
+        # opt10046 is documented as the official strength source, but this
+        # provider currently has no COM TR receive path. Keep the queue safe
+        # and observable until the exact TR field map is wired.
+        return {
+            "orderbook_source": "query_snapshot",
+            "orderbook_status": "error",
+            "strength_source": "opt10046",
+            "strength_status": "error",
+            "status_detail": (
+                "bulk close metrics TR query not wired: opt10046 probe only, "
+                "orderbook TR candidate opt10004 unconfirmed"
+            ),
+        }
+
+    def _strength_probe_ready_state_locked(self):
+        if not self._running:
+            return False, "provider_not_running"
+        if self._login_state != "connected":
+            return False, f"login_state={self._login_state}"
+        if self._tr_event_connected is not True:
+            return False, "tr_event_not_connected"
+        if self._control is None:
+            return False, "control_unavailable"
+        if self._qt_pump_running is not True:
+            return False, "qt_pump_not_running"
+        return True, "ready"
+
+    def is_strength_probe_ready(self):
+        with self._lock:
+            return self._strength_probe_ready_state_locked()[0]
+
+    def _strength_probe_deferred_result(self, code, requested_at=None, reason=None):
+        snapshot_at = datetime.now().isoformat(timespec="seconds")
+        return {
+            "stock_code": code,
+            "strength_source": "opt10046_probe",
+            "strength_status": "deferred",
+            "strength_error": reason or "provider_not_ready",
+            "strength_requested_at": requested_at,
+            "strength_snapshot_at": snapshot_at,
+        }
+
+    def enqueue_strength_probe(self, code, priority="active", force=False):
+        normalized_code = _stock_code(code)
+        if normalized_code is None:
+            raise ValueError(f"invalid stock code: {code!r}")
+        requested_at = datetime.now().isoformat(timespec="seconds")
+        with self._lock:
+            cached = self._strength_probe_cache.get(normalized_code)
+            snapshot_date = str(cached.get("strength_snapshot_at", ""))[:10] if cached else ""
+            if (
+                not force
+                and cached
+                and cached.get("strength_status") == "ok"
+                and snapshot_date == requested_at[:10]
+            ):
+                response = {
+                    "ok": True,
+                    "accepted": [normalized_code],
+                    "status": "cached",
+                    "message": "strength probe cache reused",
+                    "requested_at": requested_at,
+                    "snapshot_at": cached.get("strength_snapshot_at"),
+                }
+                self._strength_probe_last_result = dict(response)
+                return response
+            now = time.monotonic()
+            ready, not_ready_reason = self._strength_probe_ready_state_locked()
+            last_for_code = self._strength_probe_last_by_code.get(normalized_code)
+            if not force and last_for_code and now - last_for_code < (
+                self._strength_probe_duplicate_window_sec
+            ):
+                return self._strength_probe_error(
+                    normalized_code,
+                    "duplicate_probe_suppressed",
+                )
+            if (
+                normalized_code in self._strength_probe_pending_codes
+                or (
+                    self._strength_probe_inflight
+                    and self._strength_probe_inflight.get("stock_code")
+                    == normalized_code
+                )
+            ):
+                response = {
+                    "ok": True,
+                    "accepted": [normalized_code],
+                    "status": "pending",
+                    "message": "strength probe already pending",
+                }
+                self._strength_probe_last_result = dict(response)
+                return response
+            item = {
+                "stock_code": normalized_code,
+                "requested_at": requested_at,
+                "priority": priority,
+                "next_retry_at_monotonic": (
+                    now + self._strength_probe_not_ready_retry_sec
+                    if not ready
+                    else now
+                ),
+            }
+            if priority == "active":
+                self._strength_probe_pending.appendleft(item)
+            else:
+                self._strength_probe_pending.append(item)
+            self._strength_probe_pending_codes.add(normalized_code)
+            status = "pending" if ready else "deferred"
+            error = None if ready else not_ready_reason
+            self._strength_probe_not_ready_reason = error or "ready"
+        response = {
+            "ok": True,
+            "accepted": [normalized_code],
+            "status": status,
+            "message": (
+                "strength probe queued"
+                if status == "pending"
+                else "strength probe deferred until provider ready"
+            ),
+            "requested_at": requested_at,
+        }
+        if self.store is not None:
+            self.store.update_close_metrics(
+                normalized_code,
+                {
+                    "strength_source": "opt10046_probe",
+                    "strength_status": status,
+                    "strength_error": error,
+                    "strength_requested_at": requested_at,
+                    "strength_snapshot_at": requested_at,
+                },
+            )
+        with self._lock:
+            self._strength_probe_last_result = dict(response)
+        return response
+
+    def request_strength_tr_probe(self, code):
+        return self.enqueue_strength_probe(code, priority="active", force=True)
+
+    def _process_strength_probe_queue(self):
+        with self._lock:
+            self._expire_strength_probe_inflight_locked()
+            if self._strength_probe_inflight is not None:
+                return
+            if not self._strength_probe_pending:
+                return
+            now = time.monotonic()
+            if now - self._strength_probe_last_request_at < (
+                self._strength_probe_min_interval_sec
+            ):
+                return
+            ready, not_ready_reason = self._strength_probe_ready_state_locked()
+            if not ready:
+                item = self._strength_probe_pending[0]
+                retry_at = item.get("next_retry_at_monotonic") or 0
+                if now < retry_at:
+                    return
+                item["next_retry_at_monotonic"] = (
+                    now + self._strength_probe_not_ready_retry_sec
+                )
+                code = item["stock_code"]
+                requested_at = item.get("requested_at")
+                result = self._strength_probe_deferred_result(
+                    code,
+                    requested_at=requested_at,
+                    reason=not_ready_reason,
+                )
+                self._strength_probe_not_ready_reason = not_ready_reason
+                self._strength_probe_last_error = not_ready_reason
+                self._strength_probe_last_result = dict(result)
+                if self.store is not None:
+                    self.store.update_close_metrics(code, result)
+                return
+            item = self._strength_probe_pending.popleft()
+            self._strength_probe_pending_codes.discard(item["stock_code"])
+        self._request_strength_tr_probe_on_qt(item)
+
+    def _expire_strength_probe_inflight_locked(self):
+        inflight = self._strength_probe_inflight
+        if not inflight:
+            return
+        started_at = inflight.get("started_at_monotonic")
+        if started_at is None:
+            return
+        if time.monotonic() - started_at < self._strength_probe_timeout_sec:
+            return
+        code = inflight.get("stock_code")
+        requested_at = inflight.get("requested_at")
+        self._strength_probe_inflight = None
+        self._strength_probe_error(
+            code,
+            "opt10046 probe timeout",
+            requested_at=requested_at,
+        )
+
+    def _request_strength_tr_probe_on_qt(self, item):
+        normalized_code = item["stock_code"]
+        requested_at = item.get("requested_at") or datetime.now().isoformat(
+            timespec="seconds"
+        )
+        with self._lock:
+            ready, not_ready_reason = self._strength_probe_ready_state_locked()
+            if not ready:
+                item["next_retry_at_monotonic"] = (
+                    time.monotonic() + self._strength_probe_not_ready_retry_sec
+                )
+                self._strength_probe_pending.appendleft(item)
+                self._strength_probe_pending_codes.add(normalized_code)
+                result = self._strength_probe_deferred_result(
+                    normalized_code,
+                    requested_at=requested_at,
+                    reason=not_ready_reason,
+                )
+                self._strength_probe_not_ready_reason = not_ready_reason
+                self._strength_probe_last_error = not_ready_reason
+                self._strength_probe_last_result = dict(result)
+                if self.store is not None:
+                    self.store.update_close_metrics(normalized_code, result)
+                return
+            control = self._control
+            self._strength_probe_last_request_at = time.monotonic()
+            self._strength_probe_last_by_code[normalized_code] = (
+                self._strength_probe_last_request_at
+            )
+        if control is None:
+            self._strength_probe_error(
+                normalized_code,
+                "control_unavailable",
+                requested_at=requested_at,
+            )
+            return
+        # opt10046 code suffix is unconfirmed locally. Probe uses six digits first;
+        # _AL retry is intentionally left for a later guarded probe.
+        try:
+            control.dynamicCall(
+                "SetInputValue(QString, QString)",
+                "\uc885\ubaa9\ucf54\ub4dc",
+                normalized_code,
+            )
+            result = control.dynamicCall(
+                "CommRqData(QString, QString, int, QString)",
+                self._STRENGTH_PROBE_RQNAME,
+                self._STRENGTH_PROBE_TRCODE,
+                0,
+                self._STRENGTH_PROBE_SCREEN,
+            )
+        except Exception as error:
+            self._strength_probe_error(
+                normalized_code,
+                str(error),
+                requested_at=requested_at,
+            )
+            return
+        if result not in (None, 0, "0"):
+            self._strength_probe_error(
+                normalized_code,
+                f"CommRqData returned {result!r}",
+                requested_at=requested_at,
+            )
+            return
+        requested = datetime.now().isoformat(timespec="seconds")
+        inflight = {
+            "stock_code": normalized_code,
+            "requested_at": requested_at,
+            "comm_requested_at": requested,
+            "rqname": self._STRENGTH_PROBE_RQNAME,
+            "trcode": self._STRENGTH_PROBE_TRCODE,
+            "screen_no": self._STRENGTH_PROBE_SCREEN,
+            "started_at_monotonic": time.monotonic(),
+        }
+        response = {
+            "stock_code": normalized_code,
+            "strength_source": "opt10046_probe",
+            "strength_status": "requested",
+            "strength_requested_at": requested_at,
+            "strength_snapshot_at": requested,
+            "strength_rqname": self._STRENGTH_PROBE_RQNAME,
+            "strength_trcode": self._STRENGTH_PROBE_TRCODE,
+            "strength_screen_no": self._STRENGTH_PROBE_SCREEN,
+        }
+        if self.store is not None:
+            self.store.update_close_metrics(normalized_code, response)
+        with self._lock:
+            self._strength_probe_inflight = inflight
+            self._strength_probe_last_result = dict(response)
+
+    def _strength_probe_error(self, code, message, requested_at=None):
+        completed_at = datetime.now().isoformat(timespec="seconds")
+        result = {
+            "stock_code": code,
+            "strength_source": "opt10046_probe",
+            "strength_status": "error",
+            "strength_error": str(message)[:160],
+            "strength_requested_at": requested_at,
+            "strength_completed_at": completed_at,
+            "strength_snapshot_at": completed_at,
+        }
+        self._strength_probe_last_error = result["strength_error"]
+        self._strength_probe_last_result = dict(result)
+        self._strength_probe_cache[code] = dict(result)
+        if self.store is not None:
+            self.store.update_close_metrics(code, result)
+        return result
+
+    def _on_receive_tr_data(self, *args):
+        try:
+            self._handle_receive_tr_data(*args)
+        except Exception as error:
+            with self._lock:
+                self._strength_probe_last_error = f"OnReceiveTrData failed: {error}"
+
+    def _handle_receive_tr_data(self, *args):
+        if len(args) < 3:
+            return
+        screen_no = str(args[0])
+        rq_name = str(args[1])
+        tr_code = str(args[2])
+        record_name = str(args[3]) if len(args) > 3 else ""
+        with self._lock:
+            inflight = self._strength_probe_inflight
+            if inflight is None or rq_name != inflight.get("rqname"):
+                return
+            self._strength_probe_inflight = None
+            control = self._control
+        if rq_name != self._STRENGTH_PROBE_RQNAME:
+            return
+        code = inflight.get("stock_code")
+        requested_at = inflight.get("requested_at")
+        if control is None or code is None:
+            self._strength_probe_error(code or "", "control_unavailable_on_receive")
+            return
+        repeat_count = 0
+        try:
+            repeat_count = control.dynamicCall(
+                "GetRepeatCnt(QString, QString)",
+                tr_code,
+                rq_name,
+            )
+        except Exception:
+            repeat_count = 0
+        try:
+            repeat_count = int(repeat_count or 0)
+        except (TypeError, ValueError):
+            repeat_count = 0
+        row_index = 0
+        raw_sample = []
+        values = {}
+        for field_name in self._STRENGTH_PROBE_FIELDS:
+            raw_value = control.dynamicCall(
+                "GetCommData(QString, QString, int, QString)",
+                tr_code,
+                rq_name,
+                row_index,
+                field_name,
+            )
+            text = "" if raw_value is None else str(raw_value).strip()
+            raw_sample.append({"field": field_name, "value": text})
+            values[field_name] = self._realdata_number(text)
+        snapshot_at = datetime.now().isoformat(timespec="seconds")
+        has_any_value = any(value is not None for value in values.values())
+        result = {
+            "stock_code": code,
+            "realtime_strength_snapshot": values.get(self._STRENGTH_PROBE_FIELDS[0]),
+            "strength_5m": values.get(self._STRENGTH_PROBE_FIELDS[1]),
+            "strength_20m": values.get(self._STRENGTH_PROBE_FIELDS[2]),
+            "strength_60m": values.get(self._STRENGTH_PROBE_FIELDS[3]),
+            "strength_source": "opt10046",
+            "strength_snapshot_at": snapshot_at,
+            "strength_completed_at": snapshot_at,
+            "strength_requested_at": requested_at,
+            "strength_stale_sec": 0,
+            "strength_status": "ok" if has_any_value else "no_data",
+            "strength_error": None if has_any_value else "empty opt10046 fields",
+            "strength_tr_repeat_count": repeat_count,
+            "strength_raw_sample": raw_sample[:5],
+            "strength_rqname": rq_name,
+            "strength_trcode": tr_code,
+            "strength_screen_no": screen_no,
+            "status_detail": (
+                f"screen={screen_no}, tr={tr_code}, record={record_name}, "
+                f"repeat_count={repeat_count}"
+            ),
+        }
+        if self.store is not None:
+            self.store.update_close_metrics(code, result)
+        with self._lock:
+            self._strength_probe_cache[code] = dict(result)
+            self._strength_probe_last_raw_sample = raw_sample[:5]
+            self._strength_probe_last_result = dict(result)
+            self._strength_probe_last_error = result.get("strength_error")
 
     def _limited_realtime_codes(self, codes):
         limit = self._realtime_code_limit
@@ -2259,6 +2852,17 @@ class KiwoomOpenApiRealtimeProvider:
                 if recent_lags
                 else None
             )
+            strength_ready, strength_ready_reason = (
+                self._strength_probe_ready_state_locked()
+            )
+            now = time.monotonic()
+            pending_items = list(self._strength_probe_pending)
+            deferred_items = [
+                item
+                for item in pending_items
+                if (item.get("next_retry_at_monotonic") or 0) > now
+                or strength_ready is not True
+            ]
             return {
                 "available": self._check_availability(),
                 "running": self._running,
@@ -2286,6 +2890,45 @@ class KiwoomOpenApiRealtimeProvider:
                 "strength_5m_enabled": self._strength_5m_enabled,
                 "strength_5m_queue_size": self._strength_5m_queue_size,
                 "strength_5m_last_cycle_at": self._strength_5m_last_cycle_at,
+                "close_metrics_queue_size": len(self._close_metrics_queue),
+                "close_metrics_cache_size": len(self._close_metrics_cache),
+                "strength_probe_cache_size": len(self._strength_probe_cache),
+                "close_metrics_last_cycle_at": self._close_metrics_last_cycle_at,
+                "close_metrics_last_error": self._close_metrics_last_error,
+                "close_metrics_rate_limit_per_sec": round(
+                    1 / self._close_metrics_query_interval_sec, 3
+                ),
+                "close_metrics_tr_notes": dict(self._close_metrics_tr_notes),
+                "tr_event_connected": self._tr_event_connected,
+                "strength_probe_ready": strength_ready,
+                "provider_ready_reason": strength_ready_reason,
+                "provider_not_ready_reason": (
+                    None if strength_ready else strength_ready_reason
+                ),
+                "strength_probe_pending_count": len(self._strength_probe_pending),
+                "strength_probe_pending_sample": [
+                    item.get("stock_code")
+                    for item in pending_items[:20]
+                ],
+                "strength_probe_deferred_count": len(deferred_items),
+                "strength_probe_deferred_sample": [
+                    item.get("stock_code")
+                    for item in deferred_items[:20]
+                ],
+                "strength_probe_inflight_code": (
+                    self._strength_probe_inflight.get("stock_code")
+                    if self._strength_probe_inflight
+                    else None
+                ),
+                "strength_probe_last_result": (
+                    dict(self._strength_probe_last_result)
+                    if isinstance(self._strength_probe_last_result, dict)
+                    else self._strength_probe_last_result
+                ),
+                "strength_probe_last_error": self._strength_probe_last_error,
+                "strength_probe_last_raw_sample": list(
+                    self._strength_probe_last_raw_sample
+                ),
                 "stale_trade_drop_seconds": self._stale_trade_drop_seconds,
                 "stale_trade_drop_count": self._stale_trade_drop_count,
                 "last_stale_trade_lag_sec": self._last_stale_trade_lag_sec,

@@ -23,12 +23,21 @@ QUOTE_FIELDS = (
     "best_ask",
     "bid_volume",
     "ask_volume",
+    "bid_volume_snapshot",
+    "ask_volume_snapshot",
+    "bid_pct",
+    "ask_pct",
+    "bid_ask_ratio_snapshot",
+    "orderbook_snapshot_at",
+    "orderbook_stale_sec",
+    "orderbook_status",
     "total_bid_qty",
     "total_ask_qty",
     "bid_ask_ratio",
     "orderbook_received_at",
     "orderbook_age_sec",
     "orderbook_source",
+    "realtime_strength_snapshot",
     "session_buy_qty_live",
     "session_sell_qty_live",
     "session_strength",
@@ -39,6 +48,15 @@ QUOTE_FIELDS = (
     "strength_snapshot_at",
     "strength_source",
     "strength_stale_sec",
+    "strength_status",
+    "strength_error",
+    "strength_requested_at",
+    "strength_completed_at",
+    "strength_tr_repeat_count",
+    "strength_raw_sample",
+    "strength_rqname",
+    "strength_trcode",
+    "strength_screen_no",
     "foreign_line_raw",
     "cumulative_volume",
     "cumulative_value",
@@ -63,6 +81,7 @@ class RealtimeStore:
         self._quotes = {}
         self._trade_events = {}
         self._orderbook_events = {}
+        self._close_metric_snapshots = {}
         self._base_ohlc = {}
         self._last_seen = {}
         self._trade_event_limit = trade_event_limit
@@ -150,6 +169,30 @@ class RealtimeStore:
         if buy_number < 0:
             return None
         return round((buy_number / sell_number) * 100, 4)
+
+    @staticmethod
+    def _snapshot_ratio(bid_volume, ask_volume):
+        try:
+            bid_number = float(bid_volume)
+            ask_number = float(ask_volume)
+        except (TypeError, ValueError):
+            return None
+        if bid_number < 0 or ask_number <= 0:
+            return None
+        return round(bid_number / ask_number, 4)
+
+    @staticmethod
+    def _bid_ask_pct(bid_volume, ask_volume):
+        try:
+            bid_number = float(bid_volume)
+            ask_number = float(ask_volume)
+        except (TypeError, ValueError):
+            return None, None
+        total = bid_number + ask_number
+        if bid_number < 0 or ask_number < 0 or total <= 0:
+            return None, None
+        bid_pct = round((bid_number / total) * 100)
+        return bid_pct, 100 - bid_pct
 
     @staticmethod
     def _price_number(value):
@@ -404,6 +447,102 @@ class RealtimeStore:
             events.append(event)
             return deepcopy(quote)
 
+    def update_close_metrics(self, stock_code, metrics):
+        if not isinstance(metrics, dict):
+            raise TypeError("metrics must be a dict")
+        code = self._normalized_code(stock_code)
+        timestamp = time.time()
+        timestamp_text = self._timestamp_text(timestamp)
+        bid_volume = metrics.get("bid_volume_snapshot")
+        ask_volume = metrics.get("ask_volume_snapshot")
+        bid_pct = metrics.get("bid_pct")
+        ask_pct = metrics.get("ask_pct")
+        if bid_pct is None or ask_pct is None:
+            bid_pct, ask_pct = self._bid_ask_pct(bid_volume, ask_volume)
+        bid_ask_ratio = metrics.get("bid_ask_ratio_snapshot")
+        if bid_ask_ratio is None:
+            bid_ask_ratio = self._snapshot_ratio(bid_volume, ask_volume)
+        values = {
+            "stock_code": code,
+            "bid_volume_snapshot": bid_volume,
+            "ask_volume_snapshot": ask_volume,
+            "bid_pct": bid_pct,
+            "ask_pct": ask_pct,
+            "bid_ask_ratio_snapshot": bid_ask_ratio,
+            "orderbook_source": metrics.get("orderbook_source"),
+            "orderbook_snapshot_at": (
+                metrics.get("orderbook_snapshot_at") or timestamp_text
+            ),
+            "orderbook_status": metrics.get("orderbook_status"),
+            "realtime_strength_snapshot": metrics.get(
+                "realtime_strength_snapshot"
+            ),
+            "strength_5m": metrics.get("strength_5m"),
+            "strength_20m": metrics.get("strength_20m"),
+            "strength_60m": metrics.get("strength_60m"),
+            "strength_source": metrics.get("strength_source"),
+            "strength_snapshot_at": (
+                metrics.get("strength_snapshot_at") or timestamp_text
+            ),
+            "strength_status": metrics.get("strength_status"),
+            "strength_error": metrics.get("strength_error"),
+            "strength_requested_at": metrics.get("strength_requested_at"),
+            "strength_completed_at": metrics.get("strength_completed_at"),
+            "strength_tr_repeat_count": metrics.get("strength_tr_repeat_count"),
+            "strength_raw_sample": metrics.get("strength_raw_sample"),
+            "strength_rqname": metrics.get("strength_rqname"),
+            "strength_trcode": metrics.get("strength_trcode"),
+            "strength_screen_no": metrics.get("strength_screen_no"),
+            "status_detail": metrics.get("status_detail"),
+            "updated_at": timestamp_text,
+        }
+        with self._lock:
+            previous = self._close_metric_snapshots.get(code, {})
+            merged = {**previous, **{k: v for k, v in values.items() if v is not None}}
+            orderbook_at = merged.get("orderbook_snapshot_at")
+            strength_at = merged.get("strength_snapshot_at")
+            merged["orderbook_stale_sec"] = self._age_from_now(orderbook_at)
+            merged["strength_stale_sec"] = self._age_from_now(strength_at)
+            self._close_metric_snapshots[code] = merged
+            quote = self._ensure_quote(code)
+            quote.update({key: value for key, value in merged.items() if value is not None})
+            return deepcopy(merged)
+
+    @staticmethod
+    def _age_from_now(timestamp_text):
+        if not timestamp_text:
+            return None
+        try:
+            timestamp = datetime.fromisoformat(
+                str(timestamp_text).replace("Z", "+00:00")
+            )
+            now = datetime.now(timestamp.tzinfo) if timestamp.tzinfo else datetime.now()
+            return max(0.0, round((now - timestamp).total_seconds(), 3))
+        except (TypeError, ValueError):
+            return None
+
+    def close_metrics_snapshot(self, stock_codes=None):
+        with self._lock:
+            if stock_codes is None:
+                codes = tuple(self._close_metric_snapshots)
+            else:
+                codes = tuple(
+                    dict.fromkeys(self._normalized_code(code) for code in stock_codes)
+                )
+            snapshots = {}
+            for code in codes:
+                if code not in self._close_metric_snapshots:
+                    continue
+                snapshot = deepcopy(self._close_metric_snapshots[code])
+                snapshot["orderbook_stale_sec"] = self._age_from_now(
+                    snapshot.get("orderbook_snapshot_at")
+                )
+                snapshot["strength_stale_sec"] = self._age_from_now(
+                    snapshot.get("strength_snapshot_at")
+                )
+                snapshots[code] = snapshot
+            return snapshots
+
     def update_foreign_line(self, stock_code, foreign_line_raw):
         code = self._normalized_code(stock_code)
         with self._lock:
@@ -430,6 +569,11 @@ class RealtimeStore:
                 code: deepcopy(list(self._orderbook_events[code]))
                 for code in stock_codes
                 if code in self._orderbook_events
+            },
+            "close_metrics": {
+                code: deepcopy(self._close_metric_snapshots[code])
+                for code in stock_codes
+                if code in self._close_metric_snapshots
             },
         }
 
@@ -534,6 +678,7 @@ class RealtimeStore:
             self._quotes.clear()
             self._trade_events.clear()
             self._orderbook_events.clear()
+            self._close_metric_snapshots.clear()
             self._last_seen.clear()
             self._base_ohlc.clear()
             self._sequence = 0

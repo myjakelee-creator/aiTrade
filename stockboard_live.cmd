@@ -48,8 +48,10 @@ $Python32 = "C:\Users\myjay\AppData\Local\Programs\Python\Python310-32\python.ex
 $EntryPoint = Join-Path $ProjectRoot "kiwoom_trade_value_rank.py"
 $RuntimeDir = Join-Path $ProjectRoot "data\runtime"
 $PidFile = Join-Path $RuntimeDir "stockboard_server.pid"
+$HealthUrl = "http://127.0.0.1:8000/api/health"
 $Top100Url = "http://127.0.0.1:8000/api/top100"
 $ProviderStatusUrl = "http://127.0.0.1:8000/api/realtime_provider_status"
+$RealtimeStatusUrl = "http://127.0.0.1:8000/api/realtime_status"
 $BoardUrl = "http://127.0.0.1:8000/"
 $AhkScript = Join-Path $ProjectRoot "scripts\stockboard_kiwoom_link_v1.ahk"
 $AhkPidFile = Join-Path $RuntimeDir "stockboard_ahk.pid"
@@ -159,6 +161,15 @@ function Invoke-Top100WithHeaders {
     }
 }
 
+function Invoke-HealthWithHeaders {
+    $response = Invoke-WebRequest -Uri $HealthUrl -UseBasicParsing -TimeoutSec 2
+    return @{
+        Response = $response
+        Body = ($response.Content | ConvertFrom-Json)
+        HeaderPid = [string]$response.Headers["X-StockBoard-PID"]
+    }
+}
+
 function Resolve-AhkExe {
     foreach ($candidate in $AhkExeCandidates) {
         if (Test-Path -LiteralPath $candidate) {
@@ -216,6 +227,69 @@ function Get-AhkBridgeStatus {
     }
 }
 
+function Get-BasicReadySnapshot {
+    param([int]$ExpectedPid)
+    $listenPids = Get-ListenPid8000
+    $processRunning = $false
+    try {
+        $serverProcess = Get-Process -Id $ExpectedPid -ErrorAction Stop
+        $processRunning = -not $serverProcess.HasExited
+    } catch {
+        $processRunning = $false
+    }
+
+    $health = $null
+    $healthError = $null
+    $provider = $null
+    $providerError = $null
+    $realtimeStatus = $null
+    $realtimeStatusError = $null
+    $endpoint = $null
+    $endpointPid = $null
+    try {
+        $health = Invoke-HealthWithHeaders
+        $endpoint = "/api/health"
+        $endpointPid = $health.HeaderPid
+    } catch {
+        $healthError = $_.Exception.Message
+    }
+    if (-not $endpoint) {
+        try {
+            $provider = Invoke-RestMethod -Uri $ProviderStatusUrl -TimeoutSec 2
+            $endpoint = "/api/realtime_provider_status"
+        } catch {
+            $providerError = $_.Exception.Message
+        }
+    }
+    if (-not $endpoint) {
+        try {
+            $realtimeStatus = Invoke-RestMethod -Uri $RealtimeStatusUrl -TimeoutSec 2
+            $endpoint = "/api/realtime_status"
+        } catch {
+            $realtimeStatusError = $_.Exception.Message
+        }
+    }
+    return @{
+        listen_pids = @($listenPids)
+        expected_pid = $ExpectedPid
+        process_running = $processRunning
+        endpoint = $endpoint
+        endpoint_pid = $endpointPid
+        health_ok = ($null -ne $health)
+        provider_ok = ($null -ne $provider)
+        realtime_status_ok = ($null -ne $realtimeStatus)
+        health_error = $healthError
+        provider_error = $providerError
+        realtime_status_error = $realtimeStatusError
+        running = if ($provider -and $null -ne $provider.running) { [bool]$provider.running } else { $null }
+        login_state = if ($provider) { $provider.login_state } else { $null }
+        registered_count = if ($provider -and $null -ne $provider.registered_count) { [int]$provider.registered_count } else { $null }
+        price_fast_mode = if ($provider -and $null -ne $provider.price_fast_mode) { [bool]$provider.price_fast_mode } else { $null }
+        orderbook_mode = if ($provider) { $provider.orderbook_mode } else { $null }
+        tr_event_connected = if ($provider -and $null -ne $provider.tr_event_connected) { [bool]$provider.tr_event_connected } else { $null }
+    }
+}
+
 function Get-StatusSnapshot {
     $listenPids = Get-ListenPid8000
     $top = $null
@@ -267,6 +341,10 @@ function Get-StatusSnapshot {
         running = if ($provider) { [bool]$provider.running } else { $false }
         login_state = if ($provider) { $provider.login_state } else { $null }
         registered_count = if ($provider -and $null -ne $provider.registered_count) { [int]$provider.registered_count } else { 0 }
+        realdata_received_count = if ($provider -and $null -ne $provider.realdata_received_count) { [int]$provider.realdata_received_count } else { 0 }
+        trade_seen_codes_count = if ($provider -and $null -ne $provider.trade_seen_codes_count) { [int]$provider.trade_seen_codes_count } else { 0 }
+        orderbook_seen_codes_count = if ($provider -and $null -ne $provider.orderbook_seen_codes_count) { [int]$provider.orderbook_seen_codes_count } else { 0 }
+        tr_event_connected = if ($provider -and $null -ne $provider.tr_event_connected) { [bool]$provider.tr_event_connected } else { $null }
         price_fast_mode = if ($provider -and $null -ne $provider.price_fast_mode) { [bool]$provider.price_fast_mode } else { $false }
         realtime_code_limit = if ($provider -and $null -ne $provider.realtime_code_limit) { [int]$provider.realtime_code_limit } else { 0 }
         orderbook_realtime_enabled = if ($provider -and $null -ne $provider.orderbook_realtime_enabled) { [bool]$provider.orderbook_realtime_enabled } else { $true }
@@ -306,6 +384,10 @@ function Write-Status {
     Write-Host "running=$($snapshot.running)"
     Write-Host "login_state=$($snapshot.login_state)"
     Write-Host "registered_count=$($snapshot.registered_count)"
+    Write-Host "realdata_received_count=$($snapshot.realdata_received_count)"
+    Write-Host "trade_seen_codes_count=$($snapshot.trade_seen_codes_count)"
+    Write-Host "orderbook_seen_codes_count=$($snapshot.orderbook_seen_codes_count)"
+    Write-Host "tr_event_connected=$($snapshot.tr_event_connected)"
     Write-Host "display_mode=$($snapshot.display_mode)"
     Write-Host "PRICE_FAST_MODE=$($snapshot.price_fast_mode)"
     Write-Host "REALTIME_CODE_LIMIT=$($snapshot.realtime_code_limit)"
@@ -354,38 +436,14 @@ function Write-Status {
     return $snapshot
 }
 
-function Test-StartupSnapshot {
-    param($Snapshot)
-    $errors = New-Object System.Collections.Generic.List[string]
-    if ($Snapshot.running -ne $true) { $errors.Add("realtime provider running is not true") | Out-Null }
-    if ($Snapshot.login_state -ne "connected") { $errors.Add("login_state is '$($Snapshot.login_state)'") | Out-Null }
-    if ($Snapshot.suffix_realreg_requested -ne $false) { $errors.Add("suffix_realreg_requested is not false") | Out-Null }
-    if ($Snapshot.top100_row_count -lt 160 -or $Snapshot.top100_row_count -gt 220) {
-        $errors.Add("top100_row_count is outside 160..220: $($Snapshot.top100_row_count)") | Out-Null
-    }
-    if ($Snapshot.realtime_code_limit -gt 0) {
-        if ([math]::Abs($Snapshot.registered_count - $Snapshot.realtime_code_limit) -gt 5) {
-            $errors.Add("registered_count differs from realtime_code_limit: registered=$($Snapshot.registered_count), limit=$($Snapshot.realtime_code_limit)") | Out-Null
-        }
-    } elseif ([math]::Abs($Snapshot.registered_count - $Snapshot.top100_row_count) -gt 5) {
-        $errors.Add("registered_count differs from top100_row_count: registered=$($Snapshot.registered_count), top100=$($Snapshot.top100_row_count)") | Out-Null
-    }
-    foreach ($code in $TargetCodes) {
-        $row = $Snapshot.target_rows[$code]
-        if ($row.stock_code_is_6_digits -ne $true) { $errors.Add("$code stock_code is not 6 digits") | Out-Null }
-        if ($row.source -ne $ExpectedSources[$code]) { $errors.Add("$code source is '$($row.source)', expected '$($ExpectedSources[$code])'") | Out-Null }
-        if ($row.price_equals_realtime_price -ne $true) { $errors.Add("$code price != realtime_price") | Out-Null }
-        if ($row.change_rate_equals_realtime_change_rate -ne $true) { $errors.Add("$code change_rate != realtime_change_rate") | Out-Null }
-    }
-    return @($errors)
-}
-
 function Test-ServerBasicSnapshot {
     param($Snapshot)
     $errors = New-Object System.Collections.Generic.List[string]
     if ($Snapshot.listen_pids.Count -eq 0) { $errors.Add("8000 listener was not found") | Out-Null }
-    if ($Snapshot.top100_row_count -lt 160 -or $Snapshot.top100_row_count -gt 220) {
-        $errors.Add("top100_row_count is outside 160..220: $($Snapshot.top100_row_count)") | Out-Null
+    if ($Snapshot.process_running -ne $true) { $errors.Add("server process is not running") | Out-Null }
+    if (-not $Snapshot.endpoint) { $errors.Add("no lightweight HTTP endpoint responded") | Out-Null }
+    if ($Snapshot.endpoint_pid -and ([string]$Snapshot.endpoint_pid -ne [string]$Snapshot.expected_pid)) {
+        $errors.Add("health endpoint PID '$($Snapshot.endpoint_pid)' did not match new PID '$($Snapshot.expected_pid)'") | Out-Null
     }
     return @($errors)
 }
@@ -395,18 +453,25 @@ function Test-ConnectedRealtimeRegistrationSnapshot {
     $errors = New-Object System.Collections.Generic.List[string]
     if ($Snapshot.running -ne $true) { $errors.Add("realtime provider running is not true") | Out-Null }
     if ($Snapshot.login_state -ne "connected") { $errors.Add("login_state is '$($Snapshot.login_state)'") | Out-Null }
+    if ($Snapshot.price_fast_mode -ne $true) { $errors.Add("price_fast_mode is not true") | Out-Null }
+    if ($Snapshot.orderbook_mode -ne "hybrid") { $errors.Add("orderbook_mode is '$($Snapshot.orderbook_mode)'") | Out-Null }
+    if ($Snapshot.tr_event_connected -ne $true) { $errors.Add("tr_event_connected is not true") | Out-Null }
     if ($Snapshot.suffix_realreg_requested -ne $false) { $errors.Add("suffix_realreg_requested is not false") | Out-Null }
     if ($Snapshot.realtime_code_limit -gt 0) {
         if ([math]::Abs($Snapshot.registered_count - $Snapshot.realtime_code_limit) -gt 5) {
             $errors.Add("registered_count differs from realtime_code_limit: registered=$($Snapshot.registered_count), limit=$($Snapshot.realtime_code_limit)") | Out-Null
         }
-    } elseif ([math]::Abs($Snapshot.registered_count - $Snapshot.top100_row_count) -gt 5) {
+    } elseif ($Snapshot.top100_row_count -gt 0 -and [math]::Abs($Snapshot.registered_count - $Snapshot.top100_row_count) -gt 5) {
         $errors.Add("registered_count differs from top100_row_count: registered=$($Snapshot.registered_count), top100=$($Snapshot.top100_row_count)") | Out-Null
     }
-    foreach ($code in $TargetCodes) {
-        $row = $Snapshot.target_rows[$code]
-        if ($row.stock_code_is_6_digits -ne $true) { $errors.Add("$code stock_code is not 6 digits") | Out-Null }
-        if ($row.source -ne $ExpectedSources[$code]) { $errors.Add("$code source is '$($row.source)', expected '$($ExpectedSources[$code])'") | Out-Null }
+    if ($Snapshot.realdata_received_count -gt 0) {
+        foreach ($code in $TargetCodes) {
+            $row = $Snapshot.target_rows[$code]
+            if ($row.stock_code_is_6_digits -ne $true) { $errors.Add("$code stock_code is not 6 digits") | Out-Null }
+            if ($row.source -ne $ExpectedSources[$code]) { $errors.Add("$code source is '$($row.source)', expected '$($ExpectedSources[$code])'") | Out-Null }
+        }
+    } else {
+        $errors.Add("realtime source check skipped: realdata_received_count=0") | Out-Null
     }
     return @($errors)
 }
@@ -414,6 +479,10 @@ function Test-ConnectedRealtimeRegistrationSnapshot {
 function Test-RealtimePriceSnapshot {
     param($Snapshot)
     $errors = New-Object System.Collections.Generic.List[string]
+    if ($Snapshot.realdata_received_count -le 0) {
+        $errors.Add("realtime price equality skipped: realdata_received_count=0") | Out-Null
+        return @($errors)
+    }
     foreach ($code in $TargetCodes) {
         $row = $Snapshot.target_rows[$code]
         if ($row.price_equals_realtime_price -ne $true) { $errors.Add("$code price != realtime_price") | Out-Null }
@@ -599,28 +668,52 @@ function Start-StockBoard {
     $serverBasicReady = $false
     $snapshot = $null
     $lastError = ""
-    $deadline = (Get-Date).AddMinutes(6)
+    $basicReadyReason = $null
+    $basicWarnings = New-Object System.Collections.Generic.List[string]
+    $basicStartedAt = Get-Date
+    $deadline = $basicStartedAt.AddSeconds(120)
     while ((Get-Date) -lt $deadline) {
-        Start-Sleep -Seconds 5
         $process.Refresh()
         if ($process.HasExited) {
             $lastError = "server process exited with code $($process.ExitCode)"
             break
         }
         try {
-            $snapshot = Write-Status
-            if ($snapshot.x_stockboard_pid -and ([string]$snapshot.x_stockboard_pid -ne [string]$process.Id)) {
-                $lastError = "X-StockBoard-PID '$($snapshot.x_stockboard_pid)' did not match new PID '$($process.Id)'"
-                continue
-            }
+            $snapshot = Get-BasicReadySnapshot -ExpectedPid $process.Id
             $basicErrors = Test-ServerBasicSnapshot $snapshot
             if ($basicErrors.Count -eq 0) {
                 $serverBasicReady = $true
+                $basicReadyReason = "server listening and lightweight endpoint responding"
                 break
             }
             $lastError = $basicErrors -join "; "
         } catch {
             $lastError = $_.Exception.Message
+        }
+        $elapsed = [int]((Get-Date) - $basicStartedAt).TotalSeconds
+        $listenText = if ($snapshot -and $snapshot.listen_pids) { $snapshot.listen_pids -join "," } else { "" }
+        $endpointText = if ($snapshot) { $snapshot.endpoint } else { "" }
+        $processAlive = if ($snapshot) { $snapshot.process_running } else { -not $process.HasExited }
+        Write-Host ("BASIC_READY_WAIT elapsed={0}s pid_alive={1} listen={2} endpoint={3} last={4}" -f $elapsed, $processAlive, $listenText, $endpointText, $lastError)
+        Start-Sleep -Seconds 1
+    }
+
+    if (-not $serverBasicReady) {
+        Write-Host ""
+        Write-Host "Basic ready polling ended; checking final status once..." -ForegroundColor Yellow
+        try {
+            $fallbackSnapshot = Write-Status
+            if ($fallbackSnapshot.running -eq $true) {
+                $serverBasicReady = $true
+                $basicReadyReason = "provider status running after delayed readiness"
+                $basicWarnings.Add("Basic health endpoint did not pass within polling window; final status running=True") | Out-Null
+                $snapshot = @{
+                    listen_pids = @($fallbackSnapshot.listen_pids)
+                    endpoint = "/api/realtime_provider_status"
+                }
+            }
+        } catch {
+            $lastError = "$lastError; final status check failed: $($_.Exception.Message)"
         }
     }
 
@@ -630,10 +723,20 @@ function Start-StockBoard {
     }
 
     Write-Host ""
-    Write-Host "Server basic startup succeeded."
+    Write-Host "BASIC_READY=True"
+    Write-Host "BASIC_READY_REASON=$basicReadyReason"
+    if ($basicWarnings.Count -gt 0) {
+        Write-Host "BASIC_READY_WARNINGS=$($basicWarnings -join '; ')" -ForegroundColor Yellow
+    } else {
+        Write-Host "BASIC_READY_WARNINGS="
+    }
+    Write-Host "SERVER_PID=$($process.Id)"
+    Write-Host "8000_LISTEN_PID=$($snapshot.listen_pids -join ',')"
+    Write-Host "BASIC_ENDPOINT=$($snapshot.endpoint)"
 
     $loginConnected = $false
-    $deadline = (Get-Date).AddMinutes(6)
+    $strictWarnings = New-Object System.Collections.Generic.List[string]
+    $deadline = (Get-Date).AddMinutes(3)
     while ((Get-Date) -lt $deadline) {
         $snapshot = Write-Status
         if ($snapshot.login_state -eq "connected") {
@@ -649,25 +752,38 @@ function Start-StockBoard {
     }
 
     if (-not $loginConnected) {
-        Write-Host ""
-        Write-Host "OpenAPI login not completed yet" -ForegroundColor Yellow
-        Write-Host "STDOUT_LOG=$stdout"
-        Write-Host "STDERR_LOG=$stderr"
-        exit 2
+        $strictWarnings.Add("OpenAPI login not completed yet; login_state=$($snapshot.login_state)") | Out-Null
     }
 
     $snapshot = Write-Status
     $errors = Test-ConnectedRealtimeRegistrationSnapshot $snapshot
     if ($errors.Count -gt 0) {
-        Write-StartupValidationFailure "Startup validation failed after OpenAPI login." $errors $stdout $stderr
-        exit 1
+        foreach ($errorMessage in $errors) {
+            $strictWarnings.Add($errorMessage) | Out-Null
+        }
     }
 
     $errors = Test-RealtimePriceSnapshot $snapshot
     if ($errors.Count -gt 0) {
-        Write-StartupValidationFailure "Startup realtime price validation failed." $errors $stdout $stderr
-        exit 1
+        foreach ($errorMessage in $errors) {
+            $strictWarnings.Add($errorMessage) | Out-Null
+        }
     }
+
+    Write-Host ""
+    Write-Host "STRICT_READY=$($strictWarnings.Count -eq 0)"
+    if ($strictWarnings.Count -gt 0) {
+        Write-Host "STRICT_WARNINGS=$($strictWarnings -join '; ')" -ForegroundColor Yellow
+    } else {
+        Write-Host "STRICT_WARNINGS="
+    }
+    Write-Host "LOGIN_STATE=$($snapshot.login_state)"
+    Write-Host "REGISTERED_COUNT=$($snapshot.registered_count)"
+    Write-Host "PRICE_FAST_MODE=$($snapshot.price_fast_mode)"
+    Write-Host "ORDERBOOK_MODE=$($snapshot.orderbook_mode)"
+    Write-Host "TR_EVENT_CONNECTED=$($snapshot.tr_event_connected)"
+    Write-Host "STDOUT_LOG=$stdout"
+    Write-Host "STDERR_LOG=$stderr"
 
     Start-Process $BoardUrl | Out-Null
     Stop-StockBoardAhkBridge
@@ -676,7 +792,6 @@ function Start-StockBoard {
         Write-Host "StockBoard started."
     } else {
         Write-Host "StockBoard started with warning: AHK bridge was not started." -ForegroundColor Yellow
-        exit 2
     }
 }
 

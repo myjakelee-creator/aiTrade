@@ -199,6 +199,69 @@ def _age_seconds(timestamp_text):
         return None
 
 
+def _close_metric_codes(rows):
+    candidates = []
+    top_codes = []
+    seen = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        stock_code = row.get("stock_code")
+        if not isinstance(stock_code, str) or stock_code in seen:
+            continue
+        seen.add(stock_code)
+        if row.get("is_candidate") or row.get("candidate_rank"):
+            candidates.append(stock_code)
+        top_codes.append(stock_code)
+    return list(dict.fromkeys(candidates[:5] + top_codes[:20]))
+
+
+def _parse_codes_query(query):
+    return [
+        code.strip()
+        for value in query.get("codes", [])
+        for code in value.split(",")
+        if code.strip()
+    ]
+
+
+def _overlay_close_metrics(row, snapshot):
+    if not isinstance(snapshot, dict):
+        return
+    for field in (
+        "bid_pct",
+        "ask_pct",
+        "bid_volume_snapshot",
+        "ask_volume_snapshot",
+        "bid_ask_ratio_snapshot",
+        "orderbook_snapshot_at",
+        "orderbook_stale_sec",
+        "orderbook_status",
+        "realtime_strength_snapshot",
+        "strength_5m",
+        "strength_20m",
+        "strength_60m",
+        "strength_source",
+        "strength_snapshot_at",
+        "strength_stale_sec",
+        "strength_status",
+    ):
+        if field in snapshot:
+            row[field] = snapshot.get(field)
+    if row.get("orderbook_source") is None:
+        row["orderbook_source"] = snapshot.get("orderbook_source")
+    if row.get("bid_volume") is None:
+        row["bid_volume"] = snapshot.get("bid_volume_snapshot")
+    if row.get("ask_volume") is None:
+        row["ask_volume"] = snapshot.get("ask_volume_snapshot")
+    if row.get("bid_ask_ratio") is None:
+        row["bid_ask_ratio"] = snapshot.get("bid_ask_ratio_snapshot")
+    if row.get("realtime_strength") is None:
+        row["realtime_strength_snapshot"] = snapshot.get(
+            "realtime_strength_snapshot"
+        )
+
+
 def _top100_with_realtime(rows, realtime_store):
     response_rows = [deepcopy(row) for row in rows]
     codes = [row.get("stock_code") for row in response_rows]
@@ -210,14 +273,16 @@ def _top100_with_realtime(rows, realtime_store):
             file=sys.stderr,
             flush=True,
         )
-        snapshot = {"trade_events": {}, "orderbook_events": {}}
+        snapshot = {"trade_events": {}, "orderbook_events": {}, "close_metrics": {}}
 
     trade_events = snapshot.get("trade_events", {})
     orderbook_events = snapshot.get("orderbook_events", {})
+    close_metrics = snapshot.get("close_metrics", {})
     for row in response_rows:
         stock_code = row.get("stock_code")
         row["rest_price"] = row.get("price")
         row["rest_change_rate"] = row.get("change_rate")
+        _overlay_close_metrics(row, close_metrics.get(stock_code))
 
         trade_event = _latest_event(trade_events, stock_code)
         if trade_event is not None:
@@ -317,6 +382,7 @@ def _top100_with_realtime(rows, realtime_store):
             row["orderbook_source"] = (
                 orderbook_event.get("orderbook_source") or "orderbook"
             )
+            row["orderbook_status"] = "ok"
     return response_rows
 
 
@@ -390,6 +456,9 @@ def _realtime_patch_payload(
                     quote.get("session_sell_qty_live")
                 ),
                 "session_strength_source": quote.get("session_strength_source"),
+                "realtime_strength_snapshot": _realtime_number(
+                    quote.get("realtime_strength_snapshot")
+                ),
                 "strength_5m": _realtime_number(quote.get("strength_5m")),
                 "strength_20m": _realtime_number(quote.get("strength_20m")),
                 "strength_60m": _realtime_number(quote.get("strength_60m")),
@@ -398,6 +467,7 @@ def _realtime_patch_payload(
                 "strength_stale_sec": _realtime_number(
                     quote.get("strength_stale_sec")
                 ),
+                "strength_status": quote.get("strength_status"),
                 "realtime_ohlc": (
                     deepcopy(realtime_ohlc)
                     if realtime_ohlc is not None
@@ -414,14 +484,30 @@ def _realtime_patch_payload(
                     if "ask_volume" in quote
                     else quote.get("total_ask_qty")
                 ),
+                "bid_volume_snapshot": _realtime_number(
+                    quote.get("bid_volume_snapshot")
+                ),
+                "ask_volume_snapshot": _realtime_number(
+                    quote.get("ask_volume_snapshot")
+                ),
+                "bid_pct": _realtime_number(quote.get("bid_pct")),
+                "ask_pct": _realtime_number(quote.get("ask_pct")),
                 "bid_ask_ratio": _realtime_number(quote.get("bid_ask_ratio")),
+                "bid_ask_ratio_snapshot": _realtime_number(
+                    quote.get("bid_ask_ratio_snapshot")
+                ),
                 "best_bid_price": best_bid,
                 "best_ask_price": best_ask,
                 "orderbook_received_at": quote.get("orderbook_received_at"),
+                "orderbook_snapshot_at": quote.get("orderbook_snapshot_at"),
                 "orderbook_age_sec": _age_seconds(
                     quote.get("orderbook_received_at") or quote.get("received_at")
                 ),
+                "orderbook_stale_sec": _realtime_number(
+                    quote.get("orderbook_stale_sec")
+                ),
                 "orderbook_source": quote.get("orderbook_source"),
+                "orderbook_status": quote.get("orderbook_status"),
                 "received_at": quote.get("received_at"),
                 "sequence": quote.get("sequence"),
             }
@@ -490,6 +576,23 @@ def make_handler(
                 self.send_header("Location", "/stockboard_v0_3_0_sample.html")
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
+                return
+            if request_path == "/api/health":
+                response_payload = {
+                    "ok": True,
+                    "server": "stockboard",
+                    "pid": os.getpid(),
+                    "ts": datetime.now().isoformat(timespec="seconds"),
+                    "store_available": realtime_store is not None,
+                }
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-StockBoard-PID", str(os.getpid()))
+                self.end_headers()
+                self.wfile.write(body)
                 return
             if request_path == "/api/realtime":
                 if "codes" in query:
@@ -610,6 +713,104 @@ def make_handler(
                 response_payload["register_error"] = (
                     realtime_provider_register_error
                 )
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if request_path == "/api/close_metrics_request":
+                codes = _parse_codes_query(query)
+                priority = (
+                    query.get("priority", ["background"])[0]
+                    or "background"
+                )
+                force = str(query.get("force", ["0"])[0]).strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                }
+                if realtime_provider is None:
+                    response_payload = {
+                        "accepted": len(codes),
+                        "queued": 0,
+                        "priority": priority,
+                        "available": False,
+                        "error": "realtime provider unavailable",
+                    }
+                else:
+                    try:
+                        probe = str(query.get("probe", [""])[0]).strip().lower()
+                        if probe == "strength" or priority == "strength_probe":
+                            if len(codes) != 1:
+                                response_payload = {
+                                    "accepted": len(codes),
+                                    "queued": 0,
+                                    "priority": priority,
+                                    "available": True,
+                                    "error": (
+                                        "strength probe requires exactly one code"
+                                    ),
+                                }
+                            else:
+                                response_payload = realtime_provider.enqueue_strength_probe(
+                                    codes[0],
+                                    priority=priority,
+                                    force=force,
+                                )
+                                response_payload["accepted"] = 1
+                                response_payload["queued"] = 0
+                                response_payload["priority"] = "strength_probe"
+                        else:
+                            response_payload = realtime_provider.enqueue_close_metrics(
+                                codes,
+                                priority=priority,
+                                force=force,
+                            )
+                        response_payload["available"] = True
+                    except Exception as error:
+                        response_payload = {
+                            "accepted": len(codes),
+                            "queued": 0,
+                            "priority": priority,
+                            "available": False,
+                            "error": str(error),
+                        }
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if request_path == "/api/close_metrics_status":
+                codes = _parse_codes_query(query)
+                if realtime_provider is None:
+                    response_payload = {
+                        "available": False,
+                        "queue_size": 0,
+                        "snapshots": realtime_store.close_metrics_snapshot(codes),
+                        "error": "realtime provider unavailable",
+                    }
+                else:
+                    try:
+                        response_payload = realtime_provider.close_metrics_status(
+                            codes
+                        )
+                        response_payload["available"] = True
+                    except Exception as error:
+                        response_payload = {
+                            "available": False,
+                            "queue_size": 0,
+                            "snapshots": realtime_store.close_metrics_snapshot(
+                                codes
+                            ),
+                            "error": str(error),
+                        }
                 body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -879,6 +1080,20 @@ def main():
         else:
             realtime_provider_register_error = (
                 "realtime provider start did not succeed"
+            )
+    if realtime_provider_start_succeeded and realtime_provider is not None:
+        try:
+            initial_close_metric_rows = enrich_candidate_fields(
+                deepcopy(filtered_rows)
+            )
+            realtime_provider.enqueue_close_metrics(
+                _close_metric_codes(initial_close_metric_rows),
+                priority="initial",
+            )
+        except Exception as error:
+            print(
+                f"warning: close metrics initial enqueue failed: {error}",
+                file=sys.stderr,
             )
     server = ThreadingHTTPServer(
         (HOST, PORT),
