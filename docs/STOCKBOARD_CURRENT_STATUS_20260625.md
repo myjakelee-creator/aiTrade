@@ -224,6 +224,7 @@ DONE 99. 5분강도 헤더/tooltip 정리
 DONE 100. 브라우저 수신 기준 최근 5분강도 임시 계산
 DONE 101. opt10046 close_5m_strength 장마감 조회/저장
 DONE 107. opt10004 orderbook snapshot 장마감 잔량비 조회/저장
+DONE 108. Direct API Debug panel 운영 toggle
 
 ### TODO
 
@@ -252,7 +253,6 @@ TODO 80. 15:40 이후 aftermarket_realtime / regular_close_snapshot fallback 정
 TODO 81. price_source / display_price / display_change_rate 필드 정식화
 TODO 82. 실시간 렌더링 최적화, 변경된 셀만 그리기, 일봉/색상바 throttle
 TODO 102. HTML module split
-TODO 103. Direct API Debug panel 운영 toggle
 TODO 104. regular_close_snapshot
 TODO 105. price_source/display_price/display_change_rate 정식화
 TODO 106. realtime_patch payload delta 경량화
@@ -623,7 +623,7 @@ AHK_RUNNING=True
 | 15 | AftermarketFallbackPolicy | TODO |
 | 16 | SuffixStoreIsolationRegularVerify | WIP |
 | 17 | RealtimePatchPayloadDelta | TODO |
-| 18 | DirectDebugPanelToggle | TODO |
+| 18 | DirectDebugPanelToggle | DONE |
 | 19 | HTMLModuleSplit | TODO |
 | 20 | CandidateModelV02 | TODO |
 | 21 | ForeignFuturesSource | TODO |
@@ -680,3 +680,10 @@ AHK_RUNNING=True
 ### 유지 TODO
 
 - HTML module split은 TODO로 유지한다.
+
+## 14. Direct API Debug panel 운영 toggle
+
+- Direct API Debug panel은 운영 화면에서 기본 숨김이다.
+- topbar의 `진단` 버튼으로 표시/숨김을 전환한다.
+- 표시 상태는 `stockboard.debugPanelVisible` localStorage key로 유지한다.
+- 가격 원천 진단 로직과 `/api/realtime` 직접 확인 경로는 유지하며, 화면 노출만 toggle로 제어한다.

@@ -31,6 +31,7 @@
   .title{height:var(--title-height);background:linear-gradient(#dfe7ee,#cbd6df);display:flex;align-items:center;gap:8px;padding:0 var(--title-padding-x);font-size:var(--title-font-size);font-weight:var(--title-font-weight);color:#19324a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .data-diagnostics{margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:calc(var(--title-font-size) - 1px);font-weight:500;color:#4b6175;font-variant-numeric:tabular-nums;white-space:nowrap}
   .direct-api-debug{display:grid;grid-template-columns:max-content repeat(5,minmax(118px,1fr));gap:4px;align-items:center;min-height:22px;padding:2px 8px;border-bottom:1px solid var(--line);background:#fff7df;color:#263747;font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.2;overflow:hidden}
+  .direct-api-debug[hidden]{display:none}
   .direct-api-debug-title{color:#8a5a00;white-space:nowrap}
   .direct-api-debug-item{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .direct-api-debug-ok{color:var(--green)}
@@ -38,7 +39,7 @@
   .direct-api-debug-wait{color:#7f8c8d}
   body[data-density="compact"]{--board-font-size:12px;--board-header-font-size:12px;--board-row-height:27px;--board-cell-padding-y:2px;--board-cell-padding-x:4px;--grade-padding-y:1px;--grade-padding-x:5px;--ohlc-height:20px;--ohlc-range-top:9px;--ohlc-body-top:4px;--ohlc-body-height:12px;--ohlc-level-top:2px;--ohlc-level-height:16px;--ohlc-open-top:3px;--ohlc-open-height:14px;--metric-height:22px;--metric-font-size:12px;--balance-box-height:23px;--balance-side-inset:3px;--balance-cell-padding:1px;--title-height:23px;--title-font-size:12px;--title-padding-x:7px;--topbar-height:30px;--top-font-size:12px;--top-button-font-size:11px;--top-cell-padding-x:5px;--lamp-size:11px;--market-font-size:12px;--market-header-font-size:11px;--market-cell-padding-x:5px;--section-height:20px;--section-title-font-size:12px;--section-padding-x:6px;--grade-distribution-padding-y:5px;--grade-distribution-chart-size:62px;--grade-distribution-hole-inset:15px;--grade-distribution-font-size:10px;--grade-distribution-title-size:11px}
   body[data-density="ultra"]{--board-font-size:11px;--board-header-font-size:11px;--board-row-height:23px;--board-cell-padding-y:1px;--board-cell-padding-x:3px;--grade-padding-y:1px;--grade-padding-x:4px;--ohlc-height:18px;--ohlc-range-top:8px;--ohlc-body-top:3px;--ohlc-body-height:11px;--ohlc-level-top:1px;--ohlc-level-height:16px;--ohlc-open-top:2px;--ohlc-open-height:14px;--metric-height:20px;--metric-font-size:11px;--balance-box-height:21px;--balance-side-inset:3px;--balance-cell-padding:1px;--title-height:21px;--title-font-size:11px;--title-padding-x:6px;--topbar-height:27px;--top-font-size:11px;--top-button-font-size:10px;--top-cell-padding-x:4px;--lamp-size:9px;--market-font-size:11px;--market-header-font-size:10px;--market-cell-padding-x:4px;--section-height:18px;--section-title-font-size:11px;--section-padding-x:5px;--grade-distribution-padding-y:4px;--grade-distribution-chart-size:54px;--grade-distribution-hole-inset:13px;--grade-distribution-font-size:10px;--grade-distribution-title-size:10px}
-  .topbar{display:grid;grid-template-columns:max-content max-content max-content max-content max-content max-content max-content max-content minmax(0,1fr);align-items:center;width:100%;min-width:0;height:var(--topbar-height);border-bottom:1px solid var(--line);font-size:var(--top-font-size);font-weight:var(--top-font-weight)}
+  .topbar{display:grid;grid-template-columns:max-content max-content max-content max-content max-content max-content max-content max-content max-content minmax(0,1fr);align-items:center;width:100%;min-width:0;height:var(--topbar-height);border-bottom:1px solid var(--line);font-size:var(--top-font-size);font-weight:var(--top-font-weight)}
   .topbar>div:nth-child(2){padding:0 5px}
   .topbar>div{position:relative;height:100%;min-width:0;padding:0 var(--top-cell-padding-x);display:flex;align-items:center;justify-content:center;border-right:1px solid var(--line);white-space:nowrap;overflow:hidden}
   .topbar>div:first-child,.topbar>div:last-child{justify-content:flex-start}
@@ -55,6 +56,8 @@
   .display-mode-toggle:hover{background:#ffe9ad}
   .next-scroll{width:100%;height:calc(var(--topbar-height) - 8px);border:1px solid #9aa8b5;border-radius:3px;background:#eef6ff;color:#19324a;font:inherit;font-size:var(--top-button-font-size);font-weight:700;cursor:pointer}
   .next-scroll:hover{background:#dcecff}
+  .debug-toggle{width:100%;height:calc(var(--topbar-height) - 8px);border:1px solid #9aa8b5;border-radius:3px;background:#f4f4f4;color:#19324a;font:inherit;font-size:var(--top-button-font-size);font-weight:700;cursor:pointer}
+  .debug-toggle:hover{background:#e8eef5}.debug-toggle.active{background:#dbeafe;border-color:#5f9ef5;color:#0f3d73}
   .width-reset{width:100%;height:calc(var(--topbar-height) - 8px);border:1px solid #9aa8b5;border-radius:3px;background:#fff;color:#19324a;font:inherit;font-size:var(--top-button-font-size);font-weight:600;cursor:pointer}
   .width-reset:hover{background:#eef4fa}
   .speed{color:#b8860b}.market-open{color:#168000}.focus-name{color:var(--red)}.momentum{color:#b8860b;font-size:var(--top-font-size);font-weight:500}
@@ -193,7 +196,7 @@
 <div class="window">
   <div class="title">▣ StockBoard v0.3.6 Prev Close Proportional <span class="data-diagnostics" id="data-diagnostics">apiRows 0 · apiOhlc 0 · normalizedRows 0 · normalizedOhlc 0 · renderOhlc 0 · domOhlc 0</span></div>
 
-  <div class="direct-api-debug" id="direct-api-debug-panel" aria-label="Direct /api/realtime debug only. This panel does not update table cells.">
+  <div class="direct-api-debug" id="direct-api-debug-panel" hidden aria-label="Direct /api/realtime debug only. This panel does not update table cells.">
     <span class="direct-api-debug-title">Direct API</span>
     <span class="direct-api-debug-item direct-api-debug-wait">000660 waiting</span>
     <span class="direct-api-debug-item direct-api-debug-wait">005930 waiting</span>
@@ -210,6 +213,7 @@
     <div><button type="button" class="density-toggle" id="density-toggle">화면: 기본</button></div>
     <div><button type="button" class="display-mode-toggle" id="display-mode-toggle">Fast</button></div>
     <div><button type="button" class="next-scroll" id="next-scroll">다음</button></div>
+    <div><button type="button" class="debug-toggle" id="debug-toggle">진단</button></div>
     <div><button type="button" class="width-reset" id="width-reset">폭 초기화</button></div>
     <div><span class="market-open" id="market-session">장마감</span></div>
     <div class="focus-momentum"><span class="focus-name">삼성전기</span><span class="momentum">VWAP돌파 + 시가위 + 전고돌파</span></div>
@@ -258,6 +262,7 @@
   const densityToggle = document.getElementById('density-toggle');
   const displayModeToggle = document.getElementById('display-mode-toggle');
   const nextScrollButton = document.getElementById('next-scroll');
+  const debugToggle = document.getElementById('debug-toggle');
   const widthReset = document.getElementById('width-reset');
   const rankingRowCount = document.getElementById('ranking-row-count');
   const dataDiagnostics = document.getElementById('data-diagnostics');
@@ -300,6 +305,7 @@
   const usMarketWidthStorageKey = 'stockboard.usMarket.columnWidths.v2';
   const marketWidthStorageKey = 'stockboard.marketSupply.columnWidths.v2';
   const candleModeStorageKey = 'stockboard.candleMode.v1';
+  const debugPanelVisibleStorageKey = 'stockboard.debugPanelVisible';
   const candleModeToggleTitle = '클릭: 캔들모드 전환 / C: 전환';
   const candleModes = new Set(['full', 'proportional']);
   const displayDensityModes = ['normal', 'compact', 'ultra'];
@@ -486,6 +492,32 @@
     }
   }
 
+  function loadDebugPanelVisible() {
+    try {
+      return localStorage.getItem(debugPanelVisibleStorageKey) === '1';
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function saveDebugPanelVisible(visible) {
+    try {
+      localStorage.setItem(debugPanelVisibleStorageKey, visible ? '1' : '0');
+    } catch (error) {
+      console.warn('Debug panel visibility could not be saved.', error);
+    }
+  }
+
+  function applyDebugPanelVisible(visible) {
+    if (directApiDebugPanel) {
+      directApiDebugPanel.hidden = !visible;
+    }
+    if (debugToggle) {
+      debugToggle.classList.toggle('active', visible);
+      debugToggle.setAttribute('aria-pressed', visible ? 'true' : 'false');
+    }
+  }
+
   function isFastDisplayMode() {
     return top100State.displayMode === 'fast';
   }
@@ -625,6 +657,7 @@
       { defaultWidth: 92, minWidth: 78 },
       { defaultWidth: 86, minWidth: 72 },
       { defaultWidth: 54, minWidth: 42 },
+      { defaultWidth: 58, minWidth: 48 },
       { defaultWidth: 76, minWidth: 58 },
       { defaultWidth: 298, minWidth: 180 }
     ];
@@ -636,6 +669,7 @@
       getHandleCells: cells,
       applyWidths(widths) {
         topbar.style.gridTemplateColumns = [
+          'max-content',
           'max-content',
           'max-content',
           'max-content',
@@ -1056,6 +1090,7 @@
   };
   applyDisplayDensity(top100State.displayDensity);
   applyDisplayMode(top100State.displayMode);
+  applyDebugPanelVisible(loadDebugPanelVisible());
   displayModeToggle?.addEventListener('click', () => {
     const nextMode = top100State.displayMode === 'fast' ? 'graphic' : 'fast';
     applyDisplayMode(nextMode);
@@ -1063,6 +1098,11 @@
     renderBoard(top100State.renderedRows);
   });
   nextScrollButton?.addEventListener('click', () => requestNextCloseMetricsBatch('button'));
+  debugToggle?.addEventListener('click', () => {
+    const nextVisible = directApiDebugPanel?.hidden !== false;
+    applyDebugPanelVisible(nextVisible);
+    saveDebugPanelVisible(nextVisible);
+  });
   densityToggle?.addEventListener('click', () => {
     const currentIndex = displayDensityModes.indexOf(top100State.displayDensity);
     const nextMode = displayDensityModes[(currentIndex + 1) % displayDensityModes.length];
