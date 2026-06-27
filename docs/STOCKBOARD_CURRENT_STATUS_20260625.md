@@ -634,13 +634,15 @@ AHK_RUNNING=True
 | 26 | HTMLVisualCellSplit | WIP |
 | 27 | HTMLTooltipSplitDesign | WIP |
 | 28 | HTMLTooltipCoreSplit | WIP |
-| 29 | HTMLModuleSplit | TODO |
-| 30 | CandidateModelV02 | TODO |
-| 31 | ForeignFuturesSource | TODO |
-| 32 | BigHandKRT | TODO |
-| 33 | DayStrengthBackfill | TODO |
-| 34 | MarketSupplyRefresh | TODO |
-| 35 | SignalRankingStrategyFormalize | TODO |
+| 29 | HTMLCloseMetricsSplitDesign | WIP |
+| 30 | HTMLCloseMetricsHelperSplit | WIP |
+| 31 | HTMLModuleSplit | TODO |
+| 32 | CandidateModelV02 | TODO |
+| 33 | ForeignFuturesSource | TODO |
+| 34 | BigHandKRT | TODO |
+| 35 | DayStrengthBackfill | TODO |
+| 36 | MarketSupplyRefresh | TODO |
+| 37 | SignalRankingStrategyFormalize | TODO |
 
 ## 13. 2026-06-27 장마감 조회 snapshot 확정
 
@@ -1050,3 +1052,139 @@ AHK_RUNNING=True
 - `setVisualCell()`은 render/DOM mutation 핵심이므로 inline 유지한다.
 - balance tooltip 대상은 `td.balance-cell`, OHLC tooltip 대상은 `td.ohlc-cell` 제한 정책을 유지한다.
 - hover 시점 snapshot 표시, hover 중 본문 갱신 금지, singleton root 재사용, scroll 시 hide 정책을 유지한다.
+
+## 25. close metrics 분리 설계/위험점 점검 5K
+
+- 5K는 close metrics 분리 설계와 위험점 점검 단계이며, 실제 close metrics JS 파일 생성, 함수 이동, `script type="module"` 전환, `import/export` 추가는 수행하지 않는다.
+- 현재 next-batch/lazy close metrics 로직은 inline main script에 남아 있으며, `top100State`, DOM row, `refreshTop100()`, 다음 버튼, scroll handler와 결합되어 있다.
+
+### close metrics state
+
+- constants:
+  - `CLOSE_METRICS_LAZY_BATCH_SIZE = STOCKBOARD_CLOSE_METRICS.batchSize` (`20`)
+  - `CLOSE_METRICS_LAZY_THROTTLE_MS = STOCKBOARD_CLOSE_METRICS.throttleMs` (`1000`)
+  - `CLOSE_METRICS_SCROLL_TRIGGER_PX = STOCKBOARD_CLOSE_METRICS.scrollDeltaTriggerPx` (`150`)
+  - `CLOSE_METRICS_LAZY_REFRESH_DELAY_MS = STOCKBOARD_CLOSE_METRICS.refreshDelayMs` (`10000`)
+- `top100State` runtime state:
+  - `closeMetricsRequestedCodes`: 같은 page session에서 요청한 code 중복 방지
+  - `closeMetricsPendingCodes`: request accepted 후 top100 overlay로 완료되기 전 gate
+  - `closeMetricsCompletedCodes`: `strength_source=opt10046` 및 `orderbook_source=opt10004` 확인 code
+  - `closeMetricsLazyLastRequestedAt`: throttle 기준 시각
+  - `closeMetricsLazyInFlight`: API spam 방지 in-flight guard
+  - `closeMetricsLazyRefreshTimer`: lazy request 후 10초 refresh 예약 중복 방지
+  - `closeMetricsLastScrollY`: 아래 방향 scroll delta 계산 기준
+  - `closeMetricsScrollDelta`: 150px 누적 prefetch trigger 상태
+
+### close metrics 함수 목록
+
+- `hasCloseMetricsSnapshot(row)`: 완료 여부 판단
+- `syncCloseMetricsCompletion(rows)`: top100 refresh/realtime patch 후 completed/pending Set 반영
+- `rowNeedsCloseMetrics(row)`: 완료/requested/pending 제외 후 요청 필요 여부 판단
+- `collectNextCloseMetricCodes()`: `#trading-board tbody tr[data-stock-code]` DOM 순서와 `top100State.renderedRows`를 결합해 다음 20개 code 수집
+- `scheduleCloseMetricsLazyRefresh()`: lazy request 성공 후 `refreshTop100()` 10초 1회 예약
+- `requestLazyCloseMetrics(codes, trigger)`: `/api/close_metrics_request` fetch, requested/pending Set 갱신
+- `requestNextCloseMetricsBatch(trigger)`: throttle/in-flight/button disabled/collect/request orchestration
+- `handleCloseMetricsScrollTrigger()`: 아래 방향 scroll 누적 150px마다 `requestNextCloseMetricsBatch('scroll')`
+
+### API 호출 경로
+
+- 호출 URL: `/api/close_metrics_request?codes=005930,000660&priority=lazy&force=0`
+- `probe` 파라미터는 넣지 않는다.
+- backend `enqueue_close_metrics()`가 strength + orderbook 둘 다 enqueue하는 기존 정책을 사용한다.
+- HTTP handler에서 COM 직접 호출 금지 원칙을 유지한다. 브라우저는 queue 요청만 보내고 실제 TR 처리는 backend queue가 담당한다.
+
+### 완료/미완료 판단 기준
+
+- 완료:
+  - `row.strength_source === 'opt10046'`
+  - `row.orderbook_source === 'opt10004'`
+- 미완료:
+  - 둘 중 하나라도 없으면 미완료
+  - `closeMetricsRequestedCodes`, `closeMetricsPendingCodes`, `closeMetricsCompletedCodes`에 있으면 즉시 재요청하지 않음
+  - `ask_pct=0`, `bid_pct=100`, `ask_pct=0`은 정상값이며 미완료로 보지 않음
+
+### trigger 경로
+
+- 다음 버튼: `nextScrollButton.click` -> `requestNextCloseMetricsBatch('button')`
+- scroll prefetch: document capture `scroll` handler -> tooltip hide -> `handleCloseMetricsScrollTrigger()` -> 아래 방향 150px 누적 -> `requestNextCloseMetricsBatch('scroll')`
+- lazy request 성공: `requestLazyCloseMetrics()` -> `scheduleCloseMetricsLazyRefresh()` -> 10초 후 `refreshTop100()`
+- 기존 refresh loop: `window.setInterval(refreshTop100, TOP100_REFRESH_MS)` 30초 주기
+- refresh/top100 반영:
+  - `StockBoardTop100.refresh()`에서 `syncCloseMetricsCompletion(normalizedRows)`
+  - `applyRealtimePatchToRow()` 경로에서도 row 단위 `syncCloseMetricsCompletion([row])`
+
+### 위험 의존성
+
+- `collectNextCloseMetricCodes()`는 DOM row 순서와 `top100State.renderedRows`를 동시에 읽는다. 순수 helper처럼 보이지만 DOM/state 의존이 높다.
+- `requestNextCloseMetricsBatch()`는 throttle, in-flight, 버튼 disabled, code 수집, fetch 호출을 모두 묶는다.
+- close metrics Set은 `renderBoard`, `refreshTop100`, realtime patch overlay와 연결되어 완료 판단이 늦거나 누락되면 재요청/미요청 문제가 생길 수 있다.
+- scroll handler는 tooltip hide와 close metrics trigger를 같은 handler에서 수행한다. 분리 시 tooltip 동작과 close metrics prefetch가 함께 깨질 수 있다.
+- `scheduleCloseMetricsLazyRefresh()`는 `refreshTop100()`를 직접 호출한다. API fetch helper와 main refresh loop 의존이 있다.
+- 180개 close metrics cache가 이미 채워진 상태에서는 신규 lazy request 검증이 어렵다. requested/pending/completed Set 초기 상태와 cache 포화 상태를 구분해야 한다.
+- `requestLazyCloseMetrics()`는 실패 시 requested/pending Set을 즉시 되돌리지 않는다. API spam 방지에는 유리하지만 실패 재시도 정책을 바꾸면 회귀 위험이 있다.
+
+### 5L 최소 분리 후보
+
+- `docs/assets/stockboard_close_metrics.js` 생성은 가능하되, 5L 범위는 순수 helper 중심으로 좁게 잡는다.
+- 5L 이동 후보:
+  - 완료 여부 판단 helper: `hasCloseMetricsSnapshot(row)`
+  - 요청 필요 여부 판단 helper: 현재 Set 조회를 인자로 받는 순수 함수 형태
+  - request URL/query 생성 helper: `codes`, `priority`, `force` -> URLSearchParams/string
+  - throttle 가능 여부 판단 helper: `now`, `lastRequestedAt`, `throttleMs`
+- 5L 보류 후보:
+  - `requestNextCloseMetricsBatch()` 전체
+  - `requestLazyCloseMetrics()` fetch 호출
+  - `collectNextCloseMetricCodes()` DOM/top100State 직접 접근
+  - scroll handler
+  - 다음 버튼 event binding
+  - `refreshTop100()`와 lazy refresh timer
+  - `closeMetricsRequestedCodes`/`Pending`/`Completed` Set 자체
+
+### close metrics 분리 위험도 표
+
+| 구성요소 | 현재 위치 | DOM 의존도 | state 의존도 | API 의존도 | 분리 위험도 | 5L 이동 여부 | 보류 사유 |
+|---|---|---:|---:|---:|---:|---|---|
+| `hasCloseMetricsSnapshot` | inline close metrics section | 낮음 | 낮음 | 없음 | 낮음 | 후보 | 순수 row 판단 |
+| `rowNeedsCloseMetrics` | inline close metrics section | 낮음 | 높음 | 없음 | 중간 | helper화 후보 | Set을 인자로 받는 형태 필요 |
+| request query 생성 | `requestLazyCloseMetrics` 내부 | 낮음 | 낮음 | 중간 | 낮음 | 후보 | fetch와 분리 가능 |
+| throttle 판단 | `requestNextCloseMetricsBatch` 내부 | 낮음 | 중간 | 없음 | 낮음 | 후보 | now/last/throttle 인자화 가능 |
+| `collectNextCloseMetricCodes` | inline close metrics section | 높음 | 높음 | 없음 | 높음 | 보류 | DOM row 순서와 renderedRows 결합 |
+| `requestLazyCloseMetrics` | inline close metrics section | 낮음 | 높음 | 높음 | 높음 | 보류 | Set mutation/fetch/refresh 예약 결합 |
+| `requestNextCloseMetricsBatch` | inline close metrics section | 중간 | 높음 | 높음 | 높음 | 보류 | throttle/in-flight/button/fetch orchestration |
+| scroll trigger | inline document scroll handler | 높음 | 중간 | 없음 | 높음 | 보류 | tooltip hide와 같은 handler |
+| 다음 버튼 binding | inline controls section | 중간 | 중간 | 없음 | 중간 | 보류 | controls 분리 전까지 inline 유지 |
+| lazy refresh timer | inline close metrics section | 낮음 | 높음 | 중간 | 높음 | 보류 | `refreshTop100()` 직접 의존 |
+| completed Set sync | inline close metrics + patch/refresh | 낮음 | 높음 | 없음 | 높음 | 보류 | overlay 완료 판단과 재요청 방지 핵심 |
+
+- 다음 단계 5L에서는 순수 판단/query/throttle helper만 분리하고, DOM event binding, fetch 호출, Set mutation, refresh 예약은 inline 유지하는 방향이 안전하다.
+
+## 26. close metrics 순수 helper 최소 분리 5L
+
+- 5L에서 `docs/assets/stockboard_close_metrics.js`를 생성했다.
+- ES module은 아직 사용하지 않으며, `script type="module"` 전환과 `import/export` 추가는 수행하지 않았다.
+- 외부 파일은 `window.StockBoardCloseMetrics` namespace를 사용한다.
+- HTML은 `assets/stockboard_format.js`, `assets/stockboard_state.js`, `assets/stockboard_visual_cells.js`, `assets/stockboard_tooltip.js`, `assets/stockboard_close_metrics.js`, 기존 inline main script 순서로 로드한다.
+- 분리한 순수 helper:
+  - `hasCloseMetricsSnapshot(row)`
+  - `needsCloseMetrics(row, code, requestedCodes, pendingCodes, completedCodes)`
+  - `canRequestCloseMetrics(now, lastRequestedAt, inFlight, throttleMs)`
+  - `buildCloseMetricsRequestUrl(codes, options)`
+- 완료 판단 기준은 그대로 유지한다:
+  - `strength_source === 'opt10046'`
+  - `orderbook_source === 'opt10004'`
+- API URL 생성 정책:
+  - `/api/close_metrics_request?codes=...&priority=lazy&force=0`
+  - `probe` 파라미터는 사용하지 않는다.
+- inline에 유지한 close metrics 함수/상태:
+  - `closeMetricsRequestedCodes`, `closeMetricsPendingCodes`, `closeMetricsCompletedCodes`
+  - `closeMetricsLazyLastRequestedAt`, `closeMetricsLazyInFlight`, `closeMetricsLazyRefreshTimer`
+  - `closeMetricsLastScrollY`, `closeMetricsScrollDelta`
+  - `syncCloseMetricsCompletion`
+  - `collectNextCloseMetricCodes`
+  - `scheduleCloseMetricsLazyRefresh`
+  - `requestLazyCloseMetrics`
+  - `requestNextCloseMetricsBatch`
+  - `handleCloseMetricsScrollTrigger`
+  - next button click binding, document scroll handler, `refreshTop100`
+- DOM row 순서, Set mutation, fetch 호출, refresh 예약, event binding은 아직 inline 유지한다.
+- 다음 단계에서는 request/fetch 분리 또는 controls 분리 여부를 별도 검토한다.
