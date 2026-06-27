@@ -626,13 +626,15 @@ AHK_RUNNING=True
 | 18 | DirectDebugPanelToggle | DONE |
 | 19 | HTMLModuleSplitPrep | DONE |
 | 20 | HTMLCssSplit | DONE |
-| 21 | HTMLModuleSplit | TODO |
-| 22 | CandidateModelV02 | TODO |
-| 23 | ForeignFuturesSource | TODO |
-| 24 | BigHandKRT | TODO |
-| 25 | DayStrengthBackfill | TODO |
-| 26 | MarketSupplyRefresh | TODO |
-| 27 | SignalRankingStrategyFormalize | TODO |
+| 21 | HTMLJsPreSplitAudit | DONE |
+| 22 | HTMLJsSafeDedup | DONE |
+| 23 | HTMLModuleSplit | TODO |
+| 24 | CandidateModelV02 | TODO |
+| 25 | ForeignFuturesSource | TODO |
+| 26 | BigHandKRT | TODO |
+| 27 | DayStrengthBackfill | TODO |
+| 28 | MarketSupplyRefresh | TODO |
+| 29 | SignalRankingStrategyFormalize | TODO |
 
 ## 13. 2026-06-27 장마감 조회 snapshot 확정
 
@@ -705,3 +707,60 @@ AHK_RUNNING=True
 - JS는 아직 inline 유지이며, `script type="module"`, `import/export`, JS 파일 생성은 하지 않았다.
 - 5A 주석/구역 정리와 5B CSS 분리는 하나의 WIP 묶음으로 유지하며, 검증 완료 후 함께 커밋한다.
 - 목적은 HTML 줄 수 감소와 다음 JS split 단계의 유지보수성 개선이다.
+
+## 17. JS split 사전 조사 5C
+
+- 5C는 JS 분리 전 조사 단계이며, 실제 JS 파일 분리, `script type="module"` 전환, `import/export` 추가는 수행하지 않는다.
+- inline JS는 크게 상태/상수, 상태등/시장수급, localStorage, 컬럼 리사이즈, format/normalize, visual-cell, render, tooltip, close metrics next-batch, API refresh, Direct API debug, selection/clipboard bridge로 나눌 수 있다.
+- 중복 helper 후보:
+  - `ohlcTooltip`이 2회 선언되어 후행 선언이 실제 사용된다.
+  - `balanceView`, `minuteStrengthView`, `sessionStrengthView`가 2회 선언되어 후행 Fast/Graphic snapshot 대응 버전이 실제 사용된다.
+  - `formatVolume`은 전역 함수와 과거 `balanceView` 내부 지역 함수가 공존한다.
+  - `normalizeCode`와 selection IIFE의 `normalizeStockCode`는 목적이 유사하지만 `_AL/_NX` 허용 정책이 달라 바로 통합하면 위험하다.
+  - `firstValue`와 `directApiDebugFirstValue`는 유사하지만 debug payload 안전 접근 목적이 분리되어 있다.
+- 죽은 코드 후보:
+  - 앞쪽 `ohlcTooltip(candle)`, `balanceView`, `minuteStrengthView`, `sessionStrengthView`는 후행 동일 이름 선언에 가려지는 과거 구현 후보이다.
+  - `metricView`/`metricMarkup`은 현재 visual-cell 중심 렌더링에서 직접 사용 경로가 희박해 5D에서 호출 여부를 재확인한다.
+  - `title` attribute를 생성하는 markup은 native title observer가 제거하므로 custom tooltip 경로와 정리 가능성을 검토한다.
+  - 이전 viewport-row 기준 lazy 방식은 현재 `requestNextCloseMetricsBatch()` 표 순서 기준으로 대체되어, 관련 잔재가 남아 있는지 5D에서 확인한다.
+  - `.ohlc-fast-text` 좌측 정렬 시도는 UI 영향 확인 후 유지/정리 여부를 별도 판단한다.
+- 삭제/이동 위험 코드:
+  - `refreshTop100`, `loadRealtimePatch`, `renderBoard`, `renderCandidateBoard`, `applyRealtimePatchToRow`
+  - `requestNextCloseMetricsBatch`, `collectNextCloseMetricCodes`, `closeMetricsRequestedCodes`, `closeMetricsPendingCodes`, `closeMetricsCompletedCodes`
+  - `stripNativeTitles`, singleton balance/OHLC tooltip root와 tooltip mouse handlers
+  - `setVisualCell`, `ohlcCellView`, `visualMetricView`, Fast/Graphic display mode helpers
+  - Direct API debug toggle/load/update functions
+  - column resize, board sort, localStorage compatibility helpers
+  - selection/clipboard bridge IIFE
+- 5D split 후보 보정:
+  - `stockboard_state.js`: constants, DOM refs, `top100State`, localStorage keys
+  - `stockboard_api.js`: `/api/top100`, realtime patch, market supply fetch
+  - `stockboard_format.js`: normalize/format/firstValue/sort helpers
+  - `stockboard_visual_cells.js`: Fast/Graphic visual metric and OHLC visual helpers
+  - `stockboard_render.js`: row normalize, candidate/trading board render, realtime patch apply
+  - `stockboard_tooltip.js`: native title stripping and singleton tooltip handlers
+  - `stockboard_close_metrics.js`: next-batch lazy state and request helpers
+  - `stockboard_controls.js`: density/display/debug buttons, sort, column resize, candle mode
+  - `stockboard_debug.js`: Direct API diagnostic panel
+  - `stockboard_selection.js`: stock selection/clipboard bridge
+  - `stockboard_main.js`: boot, intervals, module wiring
+- 작은 조사 단계는 커밋하지 않고 5C+5D 또는 5C+5D+5E 단위로 묶어 커밋한다.
+
+## 18. JS split 전 안전 정리 5D
+
+- 5D는 JS split 전 안전 정리 단계이며, 실제 JS 파일 분리, `script type="module"` 전환, `import/export` 추가는 수행하지 않았다.
+- 같은 inline script scope에서 후행 선언에 의해 완전히 가려지던 앞쪽 중복 선언만 제거했다.
+- 제거한 중복 선언:
+  - 앞쪽 `ohlcTooltip(candle)`
+  - 앞쪽 `balanceView(value, options)`
+  - 앞쪽 `minuteStrengthView(value)`
+  - 앞쪽 `sessionStrengthView(value, options)`
+- 제거 후 위 함수들은 각각 1개 선언만 남아 있으며, 후행 Fast/Graphic 및 snapshot 대응 구현을 유지한다.
+- viewport-row 기준 lazy helper 잔재(`visibleTradingRowsForCloseMetrics`, `CLOSE_METRICS_LAZY_PREFETCH_PX`, viewport+buffer row selection)는 남아 있지 않음을 확인했다.
+- 삭제하지 않고 보류한 후보:
+  - `metricView`/`metricMarkup`: 호출 경로가 희박하지만 가격제한/visual 과거 경로와 혼동 가능성이 있어 5E에서 재확인한다.
+  - `normalizeCode`/selection IIFE `normalizeStockCode`: `_AL/_NX` 허용 정책 차이가 있어 통합하지 않는다.
+  - `firstValue`/`directApiDebugFirstValue`: Direct API payload 안전 접근 목적이 있어 통합하지 않는다.
+  - native `title` 생성 markup: observer/custom tooltip 정책과 연결되어 있어 별도 tooltip 정리 단계에서 다룬다.
+- Fast Mode 일봉 좌측 정렬 polish는 보류 상태를 유지한다. `.ohlc-fast-text`는 Fast Mode 전용 wrapper/CSS로 남기며 Graphic Mode 캔들 경로는 변경하지 않는다.
+- 다음 단계는 5E JS split 설계 또는 5D 추가 정리다.

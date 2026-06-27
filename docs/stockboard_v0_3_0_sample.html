@@ -1084,21 +1084,6 @@
     return `${display}${formatOhlcMove(value, prevClose)}`;
   }
 
-  function ohlcTooltip(candle) {
-    const prices = candle.prices;
-    return [
-      `거래일: ${candle.tradingDate || '-'}`,
-      `당일 시가: ${formatOhlcTooltipNumber(prices.open)}`,
-      `당일 고가: ${formatOhlcTooltipNumber(prices.high)}`,
-      `당일 저가: ${formatOhlcTooltipNumber(prices.low)}`,
-      `당일 종가: ${formatOhlcTooltipNumber(prices.close)}`,
-      `VWAP: ${formatOhlcTooltipNumber(prices.vwap, 2)}`,
-      `전일 고가: ${formatOhlcTooltipNumber(prices.prevHigh)}`,
-      `전일 종가: ${formatOhlcTooltipNumber(prices.prevClose)}`,
-      `전일 저가: ${formatOhlcTooltipNumber(prices.prevLow)}`
-    ].join('\n');
-  }
-
   function foreignSumView(value, label = '외합(억)', source = 'foreign_sum') {
     const description = source === 'foreign_investor_net'
       ? '장마감 후 종목별 외국인 순매수'
@@ -1158,46 +1143,6 @@
     };
   }
 
-  function balanceView(value, options = {}) {
-    if (value === null || value === undefined || value === '') return null;
-    const number = Number(value);
-    if (!Number.isFinite(number)) return null;
-    const clamped = Math.max(0.1, Math.min(10, number));
-    const position = (Math.log10(clamped) + 1) / 2;
-    const display = number.toFixed(2);
-    const status = number === 1
-      ? '매수/매도 균형'
-      : number < 1
-        ? number <= 0.5 ? '매도 압도' : '매도 우세'
-        : number >= 2 ? '매수 압도' : '매수 우세';
-    const volumeNumber = value => {
-      if (value === null || value === undefined || value === '') return null;
-      const parsed = Number(String(value).replace(/,/g, ''));
-      return Number.isFinite(parsed) ? parsed : null;
-    };
-    const bidVolume = volumeNumber(options.bidVolume);
-    const askVolume = volumeNumber(options.askVolume);
-    const formatVolume = volume => Math.trunc(volume).toLocaleString('en-US');
-    const tooltipLines = [`잔량비: ${display}`];
-    if (bidVolume !== null && askVolume !== null) {
-      tooltipLines.push(`매수잔량: ${formatVolume(bidVolume)}`);
-      tooltipLines.push(`매도잔량: ${formatVolume(askVolume)}`);
-      tooltipLines.push(`계산: ${formatVolume(bidVolume)} / ${formatVolume(askVolume)}`);
-    } else if (number !== 1) {
-      const differencePercent = Math.round((number - 1) * 100);
-      tooltipLines.push(`기준 1 대비 ${differencePercent > 0 ? '+' : ''}${differencePercent}%`);
-    }
-    tooltipLines.push(`상태: ${status}`);
-    if (number > 10) tooltipLines.push('바 표시는 10 기준 포화');
-    if (number < 0.1) tooltipLines.push('바 표시는 0.1 기준 포화');
-    return {
-      value: display,
-      blueWidth: (1 - position) * 100,
-      redWidth: position * 100,
-      tooltip: tooltipLines.join('\n')
-    };
-  }
-
   function minuteStrengthPosition(value) {
     // Hypothesis scale: recalibrate the 300/500/900 maximum threshold after Replay analysis.
     const strength = Math.max(0, value);
@@ -1209,53 +1154,6 @@
     const normalized = Math.max(-1, Math.min(1, (value - 100) / 100));
     const visual = Math.sign(normalized) * Math.pow(Math.abs(normalized), 0.6);
     return (1 + visual) * 50;
-  }
-
-  function minuteStrengthView(value) {
-    if (value === null || value === undefined || value === '') return null;
-    const number = Number(value);
-    if (!Number.isFinite(number)) return null;
-    const redWidth = instantStrengthPosition(number);
-    const difference = Math.round(number - 100);
-    const status = number < 100 ? '매도 우세' : number > 100 ? '매수 우세' : '균형';
-    const differenceText = difference > 0 ? `+${difference}` : String(difference);
-    const tooltipLines = [`순간강도 : ${number}`, status, `100 기준 ${differenceText}`];
-    if (number >= 200) tooltipLines.push('바 표시: 200 기준 매수 포화');
-    if (number <= 0) tooltipLines.push('바 표시: 0 기준 매도 포화');
-    return {
-      blueWidth: 100 - redWidth,
-      redWidth,
-      tooltip: tooltipLines.join('\n')
-    };
-  }
-
-  function sessionStrengthView(value, options = {}) {
-    if (value === null || value === undefined || value === '') return null;
-    const number = Number(value);
-    if (!Number.isFinite(number)) return null;
-    const buyVolume = Number(String(options.buyVolume ?? '').replace(/,/g, ''));
-    const sellVolume = Number(String(options.sellVolume ?? '').replace(/,/g, ''));
-    const redWidth = minuteStrengthPosition(number);
-    const difference = Math.round(number - 100);
-    const status = number < 100 ? '매도 우세' : number > 100 ? '매수 우세' : '균형';
-    const differenceText = difference > 0 ? `+${difference}` : String(difference);
-    const tooltipLines = [
-      `세션강도: ${number.toFixed(2)}`,
-      `매수체결량: ${Number.isFinite(buyVolume) ? formatInteger(buyVolume) : '-'}`,
-      `매도체결량: ${Number.isFinite(sellVolume) ? formatInteger(sellVolume) : '-'}`,
-      Number.isFinite(buyVolume) && Number.isFinite(sellVolume)
-        ? `계산: ${formatInteger(buyVolume)} / ${formatInteger(sellVolume)} * 100`
-        : '계산: -',
-      status,
-      `100 기준 ${differenceText}`,
-      '기준: 서버 시작 이후 실시간 체결 누적',
-      '주의: 정식 당일 backfill 미포함'
-    ];
-    return {
-      blueWidth: 100 - redWidth,
-      redWidth,
-      tooltip: tooltipLines.join('\n')
-    };
   }
 
   function candleView(value) {
