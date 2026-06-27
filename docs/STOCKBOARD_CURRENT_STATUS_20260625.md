@@ -640,13 +640,15 @@ AHK_RUNNING=True
 | 32 | HTMLDirectApiDebugHelperSplit | WIP |
 | 33 | HTMLSelectionControlsSplitDesign | WIP |
 | 34 | HTMLControlsHelperSplit | WIP |
-| 35 | HTMLModuleSplit | TODO |
-| 36 | CandidateModelV02 | TODO |
-| 37 | ForeignFuturesSource | TODO |
-| 38 | BigHandKRT | TODO |
-| 39 | DayStrengthBackfill | TODO |
-| 40 | MarketSupplyRefresh | TODO |
-| 41 | SignalRankingStrategyFormalize | TODO |
+| 35 | HTMLRenderMainSplitDesign | WIP |
+| 36 | HTMLRenderHelpersSplit | WIP |
+| 37 | HTMLModuleSplit | TODO |
+| 38 | CandidateModelV02 | TODO |
+| 39 | ForeignFuturesSource | TODO |
+| 40 | BigHandKRT | TODO |
+| 41 | DayStrengthBackfill | TODO |
+| 42 | MarketSupplyRefresh | TODO |
+| 43 | SignalRankingStrategyFormalize | TODO |
 
 ## 13. 2026-06-27 장마감 조회 snapshot 확정
 
@@ -1648,3 +1650,265 @@ AHK_RUNNING=True
 - sort 분리는 normalized row field, `top100State.boardSort`, `renderBoard()` header regeneration 의존 때문에 보류한다.
 - column resize 분리는 DOM measurement, CSS variable, localStorage, `ResizeObserver`, pointer state 의존 때문에 보류한다.
 - 다음 단계에서는 selection 또는 sort/resize 분리 여부를 별도 설계 단계로 다시 판단한다.
+
+## 31. render/main loop 분리 설계/위험점 점검 5T
+
+- 5T는 render/main loop 분리 설계와 위험점 점검 단계다.
+- 실제 render JS 파일 생성, render 함수 이동, main loop 이동, `refreshTop100` 이동, realtime patch 이동은 수행하지 않는다.
+- `top100State`, `rowByCode`, `renderBoard`, `refreshTop100`, realtime patch, sort/resize/selection/tooltip 의존성을 조사했다.
+- render/main loop는 현재까지 가장 위험한 구간이므로 다음 5U에서도 순수 helper만 검토한다.
+
+### render/main 관련 state
+
+- `top100State`:
+  - `rowByCode`: 거래대금 board DOM row map. 6자리 code 기준.
+  - `candidateRowByCode`: 후보 board DOM row map. 6자리 code 기준.
+  - `apiError`: top100 API error 상태.
+  - `renderedRows`: 현재 trading board 표시 row 배열. sort 적용 후 순서.
+  - `candidateRows`: 후보 board 표시 row 배열.
+  - `fiveMinuteStrengthSamples`: 브라우저 수신 기준 5분강도 임시 계산 sample map.
+  - `lastRealtimePatchSequence`: `/api/realtime_patch` delta 기준 sequence.
+  - `boardSort`: sort key/direction.
+  - `displayDensity`: normal/compact/ultra.
+  - `displayMode`: Fast/Graphic.
+  - `candleMode`: full/proportional.
+  - `candleDomain`: Graphic OHLC proportional domain.
+  - `closeMetricsRequestedCodes`, `closeMetricsPendingCodes`, `closeMetricsCompletedCodes`: close metrics lazy request gate.
+  - `closeMetricsLazyLastRequestedAt`, `closeMetricsLazyInFlight`, `closeMetricsLazyRefreshTimer`, `closeMetricsLastScrollY`, `closeMetricsScrollDelta`.
+  - `diagnostics`: api/render/dom OHLC count 등 상단 진단.
+- loading/timer state:
+  - `marketSupplyLoading`
+  - `top100RefreshLoading`
+  - `realtimePatchLoading`
+  - `directApiDebugLoading`
+  - `TOP100_REFRESH_MS = 30000`
+  - `REALTIME_PATCH_REFRESH_MS = 500`
+  - `REALTIME_PATCH_DELTA_ENABLED = true`
+- render와 연결된 외부 state:
+  - selection IIFE의 `activeStockCode`는 render 후 MutationObserver로 DOM class를 재적용한다.
+  - column width state는 renderBoard가 header를 재생성해도 CSS variable/colgroup 구조를 유지해야 한다.
+  - sort state는 `top100State.boardSort`와 `top100State.renderedRows` 순서를 결정한다.
+
+### render/main 관련 함수 목록
+
+- market/topbar render:
+  - `renderMarketFlow(cell, value, integer)`
+  - `renderMarketSupplyMarket(key, market)`
+  - `renderMarketSupply(data)`
+  - `updateDataDiagnostics()`
+  - `setStatusLamp()` / `markSuccessfulUpdate()`
+- normalize/fallback:
+  - `normalizeCode(value)`
+  - `firstValue(row, keys)`
+  - `normalizeRankingRow(row)`
+  - `preserveRealtimeFields(nextRow, previousRow)`
+- cell/view render:
+  - `setCell(cell, html, className, title, flashOnChange)`
+  - `setVisualCell(cell, view, className, tooltipKind)`
+  - `metricView`, `metricMarkup`
+  - `ohlcCellView`, `ohlcMarkup`, `rowOhlcMarkup`
+  - `orderbookMetricView`, `instantStrengthMetricView`, `fiveMinuteStrengthMetricView`
+  - `updateBoardRow(tableRow, row, flashRealtime)`
+  - `createBoardRow(row)`
+  - `updateCandidateRow(tableRow, row)`
+- board render orchestration:
+  - `showBoardMessage(message)`
+  - `renderCandidateBoard(rows)`
+  - `updateCandidateCandleCells()`
+  - `updateVisibleCandleCells()`
+  - `renderBoard(rows)`
+  - `applyRankingRows(inputRows)`
+  - `window.StockBoardTop100.update(rows)`
+  - `window.StockBoardTop100.refresh(rows)`
+  - `window.StockBoardTop100.clear()` / `status()`
+- realtime patch:
+  - `findRenderedTableRow(code)`
+  - `findCandidateTableRow(code)`
+  - `applyRealtimePatchToRow(tableRow, row, patch)`
+  - `loadRealtimePatch(options)`
+- close metrics render link:
+  - `syncCloseMetricsCompletion(rows)`
+  - `collectNextCloseMetricCodes()` reads rendered DOM order and `top100State.renderedRows`.
+  - `scheduleCloseMetricsLazyRefresh()` calls `refreshTop100()`.
+- boot/refresh loops:
+  - initial `/api/top100` fetch -> `StockBoardTop100.update()` -> `loadRealtimePatch({ forceFull: true })`
+  - `loadMarketSupply()` and 5s interval
+  - `refreshTop100()` and 30s interval
+  - `loadRealtimePatch()` and 500ms interval
+  - Direct API debug loop remains separate but still inline.
+
+### 데이터 흐름
+
+- `/api/top100` initial load:
+  - fetch `/api/top100`
+  - `StockBoardTop100.update(rows)`
+  - `applyRankingRows(rows)`
+  - `normalizeRankingRow()`
+  - `renderBoard(normalizedRows)`
+  - `renderCandidateBoard(rows)` + trading board full DOM render
+  - `top100State.rowByCode` / `candidateRowByCode` maps rebuilt
+  - `loadRealtimePatch({ forceFull: true })`
+- `/api/top100` refresh:
+  - `refreshTop100()` fetches `/api/top100`
+  - `StockBoardTop100.refresh(rows)` normalizes rows and preserves realtime fields from previous rows.
+  - if sort active, full `renderBoard(normalizedRows)` is used.
+  - if no sort, rows are patched into existing DOM through `updateBoardRow()` and candidate rows are updated.
+  - close metrics completion is synced from refreshed rows.
+- `/api/realtime_patch`:
+  - `loadRealtimePatch()` chooses `/api/realtime_patch?since_sequence=...` or full `/api/realtime_patch`.
+  - patches normalize code with `normalizeCode()`.
+  - trading table row is found by `findRenderedTableRow()` and rendered row map.
+  - candidate table row is found by `findCandidateTableRow()` and candidate row map.
+  - `applyRealtimePatchToRow()` mutates row fields and targeted cells using `setCell()`/`setVisualCell()`.
+- close metrics snapshot:
+  - backend overlays opt10046/opt10004 values into `/api/top100` rows.
+  - `syncCloseMetricsCompletion()` updates completed/pending sets.
+  - render displays strength/orderbook via metric view helpers.
+- 후보5/trading board sharing:
+  - same normalized row objects feed both candidate and trading board render paths.
+  - candidate board stores its own DOM map in `candidateRowByCode`.
+- Fast/Graphic mode:
+  - `top100State.displayMode` is read by visual-cell/OHLC helpers.
+  - Fast/Graphic toggle calls `renderBoard(top100State.renderedRows)` for full rerender.
+- tooltip/visual-cell:
+  - `setVisualCell()` writes cell html/background/data-tooltip/aria-label and removes child native title/data tooltip residue.
+  - `refreshBalanceTooltip()` and `refreshOhlcTooltip()` preserve hover snapshot behavior after DOM updates.
+
+### 위험 의존성
+
+- `renderBoard()` fully rebuilds board DOM, clears/recreates `rowByCode`, rebuilds candidate board, updates sort indicators, diagnostics, OHLC domain, and close metrics completion. Moving it as one unit is high risk.
+- `rowByCode` and `candidateRowByCode` are the bridge for realtime patch and Direct API debug DOM comparison. They must stay aligned to 6자리 code policy.
+- `_AL`/`_NX` price source policy is indirectly protected by `normalizeCode()` and backend row fields. Render split must not reinterpret source codes.
+- close metrics Sets drive lazy request de-duplication and completion. `renderBoard`, `StockBoardTop100.refresh`, realtime patch, and close metrics lazy flow all touch or depend on these sets.
+- Fast/Graphic mode performs full rerender and depends on visual helper modules plus inline `setVisualCell()` DOM mutation.
+- column resize depends on header/colgroup markup and CSS variables surviving render. Board header regeneration can break resize handles.
+- sort state determines `renderedRows` order; refresh path changes behavior when sort is active.
+- tooltip snapshot data is generated during render via `setVisualCell()` and OHLC markup. Moving render without tooltip policy can regress duplicate/native tooltip behavior.
+- Direct API debug reads table cells 4/5 by DOM index. Render column order changes will cause debug DIFF noise.
+- main loop coordinates 500ms realtime patch, 30s top100 refresh, 5s market supply refresh, and debug interval. Moving timers before render state is stabilized is high risk.
+- selection active row highlighting depends on MutationObserver after DOM regeneration.
+
+### render 분리 가능성 판단
+
+- A. 안전 후보:
+  - pure className/tone decision helpers.
+  - pure field fallback helpers that do not touch `top100State`.
+  - pure row key extraction helpers that preserve `normalizeCode()` policy by injection/callback.
+  - pure cell text sanitize helpers that wrap existing `escapeHtml`/display policy.
+- B. 중간 위험:
+  - row markup creation helpers.
+  - metric HTML wrapper helpers.
+  - candidate/trading row cell ordering helpers.
+  - `setCell()` subset if DOM mutation and title cleanup contract is preserved.
+- C. 고위험:
+  - `renderBoard()` 전체.
+  - `StockBoardTop100.update/refresh`.
+  - `refreshTop100()`.
+  - `loadRealtimePatch()` / `applyRealtimePatchToRow()`.
+  - `top100State` and `rowByCode` mutation.
+  - main boot/interval loops.
+
+### 5U 최소 분리 후보
+
+- `docs/assets/stockboard_render_helpers.js` 생성은 가능하지만 5U 범위는 매우 좁게 잡는다.
+- 5U 이동 후보:
+  - className 결정 helper.
+  - fallback value picker wrapper that receives the row and candidate keys.
+  - row code extraction helper that delegates to inline `normalizeCode` or receives normalizer as argument.
+  - cell text sanitize helper that delegates to `escapeHtml` or receives escape function as argument.
+- 5U 보류 후보:
+  - `setCell` / `setVisualCell`.
+  - `updateBoardRow` / `createBoardRow`.
+  - `renderCandidateBoard` / `renderBoard`.
+  - `StockBoardTop100.update/refresh`.
+  - `refreshTop100`.
+  - `loadRealtimePatch` / `applyRealtimePatchToRow`.
+  - `top100State`, `rowByCode`, `candidateRowByCode` mutation.
+  - boot/init intervals.
+
+### render/main 분리 위험도 표
+
+| 구성요소 | 현재 위치 | DOM 의존도 | state 의존도 | API 의존도 | 다른 모듈 의존도 | 분리 위험도 | 5U 이동 여부 | 보류 사유 |
+|---|---|---:|---:|---:|---:|---:|---|---|
+| pure class/fallback helpers | inline normalize/render helpers | 낮음 | 낮음 | 없음 | 낮음 | 낮음 | 후보 | 인자 기반으로 자르면 안전 |
+| row code extraction helper | inline normalize path | 낮음 | 중간 | 없음 | 중간 | 중간 | 후보/신중 | 6자리/_AL policy 보존 필요 |
+| `metricView`/`metricMarkup` | inline visual/render helpers | 낮음 | 중간 | 없음 | 중간 | 중간 | 신중 검토 | visual helper와 render policy 사이에 있음 |
+| `setCell` | inline render functions | 높음 | 낮음 | 없음 | 중간 | 높음 | 보류 | title/aria/flash DOM mutation contract |
+| `setVisualCell` | inline render functions | 매우 높음 | 중간 | 없음 | 높음 | 매우 높음 | 보류 | tooltip cleanup/snapshot/native title 정책 핵심 |
+| `updateBoardRow` | inline render functions | 매우 높음 | 높음 | 없음 | 높음 | 매우 높음 | 보류 | cell index, visual-cell, tooltip refresh 결합 |
+| `createBoardRow` | inline render functions | 높음 | 중간 | 없음 | 중간 | 높음 | 보류 | row dataset/15 cell layout contract |
+| `renderCandidateBoard` | inline render orchestration | 매우 높음 | 높음 | 없음 | 높음 | 매우 높음 | 보류 | candidateRows/candidateRowByCode mutation |
+| `renderBoard` | inline render orchestration | 매우 높음 | 매우 높음 | 없음 | 매우 높음 | 매우 높음 | 보류 | sort/candidate/close metrics/diagnostics/rowByCode 결합 |
+| `StockBoardTop100.update/refresh` | inline public adapter | 높음 | 매우 높음 | 중간 | 높음 | 매우 높음 | 보류 | normalize/preserve/re-render/patch branching |
+| `refreshTop100` | inline refresh loop | 낮음 | 높음 | 매우 높음 | 높음 | 매우 높음 | 보류 | API/status/realtime forceFull 결합 |
+| `applyRealtimePatchToRow` | inline realtime patch | 매우 높음 | 매우 높음 | 중간 | 매우 높음 | 매우 높음 | 보류 | targeted DOM mutation and row mutation |
+| `loadRealtimePatch` | inline refresh loop | 중간 | 매우 높음 | 매우 높음 | 높음 | 매우 높음 | 보류 | sequence/delta/row maps/candidate maps 결합 |
+| boot intervals | inline main script | 낮음 | 높음 | 높음 | 중간 | 높음 | 보류 | startup order와 loading flags 영향 |
+
+- 결론: render/main loop는 아직 모듈 분리의 본체로 이동하기 이르다. 다음 5U에서도 DOM mutation이나 API loop가 아닌 순수 helper만 검토하는 편이 안전하다.
+
+## 32. render 순수 helper 최소 분리 5U
+
+- 5U에서 `docs/assets/stockboard_render_helpers.js`를 생성했다.
+- ES module은 아직 사용하지 않으며 `script type="module"` 전환과 `import/export` 추가는 수행하지 않는다.
+- 외부 파일은 `window.StockBoardRenderHelpers` namespace를 사용한다.
+- HTML 로드 순서:
+  1. `assets/stockboard_format.js`
+  2. `assets/stockboard_state.js`
+  3. `assets/stockboard_visual_cells.js`
+  4. `assets/stockboard_tooltip.js`
+  5. `assets/stockboard_close_metrics.js`
+  6. `assets/stockboard_debug.js`
+  7. `assets/stockboard_controls.js`
+  8. `assets/stockboard_render_helpers.js`
+  9. 기존 inline main script
+
+### 분리한 render helper
+
+- `hasValue(value)`
+- `firstValue(row, keys)`
+- `classNames(...values)`
+
+### inline compatibility alias
+
+- inline main script는 `window.StockBoardRenderHelpers || {}`를 `StockBoardRenderHelpers`로 받는다.
+- 사용 alias:
+  - `firstValue`
+  - `classNames`
+- 기존 inline `firstValue(row, keys)` 선언은 제거하고 helper alias로 연결했다.
+- `updateBoardRow()`의 일부 class 조합은 `classNames()`로만 감쌌다.
+
+### inline 유지 항목
+
+- `normalizeCode`
+- `normalizeRankingRow`
+- `setCell`
+- `setVisualCell`
+- `updateBoardRow`
+- `createBoardRow`
+- `renderCandidateBoard`
+- `renderBoard`
+- `StockBoardTop100.update`
+- `StockBoardTop100.refresh`
+- `refreshTop100`
+- `loadRealtimePatch`
+- `applyRealtimePatchToRow`
+- `rowOhlcMarkup`
+- `ohlcTooltip`
+- market/topbar render functions
+- boot/init functions and all intervals
+- `top100State`, `rowByCode`, `candidateRowByCode`
+- selection, sort, column resize functions
+
+### 적용 범위
+
+- `firstValue()`는 DOM/API/state/localStorage에 접근하지 않는 순수 fallback helper라 이동했다.
+- `classNames()`는 class string 결합만 담당하며 DOM mutation은 하지 않는다.
+- `setCell()`/`setVisualCell()`은 title cleanup, tooltip snapshot, flash, DOM mutation contract가 있어 inline 유지한다.
+- `renderBoard()`/`refreshTop100()`/`loadRealtimePatch()`는 state/API/DOM 결합이 커서 계속 보류한다.
+
+### 남은 보류
+
+- render/main loop 분리는 계속 보류한다.
+- 추가로 분리할 수 있는 후보는 pure class/fallback helper 정도이며, DOM mutation이 들어가는 순간 별도 설계가 필요하다.
+- 다음 단계에서는 module split 마감 정리 또는 render helper 추가 분리 여부를 별도 판단한다.

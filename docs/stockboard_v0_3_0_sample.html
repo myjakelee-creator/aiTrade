@@ -83,6 +83,7 @@
 <script src="assets/stockboard_close_metrics.js?v=5l_close_metrics_helpers_20260627"></script>
 <script src="assets/stockboard_debug.js?v=5o_debug_helpers_20260627"></script>
 <script src="assets/stockboard_controls.js?v=5r_controls_helpers_20260627"></script>
+<script src="assets/stockboard_render_helpers.js?v=5u_render_helpers_20260627"></script>
 <script>
   /*
    * JS split map for 5B+:
@@ -94,6 +95,7 @@
    * - stockboard_close_metrics.js: next-batch close metrics request state/functions
    * - stockboard_debug.js: Direct API diagnostic helper functions
    * - stockboard_controls.js: null-safe control/storage DOM helpers
+   * - stockboard_render_helpers.js: pure render fallback/class helpers
    * - stockboard_controls.js: topbar buttons, resize, sort, candle mode, debug toggle
    * - stockboard_main.js: boot, refresh loops, public window adapters
    */
@@ -161,6 +163,9 @@
   const writeStoredValue = StockBoardControls.writeStoredValue;
   const safeAddEventListener = StockBoardControls.safeAddEventListener;
   const setElementText = StockBoardControls.setElementText;
+  const StockBoardRenderHelpers = window.StockBoardRenderHelpers || {};
+  const firstValue = StockBoardRenderHelpers.firstValue;
+  const classNames = StockBoardRenderHelpers.classNames;
 
   const board = document.getElementById('trading-board');
   const candidateBoard = document.getElementById('candidate-board');
@@ -1538,13 +1543,6 @@
     </div>`;
   }
 
-  function firstValue(row, keys) {
-    for (const key of keys) {
-      if (row[key] !== null && row[key] !== undefined && row[key] !== '') return row[key];
-    }
-    return null;
-  }
-
   function rankMovementView(previousRankValue, originalRankValue) {
     const hasPreviousRank = previousRankValue !== null && previousRankValue !== undefined && previousRankValue !== '';
     const hasOriginalRank = originalRankValue !== null && originalRankValue !== undefined && originalRankValue !== '';
@@ -2342,11 +2340,11 @@
     const grade = row.grade === '-' ? '-' : `<span class="grade ${row.gradeClass}">${escapeHtml(row.grade)}</span>`;
     const cells = tableRow.cells;
     setCell(cells[0], escapeHtml(row.rank), 'rank-cell', row.rankCellTooltip);
-    setCell(cells[1], escapeHtml(row.previousRank), `rank-cell ${row.rankMovementClass}`.trim(), row.rankTooltip);
+    setCell(cells[1], escapeHtml(row.previousRank), classNames('rank-cell', row.rankMovementClass), row.rankTooltip);
     setCell(cells[2], grade, '', row.candidateGradeTooltip || '');
     setCell(cells[3], escapeHtml(row.name), 'stock-name', `종목코드: ${row.code}`);
     setCell(cells[4], escapeHtml(row.price), 'number-cell', '', flashRealtime);
-    setCell(cells[5], escapeHtml(row.changeRate), `number-cell ${row.changeClass}`.trim(), '', flashRealtime);
+    setCell(cells[5], escapeHtml(row.changeRate), classNames('number-cell', row.changeClass), '', flashRealtime);
     setCell(cells[6], escapeHtml(row.amount), 'number-cell');
     setVisualCell(cells[7], ohlcCellView(row), 'ohlc-cell visual-cell', 'ohlc');
     refreshOhlcTooltip(cells[7]);
@@ -2354,9 +2352,9 @@
     refreshBalanceTooltip(cells[8]);
     setVisualCell(cells[9], instantStrengthMetricView(row.minuteForce, row), 'balance-cell visual-cell');
     setVisualCell(cells[10], fiveMinuteStrengthMetricView(row.sessionForce, row), 'balance-cell visual-cell');
-    setCell(cells[11], escapeHtml(row.foreign), `flow-number ${row.foreignClass}`.trim(), row.foreignTooltip);
-    setCell(cells[12], escapeHtml(row.program), `flow-number ${row.programClass}`.trim(), row.programTooltip);
-    setCell(cells[13], escapeHtml(row.bigHand), `flow-number ${row.bigHandClass}`.trim(), row.bigHandTooltip);
+    setCell(cells[11], escapeHtml(row.foreign), classNames('flow-number', row.foreignClass), row.foreignTooltip);
+    setCell(cells[12], escapeHtml(row.program), classNames('flow-number', row.programClass), row.programTooltip);
+    setCell(cells[13], escapeHtml(row.bigHand), classNames('flow-number', row.bigHandClass), row.bigHandTooltip);
     setCell(cells[14], escapeHtml(row.note), 'note');
   }
 
