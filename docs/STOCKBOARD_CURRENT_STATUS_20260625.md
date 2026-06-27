@@ -636,13 +636,15 @@ AHK_RUNNING=True
 | 28 | HTMLTooltipCoreSplit | WIP |
 | 29 | HTMLCloseMetricsSplitDesign | WIP |
 | 30 | HTMLCloseMetricsHelperSplit | WIP |
-| 31 | HTMLModuleSplit | TODO |
-| 32 | CandidateModelV02 | TODO |
-| 33 | ForeignFuturesSource | TODO |
-| 34 | BigHandKRT | TODO |
-| 35 | DayStrengthBackfill | TODO |
-| 36 | MarketSupplyRefresh | TODO |
-| 37 | SignalRankingStrategyFormalize | TODO |
+| 31 | HTMLDirectApiDebugSplitDesign | WIP |
+| 32 | HTMLDirectApiDebugHelperSplit | WIP |
+| 33 | HTMLModuleSplit | TODO |
+| 34 | CandidateModelV02 | TODO |
+| 35 | ForeignFuturesSource | TODO |
+| 36 | BigHandKRT | TODO |
+| 37 | DayStrengthBackfill | TODO |
+| 38 | MarketSupplyRefresh | TODO |
+| 39 | SignalRankingStrategyFormalize | TODO |
 
 ## 13. 2026-06-27 장마감 조회 snapshot 확정
 
@@ -1188,3 +1190,177 @@ AHK_RUNNING=True
   - next button click binding, document scroll handler, `refreshTop100`
 - DOM row 순서, Set mutation, fetch 호출, refresh 예약, event binding은 아직 inline 유지한다.
 - 다음 단계에서는 request/fetch 분리 또는 controls 분리 여부를 별도 검토한다.
+
+## 27. Direct API debug 분리 설계/위험점 점검 5N
+
+- 5N은 Direct API debug 분리 설계와 위험점 점검 단계다.
+- 실제 debug JS 파일 생성, 함수 이동, `script type="module"` 전환, `import/export` 추가는 아직 수행하지 않는다.
+- 현재 Direct API debug는 운영 화면 기본 hidden/off 상태지만, 진단 fetch/update loop는 inline main script에서 계속 실행된다.
+
+### Direct API debug DOM/state
+
+- DOM:
+  - `#direct-api-debug-panel` / `directApiDebugPanel`: Direct API debug 표시줄 root. 기본 `hidden`.
+  - `#debug-toggle` / `debugToggle`: topbar `진단` toggle button.
+  - debug item markup: `direct-api-debug-item`, `direct-api-debug-ok`, `direct-api-debug-lag`, `direct-api-debug-wait`.
+- localStorage:
+  - `debugPanelVisibleStorageKey = STOCKBOARD_STORAGE_KEYS.debugPanelVisible`
+  - 실제 key: `stockboard.debugPanelVisible`
+- runtime state/constants:
+  - `DIRECT_API_DEBUG_CODES = ['000660', '005930', '009150', '402340', '005380']`
+  - `DIRECT_API_DEBUG_REFRESH_MS = 500`
+  - `directApiDebugLoading`: overlapping fetch 방지 flag
+  - panel `hidden`, toggle `active`, toggle `aria-pressed`, panel `aria-label`
+
+### Direct API debug 함수 목록
+
+- 표시/숨김:
+  - `loadDebugPanelVisible()`
+  - `saveDebugPanelVisible(visible)`
+  - `applyDebugPanelVisible(visible)`
+  - `debugToggle` click event binding
+- payload/value helpers:
+  - `directApiDebugFirstValue(row, keys)`
+  - `directApiDebugQuote(payload, code)`
+  - `directApiDebugSource(quote)`
+  - `directApiDebugSequence(payload, quote)`
+  - `directApiDebugTimeText(value)` - 현재 사용 여부가 낮은 helper 후보로 보이지만 5N에서는 삭제하지 않는다.
+- table DOM compare helpers:
+  - `readTableDomPriceForCode(code)`
+  - `readTableDomChangeRateForCode(code)`
+- fetch/render loop:
+  - `updateDirectApiDebugPanel(payload, fetchStartedAt, fetchDurationMs)`
+  - `loadDirectApiDebug()`
+  - `startDirectApiDebugPanel()`
+
+### API 호출 경로
+
+- Direct API debug fetch:
+  - `/api/realtime?codes=000660,005930,009150,402340,005380`
+  - `cache: 'no-store'`
+- `/api/top100`을 직접 호출하지 않는다.
+- `/api/realtime_provider_status`를 직접 호출하지 않는다.
+- table 표시값 비교는 `#candidate-board`와 `#trading-board`의 현재 DOM row cell text를 읽어 수행한다.
+- hidden 상태에서도 `startDirectApiDebugPanel()`이 `loadDirectApiDebug()`와 500ms interval을 시작하므로 API 호출과 `directApiDebugPanel.innerHTML` 갱신이 계속된다.
+
+### 표시/숨김/localStorage 정책
+
+- 운영 화면 기본값은 hidden/off다.
+- topbar `진단` 버튼으로 panel 표시/숨김을 toggle한다.
+- 사용자가 바꾼 상태는 `stockboard.debugPanelVisible`에 `1`/`0`으로 저장한다.
+- reload 후 `loadDebugPanelVisible()` 결과를 `applyDebugPanelVisible()`로 반영한다.
+- visible 상태는 panel `hidden`, button `active` class, button `aria-pressed`로 표현한다.
+- hidden 상태에서도 진단 로직은 제거되지 않으며, 현재 구현은 DOM 업데이트도 계속 수행한다.
+
+### 위험 의존성
+
+- `nativeTitleObserver`가 debug item의 native `title`을 제거하고 `aria-label`로 보존한다. debug render가 `title` markup을 만들기 때문에 observer와의 연결을 분리 단계에서 깨뜨리면 native tooltip 중복이 재발할 수 있다.
+- Direct API debug panel은 운영 화면에서 반드시 기본 hidden이어야 한다.
+- localStorage key는 이미 `stockboard_state.js`의 `STOCKBOARD_STORAGE_KEYS.debugPanelVisible`로 분리되어 있으므로 5O에서 key literal을 새로 만들면 안 된다.
+- `debugToggle`은 Fast/Graphic/다음 버튼과 같은 topbar controls 영역에 있다. controls 분리 전에는 event binding 이동 위험이 있다.
+- `readTableDomPriceForCode()`와 `readTableDomChangeRateForCode()`는 table cell index 4/5에 의존한다. render column 구조가 바뀌면 debug 결과가 DIFF로 흔들릴 수 있다.
+- 500ms debug API loop는 hidden 상태에서도 계속 돈다. 5O에서 성능 최적화를 시도할 경우 운영 진단 정책 변화가 되므로 별도 단계로 분리하는 편이 안전하다.
+- `updateDirectApiDebugPanel()`은 panel hidden 상태에서도 `innerHTML`을 갱신한다. DOM update 최소화는 가능하지만 이번 설계 단계에서는 동작 변경 후보로만 기록한다.
+- debug item `title` cleanup은 tooltip singleton과 직접 연결되지는 않지만 native title 제거 정책 전체와 연결된다.
+
+### 5O 최소 분리 후보
+
+- `docs/assets/stockboard_debug.js` 생성은 가능하지만 5O 범위는 좁게 잡는다.
+- 5O 이동 후보:
+  - debug URL 생성 helper: codes -> `/api/realtime?codes=...`
+  - debug payload value pick helper: `directApiDebugFirstValue`
+  - quote 선택 helper: `directApiDebugQuote`
+  - source/sequence helper: `directApiDebugSource`, `directApiDebugSequence`
+  - visible state load/save/apply helper는 DOM/localStorage 의존이 작지 않으므로 이동 시 `debugToggle`, `directApiDebugPanel`, storage key를 인자로 받는 형태가 안전하다.
+- 5O 보류 후보:
+  - actual fetch loop: `loadDirectApiDebug`, `startDirectApiDebugPanel`
+  - panel render 전체: `updateDirectApiDebugPanel`
+  - topbar button event binding
+  - `nativeTitleObserver`
+  - table DOM compare helpers가 cell index에 의존하는 부분
+  - refresh/main loop와 가까운 interval 시작 위치
+
+### Direct API debug 분리 위험도 표
+
+| 구성요소 | 현재 위치 | DOM 의존도 | API 의존도 | localStorage 의존도 | 분리 위험도 | 5O 이동 여부 | 보류 사유 |
+|---|---|---:|---:|---:|---:|---|---|
+| debug panel root/toggle refs | inline constants/state | 높음 | 없음 | 낮음 | 중간 | 보류 | topbar controls와 직접 연결 |
+| `loadDebugPanelVisible`/`saveDebugPanelVisible` | inline localStorage helpers | 낮음 | 없음 | 높음 | 낮음~중간 | 후보 | key는 `StockBoardState` alias를 재사용해야 함 |
+| `applyDebugPanelVisible` | inline controls helpers | 높음 | 없음 | 없음 | 중간 | 신중 검토 | DOM refs를 인자로 받으면 분리 가능 |
+| `directApiDebugFirstValue` | inline debug section | 없음 | 낮음 | 없음 | 낮음 | 후보 | 순수 payload helper |
+| `directApiDebugQuote` | inline debug section | 낮음 | 중간 | 없음 | 낮음~중간 | 후보 | `normalizeCode` inline 의존 유지 필요 |
+| source/sequence helpers | inline debug section | 없음 | 낮음 | 없음 | 낮음 | 후보 | payload helper |
+| table DOM compare helpers | inline debug section | 높음 | 없음 | 없음 | 중간~높음 | 보류 | board DOM selector와 cell index 4/5 의존 |
+| `updateDirectApiDebugPanel` | inline debug section | 매우 높음 | 중간 | 없음 | 높음 | 보류 | render markup/title/native cleanup과 결합 |
+| `loadDirectApiDebug` | inline debug section | 중간 | 높음 | 없음 | 높음 | 보류 | fetch, loading flag, render callback 결합 |
+| `startDirectApiDebugPanel` | inline debug section | 낮음 | 높음 | 없음 | 높음 | 보류 | 500ms interval과 boot order 영향 |
+| debug button click binding | inline controls/event binding | 높음 | 없음 | 중간 | 중간~높음 | 보류 | controls 분리 전까지 inline 유지가 안전 |
+| `nativeTitleObserver` interaction | inline tooltip section | 매우 높음 | 없음 | 없음 | 높음 | 보류 | debug item `title` cleanup과 native tooltip 중복 방지 정책 |
+
+- 다음 5O에서는 순수 payload/URL helper 위주로만 분리하고, fetch loop/render/event binding/native title cleanup은 inline 유지하는 방향이 가장 안전하다.
+
+## 28. Direct API debug 최소 helper 분리 + hidden fetch 중단 5O
+
+- 5O에서 `docs/assets/stockboard_debug.js`를 생성했다.
+- ES module은 아직 사용하지 않으며 `script type="module"` 전환과 `import/export` 추가는 수행하지 않는다.
+- 외부 파일은 `window.StockBoardDebug` namespace를 사용한다.
+- HTML 로드 순서:
+  1. `assets/stockboard_format.js`
+  2. `assets/stockboard_state.js`
+  3. `assets/stockboard_visual_cells.js`
+  4. `assets/stockboard_tooltip.js`
+  5. `assets/stockboard_close_metrics.js`
+  6. `assets/stockboard_debug.js`
+  7. 기존 inline main script
+
+### 분리한 debug helper
+
+- `loadDebugPanelVisible(storageKey)`
+- `saveDebugPanelVisible(storageKey, visible)`
+- `buildDirectApiDebugUrl(codes)`
+- `pickDirectApiValue(payload, keys)`
+- `applyDebugPanelVisibility(panel, button, visible)`
+
+### inline 유지 항목
+
+- `DIRECT_API_DEBUG_CODES`
+- `DIRECT_API_DEBUG_REFRESH_MS`
+- `directApiDebugLoading`
+- `directApiDebugFirstValue`
+- `directApiDebugQuote`
+- `readTableDomPriceForCode`
+- `readTableDomChangeRateForCode`
+- `directApiDebugSource`
+- `directApiDebugSequence`
+- `directApiDebugTimeText`
+- `updateDirectApiDebugPanel`
+- `loadDirectApiDebug`
+- `startDirectApiDebugPanel`
+- topbar `debugToggle` click binding
+- `nativeTitleObserver`, `stripNativeTitles`
+- render/main loop, tooltip, close metrics, selection/clipboard bridge
+
+### hidden/off 상태 fetch 중단
+
+- `loadDirectApiDebug()` 시작부에서 `directApiDebugPanel?.hidden !== false`이면 즉시 `return null` 한다.
+- 따라서 운영 기본 hidden/off 상태에서는 500ms interval tick이 유지되어도 `/api/realtime?codes=...` fetch를 수행하지 않는다.
+- `진단` 버튼을 ON으로 바꾸면 `applyDebugPanelVisible(true)`와 localStorage 저장 후 `loadDirectApiDebug()`를 1회 즉시 호출한다.
+- ON 상태에서만 interval tick이 실제 fetch/update를 수행한다.
+- OFF로 바꾸면 panel이 hidden 처리되고 이후 interval tick은 fetch를 skip한다.
+- `stockboard.debugPanelVisible` localStorage key, toggle `active` class, `aria-pressed`, panel `hidden` 정책은 유지한다.
+
+### 유지 정책
+
+- Direct API debug 진단 로직 자체는 제거하지 않는다.
+- API URL 정책은 `/api/realtime?codes=...`를 유지한다.
+- native title cleanup은 inline `nativeTitleObserver`가 계속 담당한다.
+- debug item render가 생성하는 native `title`은 기존처럼 observer가 제거하고 `aria-label`로 보존한다.
+- Fast/Graphic, 다음 버튼, close metrics next-batch, tooltip singleton, render/main loop는 수정 범위 밖으로 유지한다.
+
+### 남은 보류
+
+- debug fetch loop 전체 분리는 보류한다.
+- debug panel render 전체 분리는 보류한다.
+- table DOM compare helper는 cell index 4/5 의존이 있어 보류한다.
+- topbar controls/event binding 분리는 controls 단계까지 보류한다.
+- hidden 상태 DOM update 최소화는 fetch skip으로 대부분 해소되지만, 추가 최적화는 브라우저 검증 후 별도 단계에서 판단한다.

@@ -81,6 +81,7 @@
 <script src="assets/stockboard_visual_cells.js?v=5h_visual_cells_20260627"></script>
 <script src="assets/stockboard_tooltip.js?v=5j_tooltip_core_20260627"></script>
 <script src="assets/stockboard_close_metrics.js?v=5l_close_metrics_helpers_20260627"></script>
+<script src="assets/stockboard_debug.js?v=5o_debug_helpers_20260627"></script>
 <script>
   /*
    * JS split map for 5B+:
@@ -90,6 +91,7 @@
    * - stockboard_render.js: board/candidate/market render functions
    * - stockboard_tooltip.js: custom tooltip roots and hover state
    * - stockboard_close_metrics.js: next-batch close metrics request state/functions
+   * - stockboard_debug.js: Direct API diagnostic helper functions
    * - stockboard_controls.js: topbar buttons, resize, sort, candle mode, debug toggle
    * - stockboard_main.js: boot, refresh loops, public window adapters
    */
@@ -146,6 +148,12 @@
   const closeMetricsNeedsRequest = StockBoardCloseMetrics.needsCloseMetrics;
   const closeMetricsCanRequest = StockBoardCloseMetrics.canRequestCloseMetrics;
   const buildCloseMetricsRequestUrl = StockBoardCloseMetrics.buildCloseMetricsRequestUrl;
+  const StockBoardDebug = window.StockBoardDebug || {};
+  const loadDebugPanelVisibleValue = StockBoardDebug.loadDebugPanelVisible;
+  const saveDebugPanelVisibleValue = StockBoardDebug.saveDebugPanelVisible;
+  const buildDirectApiDebugUrl = StockBoardDebug.buildDirectApiDebugUrl;
+  const pickDirectApiValue = StockBoardDebug.pickDirectApiValue;
+  const applyDebugPanelVisibility = StockBoardDebug.applyDebugPanelVisibility;
 
   const board = document.getElementById('trading-board');
   const candidateBoard = document.getElementById('candidate-board');
@@ -397,29 +405,15 @@
   }
 
   function loadDebugPanelVisible() {
-    try {
-      return localStorage.getItem(debugPanelVisibleStorageKey) === '1';
-    } catch (error) {
-      return false;
-    }
+    return loadDebugPanelVisibleValue(debugPanelVisibleStorageKey);
   }
 
   function saveDebugPanelVisible(visible) {
-    try {
-      localStorage.setItem(debugPanelVisibleStorageKey, visible ? '1' : '0');
-    } catch (error) {
-      console.warn('Debug panel visibility could not be saved.', error);
-    }
+    saveDebugPanelVisibleValue(debugPanelVisibleStorageKey, visible);
   }
 
   function applyDebugPanelVisible(visible) {
-    if (directApiDebugPanel) {
-      directApiDebugPanel.hidden = !visible;
-    }
-    if (debugToggle) {
-      debugToggle.classList.toggle('active', visible);
-      debugToggle.setAttribute('aria-pressed', visible ? 'true' : 'false');
-    }
+    applyDebugPanelVisibility(directApiDebugPanel, debugToggle, visible);
   }
 
   function isFastDisplayMode() {
@@ -1010,6 +1004,9 @@
     const nextVisible = directApiDebugPanel?.hidden !== false;
     applyDebugPanelVisible(nextVisible);
     saveDebugPanelVisible(nextVisible);
+    if (nextVisible) {
+      loadDirectApiDebug();
+    }
   });
   densityToggle?.addEventListener('click', () => {
     const currentIndex = displayDensityModes.indexOf(top100State.displayDensity);
@@ -3189,7 +3186,7 @@
   let directApiDebugLoading = false;
 
   function directApiDebugFirstValue(row, keys) {
-    return row && typeof row === 'object' ? firstValue(row, keys) : null;
+    return pickDirectApiValue(row, keys);
   }
 
   function directApiDebugQuote(payload, code) {
@@ -3295,12 +3292,13 @@
   }
 
   async function loadDirectApiDebug() {
+    if (directApiDebugPanel?.hidden !== false) return null;
     if (directApiDebugLoading) return null;
     directApiDebugLoading = true;
     const fetchStartedAt = Date.now();
     const started = performance.now();
     try {
-      const response = await fetch(`/api/realtime?codes=${DIRECT_API_DEBUG_CODES.join(',')}`, { cache: 'no-store' });
+      const response = await fetch(buildDirectApiDebugUrl(DIRECT_API_DEBUG_CODES), { cache: 'no-store' });
       if (!response.ok) throw new Error(`Direct API debug failed: ${response.status}`);
       const payload = await response.json();
       updateDirectApiDebugPanel(payload, fetchStartedAt, performance.now() - started);
