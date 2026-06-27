@@ -628,13 +628,15 @@ AHK_RUNNING=True
 | 20 | HTMLCssSplit | DONE |
 | 21 | HTMLJsPreSplitAudit | DONE |
 | 22 | HTMLJsSafeDedup | DONE |
-| 23 | HTMLModuleSplit | TODO |
-| 24 | CandidateModelV02 | TODO |
-| 25 | ForeignFuturesSource | TODO |
-| 26 | BigHandKRT | TODO |
-| 27 | DayStrengthBackfill | TODO |
-| 28 | MarketSupplyRefresh | TODO |
-| 29 | SignalRankingStrategyFormalize | TODO |
+| 23 | HTMLJsSplitDesign | WIP |
+| 24 | HTMLFormatJsSplit | WIP |
+| 25 | HTMLModuleSplit | TODO |
+| 26 | CandidateModelV02 | TODO |
+| 27 | ForeignFuturesSource | TODO |
+| 28 | BigHandKRT | TODO |
+| 29 | DayStrengthBackfill | TODO |
+| 30 | MarketSupplyRefresh | TODO |
+| 31 | SignalRankingStrategyFormalize | TODO |
 
 ## 13. 2026-06-27 장마감 조회 snapshot 확정
 
@@ -764,3 +766,102 @@ AHK_RUNNING=True
   - native `title` 생성 markup: observer/custom tooltip 정책과 연결되어 있어 별도 tooltip 정리 단계에서 다룬다.
 - Fast Mode 일봉 좌측 정렬 polish는 보류 상태를 유지한다. `.ohlc-fast-text`는 Fast Mode 전용 wrapper/CSS로 남기며 Graphic Mode 캔들 경로는 변경하지 않는다.
 - 다음 단계는 5E JS split 설계 또는 5D 추가 정리다.
+
+## 19. JS split 설계 확정 5E
+
+- 5E는 JS split 설계 확정 단계이며, 실제 JS 파일 생성, `script type="module"` 전환, `import/export` 추가는 수행하지 않는다.
+- 작은 단계마다 커밋하지 않고 5E+5F 또는 5E+5F+5G 단위로 묶어 커밋한다.
+- 1차 분리는 순수 helper 위주로 진행하고, DOM 직접 접근과 `top100State` 의존이 큰 render/refresh/main loop는 마지막으로 미룬다.
+
+### 권장 JS split 순서
+
+1. `stockboard_format.js`
+2. `stockboard_state.js`
+3. `stockboard_visual_cells.js`
+4. `stockboard_tooltip.js`
+5. `stockboard_close_metrics.js`
+6. `stockboard_debug.js`
+7. `stockboard_controls.js`
+8. `stockboard_selection.js`
+9. `stockboard_api.js`
+10. `stockboard_render.js`
+11. `stockboard_main.js`
+
+### 5F 첫 분리 대상
+
+- 첫 분리 대상은 `docs/assets/stockboard_format.js` 하나로 제한한다.
+- 후보 함수:
+  - `escapeHtml`
+  - `normalizeCode`
+  - `displayValue`
+  - `formatInteger`
+  - `numericValue`
+  - `formatTruncatedInteger`
+  - `formatVolume`
+  - `formatPercent`
+  - `formatOhlcTooltipNumber`
+  - `formatOhlcMove`
+  - `formatOhlcTooltipPrice`
+- `firstValue`, `sortableNumber`, `sortableText`, `directApiDebugFirstValue`는 사용 범위가 넓거나 debug/render 정책과 섞여 있어 5F에서는 이동하지 않는다.
+
+### namespace/export 방식
+
+- ES module `import/export`는 사용하지 않는다.
+- 외부 파일은 `window.StockBoardFormat` namespace를 만든다.
+- 5F에서는 inline script보다 먼저 아래 순서로 로드한다.
+  1. `<script src="assets/stockboard_format.js?v=5f_format_split_20260627"></script>`
+  2. 기존 inline main script
+- `defer`는 사용하지 않고 기존 blocking script 순서를 유지한다.
+- inline script는 초기에 `const StockBoardFormat = window.StockBoardFormat || {};` 식으로 namespace를 참조한 뒤 기존 호출이 깨지지 않도록 최소 연결한다.
+- 필요하면 호환 shim으로 기존 함수명 wrapper를 inline에 잠시 남긴다. 예: `const formatInteger = StockBoardFormat.formatInteger;`
+
+### 위험도 표
+
+| 후보 파일 | 포함 함수/역할 | DOM 의존도 | 전역 state 의존도 | 분리 위험도 | 권장 순서 | 보류 사유 |
+|---|---|---:|---:|---:|---:|---|
+| `stockboard_format.js` | escape/normalize/number/percent/OHLC tooltip number format | 낮음 | 낮음 | 낮음 | 1 | 5F 첫 대상 |
+| `stockboard_state.js` | constants, DOM refs, `top100State`, localStorage keys | 중간 | 높음 | 중간 | 2 | namespace 안정화 후 분리 |
+| `stockboard_visual_cells.js` | Fast/Graphic metric, OHLC visual helper | 낮음~중간 | 중간 | 중간 | 3 | format 분리 후 의존 정리 필요 |
+| `stockboard_tooltip.js` | native title stripping, singleton tooltip handlers | 높음 | 중간 | 중간~높음 | 4 | tooltip 중복 방지 회귀 위험 |
+| `stockboard_close_metrics.js` | next-batch lazy state/request helpers | 중간 | 높음 | 중간~높음 | 5 | API spam 방지와 state gate 중요 |
+| `stockboard_debug.js` | Direct API debug load/update/toggle | 중간 | 중간 | 중간 | 6 | 운영 toggle 유지 필요 |
+| `stockboard_controls.js` | density/display buttons, sort, resize, candle mode | 높음 | 높음 | 높음 | 7 | localStorage/DOM event 결합 큼 |
+| `stockboard_selection.js` | stock selection/clipboard bridge IIFE | 높음 | 낮음~중간 | 중간 | 8 | 독립 IIFE라 분리 가능하지만 클릭/키보드 영향 있음 |
+| `stockboard_api.js` | top100/realtime/market supply fetch | 중간 | 높음 | 높음 | 9 | refresh loop와 render coupling 큼 |
+| `stockboard_render.js` | normalize row, candidate/trading render, patch apply | 높음 | 높음 | 매우 높음 | 10 | 화면 핵심 경로 |
+| `stockboard_main.js` | boot, intervals, module wiring | 높음 | 높음 | 매우 높음 | 11 | 마지막 통합 단계 |
+
+### 5F 작업 범위
+
+- `docs/assets/stockboard_format.js` 하나만 생성한다.
+- 순수 format/helper 함수 일부만 이동한다.
+- render, tooltip, close metrics, Direct API debug, controls, main loop는 건드리지 않는다.
+- HTML은 외부 script를 inline main script보다 먼저 로드한다.
+- `type="module"`과 `import/export`는 계속 보류한다.
+- 런타임 화면 확인 후 5E+5F 묶음 커밋을 검토한다.
+
+## 20. 첫 JS 분리 5F
+
+- 5F에서 `docs/assets/stockboard_format.js`를 생성했다.
+- ES module은 아직 사용하지 않으며, `script type="module"` 전환과 `import/export` 추가는 수행하지 않았다.
+- 외부 파일은 `window.StockBoardFormat` namespace를 사용한다.
+- HTML은 기존 inline main script보다 먼저 `assets/stockboard_format.js?v=5f_format_split_20260627`를 로드한다.
+- inline JS는 compatibility alias로 기존 호출부 변경을 최소화한다.
+- 이동한 함수:
+  - `escapeHtml`
+  - `displayValue`
+  - `formatInteger`
+  - `numericValue`
+  - `formatTruncatedInteger`
+  - `formatVolume`
+  - `formatPercent`
+  - `formatOhlcTooltipNumber`
+  - `formatOhlcMove`
+  - `formatOhlcTooltipPrice`
+- 5F에서 이동하지 않고 보류한 함수:
+  - `normalizeCode`: `_AL/_NX` 허용 정책, 6자리 key 정책, selection bridge와 연결될 수 있어 보류한다.
+  - `normalizeStockCode`: selection bridge 내부 정책 유지.
+  - `firstValue`, `directApiDebugFirstValue`: render/debug payload 접근 정책과 연결되어 보류한다.
+  - `sortableNumber`, `sortableText`: sort/render 경로와 함께 후속 단계에서 검토한다.
+- render, tooltip, close metrics, Direct API debug, controls, main loop는 아직 inline 유지다.
+- 5E+5F는 검증 후 하나의 묶음 커밋으로 처리한다.

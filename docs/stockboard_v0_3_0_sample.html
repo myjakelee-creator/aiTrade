@@ -76,6 +76,7 @@
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>5분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
   </table>
 </div>
+<script src="assets/stockboard_format.js?v=5f_format_split_20260627"></script>
 <script>
   /*
    * JS split map for 5B+:
@@ -98,6 +99,18 @@
    * - directApiDebugLoading/directApiDebugPanel control Direct API diagnostics visibility/update.
    * - localStorage keys below are the compatibility surface for persisted UI state.
    */
+  const StockBoardFormat = window.StockBoardFormat || {};
+  const escapeHtml = StockBoardFormat.escapeHtml;
+  const displayValue = StockBoardFormat.displayValue;
+  const formatInteger = StockBoardFormat.formatInteger;
+  const numericValue = StockBoardFormat.numericValue;
+  const formatTruncatedInteger = StockBoardFormat.formatTruncatedInteger;
+  const formatVolume = StockBoardFormat.formatVolume;
+  const formatPercent = StockBoardFormat.formatPercent;
+  const formatOhlcTooltipNumber = StockBoardFormat.formatOhlcTooltipNumber;
+  const formatOhlcMove = StockBoardFormat.formatOhlcMove;
+  const formatOhlcTooltipPrice = StockBoardFormat.formatOhlcTooltipPrice;
+
   const board = document.getElementById('trading-board');
   const candidateBoard = document.getElementById('candidate-board');
   const densityToggle = document.getElementById('density-toggle');
@@ -1010,12 +1023,6 @@
     ].join(' · ');
   }
 
-  function escapeHtml(value) {
-    return String(value).replace(/[&<>"']/g, char => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    })[char]);
-  }
-
   function normalizeCode(value) {
     const code = String(value ?? '')
       .trim()
@@ -1023,65 +1030,6 @@
       .replace(/_AL$/, '')
       .replace(/^A(?=\d{6}$)/, '');
     return /^\d{6}$/.test(code) ? code : '';
-  }
-
-  function displayValue(value, suffix = '') {
-    if (value === null || value === undefined || value === '') return '-';
-    const text = String(value);
-    return suffix && !text.endsWith(suffix) ? `${text}${suffix}` : text;
-  }
-
-  function formatInteger(value) {
-    if (value === null || value === undefined || value === '') return '-';
-    const number = Number(String(value).replace(/,/g, ''));
-    return Number.isFinite(number) ? Math.trunc(number).toLocaleString('en-US') : displayValue(value);
-  }
-
-  function numericValue(value) {
-    if (value === null || value === undefined || value === '') return null;
-    const number = Number(String(value).replace(/[%+,]/g, '').trim());
-    return Number.isFinite(number) ? number : null;
-  }
-
-  function formatTruncatedInteger(value) {
-    const number = numericValue(value);
-    return number === null ? '-' : String(Math.trunc(number));
-  }
-
-  function formatVolume(value) {
-    const number = numericValue(value);
-    return number === null ? '-' : Math.trunc(number).toLocaleString('en-US');
-  }
-
-  function formatPercent(value) {
-    if (value === null || value === undefined || value === '') return '-';
-    const number = Number(String(value).replace(/[%+,]/g, '').trim());
-    if (!Number.isFinite(number)) return displayValue(value, '%');
-    return `${number > 0 ? '+' : ''}${number.toFixed(2)}%`;
-  }
-
-  function formatOhlcTooltipNumber(value, maximumFractionDigits = 0) {
-    if (value === null || value === undefined || value === '') return '-';
-    const number = Number(String(value).replace(/,/g, ''));
-    if (!Number.isFinite(number)) return '-';
-    return number.toLocaleString('en-US', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits
-    });
-  }
-
-  function formatOhlcMove(value, prevClose) {
-    const price = Number(value);
-    const base = Number(prevClose);
-    if (!Number.isFinite(price) || !Number.isFinite(base) || base <= 0) return '';
-    const rate = (price - base) / base * 100;
-    return ` (${rate > 0 ? '+' : ''}${rate.toFixed(2)}%)`;
-  }
-
-  function formatOhlcTooltipPrice(value, prevClose, maximumFractionDigits = 0) {
-    const display = formatOhlcTooltipNumber(value, maximumFractionDigits);
-    if (display === '-') return display;
-    return `${display}${formatOhlcMove(value, prevClose)}`;
   }
 
   function foreignSumView(value, label = '외합(억)', source = 'foreign_sum') {
