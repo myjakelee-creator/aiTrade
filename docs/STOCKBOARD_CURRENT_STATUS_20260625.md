@@ -624,13 +624,15 @@ AHK_RUNNING=True
 | 16 | SuffixStoreIsolationRegularVerify | WIP |
 | 17 | RealtimePatchPayloadDelta | TODO |
 | 18 | DirectDebugPanelToggle | DONE |
-| 19 | HTMLModuleSplit | TODO |
-| 20 | CandidateModelV02 | TODO |
-| 21 | ForeignFuturesSource | TODO |
-| 22 | BigHandKRT | TODO |
-| 23 | DayStrengthBackfill | TODO |
-| 24 | MarketSupplyRefresh | TODO |
-| 25 | SignalRankingStrategyFormalize | TODO |
+| 19 | HTMLModuleSplitPrep | DONE |
+| 20 | HTMLCssSplit | DONE |
+| 21 | HTMLModuleSplit | TODO |
+| 22 | CandidateModelV02 | TODO |
+| 23 | ForeignFuturesSource | TODO |
+| 24 | BigHandKRT | TODO |
+| 25 | DayStrengthBackfill | TODO |
+| 26 | MarketSupplyRefresh | TODO |
+| 27 | SignalRankingStrategyFormalize | TODO |
 
 ## 13. 2026-06-27 장마감 조회 snapshot 확정
 
@@ -687,3 +689,19 @@ AHK_RUNNING=True
 - topbar의 `진단` 버튼으로 표시/숨김을 전환한다.
 - 표시 상태는 `stockboard.debugPanelVisible` localStorage key로 유지한다.
 - 가격 원천 진단 로직과 `/api/realtime` 직접 확인 경로는 유지하며, 화면 노출만 toggle로 제어한다.
+
+## 15. HTML module split 사전 정리
+
+- 5A에서는 실제 CSS/JS 파일 분리, `script type="module"` 전환, `import/export` 추가를 수행하지 않았다.
+- `docs/stockboard_v0_3_0_sample.html` 내부에 CSS/HTML/JS 구역 경계 주석과 split 후보 맵만 추가했다.
+- 향후 분리 후보는 `stockboard.css`, `stockboard_state.js`, `stockboard_api.js`, `stockboard_format.js`, `stockboard_render.js`, `stockboard_tooltip.js`, `stockboard_close_metrics.js`, `stockboard_controls.js`, `stockboard_main.js`다.
+- 전역 의존성, singleton tooltip root, close metrics next-batch state, Direct API debug state, localStorage key 목록을 inline 주석으로 정리했다.
+- 운영 안정성을 위해 동작 변경 없이 주석/구조 정리만 수행했고, 실제 파일 분리는 5B CSS 분리부터 단계적으로 진행한다.
+
+## 16. HTML CSS split 5B
+
+- 5B에서 inline `<style>` CSS를 `docs/assets/stockboard.css`로 분리했다.
+- HTML은 `assets/stockboard.css?v=5b_css_split_20260627` stylesheet link를 사용한다.
+- JS는 아직 inline 유지이며, `script type="module"`, `import/export`, JS 파일 생성은 하지 않았다.
+- 5A 주석/구역 정리와 5B CSS 분리는 하나의 WIP 묶음으로 유지하며, 검증 완료 후 함께 커밋한다.
+- 목적은 HTML 줄 수 감소와 다음 JS split 단계의 유지보수성 개선이다.
