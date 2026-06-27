@@ -642,13 +642,14 @@ AHK_RUNNING=True
 | 34 | HTMLControlsHelperSplit | WIP |
 | 35 | HTMLRenderMainSplitDesign | WIP |
 | 36 | HTMLRenderHelpersSplit | WIP |
-| 37 | HTMLModuleSplit | TODO |
-| 38 | CandidateModelV02 | TODO |
-| 39 | ForeignFuturesSource | TODO |
-| 40 | BigHandKRT | TODO |
-| 41 | DayStrengthBackfill | TODO |
-| 42 | MarketSupplyRefresh | TODO |
-| 43 | SignalRankingStrategyFormalize | TODO |
+| 37 | HTMLModuleSplitPhase1 | WIP |
+| 38 | HTMLModuleSplit | TODO |
+| 39 | CandidateModelV02 | TODO |
+| 40 | ForeignFuturesSource | TODO |
+| 41 | BigHandKRT | TODO |
+| 42 | DayStrengthBackfill | TODO |
+| 43 | MarketSupplyRefresh | TODO |
+| 44 | SignalRankingStrategyFormalize | TODO |
 
 ## 13. 2026-06-27 장마감 조회 snapshot 확정
 
@@ -1912,3 +1913,136 @@ AHK_RUNNING=True
 - render/main loop 분리는 계속 보류한다.
 - 추가로 분리할 수 있는 후보는 pure class/fallback helper 정도이며, DOM mutation이 들어가는 순간 별도 설계가 필요하다.
 - 다음 단계에서는 module split 마감 정리 또는 render helper 추가 분리 여부를 별도 판단한다.
+
+## 33. HTML module split 1차 완료 정리 5V
+
+- 5V는 module split 1차 완료 상태를 문서화하는 마감 정리 단계다.
+- 추가 JS/CSS 파일 생성, 함수 이동, HTML 동작 로직 변경은 수행하지 않는다.
+- 현재 방식은 ES module이 아니라 기존 blocking script load order와 `window.*` namespace compatibility layer를 유지한다.
+- `import/export`와 `script type="module"` 전환은 운영 안정성과 boot order 위험 때문에 장기 보류한다.
+- render/main loop는 `top100State`, `rowByCode`, realtime patch, close metrics, sort, resize, selection, tooltip과 결합이 커서 inline 유지한다.
+
+### 분리 완료 asset 목록
+
+| 파일 | 역할 | namespace |
+|---|---|---|
+| `docs/assets/stockboard.css` | StockBoard CSS 전체 | 없음 |
+| `docs/assets/stockboard_format.js` | 숫자/퍼센트/OHLC tooltip format helper | `window.StockBoardFormat` |
+| `docs/assets/stockboard_state.js` | localStorage key, display mode, close metrics constants | `window.StockBoardState` |
+| `docs/assets/stockboard_visual_cells.js` | 잔량비/순간강도/5분강도 visual-cell view helper | `window.StockBoardVisualCells` |
+| `docs/assets/stockboard_tooltip.js` | tooltip singleton core show/hide/position helper | `window.StockBoardTooltip` |
+| `docs/assets/stockboard_close_metrics.js` | close metrics snapshot/need/throttle/request URL 순수 helper | `window.StockBoardCloseMetrics` |
+| `docs/assets/stockboard_debug.js` | Direct API debug storage/URL/value/visibility helper | `window.StockBoardDebug` |
+| `docs/assets/stockboard_controls.js` | localStorage, safe event, button/text helper | `window.StockBoardControls` |
+| `docs/assets/stockboard_render_helpers.js` | render fallback/class 순수 helper | `window.StockBoardRenderHelpers` |
+
+### 현재 script load order
+
+1. `assets/stockboard_format.js`
+2. `assets/stockboard_state.js`
+3. `assets/stockboard_visual_cells.js`
+4. `assets/stockboard_tooltip.js`
+5. `assets/stockboard_close_metrics.js`
+6. `assets/stockboard_debug.js`
+7. `assets/stockboard_controls.js`
+8. `assets/stockboard_render_helpers.js`
+9. 기존 inline main script
+10. selection/clipboard bridge IIFE
+
+### inline 유지 항목
+
+- `top100State`
+- `rowByCode`, `candidateRowByCode`
+- `renderBoard`
+- `renderCandidateBoard`
+- `updateBoardRow`, `createBoardRow`
+- `setCell`, `setVisualCell`
+- `StockBoardTop100.update`, `StockBoardTop100.refresh`
+- `refreshTop100`
+- `loadRealtimePatch`, `applyRealtimePatchToRow`
+- market/topbar render functions
+- close metrics request/fetch flow and state Sets
+- Direct API debug fetch/render loop
+- Fast/Graphic, 다음, 진단, density, candle, width reset actual callbacks
+- sort state/functions and column resize runtime
+- selection/clipboard IIFE
+- main boot and interval loops
+
+### asset smoke test 명령
+
+```powershell
+$base = 'http://127.0.0.1:8000/assets'
+$assets = @(
+  'stockboard.css',
+  'stockboard_format.js',
+  'stockboard_state.js',
+  'stockboard_visual_cells.js',
+  'stockboard_tooltip.js',
+  'stockboard_close_metrics.js',
+  'stockboard_debug.js',
+  'stockboard_controls.js',
+  'stockboard_render_helpers.js'
+)
+foreach ($asset in $assets) {
+  $response = Invoke-WebRequest "$base/$asset" -UseBasicParsing
+  "$asset`t$($response.StatusCode)`t$($response.RawContentLength)"
+}
+git status --short
+```
+
+성공 기준:
+
+- 모든 asset HTTP status가 `200`이다.
+- `git status --short`가 clean이다.
+
+### 브라우저 smoke checklist
+
+- 페이지 로딩 정상.
+- 콘솔 JS 에러 없음.
+- Fast/Graphic 전환 정상.
+- 새로고침 후 Fast/Graphic 상태 유지.
+- 잔량비 Fast `64/36` 형식 정상.
+- 잔량비 Graphic 색상비가 숫자와 일치.
+- 순간강도/5분강도 같은 숫자일 때 같은 색상비.
+- 잔량비 tooltip 1개.
+- OHLC tooltip 1개.
+- 다음 버튼 정상.
+- 약간 아래 스크롤 prefetch 정상.
+- 진단 OFF 상태에서 `/api/realtime?codes=...` debug 반복 요청 없음.
+- 진단 ON 상태에서 debug 요청 발생.
+- 진단 OFF 전환 후 debug 요청 skip.
+- sort 정상.
+- column resize 정상.
+- row selection / clipboard 정상.
+- `/api/top100` count 확인:
+  - `ROW_COUNT`
+  - `OPT10046_COUNT`
+  - `OPT10004_COUNT`
+  - `BID_PCT_COUNT`
+
+### /api/top100 count 확인 명령
+
+```powershell
+$rows = Invoke-RestMethod 'http://127.0.0.1:8000/api/top100'
+"ROW_COUNT=$($rows.Count)"
+"OPT10046_COUNT=$(@($rows | Where-Object { $_.strength_source -eq 'opt10046' }).Count)"
+"OPT10004_COUNT=$(@($rows | Where-Object { $_.orderbook_source -eq 'opt10004' }).Count)"
+"BID_PCT_COUNT=$(@($rows | Where-Object { $_.bid_pct -ne $null -and $_.bid_pct -ne '' }).Count)"
+```
+
+### 다음 TODO 우선순위 후보
+
+1. 15:30 `regular_close_snapshot` / `price_source` 정책 정리.
+2. 장마감 표시 정책 정리.
+3. 후보5 선발 기준 v0.2.
+4. Signal Engine / Ranking Engine 실제 연동.
+5. render/main loop 추가 분리는 당분간 보류.
+6. ES module `import/export` 전환은 장기 보류.
+7. Fast Mode 일봉 좌측 정렬 polish 보류.
+8. 잔량비/강도 색상비 검증 지속.
+
+### 1차 완료 판단
+
+- CSS와 주요 순수/helper 계층은 asset으로 분리했다.
+- 운영 리스크가 큰 DOM mutation, API loop, state mutation, render/main orchestration은 inline으로 유지했다.
+- 현재 상태를 HTML module split 1차 완료로 보고, 다음 단계는 기능 안정화와 운영 정책 정리를 우선한다.
