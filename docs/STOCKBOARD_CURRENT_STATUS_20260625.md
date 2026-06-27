@@ -632,13 +632,15 @@ AHK_RUNNING=True
 | 24 | HTMLFormatJsSplit | WIP |
 | 25 | HTMLStateConstantsSplit | WIP |
 | 26 | HTMLVisualCellSplit | WIP |
-| 27 | HTMLModuleSplit | TODO |
-| 28 | CandidateModelV02 | TODO |
-| 29 | ForeignFuturesSource | TODO |
-| 30 | BigHandKRT | TODO |
-| 31 | DayStrengthBackfill | TODO |
-| 32 | MarketSupplyRefresh | TODO |
-| 33 | SignalRankingStrategyFormalize | TODO |
+| 27 | HTMLTooltipSplitDesign | WIP |
+| 28 | HTMLTooltipCoreSplit | WIP |
+| 29 | HTMLModuleSplit | TODO |
+| 30 | CandidateModelV02 | TODO |
+| 31 | ForeignFuturesSource | TODO |
+| 32 | BigHandKRT | TODO |
+| 33 | DayStrengthBackfill | TODO |
+| 34 | MarketSupplyRefresh | TODO |
+| 35 | SignalRankingStrategyFormalize | TODO |
 
 ## 13. 2026-06-27 장마감 조회 snapshot 확정
 
@@ -916,3 +918,135 @@ AHK_RUNNING=True
 - 잔량비 Graphic Mode 색상비는 `bid_pct`/`ask_pct` 백분율을 우선 사용하고, 없으면 매수잔량/(매수+매도), 매도잔량/(매수+매도) 기준으로 직접 계산한다.
 - 숫자 표시 `64/36`과 그래픽 red/blue 비율 기준을 일치시켰으며, ratio/log 변환이나 상한/하한 별도 텍스트·색상 역전은 `balanceView`에서 사용하지 않는다.
 - `ask_pct=0`, `bid_pct=100`은 정상값으로 처리한다.
+
+## 23. tooltip 분리 설계/위험점 점검 5I
+
+- 5I는 tooltip 분리 설계와 위험점 점검 단계이며, 실제 tooltip JS 파일 생성, 함수 이동, `script type="module"` 전환, `import/export` 추가는 수행하지 않는다.
+- 현재 tooltip은 inline main script 안에서 balance tooltip과 OHLC tooltip을 별도 singleton root로 생성하고, document-level mouse/click/key/scroll handler로 제어한다.
+
+### tooltip DOM/state
+
+- root element:
+  - `balanceTooltip`: `div.balance-tooltip`, `role=tooltip`, `document.body`에 append
+  - `ohlcTooltipElement`: `div.ohlc-tooltip`, `role=tooltip`, `document.body`에 append
+- hover state:
+  - `activeBalanceTooltipCell`
+  - `lastBalanceTooltipEvent`
+  - `activeOhlcTooltipCell`
+  - `lastOhlcTooltipEvent`
+- native title cleanup:
+  - `stripNativeTitles(root=document)`
+  - `nativeTitleObserver`: `title` attribute mutation과 added node의 native title을 제거하고 `aria-label`로 보존
+- data attributes:
+  - `data-tooltip`, `data-tooltip-html`
+  - `data-balance-tooltip`, `data-ohlc-tooltip`는 `setVisualCell()`에서 자식 잔재 제거 대상
+  - `cell.dataset.tooltipKind = 'balance' | 'ohlc'`
+
+### tooltip 함수 목록
+
+- 공통/native cleanup:
+  - `stripNativeTitles`
+  - `nativeTitleObserver`
+- balance tooltip:
+  - `balanceTooltipText`
+  - `positionBalanceTooltip`
+  - `showBalanceTooltip`
+  - `refreshBalanceTooltip`
+  - `hideBalanceTooltip`
+  - `balanceTooltipCellFromTarget`
+  - `currentBalanceTooltipCell`
+  - `updateBalanceTooltipFromMouse`
+- OHLC tooltip:
+  - `ohlcTooltipText`
+  - `positionOhlcTooltip`
+  - `showOhlcTooltip`
+  - `hideOhlcTooltip`
+  - `ohlcTooltipCellFromTarget`
+  - `currentOhlcTooltipCell`
+  - `refreshOhlcTooltip`
+  - `updateOhlcTooltipFromMouse`
+- render 연결:
+  - `setVisualCell()`은 cell과 자식의 native `title`, `data-tooltip`, `data-tooltip-html`, `data-balance-tooltip`, `data-ohlc-tooltip` 잔재를 제거하고 최상위 `td`에 `data-tooltip`/`aria-label`/`data-tooltip-kind`를 설정한다.
+
+### tooltip 종류별 경로
+
+- 잔량비/순간강도/5분강도 visual tooltip:
+  - render가 `setVisualCell(..., 'balance-cell visual-cell')` 호출
+  - `setVisualCell()`이 `td.balance-cell[data-tooltip]`에 단일 tooltip snapshot 저장
+  - `balanceTooltipCellFromTarget()`은 `td.balance-cell[data-tooltip]` 또는 내부 `[data-tooltip]`의 closest balance cell만 허용
+  - `updateBalanceTooltipFromMouse()`가 show/hide와 위치 갱신 담당
+- 일봉/OHLC tooltip:
+  - `ohlcCellView()`/`ohlcMarkup()`이 OHLC tooltip text를 만들고 render가 `setVisualCell(..., 'ohlc-cell visual-cell', 'ohlc')` 호출
+  - `ohlcTooltipCellFromTarget()`은 `td.ohlc-cell[data-tooltip]` 또는 내부 `[data-tooltip]`의 closest OHLC cell만 허용
+  - `refreshOhlcTooltip()`은 realtime/refresh 중 hover target이 바뀌면 숨김
+- 일반 셀 tooltip:
+  - `setCell()`은 native `title`을 쓰지 않고 `aria-label`로 보존한다.
+  - custom floating tooltip 경로에는 일반 셀을 포함하지 않는다.
+- Direct API debug:
+  - debug item markup은 `title`을 생성하지만 `nativeTitleObserver`가 제거하고 `aria-label`로 보존한다.
+  - custom floating tooltip 대상에는 포함하지 않는다.
+
+### 위험 의존성
+
+- `setVisualCell()`의 자식 tooltip/title 잔재 제거가 깨지면 부모/자식 tooltip 중복이 재발할 수 있다.
+- OHLC target은 `td.ohlc-cell`로 제한되어야 하며, balance target은 `td.balance-cell`로 제한되어야 한다.
+- tooltip DOM은 singleton root를 재사용해야 하며, hover 중 새 DOM을 만들면 안 된다.
+- hover 시점 snapshot 표시 정책을 유지해야 하며, hover 중 데이터 갱신이 tooltip 본문을 바꾸면 안 된다.
+- `refreshBalanceTooltip()`/`refreshOhlcTooltip()`은 render/realtime patch 후 현재 hover target 검증에 필요하다.
+- document scroll handler는 tooltip hide와 close metrics scroll trigger를 함께 수행한다. 분리 시 scroll handler 순서와 `handleCloseMetricsScrollTrigger()` 호출을 보존해야 한다.
+- mousemove handler는 target 판별, show/hide, 위치 이동을 모두 담당하므로 과도한 분리는 회귀 위험이 있다.
+- native title observer를 분리하면 Direct API debug/native title 제거 정책에 영향을 줄 수 있다.
+
+### 5J 분리 제안
+
+- `docs/assets/stockboard_tooltip.js` 생성은 가능하되, 5J 범위는 좁게 잡는다.
+- 5J 이동 후보:
+  - singleton root 생성
+  - text/position/show/hide 함수
+  - target 판별 함수
+  - mousemove/click/keydown binding
+- 5J 보류 후보:
+  - `setVisualCell()`: render/DOM mutation 핵심이라 inline 유지
+  - `data-tooltip` 생성/tooltip content 생성: render/OHLC/visual metric inline 유지
+  - `nativeTitleObserver`: Direct API debug/title cleanup 영향이 커서 5J에서는 inline 유지 검토
+  - scroll handler: close metrics trigger와 결합되어 있어 inline 유지 또는 wrapper callback 방식 검토
+
+### tooltip 분리 위험도 표
+
+| tooltip 구성요소 | 현재 위치 | DOM 의존도 | render/setVisualCell 의존도 | 분리 위험도 | 5J 이동 여부 | 보류 사유 |
+|---|---|---:|---:|---:|---|---|
+| singleton root 생성 | inline tooltip section | 높음 | 낮음 | 중간 | 후보 | body append 순서와 CSS class 유지 필요 |
+| balance show/hide/position | inline tooltip section | 높음 | 중간 | 중간 | 후보 | `td.balance-cell` 제한 유지 필요 |
+| OHLC show/hide/position | inline tooltip section | 높음 | 중간 | 중간 | 후보 | `td.ohlc-cell` 제한 유지 필요 |
+| target 판별 함수 | inline tooltip section | 높음 | 높음 | 중간~높음 | 후보/검토 | 부모/자식 중복 tooltip 회귀 위험 |
+| `refreshBalanceTooltip`/`refreshOhlcTooltip` | inline tooltip section | 높음 | 높음 | 높음 | 후보/검토 | render/realtime patch 후 hover snapshot 정책과 연결 |
+| native title observer | inline tooltip section | 매우 높음 | 중간 | 높음 | 보류 | Direct API debug와 전체 native title 제거 정책 영향 |
+| `setVisualCell` tooltip cleanup | inline render section | 높음 | 매우 높음 | 매우 높음 | 보류 | DOM mutation 및 중복 tooltip 방지 핵심 |
+| tooltip content 생성 | render/OHLC/visual helpers | 낮음~중간 | 높음 | 높음 | 보류 | 원천/표시 정책과 결합 |
+| scroll hide handler | inline event binding | 높음 | close metrics 의존 높음 | 높음 | 보류/검토 | close metrics scroll trigger와 같은 handler |
+
+- 다음 단계 5J에서 실제 분리 범위는 singleton root + show/hide/position + target 판별 정도로 제한하고, `setVisualCell`, native title observer, tooltip content 생성은 보류하는 방향이 안전하다.
+
+## 24. tooltip core helper 최소 분리 5J
+
+- 5J에서 `docs/assets/stockboard_tooltip.js`를 생성했다.
+- ES module은 아직 사용하지 않으며, `script type="module"` 전환과 `import/export` 추가는 수행하지 않았다.
+- 외부 파일은 `window.StockBoardTooltip` namespace를 사용한다.
+- HTML은 `assets/stockboard_format.js`, `assets/stockboard_state.js`, `assets/stockboard_visual_cells.js`, `assets/stockboard_tooltip.js`, 기존 inline main script 순서로 로드한다.
+- 분리한 tooltip core helper:
+  - `ensureTooltipElement`
+  - `setTooltipContent`
+  - `positionTooltipElement`
+  - `showTooltipElement`
+  - `hideTooltipElement`
+- inline에 유지한 tooltip 함수/상태:
+  - `balanceTooltipText`, `ohlcTooltipText`
+  - `balanceTooltipCellFromTarget`, `ohlcTooltipCellFromTarget`
+  - `currentBalanceTooltipCell`, `currentOhlcTooltipCell`
+  - `refreshBalanceTooltip`, `refreshOhlcTooltip`
+  - `updateBalanceTooltipFromMouse`, `updateOhlcTooltipFromMouse`
+  - `stripNativeTitles`, `nativeTitleObserver`
+  - document mouse/click/key/scroll event binding
+- `setVisualCell()`은 render/DOM mutation 핵심이므로 inline 유지한다.
+- balance tooltip 대상은 `td.balance-cell`, OHLC tooltip 대상은 `td.ohlc-cell` 제한 정책을 유지한다.
+- hover 시점 snapshot 표시, hover 중 본문 갱신 금지, singleton root 재사용, scroll 시 hide 정책을 유지한다.

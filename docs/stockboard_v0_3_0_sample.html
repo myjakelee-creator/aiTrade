@@ -79,6 +79,7 @@
 <script src="assets/stockboard_format.js?v=5f_format_split_20260627"></script>
 <script src="assets/stockboard_state.js?v=5g_state_constants_20260627"></script>
 <script src="assets/stockboard_visual_cells.js?v=5h_visual_cells_20260627"></script>
+<script src="assets/stockboard_tooltip.js?v=5j_tooltip_core_20260627"></script>
 <script>
   /*
    * JS split map for 5B+:
@@ -138,6 +139,7 @@
   const balanceView = StockBoardVisualCells.balanceView;
   const minuteStrengthView = StockBoardVisualCells.minuteStrengthView;
   const sessionStrengthView = StockBoardVisualCells.sessionStrengthView;
+  const StockBoardTooltip = window.StockBoardTooltip || {};
 
   const board = document.getElementById('trading-board');
   const candidateBoard = document.getElementById('candidate-board');
@@ -2157,14 +2159,8 @@
   }
 
   /* JS: tooltip functions / singleton roots */
-  const balanceTooltip = document.createElement('div');
-  balanceTooltip.className = 'balance-tooltip';
-  balanceTooltip.setAttribute('role', 'tooltip');
-  document.body.appendChild(balanceTooltip);
-  const ohlcTooltipElement = document.createElement('div');
-  ohlcTooltipElement.className = 'ohlc-tooltip';
-  ohlcTooltipElement.setAttribute('role', 'tooltip');
-  document.body.appendChild(ohlcTooltipElement);
+  const balanceTooltip = StockBoardTooltip.ensureTooltipElement('balance-tooltip');
+  const ohlcTooltipElement = StockBoardTooltip.ensureTooltipElement('ohlc-tooltip');
   let activeBalanceTooltipCell = null;
   let lastBalanceTooltipEvent = null;
   let activeOhlcTooltipCell = null;
@@ -2213,15 +2209,7 @@
   }
 
   function positionBalanceTooltip(event) {
-    if (!event) return;
-    const margin = 12;
-    balanceTooltip.style.left = `${event.clientX + margin}px`;
-    balanceTooltip.style.top = `${event.clientY + margin}px`;
-    const rect = balanceTooltip.getBoundingClientRect();
-    const left = Math.min(event.clientX + margin, window.innerWidth - rect.width - margin);
-    const top = Math.min(event.clientY + margin, window.innerHeight - rect.height - margin);
-    balanceTooltip.style.left = `${Math.max(margin, left)}px`;
-    balanceTooltip.style.top = `${Math.max(margin, top)}px`;
+    StockBoardTooltip.positionTooltipElement(balanceTooltip, event);
   }
 
   function showBalanceTooltip(cell, event) {
@@ -2234,8 +2222,8 @@
     }
     activeBalanceTooltipCell = cell;
     lastBalanceTooltipEvent = event;
-    balanceTooltip.textContent = text;
-    balanceTooltip.classList.add('visible');
+    StockBoardTooltip.setTooltipContent(balanceTooltip, text);
+    StockBoardTooltip.showTooltipElement(balanceTooltip);
     positionBalanceTooltip(event);
   }
 
@@ -2252,7 +2240,7 @@
     if (cell && activeBalanceTooltipCell !== cell) return;
     activeBalanceTooltipCell = null;
     lastBalanceTooltipEvent = null;
-    balanceTooltip.classList.remove('visible');
+    StockBoardTooltip.hideTooltipElement(balanceTooltip);
   }
 
   function ohlcTooltipText(cell) {
@@ -2262,15 +2250,7 @@
   }
 
   function positionOhlcTooltip(event) {
-    if (!event) return;
-    const margin = 12;
-    ohlcTooltipElement.style.left = `${event.clientX + margin}px`;
-    ohlcTooltipElement.style.top = `${event.clientY + margin}px`;
-    const rect = ohlcTooltipElement.getBoundingClientRect();
-    const left = Math.min(event.clientX + margin, window.innerWidth - rect.width - margin);
-    const top = Math.min(event.clientY + margin, window.innerHeight - rect.height - margin);
-    ohlcTooltipElement.style.left = `${Math.max(margin, left)}px`;
-    ohlcTooltipElement.style.top = `${Math.max(margin, top)}px`;
+    StockBoardTooltip.positionTooltipElement(ohlcTooltipElement, event);
   }
 
   function showOhlcTooltip(cell, event) {
@@ -2283,8 +2263,8 @@
     }
     activeOhlcTooltipCell = cell;
     lastOhlcTooltipEvent = event;
-    ohlcTooltipElement.textContent = text;
-    ohlcTooltipElement.classList.add('visible');
+    StockBoardTooltip.setTooltipContent(ohlcTooltipElement, text);
+    StockBoardTooltip.showTooltipElement(ohlcTooltipElement);
     positionOhlcTooltip(event);
   }
 
@@ -2292,7 +2272,7 @@
     if (cell && activeOhlcTooltipCell !== cell) return;
     activeOhlcTooltipCell = null;
     lastOhlcTooltipEvent = null;
-    ohlcTooltipElement.classList.remove('visible');
+    StockBoardTooltip.hideTooltipElement(ohlcTooltipElement);
   }
 
   function ohlcTooltipCellFromTarget(target) {
