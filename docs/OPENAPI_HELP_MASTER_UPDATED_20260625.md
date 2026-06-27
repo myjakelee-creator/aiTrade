@@ -228,13 +228,26 @@ COM realtime Provider가 꺼질 수 있다.
 - hybrid orderbook은 hot Top5 + rotate 20개/5초 구조다.
 - 잔량비는 hot 또는 rotate 대상에서 숫자/visual-cell 배경으로 갱신된다.
 - 호가잔량이 늦거나 일부 unavailable이어도 Price Fast Mode에서는 현재가/등락률 우선 정책을 유지한다.
+- 장마감 후 실시간 호가잔량이 없으면 `opt10004 주식호가요청` snapshot을 사용한다.
+- opt10004에서 총매수잔량/총매도잔량 조회를 확인했다.
+- StockBoard 잔량비 snapshot 필드는 `orderbook_source=opt10004`, `bid_volume_snapshot`, `ask_volume_snapshot`, `bid_pct`, `ask_pct`, `bid_ask_ratio_snapshot`이다.
+- Fast Mode 잔량비 본문은 `64/36` 형식이며, 앞 숫자는 매수잔량 비율, 뒤 숫자는 매도잔량 비율이다.
+- Graphic Mode 잔량비는 같은 비율을 red/blue 배경으로 표시한다.
+- `ask_pct=0`은 정상값이며 빈값이 아니다.
 
 ### opt10046 5분강도 기준
 
-- opt10046 체결강도추이시간별 요청은 공식 5분/20분/60분 강도 후보 원천이다.
-- 현재 장중 운영에서는 `STOCKBOARD_STRENGTH_5M_ENABLED=0`으로 opt10046 조회 루프를 켜지 않는다.
-- 현재 화면의 `5분강도`는 공식 opt10046 값이 아니라 브라우저 수신 기준 최근 5분 delta 임시 표시다.
-- 장마감 `close_5m_strength`는 opt10046 backend 조회/저장 TODO다.
+- opt10046 체결강도추이시간별 요청은 공식 순간강도/5분/20분/60분 강도 snapshot 원천이다.
+- 장마감 후 `realtime_strength_snapshot`, `strength_5m`, `strength_20m`, `strength_60m` 조회를 확인했다.
+- `strength_source=opt10046`이면 조회 snapshot 값이며, tooltip에는 source, snapshot_at, stale_sec, status를 표시한다.
+- opt10046 snapshot이 없을 때만 화면의 `5분강도`는 브라우저 수신 기준 최근 5분 delta 임시 표시를 사용한다.
+
+### 장마감 후 snapshot 원칙
+
+- 실시간 데이터가 있으면 실시간 값을 우선 사용한다.
+- 실시간 데이터가 없으면 Kiwoom 조회 snapshot 값을 우선 사용한다.
+- 조회도 불가능할 때만 마감값 없음으로 둔다.
+- HTML에서 임의 장마감 값을 만들어내지 않는다.
 
 ### 가격 원천 정책
 

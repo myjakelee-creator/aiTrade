@@ -1486,7 +1486,7 @@
     const buy = Number.isFinite(metric?.buyPct) ? metric.buyPct : null;
     const sell = Number.isFinite(metric?.sellPct) ? metric.sellPct : null;
     if (buy === null || sell === null) return '-';
-    return `<span class="fast-metric-buy">${buy}%</span> / <span class="fast-metric-sell">${sell}%</span>`;
+    return `<span class="fast-metric-buy">${buy}</span>/<span class="fast-metric-sell">${sell}</span>`;
   }
 
   function fastStrengthHtml(value) {
@@ -1502,6 +1502,10 @@
     const askVolume = numericValue(options.askVolume);
     const optionBidPct = numericValue(options.bidPct);
     const optionAskPct = numericValue(options.askPct);
+    const source = options.orderbookSource ?? options.orderbook_source ?? null;
+    const snapshotAt = options.orderbookSnapshotAt ?? options.orderbook_snapshot_at ?? null;
+    const staleSec = options.orderbookStaleSec ?? options.orderbook_stale_sec ?? null;
+    const statusValue = options.orderbookStatus ?? options.orderbook_status ?? null;
     if (
       bidVolume === null
       && askVolume === null
@@ -1521,23 +1525,15 @@
       sellPct = 100 - buyPct;
     }
     if (buyPct === null || sellPct === null) return null;
-    const status = buyPct === sellPct
-      ? '매수/매도 균형'
-      : buyPct > sellPct
-        ? buyPct >= 67 ? '매수 압도' : '매수 우세'
-        : sellPct >= 67 ? '매도 압도' : '매도 우세';
     const display = `${buyPct}% / ${sellPct}%`;
     const tooltipLines = [`잔량비: ${display}`];
-    if (bidVolume !== null) tooltipLines.push(`매수잔량: ${formatVolume(bidVolume)}`);
-    if (askVolume !== null) tooltipLines.push(`매도잔량: ${formatVolume(askVolume)}`);
-    if (optionBidPct !== null && optionAskPct !== null) {
-      tooltipLines.push('계산: backend query snapshot bid_pct / ask_pct');
-    } else if (bidVolume !== null && askVolume !== null && bidVolume + askVolume > 0) {
-      tooltipLines.push('계산: 매수잔량 / 전체잔량, 매도잔량 / 전체잔량');
-    } else if (ratio !== null) {
-      tooltipLines.push(`계산: 기존 bid_ask_ratio ${ratio}를 전체잔량 비중으로 환산`);
-    }
-    tooltipLines.push(`상태: ${status}`);
+    if (bidVolume !== null) tooltipLines.push(`총매수잔량: ${formatVolume(bidVolume)}`);
+    if (askVolume !== null) tooltipLines.push(`총매도잔량: ${formatVolume(askVolume)}`);
+    tooltipLines.push('계산: 매수잔량 / 전체잔량, 매도잔량 / 전체잔량');
+    tooltipLines.push(`source: ${displayValue(source)}`);
+    tooltipLines.push(`snapshot_at: ${displayValue(snapshotAt)}`);
+    tooltipLines.push(`stale_sec: ${displayValue(staleSec)}`);
+    tooltipLines.push(`status: ${displayValue(statusValue)}`);
     return {
       value: display,
       buyPct,
@@ -2290,9 +2286,20 @@
       orderbookSnapshotAt: firstValue(row, ['orderbook_snapshot_at', 'orderbookSnapshotAt']),
       orderbookSource: firstValue(row, ['orderbook_source', 'orderbookSource']),
       orderbookStatus: firstValue(row, ['orderbook_status', 'orderbookStatus']),
+      orderbookError: firstValue(row, ['orderbook_error', 'orderbookError']),
+      orderbookStatusDetail: firstValue(row, ['orderbook_status_detail', 'orderbookStatusDetail']),
       orderbookStaleSec: firstValue(row, ['orderbook_stale_sec', 'orderbookStaleSec']),
       sortBidAskRatio: sortableNumber(balanceValue),
-      balanceForce: balanceView(balanceValue, { bidVolume, askVolume, bidPct, askPct }),
+      balanceForce: balanceView(balanceValue, {
+        bidVolume,
+        askVolume,
+        bidPct,
+        askPct,
+        orderbookSource: firstValue(row, ['orderbook_source', 'orderbookSource']),
+        orderbookSnapshotAt: firstValue(row, ['orderbook_snapshot_at', 'orderbookSnapshotAt']),
+        orderbookStaleSec: firstValue(row, ['orderbook_stale_sec', 'orderbookStaleSec']),
+        orderbookStatus: firstValue(row, ['orderbook_status', 'orderbookStatus'])
+      }),
       sortRealtimeStrength: sortableNumber(minuteStrengthValue),
       minuteForce: minuteStrengthView(minuteStrengthValue),
       sortSessionStrength: fiveMinuteStrength.sortValue,
@@ -2394,14 +2401,7 @@
   }
 
   function orderbookMetricView(balance, row) {
-    const age = Number(row?.orderbookAgeSec ?? row?.orderbook_age_sec);
-    return visualMetricView(balance, extendedMetricTooltip(balance?.tooltip, [
-      `orderbook_source: ${row?.orderbookSource ?? row?.orderbook_source ?? '-'}`,
-      `snapshot_at: ${row?.orderbookSnapshotAt ?? row?.orderbook_snapshot_at ?? '-'}`,
-      `stale_sec: ${row?.orderbookStaleSec ?? row?.orderbook_stale_sec ?? '-'}`,
-      `status: ${row?.orderbookStatus ?? row?.orderbook_status ?? '-'}`,
-      `age_sec: ${Number.isFinite(age) ? Math.round(age) : '-'}`
-    ]));
+    return visualMetricView(balance, balance?.tooltip || '-');
   }
 
   function instantStrengthMetricView(strength, row) {
@@ -2883,6 +2883,10 @@
     row.orderbook_stale_sec = row.orderbookStaleSec;
     row.orderbookStatus = firstValue(patch, ['orderbook_status', 'orderbookStatus']) ?? row.orderbookStatus;
     row.orderbook_status = row.orderbookStatus;
+    row.orderbookError = firstValue(patch, ['orderbook_error', 'orderbookError']) ?? row.orderbookError;
+    row.orderbook_error = row.orderbookError;
+    row.orderbookStatusDetail = firstValue(patch, ['orderbook_status_detail', 'orderbookStatusDetail']) ?? row.orderbookStatusDetail;
+    row.orderbook_status_detail = row.orderbookStatusDetail;
     row.bid_ask_ratio = firstValue(patch, [
       'balance_ratio',
       'order_balance_ratio',
@@ -2895,7 +2899,11 @@
       bidVolume: row.bidVolume,
       askVolume: row.askVolume,
       bidPct: row.bidPct,
-      askPct: row.askPct
+      askPct: row.askPct,
+      orderbookSource: row.orderbookSource,
+      orderbookSnapshotAt: row.orderbookSnapshotAt,
+      orderbookStaleSec: row.orderbookStaleSec,
+      orderbookStatus: row.orderbookStatus
     });
     row.sortBidAskRatio = sortableNumber(row.bid_ask_ratio);
     setVisualCell(tableRow.cells[8], orderbookMetricView(row.balanceForce, row), 'balance-cell visual-cell');
@@ -2932,6 +2940,10 @@
       'orderbook_stale_sec',
       'orderbookStatus',
       'orderbook_status',
+      'orderbookError',
+      'orderbook_error',
+      'orderbookStatusDetail',
+      'orderbook_status_detail',
       'bid_ask_ratio',
       'sortBidAskRatio',
       'balanceForce',

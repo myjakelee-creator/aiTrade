@@ -237,6 +237,15 @@ def _overlay_close_metrics(row, snapshot):
         "orderbook_snapshot_at",
         "orderbook_stale_sec",
         "orderbook_status",
+        "orderbook_error",
+        "orderbook_status_detail",
+        "orderbook_requested_at",
+        "orderbook_completed_at",
+        "orderbook_tr_repeat_count",
+        "orderbook_raw_sample",
+        "orderbook_rqname",
+        "orderbook_trcode",
+        "orderbook_screen_no",
         "realtime_strength_snapshot",
         "strength_5m",
         "strength_20m",
@@ -245,6 +254,8 @@ def _overlay_close_metrics(row, snapshot):
         "strength_snapshot_at",
         "strength_stale_sec",
         "strength_status",
+        "strength_error",
+        "strength_status_detail",
     ):
         if field in snapshot:
             row[field] = snapshot.get(field)
@@ -508,6 +519,10 @@ def _realtime_patch_payload(
                 ),
                 "orderbook_source": quote.get("orderbook_source"),
                 "orderbook_status": quote.get("orderbook_status"),
+                "orderbook_error": quote.get("orderbook_error"),
+                "orderbook_status_detail": quote.get(
+                    "orderbook_status_detail"
+                ),
                 "received_at": quote.get("received_at"),
                 "sequence": quote.get("sequence"),
             }
@@ -764,6 +779,26 @@ def make_handler(
                                 response_payload["accepted"] = 1
                                 response_payload["queued"] = 0
                                 response_payload["priority"] = "strength_probe"
+                        elif probe == "orderbook" or priority == "orderbook_probe":
+                            if len(codes) != 1:
+                                response_payload = {
+                                    "accepted": len(codes),
+                                    "queued": 0,
+                                    "priority": priority,
+                                    "available": True,
+                                    "error": (
+                                        "orderbook probe requires exactly one code"
+                                    ),
+                                }
+                            else:
+                                response_payload = realtime_provider.enqueue_orderbook_probe(
+                                    codes[0],
+                                    priority=priority,
+                                    force=force,
+                                )
+                                response_payload["accepted"] = 1
+                                response_payload["queued"] = 0
+                                response_payload["priority"] = "orderbook_probe"
                         else:
                             response_payload = realtime_provider.enqueue_close_metrics(
                                 codes,

@@ -402,21 +402,38 @@ HTML은 보여준다.
 
 | 화면 표시명 | 내부 이름 / 필드 | 데이터 원천 | 상태 | 비고 |
 |---|---|---|---|---|
-| 5분강도 | browser_5m_strength / fiveMinuteStrength | 브라우저 수신 기준 최근 5분 delta | DONE/임시 | opt10046 공식 체결강도5분 아님 |
-| 순간강도 | realtime_strength | OpenAPI `_AL` FID228 | DONE | 100 기준 visual-cell 배경 표시 |
-| 잔량비 | bid_ask_ratio | Hybrid orderbook `_AL` 121/125 | DONE | hot5 + rotate20 |
+| 5분강도 | strength_5m / browser_5m_strength | opt10046 snapshot 우선, 없으면 브라우저 최근 5분 delta | DONE | 장마감 후 `strength_source=opt10046` 공식값 우선 |
+| 순간강도 | realtime_strength / realtime_strength_snapshot | OpenAPI `_AL` FID228 우선, 없으면 opt10046 snapshot | DONE | 100 기준 visual-cell 배경 표시 |
+| 잔량비 | bid_ask_ratio / bid_pct / ask_pct | 실시간 호가 우선, 없으면 opt10004 snapshot | DONE | 장마감 후 총매수/총매도잔량 snapshot |
 | 일봉 | realtime_ohlc | ka10086 base + realtime tick | DONE | 기준선 제거, 경량 candle background |
 
 ## 5분강도 명명 정책
 
 - 화면 컬럼명은 `5분강도`로 표시한다.
-- `strength_5m`, `strength_20m`, `strength_60m`은 opt10046 공식값 예약 필드다.
+- `strength_5m`, `strength_20m`, `strength_60m`은 opt10046 공식값 필드다.
 - `strength_source=opt10046`이고 `strength_5m` 값이 있을 때만 공식 5분강도라고 부른다.
-- 현재 `STOCKBOARD_STRENGTH_5M_ENABLED=0`이므로 opt10046 공식값은 비활성이다.
-- 현재 화면의 `5분강도`는 브라우저 수신 기준 최근 5분 delta 임시 표시다.
+- 장마감 후에는 opt10046 체결강도추이시간별요청 snapshot을 우선 표시한다.
+- opt10046 snapshot이 없으면 현재 화면의 `5분강도`는 브라우저 수신 기준 최근 5분 delta 임시 표시를 사용한다.
 - 계산식은 `최근5분 매수체결량 delta / 최근5분 매도체결량 delta * 100`이다.
-- tooltip에는 `주의: opt10046 체결강도5분 아님`을 표시한다.
-- 장마감 공식 값은 `close_5m_strength`로 opt10046 조회/저장 TODO에 둔다.
+- browser delta fallback tooltip에는 `주의: opt10046 체결강도5분 아님`을 표시한다.
+- opt10046 tooltip에는 source, snapshot_at, stale_sec, status를 표시한다.
+
+## 잔량비 장마감 snapshot 정책
+
+- 실시간 호가잔량이 있으면 실시간 `bid_volume`, `ask_volume`, `bid_ask_ratio`를 우선 사용한다.
+- 실시간 호가잔량이 없으면 `opt10004 주식호가요청` snapshot을 사용한다.
+- 확정 필드:
+  - `orderbook_source=opt10004`
+  - `bid_volume_snapshot`
+  - `ask_volume_snapshot`
+  - `bid_pct`
+  - `ask_pct`
+  - `bid_ask_ratio_snapshot`
+- Fast Mode 본문은 `64/36` 형식이다. 앞 숫자는 매수잔량 비율, 뒤 숫자는 매도잔량 비율이다.
+- Fast Mode 본문에는 `수/도/%`를 붙이지 않는다.
+- Graphic Mode는 같은 `bid_pct` / `ask_pct` 기준 red/blue 배경 비율을 표시한다.
+- `ask_pct=0`은 정상값이며 `100/0` 또는 `0/100`처럼 표시한다.
+- Tooltip에는 `잔량비: 64% / 36%`, 총매수잔량, 총매도잔량, 계산식, source, snapshot_at, stale_sec, status를 표시한다.
 
 ## 최신 운영/진단 필드
 
@@ -431,7 +448,8 @@ HTML은 보여준다.
 | display_mode | `fast` / `graphic` 화면 모드 | DONE |
 | visual_cell_palette | E palette | DONE |
 | strength_5m_enabled | opt10046 5분강도 backend 조회 활성 여부. 현재 False | DONE/진단 |
-| close_5m_strength | 장마감 opt10046 5분강도 snapshot | TODO |
+| close_5m_strength | 장마감 opt10046 5분강도 snapshot | DONE |
+| orderbook_close_snapshot | 장마감 opt10004 총매수/총매도잔량 snapshot | DONE |
 
 ## E palette 고정값
 

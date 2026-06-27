@@ -222,6 +222,8 @@ DONE 97. E palette visual cells
 DONE 98. visual-cell tooltip native title 제거
 DONE 99. 5분강도 헤더/tooltip 정리
 DONE 100. 브라우저 수신 기준 최근 5분강도 임시 계산
+DONE 101. opt10046 close_5m_strength 장마감 조회/저장
+DONE 107. opt10004 orderbook snapshot 장마감 잔량비 조회/저장
 
 ### TODO
 
@@ -249,7 +251,6 @@ TODO 79. 15:30~15:40 regular_close_snapshot 고정 표시
 TODO 80. 15:40 이후 aftermarket_realtime / regular_close_snapshot fallback 정책
 TODO 81. price_source / display_price / display_change_rate 필드 정식화
 TODO 82. 실시간 렌더링 최적화, 변경된 셀만 그리기, 일봉/색상바 throttle
-TODO 101. opt10046 close_5m_strength 장마감 조회/저장
 TODO 102. HTML module split
 TODO 103. Direct API Debug panel 운영 toggle
 TODO 104. regular_close_snapshot
@@ -538,6 +539,7 @@ TOP100 refresh = 30000ms
 - 2026-06-25: 후보5 v0.1 점수모델, candidate fields, 원클릭 라이브 런처, 루트 redirect, UI 밀도/정렬/상단 레이아웃 개선, 상·하한가 표시 예외처리를 반영.
 - 2026-06-25: 가격 불가침 원칙, `/api/top100` root 배열 189개 구조 진단, 15:30 장마감 가격 불일치 관찰, suffix Store 오염 방지 패치 WIP 상태와 내일 정규장 검증 필요 항목을 반영.
 - 2026-06-26: 단일 `stockboard_live.cmd` 런처, AHK bridge 제어, Price Fast Mode, realtime 100종목 제한, stale tick drop 진단, hybrid orderbook, Graphic/Fast display mode, visual-cell E palette, tooltip single path, 브라우저 수신 기준 5분강도 임시 표시 상태를 반영.
+- 2026-06-27: opt10046 체결강도추이시간별요청과 opt10004 주식호가요청으로 장마감 조회 snapshot 원천을 확정하고, Fast Mode 잔량비 `64/36` 표시 정책을 반영.
 
 ## 12. 2026-06-26 최신 운영 상태
 
@@ -615,7 +617,7 @@ AHK_RUNNING=True
 | 09 | EPaletteVisualCells | DONE |
 | 10 | TooltipSinglePath | DONE |
 | 11 | FiveMinuteStrengthBrowserDelta | DONE/임시 |
-| 12 | opt10046Close5mStrength | TODO |
+| 12 | opt10046Close5mStrength | DONE |
 | 13 | RegularCloseSnapshot1530 | TODO |
 | 14 | PriceSourceDisplayPolicy | TODO |
 | 15 | AftermarketFallbackPolicy | TODO |
@@ -629,3 +631,52 @@ AHK_RUNNING=True
 | 23 | DayStrengthBackfill | TODO |
 | 24 | MarketSupplyRefresh | TODO |
 | 25 | SignalRankingStrategyFormalize | TODO |
+
+## 13. 2026-06-27 장마감 조회 snapshot 확정
+
+작성 기준: 2026-06-27 StockBoard 3C 마감 정리 후 상태.
+
+### 장마감 후 표시 원칙
+
+- 실시간 데이터가 있으면 실시간 값을 우선 사용한다.
+- 실시간 데이터가 없으면 Kiwoom 조회 snapshot 값을 우선 사용한다.
+- 조회도 불가능할 때만 마감값 없음으로 둔다.
+- HTML에서 임의 장마감 값을 만들어내지 않는다.
+
+### 체결강도 snapshot
+
+- `opt10046 체결강도추이시간별요청` 단일 probe와 후보5 + 상위20 queue 연결을 통해 장마감 후 snapshot 조회를 확인했다.
+- 조회 필드:
+  - `realtime_strength_snapshot`
+  - `strength_5m`
+  - `strength_20m`
+  - `strength_60m`
+  - `strength_source=opt10046`
+  - `strength_snapshot_at`
+  - `strength_stale_sec`
+  - `strength_status`
+
+### 잔량비 snapshot
+
+- `opt10004 주식호가요청`으로 총매수잔량/총매도잔량 snapshot 조회를 확인했다.
+- 잔량비 장마감 조회 원천:
+  - `orderbook_source=opt10004`
+  - `bid_volume_snapshot`
+  - `ask_volume_snapshot`
+  - `bid_pct`
+  - `ask_pct`
+  - `bid_ask_ratio_snapshot`
+- `ask_pct=0`은 정상값이며 빈값으로 처리하지 않는다. 화면은 `100/0` 또는 `0/100`처럼 표시한다.
+
+### 화면 표시
+
+- Fast Mode 잔량비 본문은 `64/36` 형식이다.
+- 앞 숫자는 매수잔량 비율이며 빨간색, 뒤 숫자는 매도잔량 비율이며 파란색이다.
+- 열 제목이 잔량비이므로 본문에는 `수/도/%`를 붙이지 않는다.
+- Tooltip에는 `잔량비: 64% / 36%`, 총매수잔량, 총매도잔량, 계산식, source, snapshot_at, stale_sec, status를 유지한다.
+- Graphic Mode 잔량비는 red/blue 배경 비율을 유지한다.
+- E palette는 `red=#E75F5F`, `blue=#5F9EF5`, `neutral=#E2E8F0`, `wick=#111827`로 유지한다.
+
+### 유지 TODO
+
+- HTML module split은 TODO로 유지한다.

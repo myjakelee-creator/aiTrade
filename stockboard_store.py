@@ -31,6 +31,15 @@ QUOTE_FIELDS = (
     "orderbook_snapshot_at",
     "orderbook_stale_sec",
     "orderbook_status",
+    "orderbook_error",
+    "orderbook_status_detail",
+    "orderbook_requested_at",
+    "orderbook_completed_at",
+    "orderbook_tr_repeat_count",
+    "orderbook_raw_sample",
+    "orderbook_rqname",
+    "orderbook_trcode",
+    "orderbook_screen_no",
     "total_bid_qty",
     "total_ask_qty",
     "bid_ask_ratio",
@@ -50,6 +59,7 @@ QUOTE_FIELDS = (
     "strength_stale_sec",
     "strength_status",
     "strength_error",
+    "strength_status_detail",
     "strength_requested_at",
     "strength_completed_at",
     "strength_tr_repeat_count",
@@ -474,6 +484,17 @@ class RealtimeStore:
                 metrics.get("orderbook_snapshot_at") or timestamp_text
             ),
             "orderbook_status": metrics.get("orderbook_status"),
+            "orderbook_error": metrics.get("orderbook_error"),
+            "orderbook_status_detail": metrics.get(
+                "orderbook_status_detail"
+            ),
+            "orderbook_requested_at": metrics.get("orderbook_requested_at"),
+            "orderbook_completed_at": metrics.get("orderbook_completed_at"),
+            "orderbook_tr_repeat_count": metrics.get("orderbook_tr_repeat_count"),
+            "orderbook_raw_sample": metrics.get("orderbook_raw_sample"),
+            "orderbook_rqname": metrics.get("orderbook_rqname"),
+            "orderbook_trcode": metrics.get("orderbook_trcode"),
+            "orderbook_screen_no": metrics.get("orderbook_screen_no"),
             "realtime_strength_snapshot": metrics.get(
                 "realtime_strength_snapshot"
             ),
@@ -486,6 +507,7 @@ class RealtimeStore:
             ),
             "strength_status": metrics.get("strength_status"),
             "strength_error": metrics.get("strength_error"),
+            "strength_status_detail": metrics.get("strength_status_detail"),
             "strength_requested_at": metrics.get("strength_requested_at"),
             "strength_completed_at": metrics.get("strength_completed_at"),
             "strength_tr_repeat_count": metrics.get("strength_tr_repeat_count"),
@@ -498,7 +520,19 @@ class RealtimeStore:
         }
         with self._lock:
             previous = self._close_metric_snapshots.get(code, {})
-            merged = {**previous, **{k: v for k, v in values.items() if v is not None}}
+            clearable_none_fields = {
+                "orderbook_error",
+                "orderbook_status_detail",
+                "strength_error",
+                "strength_status_detail",
+            }
+            merged_values = {
+                key: value
+                for key, value in values.items()
+                if value is not None
+                or (key in clearable_none_fields and key in metrics)
+            }
+            merged = {**previous, **merged_values}
             orderbook_at = merged.get("orderbook_snapshot_at")
             strength_at = merged.get("strength_snapshot_at")
             merged["orderbook_stale_sec"] = self._age_from_now(orderbook_at)

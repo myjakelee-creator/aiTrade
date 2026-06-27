@@ -1163,6 +1163,31 @@ class KiwoomOpenApiRealtimeProvider:
         "\uccb4\uacb0\uac15\ub3c420\ubd84",
         "\uccb4\uacb0\uac15\ub3c460\ubd84",
     )
+    _ORDERBOOK_PROBE_SCREEN = "9021"
+    _ORDERBOOK_PROBE_RQNAME = "stockboard_opt10004_probe"
+    _ORDERBOOK_PROBE_TRCODE = "opt10004"
+    _ORDERBOOK_PROBE_TOTAL_ASK_FIELDS = (
+        "\ucd1d\ub9e4\ub3c4\uc794\ub7c9",
+        "\ub9e4\ub3c4\ud638\uac00\ucd1d\uc794\ub7c9",
+        "\ub9e4\ub3c4\uc794\ub7c9",
+    )
+    _ORDERBOOK_PROBE_TOTAL_BID_FIELDS = (
+        "\ucd1d\ub9e4\uc218\uc794\ub7c9",
+        "\ub9e4\uc218\ud638\uac00\ucd1d\uc794\ub7c9",
+        "\ub9e4\uc218\uc794\ub7c9",
+    )
+    _ORDERBOOK_PROBE_LEVEL_ASK_FIELDS = tuple(
+        [f"\ub9e4\ub3c4\uc794\ub7c9{index}" for index in range(1, 11)]
+        + [f"\ub9e4\ub3c4\ud638\uac00\uc794\ub7c9{index}" for index in range(1, 11)]
+    )
+    _ORDERBOOK_PROBE_LEVEL_BID_FIELDS = tuple(
+        [f"\ub9e4\uc218\uc794\ub7c9{index}" for index in range(1, 11)]
+        + [f"\ub9e4\uc218\ud638\uac00\uc794\ub7c9{index}" for index in range(1, 11)]
+    )
+    _ORDERBOOK_PROBE_PRICE_FIELDS = tuple(
+        [f"\ub9e4\ub3c4\ud638\uac00{index}" for index in range(1, 11)]
+        + [f"\ub9e4\uc218\ud638\uac00{index}" for index in range(1, 11)]
+    )
     _ORDERBOOK_REALREG_FIDS = "41;51;121;125"
     _ECN_ORDERBOOK_REAL_TYPE = "ECN\uc8fc\uc2dd\ud638\uac00\uc794\ub7c9"
     _EXPECTED_REALREG_SCREEN_START = 9020
@@ -1407,7 +1432,10 @@ class KiwoomOpenApiRealtimeProvider:
                 "opt10046 strength queue enabled for active/candidate/top20; "
                 "provider-ready gated"
             ),
-            "orderbook": "opt10004 candidate is unconfirmed in local docs",
+            "orderbook": (
+                "opt10004 orderbook snapshot confirmed for total bid/ask "
+                "volume; active/candidate/top20 queue enabled"
+            ),
         }
         self._strength_probe_pending = deque()
         self._strength_probe_pending_codes = set()
@@ -1423,6 +1451,20 @@ class KiwoomOpenApiRealtimeProvider:
         self._strength_probe_timeout_sec = 10.0
         self._strength_probe_not_ready_retry_sec = 5.0
         self._strength_probe_not_ready_reason = "not_checked"
+        self._orderbook_probe_pending = deque()
+        self._orderbook_probe_pending_codes = set()
+        self._orderbook_probe_inflight = None
+        self._orderbook_probe_cache = {}
+        self._orderbook_probe_last_request_at = 0.0
+        self._orderbook_probe_last_by_code = {}
+        self._orderbook_probe_last_result = None
+        self._orderbook_probe_last_error = None
+        self._orderbook_probe_last_raw_sample = []
+        self._orderbook_probe_min_interval_sec = 1.0
+        self._orderbook_probe_duplicate_window_sec = 30.0
+        self._orderbook_probe_timeout_sec = 10.0
+        self._orderbook_probe_not_ready_retry_sec = 5.0
+        self._orderbook_probe_not_ready_reason = "not_checked"
         self._stale_trade_drop_seconds = max(
             0, _env_int("STOCKBOARD_DROP_STALE_TRADE_SECONDS", 0)
         )
@@ -1570,6 +1612,7 @@ class KiwoomOpenApiRealtimeProvider:
                     self._process_pending_realtime_requests()
                     self._process_orderbook_rotation()
                     self._process_strength_probe_queue()
+                    self._process_orderbook_probe_queue()
                     self._process_close_metrics_queue()
                     pump_time = datetime.now().isoformat(timespec="seconds")
                     with self._lock:
@@ -1754,11 +1797,16 @@ class KiwoomOpenApiRealtimeProvider:
                 "queued": 0,
                 "priority": priority,
                 "strength_probe_queued": 0,
+                "orderbook_probe_queued": 0,
             }
-        queued = 0
-        deferred = 0
-        skipped_cached = 0
-        already_pending = 0
+        strength_queued = 0
+        strength_deferred = 0
+        strength_skipped_cached = 0
+        strength_already_pending = 0
+        orderbook_queued = 0
+        orderbook_deferred = 0
+        orderbook_skipped_cached = 0
+        orderbook_already_pending = 0
         for code in normalized_codes:
             response = self.enqueue_strength_probe(
                 code,
@@ -1768,24 +1816,44 @@ class KiwoomOpenApiRealtimeProvider:
             message = response.get("message")
             status = response.get("status")
             if status == "cached":
-                skipped_cached += 1
+                strength_skipped_cached += 1
             elif message == "strength probe already pending":
-                already_pending += 1
+                strength_already_pending += 1
             elif status in {"pending", "requested"}:
-                queued += 1
+                strength_queued += 1
             elif status == "deferred":
-                queued += 1
-                deferred += 1
+                strength_queued += 1
+                strength_deferred += 1
+            response = self.enqueue_orderbook_probe(
+                code,
+                priority=priority,
+                force=force,
+            )
+            message = response.get("message")
+            status = response.get("status")
+            if status == "cached":
+                orderbook_skipped_cached += 1
+            elif message == "orderbook probe already pending":
+                orderbook_already_pending += 1
+            elif status in {"pending", "requested"}:
+                orderbook_queued += 1
+            elif status == "deferred":
+                orderbook_queued += 1
+                orderbook_deferred += 1
         return {
             "accepted": len(normalized_codes),
-            "queued": queued,
+            "queued": strength_queued + orderbook_queued,
             "priority": priority,
-            "strength_probe_queued": queued,
-            "strength_probe_deferred": deferred,
-            "strength_probe_already_pending": already_pending,
-            "strength_probe_skipped_cached": skipped_cached,
-            "orderbook_status": "not_implemented",
-            "message": "strength probes queued; orderbook TR remains disabled",
+            "strength_probe_queued": strength_queued,
+            "strength_probe_deferred": strength_deferred,
+            "strength_probe_already_pending": strength_already_pending,
+            "strength_probe_skipped_cached": strength_skipped_cached,
+            "orderbook_probe_queued": orderbook_queued,
+            "orderbook_probe_deferred": orderbook_deferred,
+            "orderbook_probe_already_pending": orderbook_already_pending,
+            "orderbook_probe_skipped_cached": orderbook_skipped_cached,
+            "orderbook_status": "enabled",
+            "message": "strength and orderbook probes queued",
         }
 
     def close_metrics_status(self, codes=None):
@@ -1798,6 +1866,16 @@ class KiwoomOpenApiRealtimeProvider:
                 for item in pending_items
                 if (item.get("next_retry_at_monotonic") or 0) > now
                 or ready is not True
+            ]
+            orderbook_ready, orderbook_ready_reason = (
+                self._orderbook_probe_ready_state_locked()
+            )
+            orderbook_pending_items = list(self._orderbook_probe_pending)
+            orderbook_deferred_items = [
+                item
+                for item in orderbook_pending_items
+                if (item.get("next_retry_at_monotonic") or 0) > now
+                or orderbook_ready is not True
             ]
             requested_codes = [
                 _stock_code(code)
@@ -1844,6 +1922,36 @@ class KiwoomOpenApiRealtimeProvider:
                 "strength_probe_last_raw_sample": list(
                     self._strength_probe_last_raw_sample
                 ),
+                "orderbook_probe_ready": orderbook_ready,
+                "orderbook_probe_ready_reason": orderbook_ready_reason,
+                "orderbook_probe_not_ready_reason": (
+                    None if orderbook_ready else orderbook_ready_reason
+                ),
+                "orderbook_probe_pending_count": len(self._orderbook_probe_pending),
+                "orderbook_probe_pending_sample": [
+                    item.get("stock_code")
+                    for item in orderbook_pending_items[:20]
+                ],
+                "orderbook_probe_deferred_count": len(orderbook_deferred_items),
+                "orderbook_probe_deferred_sample": [
+                    item.get("stock_code")
+                    for item in orderbook_deferred_items[:20]
+                ],
+                "orderbook_probe_inflight_code": (
+                    self._orderbook_probe_inflight.get("stock_code")
+                    if self._orderbook_probe_inflight
+                    else None
+                ),
+                "orderbook_probe_cache_size": len(self._orderbook_probe_cache),
+                "orderbook_probe_last_result": (
+                    dict(self._orderbook_probe_last_result)
+                    if isinstance(self._orderbook_probe_last_result, dict)
+                    else self._orderbook_probe_last_result
+                ),
+                "orderbook_probe_last_error": self._orderbook_probe_last_error,
+                "orderbook_probe_last_raw_sample": list(
+                    self._orderbook_probe_last_raw_sample
+                ),
                 "rate_limit_per_sec": round(
                     1 / self._close_metrics_query_interval_sec, 3
                 ),
@@ -1888,9 +1996,10 @@ class KiwoomOpenApiRealtimeProvider:
                     {
                         "orderbook_source": "query_snapshot",
                         "orderbook_status": "pending" if should_retry else "error",
+                        "orderbook_status_detail": str(error),
                         "strength_source": "opt10046",
                         "strength_status": "pending" if should_retry else "error",
-                        "status_detail": str(error),
+                        "strength_status_detail": str(error),
                     },
                 )
 
@@ -1903,9 +2012,9 @@ class KiwoomOpenApiRealtimeProvider:
             "orderbook_status": "error",
             "strength_source": "opt10046",
             "strength_status": "error",
-            "status_detail": (
+            "strength_status_detail": (
                 "bulk close metrics TR query not wired: opt10046 probe only, "
-                "orderbook TR candidate opt10004 unconfirmed"
+                "orderbook probe uses opt10004 queue"
             ),
         }
 
@@ -2033,6 +2142,119 @@ class KiwoomOpenApiRealtimeProvider:
 
     def request_strength_tr_probe(self, code):
         return self.enqueue_strength_probe(code, priority="active", force=True)
+
+    def _orderbook_probe_ready_state_locked(self):
+        return self._strength_probe_ready_state_locked()
+
+    def is_orderbook_probe_ready(self):
+        with self._lock:
+            return self._orderbook_probe_ready_state_locked()[0]
+
+    def _orderbook_probe_deferred_result(self, code, requested_at=None, reason=None):
+        snapshot_at = datetime.now().isoformat(timespec="seconds")
+        return {
+            "stock_code": code,
+            "orderbook_source": "opt10004_probe",
+            "orderbook_status": "deferred",
+            "orderbook_error": reason or "provider_not_ready",
+            "orderbook_requested_at": requested_at,
+            "orderbook_snapshot_at": snapshot_at,
+        }
+
+    def enqueue_orderbook_probe(self, code, priority="active", force=False):
+        normalized_code = _stock_code(code)
+        if normalized_code is None:
+            raise ValueError(f"invalid stock code: {code!r}")
+        requested_at = datetime.now().isoformat(timespec="seconds")
+        with self._lock:
+            cached = self._orderbook_probe_cache.get(normalized_code)
+            snapshot_date = str(cached.get("orderbook_snapshot_at", ""))[:10] if cached else ""
+            if (
+                not force
+                and cached
+                and cached.get("orderbook_status") == "ok"
+                and snapshot_date == requested_at[:10]
+            ):
+                response = {
+                    "ok": True,
+                    "accepted": [normalized_code],
+                    "status": "cached",
+                    "message": "orderbook probe cache reused",
+                    "requested_at": requested_at,
+                    "snapshot_at": cached.get("orderbook_snapshot_at"),
+                }
+                self._orderbook_probe_last_result = dict(response)
+                return response
+            now = time.monotonic()
+            ready, not_ready_reason = self._orderbook_probe_ready_state_locked()
+            last_for_code = self._orderbook_probe_last_by_code.get(normalized_code)
+            if not force and last_for_code and now - last_for_code < (
+                self._orderbook_probe_duplicate_window_sec
+            ):
+                return self._orderbook_probe_error(
+                    normalized_code,
+                    "duplicate_probe_suppressed",
+                    requested_at=requested_at,
+                )
+            if (
+                normalized_code in self._orderbook_probe_pending_codes
+                or (
+                    self._orderbook_probe_inflight
+                    and self._orderbook_probe_inflight.get("stock_code")
+                    == normalized_code
+                )
+            ):
+                response = {
+                    "ok": True,
+                    "accepted": [normalized_code],
+                    "status": "pending",
+                    "message": "orderbook probe already pending",
+                }
+                self._orderbook_probe_last_result = dict(response)
+                return response
+            item = {
+                "stock_code": normalized_code,
+                "requested_at": requested_at,
+                "priority": priority,
+                "next_retry_at_monotonic": (
+                    now + self._orderbook_probe_not_ready_retry_sec
+                    if not ready
+                    else now
+                ),
+            }
+            if priority == "active":
+                self._orderbook_probe_pending.appendleft(item)
+            else:
+                self._orderbook_probe_pending.append(item)
+            self._orderbook_probe_pending_codes.add(normalized_code)
+            status = "pending" if ready else "deferred"
+            error = None if ready else not_ready_reason
+            self._orderbook_probe_not_ready_reason = error or "ready"
+        response = {
+            "ok": True,
+            "accepted": [normalized_code],
+            "status": status,
+            "message": (
+                "orderbook probe queued"
+                if status == "pending"
+                else "orderbook probe deferred until provider ready"
+            ),
+            "requested_at": requested_at,
+        }
+        if self.store is not None:
+            self.store.update_close_metrics(
+                normalized_code,
+                {
+                    "orderbook_source": "opt10004_probe",
+                    "orderbook_status": status,
+                    "orderbook_error": error,
+                    "orderbook_requested_at": requested_at,
+                    "orderbook_snapshot_at": requested_at,
+                },
+            )
+        with self._lock:
+            self._orderbook_probe_last_result = dict(response)
+        return response
 
     def _process_strength_probe_queue(self):
         with self._lock:
@@ -2199,6 +2421,173 @@ class KiwoomOpenApiRealtimeProvider:
             self.store.update_close_metrics(code, result)
         return result
 
+    def _process_orderbook_probe_queue(self):
+        with self._lock:
+            self._expire_orderbook_probe_inflight_locked()
+            if self._orderbook_probe_inflight is not None:
+                return
+            if not self._orderbook_probe_pending:
+                return
+            now = time.monotonic()
+            if now - self._orderbook_probe_last_request_at < (
+                self._orderbook_probe_min_interval_sec
+            ):
+                return
+            ready, not_ready_reason = self._orderbook_probe_ready_state_locked()
+            if not ready:
+                item = self._orderbook_probe_pending[0]
+                retry_at = item.get("next_retry_at_monotonic") or 0
+                if now < retry_at:
+                    return
+                item["next_retry_at_monotonic"] = (
+                    now + self._orderbook_probe_not_ready_retry_sec
+                )
+                code = item["stock_code"]
+                requested_at = item.get("requested_at")
+                result = self._orderbook_probe_deferred_result(
+                    code,
+                    requested_at=requested_at,
+                    reason=not_ready_reason,
+                )
+                self._orderbook_probe_not_ready_reason = not_ready_reason
+                self._orderbook_probe_last_error = not_ready_reason
+                self._orderbook_probe_last_result = dict(result)
+                if self.store is not None:
+                    self.store.update_close_metrics(code, result)
+                return
+            item = self._orderbook_probe_pending.popleft()
+            self._orderbook_probe_pending_codes.discard(item["stock_code"])
+        self._request_orderbook_tr_probe_on_qt(item)
+
+    def _expire_orderbook_probe_inflight_locked(self):
+        inflight = self._orderbook_probe_inflight
+        if not inflight:
+            return
+        started_at = inflight.get("started_at_monotonic")
+        if started_at is None:
+            return
+        if time.monotonic() - started_at < self._orderbook_probe_timeout_sec:
+            return
+        code = inflight.get("stock_code")
+        requested_at = inflight.get("requested_at")
+        self._orderbook_probe_inflight = None
+        self._orderbook_probe_error(
+            code,
+            "opt10004 probe timeout",
+            requested_at=requested_at,
+            status="timeout",
+        )
+
+    def _request_orderbook_tr_probe_on_qt(self, item):
+        normalized_code = item["stock_code"]
+        requested_at = item.get("requested_at") or datetime.now().isoformat(
+            timespec="seconds"
+        )
+        with self._lock:
+            ready, not_ready_reason = self._orderbook_probe_ready_state_locked()
+            if not ready:
+                item["next_retry_at_monotonic"] = (
+                    time.monotonic() + self._orderbook_probe_not_ready_retry_sec
+                )
+                self._orderbook_probe_pending.appendleft(item)
+                self._orderbook_probe_pending_codes.add(normalized_code)
+                result = self._orderbook_probe_deferred_result(
+                    normalized_code,
+                    requested_at=requested_at,
+                    reason=not_ready_reason,
+                )
+                self._orderbook_probe_not_ready_reason = not_ready_reason
+                self._orderbook_probe_last_error = not_ready_reason
+                self._orderbook_probe_last_result = dict(result)
+                if self.store is not None:
+                    self.store.update_close_metrics(normalized_code, result)
+                return
+            control = self._control
+            self._orderbook_probe_last_request_at = time.monotonic()
+            self._orderbook_probe_last_by_code[normalized_code] = (
+                self._orderbook_probe_last_request_at
+            )
+        if control is None:
+            self._orderbook_probe_error(
+                normalized_code,
+                "control_unavailable",
+                requested_at=requested_at,
+            )
+            return
+        try:
+            control.dynamicCall(
+                "SetInputValue(QString, QString)",
+                "\uc885\ubaa9\ucf54\ub4dc",
+                normalized_code,
+            )
+            result = control.dynamicCall(
+                "CommRqData(QString, QString, int, QString)",
+                self._ORDERBOOK_PROBE_RQNAME,
+                self._ORDERBOOK_PROBE_TRCODE,
+                0,
+                self._ORDERBOOK_PROBE_SCREEN,
+            )
+        except Exception as error:
+            self._orderbook_probe_error(
+                normalized_code,
+                str(error),
+                requested_at=requested_at,
+            )
+            return
+        if result not in (None, 0, "0"):
+            self._orderbook_probe_error(
+                normalized_code,
+                f"CommRqData returned {result!r}",
+                requested_at=requested_at,
+            )
+            return
+        requested = datetime.now().isoformat(timespec="seconds")
+        inflight = {
+            "stock_code": normalized_code,
+            "requested_at": requested_at,
+            "comm_requested_at": requested,
+            "rqname": self._ORDERBOOK_PROBE_RQNAME,
+            "trcode": self._ORDERBOOK_PROBE_TRCODE,
+            "screen_no": self._ORDERBOOK_PROBE_SCREEN,
+            "started_at_monotonic": time.monotonic(),
+        }
+        response = {
+            "stock_code": normalized_code,
+            "orderbook_source": "opt10004_probe",
+            "orderbook_status": "requested",
+            "orderbook_requested_at": requested_at,
+            "orderbook_snapshot_at": requested,
+            "orderbook_rqname": self._ORDERBOOK_PROBE_RQNAME,
+            "orderbook_trcode": self._ORDERBOOK_PROBE_TRCODE,
+            "orderbook_screen_no": self._ORDERBOOK_PROBE_SCREEN,
+        }
+        if self.store is not None:
+            self.store.update_close_metrics(normalized_code, response)
+        with self._lock:
+            self._orderbook_probe_inflight = inflight
+            self._orderbook_probe_last_result = dict(response)
+
+    def _orderbook_probe_error(
+        self, code, message, requested_at=None, status="error"
+    ):
+        completed_at = datetime.now().isoformat(timespec="seconds")
+        result = {
+            "stock_code": code,
+            "orderbook_source": "opt10004_probe",
+            "orderbook_status": status,
+            "orderbook_error": str(message)[:160],
+            "orderbook_requested_at": requested_at,
+            "orderbook_completed_at": completed_at,
+            "orderbook_snapshot_at": completed_at,
+        }
+        self._orderbook_probe_last_error = result["orderbook_error"]
+        self._orderbook_probe_last_result = dict(result)
+        if status in {"error", "timeout"}:
+            self._orderbook_probe_cache[code] = dict(result)
+        if self.store is not None:
+            self.store.update_close_metrics(code, result)
+        return result
+
     def _on_receive_tr_data(self, *args):
         try:
             self._handle_receive_tr_data(*args)
@@ -2213,6 +2602,14 @@ class KiwoomOpenApiRealtimeProvider:
         rq_name = str(args[1])
         tr_code = str(args[2])
         record_name = str(args[3]) if len(args) > 3 else ""
+        if rq_name == self._ORDERBOOK_PROBE_RQNAME:
+            self._handle_orderbook_tr_data(
+                screen_no,
+                rq_name,
+                tr_code,
+                record_name,
+            )
+            return
         with self._lock:
             inflight = self._strength_probe_inflight
             if inflight is None or rq_name != inflight.get("rqname"):
@@ -2273,7 +2670,7 @@ class KiwoomOpenApiRealtimeProvider:
             "strength_rqname": rq_name,
             "strength_trcode": tr_code,
             "strength_screen_no": screen_no,
-            "status_detail": (
+            "strength_status_detail": (
                 f"screen={screen_no}, tr={tr_code}, record={record_name}, "
                 f"repeat_count={repeat_count}"
             ),
@@ -2285,6 +2682,155 @@ class KiwoomOpenApiRealtimeProvider:
             self._strength_probe_last_raw_sample = raw_sample[:5]
             self._strength_probe_last_result = dict(result)
             self._strength_probe_last_error = result.get("strength_error")
+
+    def _handle_orderbook_tr_data(self, screen_no, rq_name, tr_code, record_name):
+        with self._lock:
+            inflight = self._orderbook_probe_inflight
+            if inflight is None or rq_name != inflight.get("rqname"):
+                return
+            self._orderbook_probe_inflight = None
+            control = self._control
+        code = inflight.get("stock_code")
+        requested_at = inflight.get("requested_at")
+        if control is None or code is None:
+            self._orderbook_probe_error(
+                code or "",
+                "control_unavailable_on_receive",
+                requested_at=requested_at,
+            )
+            return
+        repeat_count = 0
+        try:
+            repeat_count = control.dynamicCall(
+                "GetRepeatCnt(QString, QString)",
+                tr_code,
+                rq_name,
+            )
+        except Exception:
+            repeat_count = 0
+        try:
+            repeat_count = int(repeat_count or 0)
+        except (TypeError, ValueError):
+            repeat_count = 0
+        row_index = 0
+        raw_values = {}
+        raw_sample = []
+        field_names = (
+            self._ORDERBOOK_PROBE_TOTAL_ASK_FIELDS
+            + self._ORDERBOOK_PROBE_TOTAL_BID_FIELDS
+            + self._ORDERBOOK_PROBE_LEVEL_ASK_FIELDS
+            + self._ORDERBOOK_PROBE_LEVEL_BID_FIELDS
+            + self._ORDERBOOK_PROBE_PRICE_FIELDS
+        )
+        for field_name in field_names:
+            raw_value = control.dynamicCall(
+                "GetCommData(QString, QString, int, QString)",
+                tr_code,
+                rq_name,
+                row_index,
+                field_name,
+            )
+            text = "" if raw_value is None else str(raw_value).strip()
+            number = self._realdata_number(text)
+            raw_values[field_name] = number
+            if text and len(raw_sample) < 10:
+                raw_sample.append({"field": field_name, "value": text})
+        normalized = self._normalize_orderbook_probe_values(raw_values)
+        snapshot_at = datetime.now().isoformat(timespec="seconds")
+        result = {
+            "stock_code": code,
+            "bid_volume_snapshot": normalized.get("bid_volume_snapshot"),
+            "ask_volume_snapshot": normalized.get("ask_volume_snapshot"),
+            "bid_pct": normalized.get("bid_pct"),
+            "ask_pct": normalized.get("ask_pct"),
+            "bid_ask_ratio_snapshot": normalized.get("bid_ask_ratio_snapshot"),
+            "orderbook_source": normalized.get("orderbook_source"),
+            "orderbook_snapshot_at": snapshot_at,
+            "orderbook_completed_at": snapshot_at,
+            "orderbook_requested_at": requested_at,
+            "orderbook_stale_sec": 0,
+            "orderbook_status": normalized.get("orderbook_status"),
+            "orderbook_error": normalized.get("orderbook_error"),
+            "orderbook_tr_repeat_count": repeat_count,
+            "orderbook_raw_sample": raw_sample[:10],
+            "orderbook_rqname": rq_name,
+            "orderbook_trcode": tr_code,
+            "orderbook_screen_no": screen_no,
+            "orderbook_status_detail": (
+                f"screen={screen_no}, tr={tr_code}, record={record_name}, "
+                f"repeat_count={repeat_count}"
+            ),
+        }
+        if self.store is not None:
+            self.store.update_close_metrics(code, result)
+        with self._lock:
+            self._orderbook_probe_cache[code] = dict(result)
+            self._orderbook_probe_last_raw_sample = raw_sample[:10]
+            self._orderbook_probe_last_result = dict(result)
+            self._orderbook_probe_last_error = result.get("orderbook_error")
+
+    def _normalize_orderbook_probe_values(self, values):
+        ask_volume = self._first_probe_number(
+            values, self._ORDERBOOK_PROBE_TOTAL_ASK_FIELDS
+        )
+        bid_volume = self._first_probe_number(
+            values, self._ORDERBOOK_PROBE_TOTAL_BID_FIELDS
+        )
+        source = self._ORDERBOOK_PROBE_TRCODE
+        if ask_volume is None:
+            ask_volume = self._sum_probe_numbers(
+                values, self._ORDERBOOK_PROBE_LEVEL_ASK_FIELDS
+            )
+            if ask_volume is not None:
+                source = f"{self._ORDERBOOK_PROBE_TRCODE}_sum_10_levels"
+        if bid_volume is None:
+            bid_volume = self._sum_probe_numbers(
+                values, self._ORDERBOOK_PROBE_LEVEL_BID_FIELDS
+            )
+            if bid_volume is not None:
+                source = f"{self._ORDERBOOK_PROBE_TRCODE}_sum_10_levels"
+        if ask_volume is None or bid_volume is None:
+            return {
+                "orderbook_source": "opt10004_probe",
+                "orderbook_status": "no_data",
+                "orderbook_error": "no total or 1-10 level volume fields",
+            }
+        total = bid_volume + ask_volume
+        if total <= 0:
+            return {
+                "orderbook_source": source,
+                "orderbook_status": "no_data",
+                "orderbook_error": "zero total orderbook volume",
+            }
+        bid_pct = round((bid_volume / total) * 100)
+        ask_pct = 100 - bid_pct
+        bid_ask_ratio = round(bid_volume / ask_volume, 4) if ask_volume else None
+        return {
+            "bid_volume_snapshot": bid_volume,
+            "ask_volume_snapshot": ask_volume,
+            "bid_pct": bid_pct,
+            "ask_pct": ask_pct,
+            "bid_ask_ratio_snapshot": bid_ask_ratio,
+            "orderbook_source": source,
+            "orderbook_status": "ok",
+            "orderbook_error": None,
+        }
+
+    @staticmethod
+    def _first_probe_number(values, field_names):
+        for field_name in field_names:
+            value = values.get(field_name)
+            if value is not None:
+                return value
+        return None
+
+    @staticmethod
+    def _sum_probe_numbers(values, field_names):
+        numbers = [values.get(field_name) for field_name in field_names]
+        numbers = [value for value in numbers if value is not None]
+        if not numbers:
+            return None
+        return sum(numbers)
 
     def _limited_realtime_codes(self, codes):
         limit = self._realtime_code_limit
@@ -2863,6 +3409,16 @@ class KiwoomOpenApiRealtimeProvider:
                 if (item.get("next_retry_at_monotonic") or 0) > now
                 or strength_ready is not True
             ]
+            orderbook_ready, orderbook_ready_reason = (
+                self._orderbook_probe_ready_state_locked()
+            )
+            orderbook_pending_items = list(self._orderbook_probe_pending)
+            orderbook_deferred_items = [
+                item
+                for item in orderbook_pending_items
+                if (item.get("next_retry_at_monotonic") or 0) > now
+                or orderbook_ready is not True
+            ]
             return {
                 "available": self._check_availability(),
                 "running": self._running,
@@ -2928,6 +3484,36 @@ class KiwoomOpenApiRealtimeProvider:
                 "strength_probe_last_error": self._strength_probe_last_error,
                 "strength_probe_last_raw_sample": list(
                     self._strength_probe_last_raw_sample
+                ),
+                "orderbook_probe_ready": orderbook_ready,
+                "orderbook_probe_ready_reason": orderbook_ready_reason,
+                "orderbook_probe_not_ready_reason": (
+                    None if orderbook_ready else orderbook_ready_reason
+                ),
+                "orderbook_probe_pending_count": len(self._orderbook_probe_pending),
+                "orderbook_probe_pending_sample": [
+                    item.get("stock_code")
+                    for item in orderbook_pending_items[:20]
+                ],
+                "orderbook_probe_deferred_count": len(orderbook_deferred_items),
+                "orderbook_probe_deferred_sample": [
+                    item.get("stock_code")
+                    for item in orderbook_deferred_items[:20]
+                ],
+                "orderbook_probe_inflight_code": (
+                    self._orderbook_probe_inflight.get("stock_code")
+                    if self._orderbook_probe_inflight
+                    else None
+                ),
+                "orderbook_probe_cache_size": len(self._orderbook_probe_cache),
+                "orderbook_probe_last_result": (
+                    dict(self._orderbook_probe_last_result)
+                    if isinstance(self._orderbook_probe_last_result, dict)
+                    else self._orderbook_probe_last_result
+                ),
+                "orderbook_probe_last_error": self._orderbook_probe_last_error,
+                "orderbook_probe_last_raw_sample": list(
+                    self._orderbook_probe_last_raw_sample
                 ),
                 "stale_trade_drop_seconds": self._stale_trade_drop_seconds,
                 "stale_trade_drop_count": self._stale_trade_drop_count,
