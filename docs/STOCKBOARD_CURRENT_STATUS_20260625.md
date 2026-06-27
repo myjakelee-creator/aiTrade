@@ -631,13 +631,14 @@ AHK_RUNNING=True
 | 23 | HTMLJsSplitDesign | WIP |
 | 24 | HTMLFormatJsSplit | WIP |
 | 25 | HTMLStateConstantsSplit | WIP |
-| 26 | HTMLModuleSplit | TODO |
-| 27 | CandidateModelV02 | TODO |
-| 28 | ForeignFuturesSource | TODO |
-| 29 | BigHandKRT | TODO |
-| 30 | DayStrengthBackfill | TODO |
-| 31 | MarketSupplyRefresh | TODO |
-| 32 | SignalRankingStrategyFormalize | TODO |
+| 26 | HTMLVisualCellSplit | WIP |
+| 27 | HTMLModuleSplit | TODO |
+| 28 | CandidateModelV02 | TODO |
+| 29 | ForeignFuturesSource | TODO |
+| 30 | BigHandKRT | TODO |
+| 31 | DayStrengthBackfill | TODO |
+| 32 | MarketSupplyRefresh | TODO |
+| 33 | SignalRankingStrategyFormalize | TODO |
 
 ## 13. 2026-06-27 장마감 조회 snapshot 확정
 
@@ -888,3 +889,30 @@ AHK_RUNNING=True
   - column resize runtime controller state
 - render, tooltip, close metrics functions, Direct API debug functions, controls, main loop는 아직 inline 유지다.
 - 다음 단계는 visual-cell 또는 tooltip 분리 검토다.
+
+## 22. visual-cell helper 최소 분리 5H
+
+- 5H에서 `docs/assets/stockboard_visual_cells.js`를 생성했다.
+- ES module은 아직 사용하지 않으며, `script type="module"` 전환과 `import/export` 추가는 수행하지 않았다.
+- 외부 파일은 `window.StockBoardVisualCells` namespace를 사용한다.
+- HTML은 `assets/stockboard_format.js`, `assets/stockboard_state.js`, `assets/stockboard_visual_cells.js`, 기존 inline main script 순서로 로드한다.
+- 분리한 함수:
+  - `balanceView`
+  - `minuteStrengthView`
+  - `sessionStrengthView`
+- `balanceView`는 `ask_pct=0` 같은 0 값을 정상 숫자로 유지하고, Fast Mode `64/36` 표시와 Graphic Mode red/blue 비율 계산 정책을 바꾸지 않는다.
+- 이동하지 않고 보류한 함수:
+  - `setVisualCell`: DOM 직접 조작 함수라 inline 유지.
+  - `metricView`, `metricMarkup`: 과거 visual/price-limit 경로와 연결 가능성이 있어 inline 유지.
+  - `ohlcTooltip`, `rowOhlcMarkup`, OHLC/render 관련 함수: tooltip/render 경로와 함께 후속 단계에서 검토.
+  - tooltip singleton, close metrics next-batch, Direct API debug, selection, sort, column resize, main loop: inline 유지.
+- Graphic/Fast 표시 동작 변경 없음이 목표이며, 다음 단계는 tooltip 분리 설계 또는 close metrics 분리 설계 검토다.
+
+### 5H 보정
+
+- 5분강도 Graphic Mode 색상비도 순간강도와 동일한 100 기준 강조 수식(`strengthVisualPosition`)을 사용한다.
+- 숫자값, 원천값, tooltip 본문은 변경하지 않고 visual ratio만 보정했다.
+- Fast Mode는 기존 숫자 표시를 유지하고, 잔량비 `64/36` 및 red/blue 배경 비율 계산에는 영향을 주지 않는다.
+- 잔량비 Graphic Mode 색상비는 `bid_pct`/`ask_pct` 백분율을 우선 사용하고, 없으면 매수잔량/(매수+매도), 매도잔량/(매수+매도) 기준으로 직접 계산한다.
+- 숫자 표시 `64/36`과 그래픽 red/blue 비율 기준을 일치시켰으며, ratio/log 변환이나 상한/하한 별도 텍스트·색상 역전은 `balanceView`에서 사용하지 않는다.
+- `ask_pct=0`, `bid_pct=100`은 정상값으로 처리한다.
