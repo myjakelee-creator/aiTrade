@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "updated_at": "2026-06-28",
+  "items": [
+    {
+      "date": "20260626",
+      "date_label": "2026-06-26",
+      "stock_code": "000660",
+      "stock_name": "SK하이닉스",
+      "market": "통합장",
+      "timeframe": "1m",
+      "chart_url": "assets/stockboard_execution_chart_20260626_000660.json",
+      "row_count": 663
+    }
+  ]
+}
