@@ -1,0 +1,89 @@
+name: Codex Task
+description: Copy-paste-free task request for ChatGPT + GitHub + Codex workflow
+title: "[Codex Task] "
+labels: ["codex", "workflow"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this issue to let ChatGPT prepare the task and let Codex execute it through GitHub, without the owner acting as a copy-paste messenger.
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be changed or investigated?
+      placeholder: "Example: Fix StockBoard stale metrics display for 잔량비, 순간강도, 5분강도."
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context / baseline documents
+      description: Mention current docs, previous decisions, or relevant symptoms.
+      value: |
+        Baseline documents:
+        - docs/STOCKBOARD_CURRENT_STATUS_20260625.md
+        - docs/STOCKBOARD_NAMEPLATE_v1.4_20260625.md
+        - docs/OPENAPI_HELP_MASTER_UPDATED_20260625.md
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_files
+    attributes:
+      label: Expected target files
+      description: List expected files or areas. Keep scope narrow.
+      placeholder: |
+        - stockboard_server.py
+        - kiwoom_data_provider.py
+        - docs/stockboard_v0_3_0_sample.html
+    validations:
+      required: false
+
+  - type: textarea
+    id: forbidden
+    attributes:
+      label: Forbidden changes
+      value: |
+        - Do not push directly to main.
+        - Do not change live trading behavior unless explicitly required.
+        - Do not add new documents unless explicitly required.
+        - Do not introduce automatic scheduled upload or startup behavior.
+        - Do not claim verification that was not actually run.
+    validations:
+      required: true
+
+  - type: textarea
+    id: codex_instruction
+    attributes:
+      label: Codex instruction
+      description: ChatGPT should fill this so Codex can execute directly.
+      placeholder: |
+        @codex Please work on this task on a dedicated branch. Read AGENTS.md first. Implement the minimal change, run available checks, and open a PR with the required report.
+    validations:
+      required: false
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation checklist
+      value: |
+        - [ ] Static check or syntax check run
+        - [ ] Relevant pytest run, if available
+        - [ ] API endpoint checked, if applicable
+        - [ ] Browser/DOM checked, if applicable
+        - [ ] Kiwoom/HTS/live-session manual check noted, if needed
+        - [ ] Unverified items explicitly listed
+    validations:
+      required: true
+
+  - type: textarea
+    id: owner_approval
+    attributes:
+      label: Owner approval requirement
+      value: |
+        Final merge requires owner approval after PR report review.
+    validations:
+      required: true
