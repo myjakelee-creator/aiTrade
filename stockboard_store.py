@@ -4,7 +4,7 @@ import os
 import time
 from collections import deque
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
 
@@ -84,6 +84,12 @@ QUOTE_FIELDS = (
     "source_code",
     "realtime_ohlc",
     "realtime_ohlc_source",
+    "regular_close_price",
+    "regular_close_change_rate",
+    "regular_close_ohlc",
+    "regular_close_snapshot_at",
+    "regular_close_snapshot_source",
+    "regular_close_snapshot_status",
 )
 
 
@@ -168,6 +174,10 @@ class RealtimeStore:
     @staticmethod
     def _timestamp_text(timestamp):
         return datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
+
+    @staticmethod
+    def _kst_now():
+        return datetime.now(timezone(timedelta(hours=9)))
 
     @staticmethod
     def _has_persistent_value(value):
@@ -723,6 +733,45 @@ class RealtimeStore:
             quote = self._ensure_quote(code)
             quote.update({key: value for key, value in merged.items() if value is not None})
             return deepcopy(merged)
+
+    def ensure_regular_close_snapshot(self, stock_code, snapshot):
+        if not isinstance(snapshot, dict):
+            raise TypeError("snapshot must be a dict")
+        code = self._normalized_code(stock_code)
+        with self._lock:
+            quote = self._ensure_quote(code)
+            if quote.get("regular_close_snapshot_at"):
+                return deepcopy(quote)
+            timestamp_text = snapshot.get(
+                "regular_close_snapshot_at"
+            ) or self._kst_now().isoformat(timespec="seconds")
+            values = {
+                "regular_close_price": snapshot.get("regular_close_price"),
+                "regular_close_change_rate": snapshot.get(
+                    "regular_close_change_rate"
+                ),
+                "regular_close_ohlc": deepcopy(
+                    snapshot.get("regular_close_ohlc")
+                ),
+                "regular_close_snapshot_at": timestamp_text,
+                "regular_close_snapshot_source": snapshot.get(
+                    "regular_close_snapshot_source"
+                ),
+                "regular_close_snapshot_status": snapshot.get(
+                    "regular_close_snapshot_status"
+                ) or "ok",
+            }
+            quote.update(
+                {
+                    key: value
+                    for key, value in values.items()
+                    if value is not None and value != ""
+                }
+            )
+            self._sequence += 1
+            quote["sequence"] = self._sequence
+            self._updated_at = timestamp_text
+            return deepcopy(quote)
 
     @staticmethod
     def _age_from_now(timestamp_text):

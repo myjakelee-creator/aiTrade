@@ -29,6 +29,11 @@ from stockboard_store import RealtimeStore, _load_tradable_stock_codes
 DOCS_DIR = Path(__file__).resolve().parent / "docs"
 HOST = os.getenv("KIWOOM_HOST", "127.0.0.1")
 PORT = int(os.getenv("KIWOOM_PORT", "8000"))
+REGULAR_CLOSE_START_HOUR = 15
+REGULAR_CLOSE_START_MINUTE = 30
+AFTERMARKET_START_HOUR = 15
+AFTERMARKET_START_MINUTE = 40
+AFTERMARKET_REALTIME_FRESH_SEC = 60.0
 
 
 def _listening_pids(host, port):
@@ -197,6 +202,181 @@ def _age_seconds(timestamp_text):
         return max(0.0, round((now - timestamp).total_seconds(), 3))
     except (TypeError, ValueError):
         return None
+
+
+def _market_clock_phase(now=None):
+    current = now or datetime.now(KST)
+    regular_close_start = current.replace(
+        hour=REGULAR_CLOSE_START_HOUR,
+        minute=REGULAR_CLOSE_START_MINUTE,
+        second=0,
+        microsecond=0,
+    )
+    aftermarket_start = current.replace(
+        hour=AFTERMARKET_START_HOUR,
+        minute=AFTERMARKET_START_MINUTE,
+        second=0,
+        microsecond=0,
+    )
+    if current < regular_close_start:
+        return "regular"
+    if current < aftermarket_start:
+        return "regular_close_lock"
+    return "aftermarket"
+
+
+def _has_value(value):
+    return value is not None and value != ""
+
+
+def _is_ohlc(value):
+    return isinstance(value, dict) and not isinstance(value, list)
+
+
+def _is_al_source(value):
+    return str(value or "").upper().endswith("_AL")
+
+
+def _is_realtime_fresh(row):
+    age = _age_seconds(row.get("received_at") or row.get("realtime_received_at"))
+    return age is not None and age <= AFTERMARKET_REALTIME_FRESH_SEC
+
+
+def _regular_close_snapshot_from_row(row):
+    realtime_ohlc = row.get("realtime_ohlc")
+    base_ohlc = row.get("ohlc")
+    if (
+        _has_value(row.get("realtime_price"))
+        and _has_value(row.get("realtime_change_rate"))
+        and _is_ohlc(realtime_ohlc)
+        and _is_al_source(row.get("realtime_source_code"))
+    ):
+        return {
+            "regular_close_price": row.get("realtime_price"),
+            "regular_close_change_rate": row.get("realtime_change_rate"),
+            "regular_close_ohlc": deepcopy(realtime_ohlc),
+            "regular_close_snapshot_source": "realtime_al",
+            "regular_close_snapshot_status": "ok",
+        }
+    if _has_value(row.get("price")) and _has_value(row.get("change_rate")):
+        ohlc = realtime_ohlc if _is_ohlc(realtime_ohlc) else base_ohlc
+        if _is_ohlc(ohlc):
+            return {
+                "regular_close_price": row.get("price"),
+                "regular_close_change_rate": row.get("change_rate"),
+                "regular_close_ohlc": deepcopy(ohlc),
+                "regular_close_snapshot_source": (
+                    "price_change_rate_realtime_ohlc"
+                    if _is_ohlc(realtime_ohlc)
+                    else "price_change_rate_base_ohlc"
+                ),
+                "regular_close_snapshot_status": "ok",
+            }
+    if _has_value(row.get("rest_price")) and _is_ohlc(base_ohlc):
+        return {
+            "regular_close_price": row.get("rest_price"),
+            "regular_close_change_rate": row.get("rest_change_rate"),
+            "regular_close_ohlc": deepcopy(base_ohlc),
+            "regular_close_snapshot_source": "rest_price_base_ohlc",
+            "regular_close_snapshot_status": "ok",
+        }
+    return {
+        "regular_close_snapshot_source": "unavailable",
+        "regular_close_snapshot_status": "unavailable",
+    }
+
+
+def _copy_regular_close_fields(target, source):
+    for field in (
+        "regular_close_price",
+        "regular_close_change_rate",
+        "regular_close_ohlc",
+        "regular_close_snapshot_at",
+        "regular_close_snapshot_source",
+        "regular_close_snapshot_status",
+    ):
+        if field in source:
+            target[field] = deepcopy(source.get(field))
+
+
+def _apply_display_price_fields(row, now=None):
+    phase = _market_clock_phase(now)
+    regular_price = row.get("regular_close_price")
+    regular_change_rate = row.get("regular_close_change_rate")
+    regular_ohlc = row.get("regular_close_ohlc")
+    realtime_price = row.get("realtime_price")
+    realtime_change_rate = row.get("realtime_change_rate")
+    realtime_ohlc = row.get("realtime_ohlc")
+    base_price = row.get("price")
+    base_change_rate = row.get("change_rate")
+    base_ohlc = row.get("ohlc")
+
+    if phase == "regular_close_lock" and _has_value(regular_price):
+        row["display_price"] = regular_price
+        row["display_change_rate"] = regular_change_rate
+        row["display_ohlc"] = deepcopy(regular_ohlc)
+        row["price_source"] = "regular_close_snapshot"
+        row["display_ohlc_source"] = "regular_close_snapshot"
+        return row
+
+    if phase == "aftermarket":
+        if _has_value(realtime_price) and _is_realtime_fresh(row):
+            row["display_price"] = realtime_price
+            row["display_change_rate"] = realtime_change_rate
+            row["display_ohlc"] = deepcopy(realtime_ohlc) if _is_ohlc(realtime_ohlc) else None
+            row["price_source"] = "aftermarket_realtime"
+            row["display_ohlc_source"] = (
+                "realtime_ohlc" if _is_ohlc(realtime_ohlc) else "unavailable"
+            )
+            return row
+        if _has_value(regular_price):
+            row["display_price"] = regular_price
+            row["display_change_rate"] = regular_change_rate
+            row["display_ohlc"] = deepcopy(regular_ohlc)
+            row["price_source"] = "regular_close_snapshot_fallback"
+            row["display_ohlc_source"] = "regular_close_snapshot"
+            return row
+
+    if _has_value(realtime_price):
+        row["display_price"] = realtime_price
+        row["display_change_rate"] = realtime_change_rate
+        row["display_ohlc"] = deepcopy(realtime_ohlc) if _is_ohlc(realtime_ohlc) else None
+        row["price_source"] = "realtime"
+        row["display_ohlc_source"] = (
+            "realtime_ohlc" if _is_ohlc(realtime_ohlc) else "unavailable"
+        )
+    elif _has_value(base_price):
+        row["display_price"] = base_price
+        row["display_change_rate"] = base_change_rate
+        row["display_ohlc"] = deepcopy(base_ohlc) if _is_ohlc(base_ohlc) else None
+        row["price_source"] = "close_snapshot_candidate"
+        row["display_ohlc_source"] = "base_ohlc" if _is_ohlc(base_ohlc) else "unavailable"
+    else:
+        row["display_price"] = None
+        row["display_change_rate"] = None
+        row["display_ohlc"] = None
+        row["price_source"] = "unavailable"
+        row["display_ohlc_source"] = "unavailable"
+    return row
+
+
+def _sanitize_realtime_display_patch(patch):
+    if patch.get("price_source") != "unavailable":
+        return patch
+    if _has_value(patch.get("display_price")) or _has_value(
+        patch.get("display_change_rate")
+    ):
+        return patch
+    for field in (
+        "display_price",
+        "display_change_rate",
+        "display_ohlc",
+        "price_source",
+        "display_ohlc_source",
+    ):
+        patch.pop(field, None)
+    patch["display_patch_status"] = "unavailable_omitted"
+    return patch
 
 
 def _close_metric_codes(rows):
@@ -394,6 +574,17 @@ def _top100_with_realtime(rows, realtime_store):
                 orderbook_event.get("orderbook_source") or "orderbook"
             )
             row["orderbook_status"] = "ok"
+        if _market_clock_phase() != "regular":
+            try:
+                regular_snapshot = realtime_store.ensure_regular_close_snapshot(
+                    stock_code,
+                    _regular_close_snapshot_from_row(row),
+                )
+                _copy_regular_close_fields(row, regular_snapshot)
+            except Exception as error:
+                row["regular_close_snapshot_status"] = "error"
+                row["regular_close_snapshot_error"] = str(error)
+        _apply_display_price_fields(row)
     return response_rows
 
 
@@ -424,109 +615,103 @@ def _realtime_patch_payload(
             quote.get("cumulative_value")
         )
         realtime_ohlc = quote.get("realtime_ohlc")
-        patches.append(
-            {
-                "stock_code": stock_code,
-                "price": price,
-                "change_rate": change_rate,
-                "realtime_price": price,
-                "realtime_change_rate": change_rate,
-                "trade_time": quote.get("trade_time"),
-                "fid20_trade_time": quote.get("trade_time"),
-                "received_code": quote.get("received_code"),
-                "normalized_code": quote.get("normalized_code"),
-                "registered_code": quote.get("registered_code"),
-                "original_registered_code": quote.get(
-                    "original_registered_code"
-                ),
-                "realtime_source_code": quote.get("realtime_source_code"),
-                "source_code": quote.get("source_code"),
-                "realtime_strength": _realtime_number(
-                    quote.get("execution_strength")
-                ),
-                "realtime_acc_volume": _realtime_number(
-                    quote.get("cumulative_volume")
-                ),
-                "realtime_acc_trade_value": _realtime_number(
-                    quote.get("cumulative_value")
-                ),
-                "realtime_acc_trade_value_raw": trade_value_diagnostics["raw"],
-                "realtime_acc_trade_value_million": trade_value_diagnostics[
-                    "million"
-                ],
-                "realtime_acc_trade_value_eok_candidate": (
-                    trade_value_diagnostics["eok_candidate"]
-                ),
-                "session_strength": _realtime_number(
-                    quote.get("session_strength")
-                ),
-                "session_buy_qty_live": _realtime_number(
-                    quote.get("session_buy_qty_live")
-                ),
-                "session_sell_qty_live": _realtime_number(
-                    quote.get("session_sell_qty_live")
-                ),
-                "session_strength_source": quote.get("session_strength_source"),
-                "realtime_strength_snapshot": _realtime_number(
-                    quote.get("realtime_strength_snapshot")
-                ),
-                "strength_5m": _realtime_number(quote.get("strength_5m")),
-                "strength_20m": _realtime_number(quote.get("strength_20m")),
-                "strength_60m": _realtime_number(quote.get("strength_60m")),
-                "strength_snapshot_at": quote.get("strength_snapshot_at"),
-                "strength_source": quote.get("strength_source"),
-                "strength_stale_sec": _realtime_number(
-                    quote.get("strength_stale_sec")
-                ),
-                "strength_status": quote.get("strength_status"),
-                "realtime_ohlc": (
-                    deepcopy(realtime_ohlc)
-                    if realtime_ohlc is not None
-                    else None
-                ),
-                "realtime_ohlc_source": quote.get("realtime_ohlc_source"),
-                "bid_volume": _realtime_number(
-                    quote.get("bid_volume")
-                    if "bid_volume" in quote
-                    else quote.get("total_bid_qty")
-                ),
-                "ask_volume": _realtime_number(
-                    quote.get("ask_volume")
-                    if "ask_volume" in quote
-                    else quote.get("total_ask_qty")
-                ),
-                "bid_volume_snapshot": _realtime_number(
-                    quote.get("bid_volume_snapshot")
-                ),
-                "ask_volume_snapshot": _realtime_number(
-                    quote.get("ask_volume_snapshot")
-                ),
-                "bid_pct": _realtime_number(quote.get("bid_pct")),
-                "ask_pct": _realtime_number(quote.get("ask_pct")),
-                "bid_ask_ratio": _realtime_number(quote.get("bid_ask_ratio")),
-                "bid_ask_ratio_snapshot": _realtime_number(
-                    quote.get("bid_ask_ratio_snapshot")
-                ),
-                "best_bid_price": best_bid,
-                "best_ask_price": best_ask,
-                "orderbook_received_at": quote.get("orderbook_received_at"),
-                "orderbook_snapshot_at": quote.get("orderbook_snapshot_at"),
-                "orderbook_age_sec": _age_seconds(
-                    quote.get("orderbook_received_at") or quote.get("received_at")
-                ),
-                "orderbook_stale_sec": _realtime_number(
-                    quote.get("orderbook_stale_sec")
-                ),
-                "orderbook_source": quote.get("orderbook_source"),
-                "orderbook_status": quote.get("orderbook_status"),
-                "orderbook_error": quote.get("orderbook_error"),
-                "orderbook_status_detail": quote.get(
-                    "orderbook_status_detail"
-                ),
-                "received_at": quote.get("received_at"),
-                "sequence": quote.get("sequence"),
-            }
-        )
+        patch = {
+            "stock_code": stock_code,
+            "price": price,
+            "change_rate": change_rate,
+            "realtime_price": price,
+            "realtime_change_rate": change_rate,
+            "trade_time": quote.get("trade_time"),
+            "fid20_trade_time": quote.get("trade_time"),
+            "received_code": quote.get("received_code"),
+            "normalized_code": quote.get("normalized_code"),
+            "registered_code": quote.get("registered_code"),
+            "original_registered_code": quote.get("original_registered_code"),
+            "realtime_source_code": quote.get("realtime_source_code"),
+            "source_code": quote.get("source_code"),
+            "realtime_strength": _realtime_number(
+                quote.get("execution_strength")
+            ),
+            "realtime_acc_volume": _realtime_number(
+                quote.get("cumulative_volume")
+            ),
+            "realtime_acc_trade_value": _realtime_number(
+                quote.get("cumulative_value")
+            ),
+            "realtime_acc_trade_value_raw": trade_value_diagnostics["raw"],
+            "realtime_acc_trade_value_million": trade_value_diagnostics[
+                "million"
+            ],
+            "realtime_acc_trade_value_eok_candidate": (
+                trade_value_diagnostics["eok_candidate"]
+            ),
+            "session_strength": _realtime_number(quote.get("session_strength")),
+            "session_buy_qty_live": _realtime_number(
+                quote.get("session_buy_qty_live")
+            ),
+            "session_sell_qty_live": _realtime_number(
+                quote.get("session_sell_qty_live")
+            ),
+            "session_strength_source": quote.get("session_strength_source"),
+            "realtime_strength_snapshot": _realtime_number(
+                quote.get("realtime_strength_snapshot")
+            ),
+            "strength_5m": _realtime_number(quote.get("strength_5m")),
+            "strength_20m": _realtime_number(quote.get("strength_20m")),
+            "strength_60m": _realtime_number(quote.get("strength_60m")),
+            "strength_snapshot_at": quote.get("strength_snapshot_at"),
+            "strength_source": quote.get("strength_source"),
+            "strength_stale_sec": _realtime_number(
+                quote.get("strength_stale_sec")
+            ),
+            "strength_status": quote.get("strength_status"),
+            "realtime_ohlc": (
+                deepcopy(realtime_ohlc) if realtime_ohlc is not None else None
+            ),
+            "realtime_ohlc_source": quote.get("realtime_ohlc_source"),
+            "bid_volume": _realtime_number(
+                quote.get("bid_volume")
+                if "bid_volume" in quote
+                else quote.get("total_bid_qty")
+            ),
+            "ask_volume": _realtime_number(
+                quote.get("ask_volume")
+                if "ask_volume" in quote
+                else quote.get("total_ask_qty")
+            ),
+            "bid_volume_snapshot": _realtime_number(
+                quote.get("bid_volume_snapshot")
+            ),
+            "ask_volume_snapshot": _realtime_number(
+                quote.get("ask_volume_snapshot")
+            ),
+            "bid_pct": _realtime_number(quote.get("bid_pct")),
+            "ask_pct": _realtime_number(quote.get("ask_pct")),
+            "bid_ask_ratio": _realtime_number(quote.get("bid_ask_ratio")),
+            "bid_ask_ratio_snapshot": _realtime_number(
+                quote.get("bid_ask_ratio_snapshot")
+            ),
+            "best_bid_price": best_bid,
+            "best_ask_price": best_ask,
+            "orderbook_received_at": quote.get("orderbook_received_at"),
+            "orderbook_snapshot_at": quote.get("orderbook_snapshot_at"),
+            "orderbook_age_sec": _age_seconds(
+                quote.get("orderbook_received_at") or quote.get("received_at")
+            ),
+            "orderbook_stale_sec": _realtime_number(
+                quote.get("orderbook_stale_sec")
+            ),
+            "orderbook_source": quote.get("orderbook_source"),
+            "orderbook_status": quote.get("orderbook_status"),
+            "orderbook_error": quote.get("orderbook_error"),
+            "orderbook_status_detail": quote.get("orderbook_status_detail"),
+            "received_at": quote.get("received_at"),
+            "sequence": quote.get("sequence"),
+        }
+        _copy_regular_close_fields(patch, quote)
+        _apply_display_price_fields(patch)
+        _sanitize_realtime_display_patch(patch)
+        patches.append(patch)
     return {
         "sequence": snapshot.get("sequence"),
         "updated_at": snapshot.get("updated_at"),

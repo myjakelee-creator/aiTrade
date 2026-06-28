@@ -1036,7 +1036,17 @@
     );
   }
 
+  function hasApiDisplayOhlc(row) {
+    return Boolean(
+      row
+      && row.display_ohlc
+      && typeof row.display_ohlc === 'object'
+      && !Array.isArray(row.display_ohlc)
+    );
+  }
+
   function displayOhlc(row) {
+    if (hasApiDisplayOhlc(row)) return row.display_ohlc;
     return hasRealtimeOhlc(row) ? row.realtime_ohlc : row?.ohlc;
   }
 
@@ -1402,7 +1412,8 @@
   }
 
   function ohlcCellView(row) {
-    const source = hasRealtimeOhlc(row) ? 'realtime_ohlc' : 'base ohlc';
+    const source = row?.display_ohlc_source
+      || (hasRealtimeOhlc(row) ? 'realtime_ohlc' : 'base ohlc');
     const emptyCandle = {
       html: isFastDisplayMode() ? '<span class="fast-metric-text">-</span>' : '',
       background: isFastDisplayMode() ? '' : `linear-gradient(${visualCellColors.neutral},${visualCellColors.neutral}) ${visualCellInset}`,
@@ -1933,6 +1944,13 @@
       sessionSellQtyLive
     );
     const fiveMinuteStrength = officialFiveMinuteStrength || browserFiveMinuteStrength;
+    const displayPriceValue = firstValue(row, ['display_price', 'displayPrice']);
+    const priceValue = displayPriceValue ?? firstValue(row, ['price']);
+    const displayChangeRateValue = firstValue(row, [
+      'display_change_rate',
+      'displayChangeRate'
+    ]);
+    const effectiveChangeRate = displayChangeRateValue ?? changeRate;
     return {
       code: normalizedCode,
       marketGroup: stockMarketGroup(row),
@@ -1945,6 +1963,18 @@
       gradeScore: firstValue(row, ['grade_score']),
       candidateGradeTooltip,
       ohlc: row.ohlc,
+      display_ohlc: firstValue(row, ['display_ohlc', 'displayOhlc']),
+      displayOhlc: firstValue(row, ['display_ohlc', 'displayOhlc']),
+      display_ohlc_source: firstValue(row, [
+        'display_ohlc_source',
+        'displayOhlcSource'
+      ]),
+      regular_close_price: firstValue(row, ['regular_close_price']),
+      regular_close_change_rate: firstValue(row, ['regular_close_change_rate']),
+      regular_close_ohlc: firstValue(row, ['regular_close_ohlc']),
+      regular_close_snapshot_at: firstValue(row, ['regular_close_snapshot_at']),
+      regular_close_snapshot_source: firstValue(row, ['regular_close_snapshot_source']),
+      regular_close_snapshot_status: firstValue(row, ['regular_close_snapshot_status']),
       realtime_ohlc: firstValue(row, ['realtime_ohlc', 'realtimeOhlc']),
       realtimeOhlc: firstValue(row, ['realtime_ohlc', 'realtimeOhlc']),
       realtime_ohlc_source: firstValue(row, [
@@ -1967,6 +1997,17 @@
       changeRate: formatPercent(changeRate),
       changeRateNumber: Number(String(changeRate ?? '').replace(/[%+,]/g, '').trim()),
       changeClass: toneClass(firstValue(row, ['change_tone']), changeRate),
+      sortPrice: sortableNumber(priceValue),
+      price: formatInteger(priceValue),
+      displayPrice: displayPriceValue,
+      display_price: displayPriceValue,
+      displayChangeRate: displayChangeRateValue,
+      display_change_rate: displayChangeRateValue,
+      priceSource: firstValue(row, ['price_source', 'priceSource']),
+      price_source: firstValue(row, ['price_source', 'priceSource']),
+      changeRate: formatPercent(effectiveChangeRate),
+      changeRateNumber: Number(String(effectiveChangeRate ?? '').replace(/[%+,]/g, '').trim()),
+      changeClass: toneClass(firstValue(row, ['change_tone']), effectiveChangeRate),
       sortAmount: sortableNumber(amountValue),
       amount: formatInteger(amountValue),
       realtimeAccTradeValueEokCandidate,
@@ -2388,21 +2429,46 @@
   }
 
   function applyRealtimePatchToRow(tableRow, row, patch) {
-    const changeRate = firstValue(patch, ['change_rate', 'realtime_change_rate']);
-    const price = firstValue(patch, ['price', 'realtime_price']);
-    if (price !== null) {
+    const patchPriceSource = firstValue(patch, ['price_source', 'priceSource']);
+    const patchDisplayPrice = firstValue(patch, ['display_price', 'displayPrice']);
+    const patchDisplayChangeRate = firstValue(patch, [
+      'display_change_rate',
+      'displayChangeRate'
+    ]);
+    const patchHasUsableDisplay = patchPriceSource !== 'unavailable'
+      || patchDisplayPrice !== null
+      || patchDisplayChangeRate !== null;
+    const changeRate = firstValue(patch, [
+      'display_change_rate',
+      'displayChangeRate',
+      'change_rate',
+      'realtime_change_rate'
+    ]);
+    const price = firstValue(patch, [
+      'display_price',
+      'displayPrice',
+      'price',
+      'realtime_price'
+    ]);
+    if (patchHasUsableDisplay && price !== null) {
       const displayPrice = formatInteger(price);
       if (row) {
         row.price = displayPrice;
+        row.displayPrice = patchDisplayPrice ?? row.displayPrice;
+        row.display_price = row.displayPrice;
+        row.priceSource = patchPriceSource ?? row.priceSource;
+        row.price_source = row.priceSource;
         row.sortPrice = sortableNumber(price);
       }
       setCell(tableRow.cells[4], escapeHtml(displayPrice), 'number-cell', '', true);
     }
-    if (changeRate !== null) {
+    if (patchHasUsableDisplay && changeRate !== null) {
       const displayChangeRate = formatPercent(changeRate);
       const changeClass = toneClass(null, changeRate);
       if (row) {
         row.changeRate = displayChangeRate;
+        row.displayChangeRate = patchDisplayChangeRate ?? row.displayChangeRate;
+        row.display_change_rate = row.displayChangeRate;
         row.changeRateNumber = Number(String(changeRate ?? '').replace(/[%+,]/g, '').trim());
         row.changeClass = changeClass;
       }
@@ -2539,6 +2605,23 @@
       row.amount = formatInteger(realtimeAccTradeValueEokCandidate);
       setCell(tableRow.cells[6], escapeHtml(row.amount), 'number-cell');
     }
+    const displayOhlcPatch = firstValue(patch, ['display_ohlc', 'displayOhlc']);
+    row.regular_close_price = firstValue(patch, ['regular_close_price']) ?? row.regular_close_price;
+    row.regular_close_change_rate = firstValue(patch, ['regular_close_change_rate']) ?? row.regular_close_change_rate;
+    row.regular_close_ohlc = firstValue(patch, ['regular_close_ohlc']) ?? row.regular_close_ohlc;
+    row.regular_close_snapshot_at = firstValue(patch, ['regular_close_snapshot_at']) ?? row.regular_close_snapshot_at;
+    row.regular_close_snapshot_source = firstValue(patch, ['regular_close_snapshot_source']) ?? row.regular_close_snapshot_source;
+    row.regular_close_snapshot_status = firstValue(patch, ['regular_close_snapshot_status']) ?? row.regular_close_snapshot_status;
+    if (patchHasUsableDisplay && displayOhlcPatch && typeof displayOhlcPatch === 'object' && !Array.isArray(displayOhlcPatch)) {
+      row.display_ohlc = displayOhlcPatch;
+      row.displayOhlc = displayOhlcPatch;
+      row.display_ohlc_source = firstValue(patch, [
+        'display_ohlc_source',
+        'displayOhlcSource'
+      ]) ?? row.display_ohlc_source;
+      setVisualCell(tableRow.cells[7], ohlcCellView(row), 'ohlc-cell visual-cell', 'ohlc');
+      refreshOhlcTooltip(tableRow.cells[7]);
+    }
     const realtimeOhlc = firstValue(patch, ['realtime_ohlc', 'realtimeOhlc']);
     if (realtimeOhlc && typeof realtimeOhlc === 'object' && !Array.isArray(realtimeOhlc)) {
       row.realtime_ohlc = realtimeOhlc;
@@ -2550,8 +2633,10 @@
       if (realtimeOhlcSource !== null) {
         row.realtime_ohlc_source = realtimeOhlcSource;
       }
-      setVisualCell(tableRow.cells[7], ohlcCellView(row), 'ohlc-cell visual-cell', 'ohlc');
-      refreshOhlcTooltip(tableRow.cells[7]);
+      if (!displayOhlcPatch) {
+        setVisualCell(tableRow.cells[7], ohlcCellView(row), 'ohlc-cell visual-cell', 'ohlc');
+        refreshOhlcTooltip(tableRow.cells[7]);
+      }
     }
     row.bidVolume = firstValue(patch, ['bid_volume', 'bid_volume_snapshot']) ?? row.bidVolume;
     row.askVolume = firstValue(patch, ['ask_volume', 'ask_volume_snapshot']) ?? row.askVolume;
@@ -2606,7 +2691,13 @@
     [
       'price',
       'sortPrice',
+      'displayPrice',
+      'display_price',
+      'priceSource',
+      'price_source',
       'changeRate',
+      'displayChangeRate',
+      'display_change_rate',
       'changeRateNumber',
       'changeClass',
       'amount',
@@ -2676,6 +2767,15 @@
       'realtime_ohlc',
       'realtimeOhlc',
       'realtime_ohlc_source',
+      'display_ohlc',
+      'displayOhlc',
+      'display_ohlc_source',
+      'regular_close_price',
+      'regular_close_change_rate',
+      'regular_close_ohlc',
+      'regular_close_snapshot_at',
+      'regular_close_snapshot_source',
+      'regular_close_snapshot_status',
       'realtimeReceivedAt',
       'realtimeSequence'
     ].forEach(key => {
