@@ -1,4 +1,6 @@
 import csv
+import json
+import os
 import time
 from collections import deque
 from copy import deepcopy
@@ -10,6 +12,10 @@ from stockboard_engine import _stock_code
 
 
 DOCS_DIR = Path(__file__).resolve().parent / "docs"
+RUNTIME_DIR = Path(__file__).resolve().parent / "data" / "runtime"
+CLOSE_METRICS_PERSIST_PATH = (
+    RUNTIME_DIR / "stockboard_close_metrics_snapshots.json"
+)
 
 QUOTE_FIELDS = (
     "price",
@@ -82,7 +88,56 @@ QUOTE_FIELDS = (
 
 
 class RealtimeStore:
-    def __init__(self, trade_event_limit=200, orderbook_event_limit=200):
+    _STRENGTH_PERSIST_FIELDS = (
+        "stock_code",
+        "updated_at",
+        "realtime_strength_snapshot",
+        "strength_5m",
+        "strength_20m",
+        "strength_60m",
+        "strength_source",
+        "strength_snapshot_at",
+        "strength_stale_sec",
+        "strength_status",
+        "strength_error",
+        "strength_status_detail",
+        "strength_requested_at",
+        "strength_completed_at",
+        "strength_tr_repeat_count",
+        "strength_raw_sample",
+        "strength_rqname",
+        "strength_trcode",
+        "strength_screen_no",
+    )
+    _ORDERBOOK_PERSIST_FIELDS = (
+        "stock_code",
+        "updated_at",
+        "bid_volume_snapshot",
+        "ask_volume_snapshot",
+        "bid_pct",
+        "ask_pct",
+        "bid_ask_ratio_snapshot",
+        "orderbook_source",
+        "orderbook_snapshot_at",
+        "orderbook_stale_sec",
+        "orderbook_status",
+        "orderbook_error",
+        "orderbook_status_detail",
+        "orderbook_requested_at",
+        "orderbook_completed_at",
+        "orderbook_tr_repeat_count",
+        "orderbook_raw_sample",
+        "orderbook_rqname",
+        "orderbook_trcode",
+        "orderbook_screen_no",
+    )
+
+    def __init__(
+        self,
+        trade_event_limit=200,
+        orderbook_event_limit=200,
+        close_metrics_persist_path=CLOSE_METRICS_PERSIST_PATH,
+    ):
         trade_event_limit = int(trade_event_limit)
         orderbook_event_limit = int(orderbook_event_limit)
         if trade_event_limit <= 0 or orderbook_event_limit <= 0:
@@ -92,12 +147,16 @@ class RealtimeStore:
         self._trade_events = {}
         self._orderbook_events = {}
         self._close_metric_snapshots = {}
+        self._close_metrics_persistent_snapshots = {}
         self._base_ohlc = {}
         self._last_seen = {}
         self._trade_event_limit = trade_event_limit
         self._orderbook_event_limit = orderbook_event_limit
         self._sequence = 0
         self._updated_at = None
+        self._close_metrics_persist_path = Path(close_metrics_persist_path)
+        self._close_metrics_persist_error = None
+        self._load_persistent_close_metrics()
 
     @staticmethod
     def _normalized_code(stock_code):
@@ -109,6 +168,128 @@ class RealtimeStore:
     @staticmethod
     def _timestamp_text(timestamp):
         return datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
+
+    @staticmethod
+    def _has_persistent_value(value):
+        return value is not None and value != ""
+
+    def _persistent_timestamp(self):
+        return datetime.now(timezone.utc).isoformat()
+
+    def _merge_persistent_values(self, previous, values, fields):
+        merged = dict(previous or {})
+        for field in fields:
+            if field not in values:
+                continue
+            value = values.get(field)
+            if self._has_persistent_value(value):
+                merged[field] = deepcopy(value)
+        return merged
+
+    def _load_persistent_close_metrics(self):
+        path = self._close_metrics_persist_path
+        if not path.exists():
+            return
+        try:
+            with path.open("r", encoding="utf-8") as snapshot_file:
+                payload = json.load(snapshot_file)
+        except Exception as error:
+            self._close_metrics_persist_error = f"load failed: {error}"
+            print(
+                f"warning: close metrics persistent load failed: {error}",
+                flush=True,
+            )
+            return
+        snapshots = payload.get("snapshots") if isinstance(payload, dict) else None
+        if not isinstance(snapshots, dict):
+            self._close_metrics_persist_error = "load failed: invalid snapshots"
+            return
+        restored_at = self._persistent_timestamp()
+        restored = {}
+        for raw_code, snapshot in snapshots.items():
+            if not isinstance(snapshot, dict):
+                continue
+            try:
+                code = self._normalized_code(
+                    snapshot.get("stock_code") or raw_code
+                )
+            except ValueError:
+                continue
+            restored_snapshot = {
+                key: deepcopy(value)
+                for key, value in snapshot.items()
+                if self._has_persistent_value(value)
+            }
+            restored_snapshot["stock_code"] = code
+            restored_snapshot["close_metrics_persistent"] = True
+            restored_snapshot["close_metrics_restored_at"] = restored_at
+            if (
+                restored_snapshot.get("strength_source") == "opt10046"
+                and not self._has_persistent_value(
+                    restored_snapshot.get("strength_status")
+                )
+            ):
+                restored_snapshot["strength_status"] = "restored_persistent"
+            if (
+                restored_snapshot.get("orderbook_source") == "opt10004"
+                and not self._has_persistent_value(
+                    restored_snapshot.get("orderbook_status")
+                )
+            ):
+                restored_snapshot["orderbook_status"] = "restored_persistent"
+            restored[code] = restored_snapshot
+        self._close_metric_snapshots.update(restored)
+        self._close_metrics_persistent_snapshots.update(deepcopy(restored))
+        self._close_metrics_persist_error = None
+
+    def _write_persistent_close_metrics(self):
+        path = self._close_metrics_persist_path
+        payload = {
+            "version": 1,
+            "saved_at": self._persistent_timestamp(),
+            "snapshots": dict(sorted(self._close_metrics_persistent_snapshots.items())),
+        }
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = path.with_name(f"{path.name}.tmp")
+            with tmp_path.open("w", encoding="utf-8") as snapshot_file:
+                json.dump(payload, snapshot_file, ensure_ascii=False, indent=2)
+                snapshot_file.write("\n")
+            os.replace(tmp_path, path)
+            self._close_metrics_persist_error = None
+        except Exception as error:
+            self._close_metrics_persist_error = f"save failed: {error}"
+            print(
+                f"warning: close metrics persistent save failed: {error}",
+                flush=True,
+            )
+
+    def _persist_close_metrics_snapshot(self, code, snapshot):
+        persisted_at = self._persistent_timestamp()
+        previous = self._close_metrics_persistent_snapshots.get(code, {})
+        persistent_snapshot = dict(previous)
+        if snapshot.get("strength_source") == "opt10046":
+            persistent_snapshot = self._merge_persistent_values(
+                persistent_snapshot,
+                snapshot,
+                self._STRENGTH_PERSIST_FIELDS,
+            )
+        if snapshot.get("orderbook_source") == "opt10004":
+            persistent_snapshot = self._merge_persistent_values(
+                persistent_snapshot,
+                snapshot,
+                self._ORDERBOOK_PERSIST_FIELDS,
+            )
+        if (
+            persistent_snapshot.get("strength_source") != "opt10046"
+            and persistent_snapshot.get("orderbook_source") != "opt10004"
+        ):
+            return
+        persistent_snapshot["stock_code"] = code
+        persistent_snapshot["close_metrics_persistent"] = True
+        persistent_snapshot["close_metrics_persisted_at"] = persisted_at
+        self._close_metrics_persistent_snapshots[code] = persistent_snapshot
+        self._write_persistent_close_metrics()
 
     def _ensure_quote(self, stock_code):
         quote = self._quotes.get(stock_code)
@@ -538,6 +719,7 @@ class RealtimeStore:
             merged["orderbook_stale_sec"] = self._age_from_now(orderbook_at)
             merged["strength_stale_sec"] = self._age_from_now(strength_at)
             self._close_metric_snapshots[code] = merged
+            self._persist_close_metrics_snapshot(code, merged)
             quote = self._ensure_quote(code)
             quote.update({key: value for key, value in merged.items() if value is not None})
             return deepcopy(merged)
@@ -713,6 +895,8 @@ class RealtimeStore:
             self._trade_events.clear()
             self._orderbook_events.clear()
             self._close_metric_snapshots.clear()
+            self._close_metrics_persistent_snapshots.clear()
+            self._load_persistent_close_metrics()
             self._last_seen.clear()
             self._base_ohlc.clear()
             self._sequence = 0
