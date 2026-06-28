@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "updated_at": "2026-06-28",
   "items": [
     {
@@ -9,7 +9,20 @@
       "stock_name": "SK하이닉스",
       "market": "통합장",
       "timeframe": "1m",
-      "chart_url": "assets/stockboard_execution_chart_20260626_000660.json",
+      "chunk_encoding": "base64_json",
+      "chunk_urls": [
+        "assets/stockboard_execution_chart_20260626_000660.json.b64.part01.txt",
+        "assets/stockboard_execution_chart_20260626_000660.json.b64.part02.txt",
+        "assets/stockboard_execution_chart_20260626_000660.json.b64.part03.txt",
+        "assets/stockboard_execution_chart_20260626_000660.json.b64.part04.txt",
+        "assets/stockboard_execution_chart_20260626_000660.json.b64.part05.txt",
+        "assets/stockboard_execution_chart_20260626_000660.json.b64.part06.txt",
+        "assets/stockboard_execution_chart_20260626_000660.json.b64.part07.txt",
+        "assets/stockboard_execution_chart_20260626_000660.json.b64.part08.txt",
+        "assets/stockboard_execution_chart_20260626_000660.json.b64.part09.txt",
+        "assets/stockboard_execution_chart_20260626_000660.json.b64.part10.txt",
+        "assets/stockboard_execution_chart_20260626_000660.json.b64.part11.txt"
+      ],
       "row_count": 663
     }
   ]
