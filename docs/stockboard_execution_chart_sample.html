@@ -5,32 +5,38 @@
 <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
-<title>StockBoard 우측 체결/OHLC 차트 샘플</title>
+<title>StockBoard 체결/OHLC 차트</title>
 <style>
   :root{--bg:#f3f6f8;--line:#c8d0d8;--head:#e7edf3;--text:#17202a;--red:#d71920;--blue:#1266d6;--green:#18a558;--gold:#b8860b}
   *{box-sizing:border-box} html,body{height:100%;margin:0;overflow:hidden} body{background:var(--bg);color:var(--text);font-family:Malgun Gothic,Arial,sans-serif}
-  .sample-shell{--chart-panel-width:440px;display:grid;grid-template-columns:minmax(0,1fr) 8px var(--chart-panel-width);gap:0;height:100vh;padding:8px}
-  .stockboard-frame-wrap,.execution-chart-panel{min-width:0;min-height:0;border:1px solid #9aa8b5;background:#fff;box-shadow:0 2px 12px rgba(90,100,115,.22)}
-  .stockboard-frame-wrap{overflow:hidden}.stockboard-frame{width:100%;height:100%;border:0;display:block;background:#fff}
-  .sample-resizer{position:relative;z-index:20;cursor:col-resize;background:transparent}.sample-resizer::before{content:"";position:absolute;left:3px;top:0;bottom:0;width:2px;background:#9aa8b5;opacity:.35}.sample-resizer:hover::before,body.resizing-layout .sample-resizer::before{opacity:1;background:#1266d6}body.resizing-layout{cursor:col-resize;user-select:none}body.resizing-layout iframe{pointer-events:none}
-  .execution-chart-panel{display:flex;flex-direction:column;overflow:hidden;margin-left:0}.execution-chart-title{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:30px;padding:5px 8px;border-bottom:1px solid var(--line);background:linear-gradient(#dfe7ee,#cbd6df);color:#19324a;font-size:13px;font-weight:800;white-space:nowrap}.execution-chart-status{max-width:190px;overflow:hidden;color:#4b6175;font-size:11px;font-weight:700;text-overflow:ellipsis}
-  .execution-chart-controls{display:grid;grid-template-columns:1fr 1fr auto;gap:6px;padding:7px 8px;border-bottom:1px solid var(--line);background:#f8fbff}.execution-chart-controls label,.execution-chart-upload label{display:grid;gap:3px;color:#4b6175;font-size:11px;font-weight:700}.execution-chart-controls select,.execution-chart-controls button,.execution-chart-upload input,.execution-chart-upload button{height:28px;border:1px solid #9aa8b5;border-radius:3px;background:#fff;color:#19324a;font:inherit;font-size:12px;font-weight:700}.execution-chart-controls button,.execution-chart-upload button{min-width:58px;cursor:pointer}.execution-chart-controls button:hover,.execution-chart-upload button:hover{background:#eef4fa}
+  .sample-shell{--chart-panel-width:min(1180px,calc(100vw - 16px));display:grid;grid-template-columns:minmax(0,1fr) 8px var(--chart-panel-width);gap:0;height:100vh;padding:8px}
+  .chart-spacer{min-width:0;min-height:0;border:1px solid #9aa8b5;background:#fff;box-shadow:0 2px 12px rgba(90,100,115,.18);display:flex;align-items:center;justify-content:center;color:#7b8794;font-size:12px;text-align:center;line-height:1.5;padding:20px}
+  .execution-chart-panel{min-width:0;min-height:0;border:1px solid #9aa8b5;background:#fff;box-shadow:0 2px 12px rgba(90,100,115,.22);display:flex;flex-direction:column;overflow:hidden;margin-left:0}
+  .sample-resizer{position:relative;z-index:20;cursor:col-resize;background:transparent}.sample-resizer::before{content:"";position:absolute;left:3px;top:0;bottom:0;width:2px;background:#9aa8b5;opacity:.35}.sample-resizer:hover::before,body.resizing-layout .sample-resizer::before{opacity:1;background:#1266d6}body.resizing-layout{cursor:col-resize;user-select:none}
+  .execution-chart-title{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:30px;padding:5px 8px;border-bottom:1px solid var(--line);background:linear-gradient(#dfe7ee,#cbd6df);color:#19324a;font-size:13px;font-weight:800;white-space:nowrap}.execution-chart-status{max-width:220px;overflow:hidden;color:#4b6175;font-size:11px;font-weight:700;text-overflow:ellipsis}
+  .execution-chart-controls{display:grid;grid-template-columns:1fr 1fr auto auto auto auto;gap:6px;padding:7px 8px;border-bottom:1px solid var(--line);background:#f8fbff}.execution-chart-controls label,.execution-chart-upload label{display:grid;gap:3px;color:#4b6175;font-size:11px;font-weight:700}.execution-chart-controls select,.execution-chart-controls button,.execution-chart-upload input,.execution-chart-upload button{height:28px;border:1px solid #9aa8b5;border-radius:3px;background:#fff;color:#19324a;font:inherit;font-size:12px;font-weight:700}.execution-chart-controls button,.execution-chart-upload button{min-width:58px;cursor:pointer}.execution-chart-controls button:hover,.execution-chart-upload button:hover{background:#eef4fa}.zoom-label{display:flex;align-items:end;justify-content:center;padding-bottom:4px;font-size:11px;color:#4b6175;font-weight:800;white-space:nowrap}
   .execution-chart-upload{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;padding:7px 8px;border-bottom:1px solid var(--line);background:#fffdf2}.execution-chart-upload .file-wide{grid-column:span 3}.execution-chart-upload input[type=file]{height:auto;min-height:28px;padding:4px;background:#fff}.execution-chart-upload button{grid-column:span 3;background:#fff7df;font-weight:800}
   .execution-chart-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 7px;padding:7px 8px;border-bottom:1px solid var(--line);background:#fff;font-size:11px;line-height:1.25}.execution-chart-summary b{color:#263747;font-weight:800}.execution-chart-summary span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .execution-chart-legend{display:flex;flex-wrap:wrap;gap:5px 8px;padding:6px 8px;border-bottom:1px solid var(--line);background:#f8fbff;font-size:11px;font-weight:700}.legend-item{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.legend-dot{width:9px;height:9px;border-radius:2px;display:inline-block}.legend-red{background:var(--red)}.legend-blue{background:var(--blue)}.legend-gold{background:var(--gold)}.legend-green{background:var(--green)}
-  .execution-chart-body{flex:1 1 auto;min-height:0;overflow:auto;padding:8px;background:#fff}.chart-card{margin-bottom:9px;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:#fff}.chart-card-title{display:flex;align-items:center;justify-content:space-between;min-height:26px;padding:4px 7px;background:var(--head);color:#263747;font-size:12px;font-weight:800}.chart-card-subtitle{color:#5f6f80;font-size:10px;font-weight:700}.chart-scroll{width:100%;overflow-x:auto;overflow-y:hidden;background:linear-gradient(90deg,#fff,#fbfdff)}canvas.execution-chart-canvas{display:block;background:#fff}.execution-chart-hover{min-height:70px;padding:7px 8px;border-top:1px solid var(--line);background:#111827;color:#f8fafc;font-size:11px;line-height:1.45;white-space:pre-line;font-variant-numeric:tabular-nums}.execution-chart-note{margin-top:2px;padding:7px 8px;border:1px solid #eadb9b;border-radius:4px;background:#fff9db;color:#5f4700;font-size:11px;line-height:1.45}
-  @media (max-width:1280px){html,body{overflow:auto}.sample-shell{display:block;height:auto;min-height:100vh}.stockboard-frame-wrap{height:62vh;margin-bottom:8px}.sample-resizer{display:none}.execution-chart-panel{height:76vh}}
+  .execution-chart-body{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:8px;background:#fff}.execution-chart-scroll{width:100%;overflow-x:auto;overflow-y:visible;padding-bottom:8px}.execution-chart-strip{min-width:100%}.chart-card{margin-bottom:9px;border:1px solid var(--line);border-radius:4px;background:#fff;overflow:hidden}.chart-card-title{display:flex;align-items:center;justify-content:space-between;min-height:26px;padding:4px 7px;background:var(--head);color:#263747;font-size:12px;font-weight:800}.chart-card-subtitle{color:#5f6f80;font-size:10px;font-weight:700}.chart-scroll{width:100%;overflow:visible;background:linear-gradient(90deg,#fff,#fbfdff)}canvas.execution-chart-canvas{display:block;background:#fff}.execution-chart-hover{min-height:70px;padding:7px 8px;border-top:1px solid var(--line);background:#111827;color:#f8fafc;font-size:11px;line-height:1.45;white-space:pre-line;font-variant-numeric:tabular-nums}.execution-chart-note{margin-top:2px;padding:7px 8px;border:1px solid #eadb9b;border-radius:4px;background:#fff9db;color:#5f4700;font-size:11px;line-height:1.45}
+  @media (max-width:1280px){html,body{overflow:auto}.sample-shell{display:block;height:auto;min-height:100vh}.chart-spacer{display:none}.sample-resizer{display:none}.execution-chart-panel{height:100vh}.execution-chart-controls{grid-template-columns:1fr 1fr repeat(4,auto)}}
 </style>
 </head>
 <body>
 <main class="sample-shell">
-  <section class="stockboard-frame-wrap" aria-label="StockBoard 기존 화면">
-    <iframe class="stockboard-frame" src="http://127.0.0.1:8000/stockboard_v0_3_0_sample.html" title="StockBoard"></iframe>
-  </section>
-  <div class="sample-resizer" id="sample-resizer" aria-label="StockBoard와 우측 차트 폭 조절" title="좌우 폭 조절"></div>
+  <section class="chart-spacer" aria-label="독립 차트 브라우저 안내">차트 전용 독립 화면입니다.<br />기존 StockBoard 서버를 재시작하지 않아도 됩니다.<br />왼쪽 경계를 드래그하면 차트 폭을 넓힐 수 있습니다.</section>
+  <div class="sample-resizer" id="sample-resizer" aria-label="좌우 폭 조절" title="좌우 폭 조절"></div>
   <aside class="execution-chart-panel" aria-label="StockBoard 우측 체결/OHLC 차트 샘플">
-    <div class="execution-chart-title"><span>우측 체결/OHLC 차트 샘플</span><span class="execution-chart-status" id="execution-chart-status">대기</span></div>
-    <div class="execution-chart-controls"><label>날짜<select id="execution-chart-date"></select></label><label>종목<select id="execution-chart-code"></select></label><button type="button" id="execution-chart-reload">로드</button></div>
+    <div class="execution-chart-title"><span>체결/OHLC 차트</span><span class="execution-chart-status" id="execution-chart-status">대기</span></div>
+    <div class="execution-chart-controls">
+      <label>날짜<select id="execution-chart-date"></select></label>
+      <label>종목<select id="execution-chart-code"></select></label>
+      <button type="button" id="execution-chart-reload">로드</button>
+      <button type="button" id="execution-chart-zoom-out">분폭-</button>
+      <button type="button" id="execution-chart-zoom-in">분폭+</button>
+      <button type="button" id="execution-chart-zoom-reset">초기</button>
+      <span class="zoom-label" id="execution-chart-zoom-label">분폭 -</span>
+    </div>
     <div class="execution-chart-upload" aria-label="엑셀 업로드 후 로컬 JSON 저장">
       <label>저장 날짜<input id="execution-chart-upload-date" value="20260626" inputmode="numeric" /></label>
       <label>종목코드<input id="execution-chart-upload-code" value="000660" inputmode="numeric" /></label>
@@ -42,14 +48,18 @@
     <div class="execution-chart-summary" id="execution-chart-summary"><span><b>종목</b> -</span><span><b>구간</b> -</span><span><b>시가선</b> -</span><span><b>VWAP</b> -</span><span><b>고가/저가</b> -</span><span><b>거래대금</b> -</span></div>
     <div class="execution-chart-legend"><span class="legend-item"><i class="legend-dot legend-red"></i>상승/매수</span><span class="legend-item"><i class="legend-dot legend-blue"></i>하락/매도</span><span class="legend-item"><i class="legend-dot legend-gold"></i>VWAP</span><span class="legend-item"><i class="legend-dot legend-green"></i>09시 시가선</span></div>
     <div class="execution-chart-body">
-      <section class="chart-card"><div class="chart-card-title"><span>1분 OHLC + VWAP + 시가선</span><span class="chart-card-subtitle">로컬 JSON</span></div><div class="chart-scroll"><canvas class="execution-chart-canvas" id="execution-price-canvas"></canvas></div></section>
-      <section class="chart-card"><div class="chart-card-title"><span>체결강도</span><span class="chart-card-subtitle">0110 병합 · 누락값 제외</span></div><div class="chart-scroll"><canvas class="execution-chart-canvas" id="execution-strength-canvas"></canvas></div></section>
-      <section class="chart-card"><div class="chart-card-title"><span>매수/매도 체결량</span><span class="chart-card-subtitle">한 막대: 아래=매수, 위=매도</span></div><div class="chart-scroll"><canvas class="execution-chart-canvas" id="execution-volume-canvas"></canvas></div></section>
+      <div class="execution-chart-scroll" id="execution-chart-scroll">
+        <div class="execution-chart-strip" id="execution-chart-strip">
+          <section class="chart-card"><div class="chart-card-title"><span>1분 OHLC + VWAP + 시가선</span><span class="chart-card-subtitle">로컬 JSON</span></div><div class="chart-scroll"><canvas class="execution-chart-canvas" id="execution-price-canvas"></canvas></div></section>
+          <section class="chart-card"><div class="chart-card-title"><span>체결강도</span><span class="chart-card-subtitle">0110 병합 · 누락값 제외</span></div><div class="chart-scroll"><canvas class="execution-chart-canvas" id="execution-strength-canvas"></canvas></div></section>
+          <section class="chart-card"><div class="chart-card-title"><span>매수/매도 체결량</span><span class="chart-card-subtitle">한 막대: 아래=매수, 위=매도</span></div><div class="chart-scroll"><canvas class="execution-chart-canvas" id="execution-volume-canvas"></canvas></div></section>
+        </div>
+      </div>
       <div class="execution-chart-hover" id="execution-chart-hover">차트 서버 연결을 확인하는 중입니다.</div>
-      <div class="execution-chart-note">로컬 저장 위치: data/execution_charts/index.json 및 data/execution_charts/parsed/YYYYMMDD/CODE.json. 구글 드라이브 저장, 자동 업로드, 실시간 틱 집계는 포함하지 않았습니다.</div>
+      <div class="execution-chart-note">로컬 저장 위치: data/execution_charts/index.json 및 data/execution_charts/parsed/YYYYMMDD/CODE.json. 차트 3개는 하나의 가로 스크롤과 하나의 분폭 설정을 공유합니다.</div>
     </div>
   </aside>
 </main>
-<script src="assets/stockboard_execution_chart.js?v=local_api_20260628"></script>
+<script src="assets/stockboard_execution_chart.js?v=sync_scroll_zoom_20260629"></script>
 </body>
 </html>
