@@ -2074,3 +2074,12 @@ $rows = Invoke-RestMethod 'http://127.0.0.1:8000/api/top100'
 - CSS와 주요 순수/helper 계층은 asset으로 분리했다.
 - 운영 리스크가 큰 DOM mutation, API loop, state mutation, render/main orchestration은 inline으로 유지했다.
 - 현재 상태를 HTML module split 1차 완료로 보고, 다음 단계는 기능 안정화와 운영 정책 정리를 우선한다.
+
+## 34. 2026-06-29 StockBoard execution/OHLC chart local JSON prototype
+
+- Standalone execution/OHLC chart page now uses v3 CSS/JS assets.
+- Uploaded OHLC and 0110 execution files are parsed into local runtime JSON under `data/execution_charts`.
+- Data flow: upload files -> `data/execution_charts/index.json` and `data/execution_charts/parsed/YYYYMMDD/CODE.json` -> standalone chart server on port `8010`.
+- Current chart view supports OHLC candles, VWAP/open helper lines, buy/sell bars, fixed-width viewport zoom, shared viewport, and visible-range y-axis scaling.
+- Local execution chart runtime data is ignored by git.
+- Deferred: realtime charting, Google Drive sync, and aftermarket 1m/5m strength mode.
