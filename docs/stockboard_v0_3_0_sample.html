@@ -950,6 +950,7 @@
   const CLOSE_METRICS_LAZY_THROTTLE_MS = STOCKBOARD_CLOSE_METRICS.throttleMs;
   const CLOSE_METRICS_SCROLL_TRIGGER_PX = STOCKBOARD_CLOSE_METRICS.scrollDeltaTriggerPx;
   const CLOSE_METRICS_LAZY_REFRESH_DELAY_MS = STOCKBOARD_CLOSE_METRICS.refreshDelayMs;
+  const CLOSE_METRICS_REQUESTED_RETRY_MS = 60 * 1000;
   const top100State = {
     rowByCode: new Map(),
     candidateRowByCode: new Map(),
@@ -964,6 +965,7 @@
     candleMode: loadCandleMode(),
     candleDomain: null,
     closeMetricsRequestedCodes: new Set(),
+    closeMetricsRequestedAtByCode: new Map(),
     closeMetricsPendingCodes: new Set(),
     closeMetricsCompletedCodes: new Set(),
     closeMetricsLazyLastRequestedAt: 0,
@@ -2335,6 +2337,10 @@
     hideOhlcTooltip();
     handleCloseMetricsScrollTrigger();
   }, true);
+  safeAddEventListener(document, 'wheel', handleCloseMetricsWheelTrigger, {
+    passive: true,
+    capture: true
+  });
 
   function updateBoardRow(tableRow, row, flashRealtime = false) {
     const grade = row.grade === '-' ? '-' : `<span class="grade ${row.gradeClass}">${escapeHtml(row.grade)}</span>`;
@@ -2856,13 +2862,26 @@
       if (!hasCloseMetricsSnapshot(row)) return;
       top100State.closeMetricsCompletedCodes.add(row.code);
       top100State.closeMetricsPendingCodes.delete(row.code);
+      top100State.closeMetricsRequestedCodes.delete(row.code);
+      top100State.closeMetricsRequestedAtByCode.delete(row.code);
     });
   }
 
   function rowNeedsCloseMetrics(row) {
+    const code = row?.code;
+    if (!row || !code) return false;
+    if (top100State.closeMetricsCompletedCodes.has(code)) return false;
+    const requestedAt = top100State.closeMetricsRequestedAtByCode.get(code) || 0;
+    const requestIsStale = requestedAt > 0
+      && Date.now() - requestedAt >= CLOSE_METRICS_REQUESTED_RETRY_MS;
+    if (requestIsStale) {
+      top100State.closeMetricsRequestedCodes.delete(code);
+      top100State.closeMetricsPendingCodes.delete(code);
+      top100State.closeMetricsRequestedAtByCode.delete(code);
+    }
     return closeMetricsNeedsRequest(
       row,
-      row?.code,
+      code,
       top100State.closeMetricsRequestedCodes,
       top100State.closeMetricsPendingCodes,
       top100State.closeMetricsCompletedCodes
@@ -2893,8 +2912,10 @@
 
   async function requestLazyCloseMetrics(codes, trigger = 'manual') {
     if (!codes.length) return null;
+    const requestedAt = Date.now();
     codes.forEach(code => {
       top100State.closeMetricsRequestedCodes.add(code);
+      top100State.closeMetricsRequestedAtByCode.set(code, requestedAt);
       top100State.closeMetricsPendingCodes.add(code);
     });
     try {
@@ -2905,6 +2926,9 @@
       scheduleCloseMetricsLazyRefresh();
       return payload;
     } catch (error) {
+      codes.forEach(code => {
+        top100State.closeMetricsPendingCodes.delete(code);
+      });
       console.warn(error);
       return null;
     }
@@ -2945,6 +2969,11 @@
     if (top100State.closeMetricsScrollDelta < CLOSE_METRICS_SCROLL_TRIGGER_PX) return;
     top100State.closeMetricsScrollDelta = 0;
     requestNextCloseMetricsBatch('scroll');
+  }
+
+  function handleCloseMetricsWheelTrigger(event) {
+    if (!event || event.deltaY <= 0) return;
+    requestNextCloseMetricsBatch('wheel');
   }
 
   document.addEventListener('keydown', event => {
