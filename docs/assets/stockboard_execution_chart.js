@@ -2,11 +2,14 @@
   'use strict';
 
   const API_BASE_CANDIDATES = ['', 'http://127.0.0.1:8010'];
-  const CACHE_BUSTER = '20260628_local_api';
+  const CACHE_BUSTER = '20260629_sync_scroll_zoom';
   const PANEL_WIDTH_KEY = 'stockboard.executionChart.panelWidth.v1';
+  const MINUTE_WIDTH_KEY = 'stockboard.executionChart.minuteWidth.v1';
+  const DEFAULT_MINUTE_WIDTH = 4.2;
   const COLORS = {
     text: '#17202a', muted: '#5f6f80', grid: '#d8e0e7', border: '#9aa8b5',
     red: '#d71920', blue: '#1266d6', green: '#18a558', gold: '#b8860b', gray: '#7f8c8d',
+    cross: '#d71920',
     premarket: 'rgba(251,191,36,.08)', regular: 'rgba(24,165,88,.06)', closing_call: 'rgba(215,25,32,.07)', aftermarket: 'rgba(18,102,214,.06)'
   };
   const nf = new Intl.NumberFormat('ko-KR');
@@ -18,9 +21,14 @@
     width: 980,
     pad: { left: 58, right: 18, top: 18, bottom: 24 },
     dragging: false,
+    minuteWidth: DEFAULT_MINUTE_WIDTH,
+    hoverIndex: null,
+    chartMeta: {},
+    renderQueued: false,
   };
 
   const $ = id => document.getElementById(id);
+
   function cacheUrl(url) {
     return `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(CACHE_BUSTER)}&t=${Date.now()}`;
   }
@@ -33,10 +41,7 @@
     for (const base of apiBases()) {
       const url = `${base}${path}`;
       try {
-        const response = await fetch(options.method === 'POST' ? url : cacheUrl(url), {
-          cache: 'no-store',
-          ...options,
-        });
+        const response = await fetch(options.method === 'POST' ? url : cacheUrl(url), { cache: 'no-store', ...options });
         const text = await response.text();
         if (!response.ok) throw new Error(text || `${response.status}`);
         state.apiBase = base;
@@ -177,11 +182,15 @@
     ctx.lineJoin = 'round';
     return ctx;
   }
-  function chartWidth(canvas) {
-    const scrollWidth = canvas?.parentElement?.clientWidth || 760;
-    return Math.max(760, scrollWidth, state.series.length * 4.2 + state.pad.left + state.pad.right);
+  function chartWidth() {
+    const scrollWidth = $('execution-chart-scroll')?.clientWidth || 760;
+    return Math.max(760, scrollWidth, state.series.length * state.minuteWidth + state.pad.left + state.pad.right);
   }
-  function xFor(index, width) {
+  function syncStripWidth() {
+    const strip = $('execution-chart-strip');
+    if (strip) strip.style.width = `${state.width}px`;
+  }
+  function xFor(index, width = state.width) {
     const count = Math.max(1, state.series.length - 1);
     return state.pad.left + index * ((width - state.pad.left - state.pad.right) / count);
   }
@@ -267,13 +276,36 @@
       if (index >= 0) ctx.fillText(label, xFor(index, width) - 13, height - 7);
     });
   }
+  function drawCrosshair() {
+    const index = state.hoverIndex;
+    if (index === null || index < 0 || index >= state.series.length) return;
+    Object.values(state.chartMeta).forEach(meta => {
+      if (!meta?.ctx) return;
+      const ctx = meta.ctx;
+      const x = xFor(index, meta.width);
+      const y = meta.yForIndex ? meta.yForIndex(index) : null;
+      ctx.save();
+      ctx.strokeStyle = COLORS.cross;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(Math.round(x) + 0.5, state.pad.top);
+      ctx.lineTo(Math.round(x) + 0.5, meta.height - state.pad.bottom);
+      ctx.stroke();
+      if (Number.isFinite(y)) {
+        ctx.beginPath();
+        ctx.moveTo(state.pad.left, Math.round(y) + 0.5);
+        ctx.lineTo(meta.width - state.pad.right, Math.round(y) + 0.5);
+        ctx.stroke();
+      }
+      ctx.restore();
+    });
+  }
 
   function renderPrice() {
     const canvas = $('execution-price-canvas');
     if (!canvas) return;
-    const width = chartWidth(canvas);
+    const width = state.width;
     const height = 220;
-    state.width = width;
     const ctx = setupCanvas(canvas, width, height);
     drawSessions(ctx, width, height);
     const values = state.series.flatMap(point => [point.open, point.high, point.low, point.close, point.vwap, point.regular_open_line]);
@@ -281,7 +313,7 @@
     const scale = yScale(min, max, height);
     drawFrame(ctx, width, height, uniqueTicks([min, (min + max) / 2, max]).map(value => ({ value, y: scale(value) })), priceText);
     const step = Math.max(2, (width - state.pad.left - state.pad.right) / Math.max(1, state.series.length - 1));
-    const candleWidth = Math.max(1, Math.min(4, step * 0.55));
+    const candleWidth = Math.max(1, Math.min(8, step * 0.58));
     state.series.forEach((point, index) => {
       const open = positiveNum(point.open);
       const high = positiveNum(point.high);
@@ -305,11 +337,19 @@
     drawLine(ctx, width, 'vwap', scale, COLORS.gold);
     drawLine(ctx, width, 'regular_open_line', scale, COLORS.green, [5, 4]);
     drawTimes(ctx, width, height);
+    state.chartMeta.price = {
+      ctx, width, height,
+      yForIndex: index => {
+        const point = state.series[index];
+        const value = positiveNum(point?.close) ?? positiveNum(point?.trade_price);
+        return value === null ? null : scale(value);
+      }
+    };
   }
   function renderStrength() {
     const canvas = $('execution-strength-canvas');
     if (!canvas) return;
-    const width = state.width || chartWidth(canvas);
+    const width = state.width;
     const height = 140;
     const ctx = setupCanvas(canvas, width, height);
     drawSessions(ctx, width, height);
@@ -327,11 +367,18 @@
     ctx.restore();
     drawLine(ctx, width, 'strength', scale, COLORS.text);
     drawTimes(ctx, width, height);
+    state.chartMeta.strength = {
+      ctx, width, height,
+      yForIndex: index => {
+        const value = num(state.series[index]?.strength);
+        return value === null ? null : scale(value);
+      }
+    };
   }
   function renderVolume() {
     const canvas = $('execution-volume-canvas');
     if (!canvas) return;
-    const width = state.width || chartWidth(canvas);
+    const width = state.width;
     const height = 170;
     const ctx = setupCanvas(canvas, width, height);
     drawSessions(ctx, width, height);
@@ -340,7 +387,7 @@
     const baseY = height - state.pad.bottom;
     const innerHeight = height - state.pad.top - state.pad.bottom;
     const step = Math.max(2, (width - state.pad.left - state.pad.right) / Math.max(1, state.series.length - 1));
-    const barWidth = Math.max(1, Math.min(4, step * 0.58));
+    const barWidth = Math.max(1, Math.min(8, step * 0.58));
     drawFrame(ctx, width, height, uniqueTicks([0, maxVolume / 2, maxVolume]).map(value => ({ value, y: baseY - value / maxVolume * innerHeight })), intText);
     state.series.forEach((point, index) => {
       const sell = num(point.sell_volume) || 0;
@@ -355,6 +402,14 @@
       ctx.fillRect(x - barWidth / 2, baseY - buyHeight - sellHeight, barWidth, Math.max(1, sellHeight));
     });
     drawTimes(ctx, width, height);
+    state.chartMeta.volume = {
+      ctx, width, height,
+      yForIndex: index => {
+        const point = state.series[index];
+        const total = (num(point?.sell_volume) || 0) + (num(point?.buy_volume) || 0);
+        return total ? baseY - total / maxVolume * innerHeight : null;
+      }
+    };
   }
 
   function hoverText(point) {
@@ -368,37 +423,63 @@
       `분봉 거래대금 ${num(point.trade_value_eok) === null ? '-' : `${fixedText(point.trade_value_eok, 1)}억`}`
     ].join('\n');
   }
+  function scheduleRender() {
+    if (state.renderQueued) return;
+    state.renderQueued = true;
+    window.requestAnimationFrame(() => {
+      state.renderQueued = false;
+      renderCharts();
+    });
+  }
   function attachHover() {
-    const hover = $('execution-chart-hover');
-    ['execution-price-canvas', 'execution-strength-canvas', 'execution-volume-canvas'].forEach(id => {
-      const canvas = $(id);
+    const scroll = $('execution-chart-scroll');
+    if (!scroll || scroll.dataset.hoverReady === '1') return;
+    scroll.dataset.hoverReady = '1';
+    scroll.addEventListener('mousemove', event => {
+      const canvas = event.target?.closest?.('canvas.execution-chart-canvas');
       if (!canvas) return;
-      canvas.onmousemove = event => {
-        const rect = canvas.getBoundingClientRect();
-        const x = event.clientX - rect.left;
-        const ratio = (x - state.pad.left) / Math.max(1, state.width - state.pad.left - state.pad.right);
-        const index = Math.max(0, Math.min(state.series.length - 1, Math.round(ratio * (state.series.length - 1))));
-        if (hover) hover.textContent = hoverText(state.series[index]);
-      };
-      canvas.onmouseleave = () => {
-        if (!hover || !state.payload) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const ratio = (x - state.pad.left) / Math.max(1, state.width - state.pad.left - state.pad.right);
+      const index = Math.max(0, Math.min(state.series.length - 1, Math.round(ratio * (state.series.length - 1))));
+      state.hoverIndex = index;
+      setHover(hoverText(state.series[index]));
+      scheduleRender();
+    });
+    scroll.addEventListener('mouseleave', () => {
+      state.hoverIndex = null;
+      if (state.payload) {
         const meta = state.payload.meta || {};
         const summary = state.payload.summary || {};
-        hover.textContent = `${meta.stock_code || ''} ${meta.stock_name || ''} · ${summary.time_range || ''}\n전체 ${summary.chart_points || state.series.length}분 JSON 로드 완료. 서버/API는 execution chart local server 기준입니다.`;
-      };
+        setHover(`${meta.stock_code || ''} ${meta.stock_name || ''} · ${summary.time_range || ''}\n전체 ${summary.chart_points || state.series.length}분 JSON 로드 완료. 차트 위에 마우스를 올리면 분 단위 값을 확인합니다.`);
+      }
+      scheduleRender();
     });
   }
   function renderCharts() {
     if (!state.payload || !state.series.length) return;
     renderSummary(state.payload);
+    state.width = chartWidth();
+    syncStripWidth();
+    state.chartMeta = {};
     renderPrice();
     renderStrength();
     renderVolume();
+    drawCrosshair();
     attachHover();
+    updateZoomLabel();
     const meta = state.payload.meta || {};
     const summary = state.payload.summary || {};
     setStatus(`${summary.chart_points || state.series.length}/${summary.row_count || state.series.length}점 JSON`);
-    setHover(`${meta.stock_code || ''} ${meta.stock_name || ''} · ${summary.time_range || ''}\n전체 ${summary.chart_points || state.series.length}분 JSON 로드 완료. 차트 위에 마우스를 올리면 분 단위 값을 확인합니다.`);
+    if (state.hoverIndex === null) {
+      setHover(`${meta.stock_code || ''} ${meta.stock_name || ''} · ${summary.time_range || ''}\n전체 ${summary.chart_points || state.series.length}분 JSON 로드 완료. 차트 위에 마우스를 올리면 분 단위 값을 확인합니다.`);
+    }
+  }
+  function resetScrollPositions() {
+    const body = document.querySelector('.execution-chart-body');
+    const scroll = $('execution-chart-scroll');
+    if (body) body.scrollTop = 0;
+    if (scroll) scroll.scrollLeft = 0;
   }
   async function loadSelectedChart() {
     const item = selectedItem();
@@ -411,7 +492,9 @@
       const payload = normalizePayload(await apiJson(`/api/execution_chart?date=${encodeURIComponent(item.date)}&code=${encodeURIComponent(item.stock_code)}`));
       state.payload = payload;
       state.series = payload.series;
+      state.hoverIndex = null;
       renderCharts();
+      resetScrollPositions();
     } catch (error) {
       showError(`차트 JSON 로드 실패: ${error.message}`);
     }
@@ -459,11 +542,28 @@
   }
 
   function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
+  function updateZoomLabel() {
+    const label = $('execution-chart-zoom-label');
+    if (label) label.textContent = `분폭 ${state.minuteWidth.toFixed(1)}px`;
+  }
+  function applyMinuteWidth(width) {
+    state.minuteWidth = Math.round(clamp(width, 1.5, 18) * 10) / 10;
+    try { localStorage.setItem(MINUTE_WIDTH_KEY, String(state.minuteWidth)); } catch (_) {}
+    updateZoomLabel();
+    renderCharts();
+  }
+  function restoreMinuteWidth() {
+    try {
+      const stored = Number(localStorage.getItem(MINUTE_WIDTH_KEY));
+      if (Number.isFinite(stored) && stored > 0) state.minuteWidth = clamp(stored, 1.5, 18);
+    } catch (_) {}
+    updateZoomLabel();
+  }
   function applyPanelWidth(width) {
     const shell = document.querySelector('.sample-shell');
     if (!shell) return;
-    const maxWidth = Math.max(360, Math.min(900, window.innerWidth * 0.72));
-    const clamped = Math.round(clamp(width, 360, maxWidth));
+    const maxWidth = Math.max(360, Math.min(1100, window.innerWidth * 0.94));
+    const clamped = Math.round(clamp(width, 420, maxWidth));
     shell.style.setProperty('--chart-panel-width', `${clamped}px`);
     try { localStorage.setItem(PANEL_WIDTH_KEY, String(clamped)); } catch (_) {}
     window.requestAnimationFrame(renderCharts);
@@ -504,9 +604,13 @@
     $('execution-chart-code')?.addEventListener('change', loadSelectedChart);
     $('execution-chart-reload')?.addEventListener('click', loadSelectedChart);
     $('execution-chart-upload-button')?.addEventListener('click', uploadFiles);
+    $('execution-chart-zoom-in')?.addEventListener('click', () => applyMinuteWidth(state.minuteWidth * 1.25));
+    $('execution-chart-zoom-out')?.addEventListener('click', () => applyMinuteWidth(state.minuteWidth / 1.25));
+    $('execution-chart-zoom-reset')?.addEventListener('click', () => applyMinuteWidth(DEFAULT_MINUTE_WIDTH));
     window.addEventListener('resize', () => window.requestAnimationFrame(renderCharts));
     setupResizer();
     restorePanelWidth();
+    restoreMinuteWidth();
   }
   function init() {
     initEvents();
