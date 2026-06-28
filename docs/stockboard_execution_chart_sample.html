@@ -25,9 +25,10 @@
     font-family: Malgun Gothic, Arial, sans-serif;
   }
   .sample-shell {
+    --chart-panel-width: 440px;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 440px;
-    gap: 8px;
+    grid-template-columns: minmax(0, 1fr) 8px var(--chart-panel-width);
+    gap: 0;
     height: 100vh;
     padding: 8px;
   }
@@ -39,9 +40,7 @@
     background: #fff;
     box-shadow: 0 2px 12px rgba(90, 100, 115, 0.22);
   }
-  .stockboard-frame-wrap {
-    overflow: hidden;
-  }
+  .stockboard-frame-wrap { overflow: hidden; }
   .stockboard-frame {
     width: 100%;
     height: 100%;
@@ -49,10 +48,39 @@
     display: block;
     background: #fff;
   }
+  .sample-resizer {
+    position: relative;
+    z-index: 20;
+    cursor: col-resize;
+    background: transparent;
+  }
+  .sample-resizer::before {
+    content: "";
+    position: absolute;
+    left: 3px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: #9aa8b5;
+    opacity: 0.35;
+  }
+  .sample-resizer:hover::before,
+  body.resizing-layout .sample-resizer::before {
+    opacity: 1;
+    background: #1266d6;
+  }
+  body.resizing-layout {
+    cursor: col-resize;
+    user-select: none;
+  }
+  body.resizing-layout iframe {
+    pointer-events: none;
+  }
   .execution-chart-panel {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    margin-left: 0;
   }
   .execution-chart-title {
     display: flex;
@@ -69,7 +97,7 @@
     white-space: nowrap;
   }
   .execution-chart-status {
-    max-width: 170px;
+    max-width: 190px;
     overflow: hidden;
     color: #4b6175;
     font-size: 11px;
@@ -226,9 +254,8 @@
       height: 62vh;
       margin-bottom: 8px;
     }
-    .execution-chart-panel {
-      height: 70vh;
-    }
+    .sample-resizer { display: none; }
+    .execution-chart-panel { height: 70vh; }
   }
 </style>
 </head>
@@ -237,6 +264,8 @@
   <section class="stockboard-frame-wrap" aria-label="StockBoard 기존 화면">
     <iframe class="stockboard-frame" src="stockboard_v0_3_0_sample.html" title="StockBoard"></iframe>
   </section>
+
+  <div class="sample-resizer" id="sample-resizer" aria-label="StockBoard와 우측 차트 폭 조절" title="좌우 폭 조절"></div>
 
   <aside class="execution-chart-panel" aria-label="StockBoard 우측 체결/OHLC 차트 샘플">
     <div class="execution-chart-title">
@@ -274,7 +303,7 @@
       <section class="chart-card">
         <div class="chart-card-title">
           <span>1분 OHLC + VWAP + 시가선</span>
-          <span class="chart-card-subtitle">통합장 샘플</span>
+          <span class="chart-card-subtitle">통합장 전체 JSON</span>
         </div>
         <div class="chart-scroll">
           <canvas class="execution-chart-canvas" id="execution-price-canvas"></canvas>
@@ -284,7 +313,7 @@
       <section class="chart-card">
         <div class="chart-card-title">
           <span>체결강도</span>
-          <span class="chart-card-subtitle">0110 병합</span>
+          <span class="chart-card-subtitle">0110 병합 · 누락값 제외</span>
         </div>
         <div class="chart-scroll">
           <canvas class="execution-chart-canvas" id="execution-strength-canvas"></canvas>
@@ -294,22 +323,22 @@
       <section class="chart-card">
         <div class="chart-card-title">
           <span>매수/매도 체결량</span>
-          <span class="chart-card-subtitle">빨강=매수, 파랑=매도</span>
+          <span class="chart-card-subtitle">위=매도, 아래=매수</span>
         </div>
         <div class="chart-scroll">
           <canvas class="execution-chart-canvas" id="execution-volume-canvas"></canvas>
         </div>
       </section>
 
-      <div class="execution-chart-hover" id="execution-chart-hover">차트 위에 마우스를 올리면 해당 분의 OHLC, VWAP, 시가선, 체결강도, 매수/매도 체결량을 표시합니다.</div>
+      <div class="execution-chart-hover" id="execution-chart-hover">차트 index를 불러오는 중입니다.</div>
 
       <div class="execution-chart-note">
-        1차 샘플은 정적 JSON만 사용합니다. 구글 드라이브 저장, 자동 업로드, 실시간 틱 집계, 서버 API 변경은 포함하지 않았습니다.
+        1차 개선판은 날짜/종목별 정적 JSON을 사용합니다. 구글 드라이브 저장, 자동 업로드, 실시간 틱 집계, 서버 API 변경은 포함하지 않았습니다.
       </div>
     </div>
   </aside>
 </main>
 
-<script src="assets/stockboard_execution_chart.js?v=sample_20260628"></script>
+<script src="assets/stockboard_execution_chart.js?v=sample_20260628_b"></script>
 </body>
 </html>
