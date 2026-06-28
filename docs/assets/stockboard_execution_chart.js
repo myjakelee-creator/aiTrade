@@ -1,8 +1,8 @@
 (() => {
   'use strict';
 
-  const INDEX_URL = 'assets/stockboard_execution_chart_index.json';
-  const CACHE_BUSTER = '20260628_c';
+  const API_BASE_CANDIDATES = ['', 'http://127.0.0.1:8010'];
+  const CACHE_BUSTER = '20260628_local_api';
   const PANEL_WIDTH_KEY = 'stockboard.executionChart.panelWidth.v1';
   const COLORS = {
     text: '#17202a', muted: '#5f6f80', grid: '#d8e0e7', border: '#9aa8b5',
@@ -11,6 +11,7 @@
   };
   const nf = new Intl.NumberFormat('ko-KR');
   const state = {
+    apiBase: null,
     index: null,
     payload: null,
     series: [],
@@ -20,7 +21,32 @@
   };
 
   const $ = id => document.getElementById(id);
-  const cacheUrl = url => url.startsWith('data:') ? url : `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(CACHE_BUSTER)}`;
+  function cacheUrl(url) {
+    return `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(CACHE_BUSTER)}&t=${Date.now()}`;
+  }
+  function apiBases() {
+    const bases = state.apiBase ? [state.apiBase, ...API_BASE_CANDIDATES.filter(base => base !== state.apiBase)] : API_BASE_CANDIDATES;
+    return [...new Set(bases)];
+  }
+  async function apiJson(path, options = {}) {
+    let lastError = null;
+    for (const base of apiBases()) {
+      const url = `${base}${path}`;
+      try {
+        const response = await fetch(options.method === 'POST' ? url : cacheUrl(url), {
+          cache: 'no-store',
+          ...options,
+        });
+        const text = await response.text();
+        if (!response.ok) throw new Error(text || `${response.status}`);
+        state.apiBase = base;
+        return text ? JSON.parse(text) : {};
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error(`${path} failed`);
+  }
 
   function num(value) {
     if (value === null || value === undefined || value === '') return null;
@@ -42,31 +68,20 @@
   }
   const priceText = intText;
 
-  function showError(message) {
+  function setStatus(text) {
     const status = $('execution-chart-status');
+    if (status) status.textContent = text;
+  }
+  function setHover(text) {
     const hover = $('execution-chart-hover');
-    if (status) status.textContent = '오류';
-    if (hover) hover.textContent = message;
+    if (hover) hover.textContent = text;
+  }
+  function showError(message) {
+    setStatus('오류');
+    setHover(message);
     console.warn(message);
   }
-  async function fetchText(url) {
-    const response = await fetch(cacheUrl(url), { cache: 'no-store' });
-    if (!response.ok) throw new Error(`${url} load failed: ${response.status}`);
-    return response.text();
-  }
-  async function fetchJson(url) {
-    return JSON.parse(await fetchText(url));
-  }
-  async function fetchPayload(item) {
-    if (Array.isArray(item.chunk_urls) && item.chunk_urls.length) {
-      const chunks = await Promise.all(item.chunk_urls.map(fetchText));
-      const compact = chunks.join('').replace(/\s+/g, '');
-      const binary = atob(compact);
-      const bytes = Uint8Array.from(binary, ch => ch.charCodeAt(0));
-      return JSON.parse(new TextDecoder('utf-8').decode(bytes));
-    }
-    return fetchJson(item.chart_url);
-  }
+
   function rowToObject(columns, row) {
     if (!Array.isArray(row)) return row || {};
     const out = {};
@@ -78,7 +93,6 @@
     const rows = Array.isArray(payload.series) ? payload.series : [];
     return { ...payload, columns, series: rows.map(row => rowToObject(columns, row)) };
   }
-
   function dateItems() {
     const map = new Map();
     (state.index?.items || []).forEach(item => {
@@ -98,7 +112,15 @@
     const select = $('execution-chart-date');
     if (!select) return;
     select.innerHTML = '';
-    dateItems().forEach(item => {
+    const dates = dateItems();
+    if (!dates.length) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = '저장 데이터 없음';
+      select.appendChild(option);
+      return;
+    }
+    dates.forEach(item => {
       const option = document.createElement('option');
       option.value = item.date;
       option.textContent = item.label;
@@ -110,7 +132,15 @@
     const date = $('execution-chart-date')?.value;
     if (!select) return;
     select.innerHTML = '';
-    itemsForDate(date).forEach(item => {
+    const items = itemsForDate(date);
+    if (!items.length) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = '저장 종목 없음';
+      select.appendChild(option);
+      return;
+    }
+    items.forEach(item => {
       const option = document.createElement('option');
       option.value = item.stock_code;
       option.textContent = `${item.stock_code} ${item.stock_name || ''}`.trim();
@@ -149,7 +179,7 @@
   }
   function chartWidth(canvas) {
     const scrollWidth = canvas?.parentElement?.clientWidth || 760;
-    return Math.max(760, scrollWidth, state.series.length * 4.6 + state.pad.left + state.pad.right);
+    return Math.max(760, scrollWidth, state.series.length * 4.2 + state.pad.left + state.pad.right);
   }
   function xFor(index, width) {
     const count = Math.max(1, state.series.length - 1);
@@ -305,45 +335,24 @@
     const height = 170;
     const ctx = setupCanvas(canvas, width, height);
     drawSessions(ctx, width, height);
-    const maxSell = Math.max(1, ...state.series.map(point => num(point.sell_volume) || 0));
-    const maxBuy = Math.max(1, ...state.series.map(point => num(point.buy_volume) || 0));
-    const maxVolume = Math.max(maxSell, maxBuy);
-    const midY = Math.round((state.pad.top + height - state.pad.bottom) / 2);
-    const half = Math.max(1, (height - state.pad.top - state.pad.bottom) / 2 - 3);
+    const totals = state.series.map(point => (num(point.sell_volume) || 0) + (num(point.buy_volume) || 0));
+    const maxVolume = Math.max(1, ...totals);
+    const baseY = height - state.pad.bottom;
+    const innerHeight = height - state.pad.top - state.pad.bottom;
     const step = Math.max(2, (width - state.pad.left - state.pad.right) / Math.max(1, state.series.length - 1));
     const barWidth = Math.max(1, Math.min(4, step * 0.58));
-    ctx.strokeStyle = COLORS.grid;
-    ctx.fillStyle = COLORS.muted;
-    [state.pad.top, midY, height - state.pad.bottom].forEach(y => {
-      ctx.beginPath();
-      ctx.moveTo(state.pad.left, y);
-      ctx.lineTo(width - state.pad.right, y);
-      ctx.stroke();
-    });
-    ctx.fillText(`매도 ${intText(maxVolume)}`, 4, state.pad.top + 4);
-    ctx.fillText('0', 4, midY + 3);
-    ctx.fillText(`매수 ${intText(maxVolume)}`, 4, height - state.pad.bottom + 3);
-    ctx.strokeStyle = COLORS.border;
-    ctx.strokeRect(state.pad.left, state.pad.top, width - state.pad.left - state.pad.right, height - state.pad.top - state.pad.bottom);
-    ctx.strokeStyle = '#64748b';
-    ctx.beginPath();
-    ctx.moveTo(state.pad.left, midY);
-    ctx.lineTo(width - state.pad.right, midY);
-    ctx.stroke();
+    drawFrame(ctx, width, height, uniqueTicks([0, maxVolume / 2, maxVolume]).map(value => ({ value, y: baseY - value / maxVolume * innerHeight })), intText);
     state.series.forEach((point, index) => {
-      const sell = num(point.sell_volume);
-      const buy = num(point.buy_volume);
+      const sell = num(point.sell_volume) || 0;
+      const buy = num(point.buy_volume) || 0;
+      if (!sell && !buy) return;
       const x = xFor(index, width);
-      if (sell !== null && sell > 0) {
-        const h = Math.max(1, sell / maxVolume * half);
-        ctx.fillStyle = COLORS.blue;
-        ctx.fillRect(x - barWidth / 2, midY - h, barWidth, h);
-      }
-      if (buy !== null && buy > 0) {
-        const h = Math.max(1, buy / maxVolume * half);
-        ctx.fillStyle = COLORS.red;
-        ctx.fillRect(x - barWidth / 2, midY, barWidth, h);
-      }
+      const buyHeight = buy / maxVolume * innerHeight;
+      const sellHeight = sell / maxVolume * innerHeight;
+      ctx.fillStyle = COLORS.red;
+      ctx.fillRect(x - barWidth / 2, baseY - buyHeight, barWidth, Math.max(1, buyHeight));
+      ctx.fillStyle = COLORS.blue;
+      ctx.fillRect(x - barWidth / 2, baseY - buyHeight - sellHeight, barWidth, Math.max(1, sellHeight));
     });
     drawTimes(ctx, width, height);
   }
@@ -355,7 +364,7 @@
       `OHLC ${priceText(point.open)} / ${priceText(point.high)} / ${priceText(point.low)} / ${priceText(point.close)}`,
       `VWAP ${priceText(point.vwap)} · 09시 시가선 ${priceText(point.regular_open_line)}`,
       `체결가 ${priceText(point.trade_price)} · 체결강도 ${fixedText(point.strength, 2)}`,
-      `매도 ${intText(point.sell_volume)} · 매수 ${intText(point.buy_volume)} · 합계 ${intText(point.total_execution_volume)}`,
+      `매수 ${intText(point.buy_volume)} · 매도 ${intText(point.sell_volume)} · 합계 ${intText(point.total_execution_volume)}`,
       `분봉 거래대금 ${num(point.trade_value_eok) === null ? '-' : `${fixedText(point.trade_value_eok, 1)}억`}`
     ].join('\n');
   }
@@ -375,7 +384,7 @@
         if (!hover || !state.payload) return;
         const meta = state.payload.meta || {};
         const summary = state.payload.summary || {};
-        hover.textContent = `${meta.stock_code || ''} ${meta.stock_name || ''} · ${summary.time_range || ''}\n전체 ${summary.chart_points || state.series.length}분 JSON 로드 완료. 서버/API/실시간/구글드라이브는 아직 미포함입니다.`;
+        hover.textContent = `${meta.stock_code || ''} ${meta.stock_name || ''} · ${summary.time_range || ''}\n전체 ${summary.chart_points || state.series.length}분 JSON 로드 완료. 서버/API는 execution chart local server 기준입니다.`;
       };
     });
   }
@@ -388,18 +397,18 @@
     attachHover();
     const meta = state.payload.meta || {};
     const summary = state.payload.summary || {};
-    const status = $('execution-chart-status');
-    if (status) status.textContent = `${summary.chart_points || state.series.length}/${summary.row_count || state.series.length}점 JSON`;
-    const hover = $('execution-chart-hover');
-    if (hover) hover.textContent = `${meta.stock_code || ''} ${meta.stock_name || ''} · ${summary.time_range || ''}\n전체 ${summary.chart_points || state.series.length}분 JSON 로드 완료. 차트 위에 마우스를 올리면 분 단위 값을 확인합니다.`;
+    setStatus(`${summary.chart_points || state.series.length}/${summary.row_count || state.series.length}점 JSON`);
+    setHover(`${meta.stock_code || ''} ${meta.stock_name || ''} · ${summary.time_range || ''}\n전체 ${summary.chart_points || state.series.length}분 JSON 로드 완료. 차트 위에 마우스를 올리면 분 단위 값을 확인합니다.`);
   }
   async function loadSelectedChart() {
     const item = selectedItem();
-    if (!item) return showError('선택 가능한 차트 데이터가 없습니다.');
-    const status = $('execution-chart-status');
-    if (status) status.textContent = '로드중';
+    if (!item) {
+      showError('저장된 차트 JSON이 없습니다. 아래 업로드 영역에서 OHLC 파일을 업로드하세요.');
+      return;
+    }
+    setStatus('로드중');
     try {
-      const payload = normalizePayload(await fetchPayload(item));
+      const payload = normalizePayload(await apiJson(`/api/execution_chart?date=${encodeURIComponent(item.date)}&code=${encodeURIComponent(item.stock_code)}`));
       state.payload = payload;
       state.series = payload.series;
       renderCharts();
@@ -409,12 +418,43 @@
   }
   async function loadIndex() {
     try {
-      state.index = await fetchJson(INDEX_URL);
+      state.index = await apiJson('/api/execution_chart_index');
       fillDateSelect();
       fillCodeSelect();
       await loadSelectedChart();
     } catch (error) {
-      showError(`차트 index 로드 실패: ${error.message}`);
+      showError(`차트 서버 연결 실패: ${error.message}\nstart_stockboard_execution_chart.cmd가 실행 중인지 확인하세요.`);
+    }
+  }
+  async function uploadFiles() {
+    const ohlcFile = $('execution-chart-ohlc-file')?.files?.[0];
+    const executionFile = $('execution-chart-execution-file')?.files?.[0];
+    if (!ohlcFile) {
+      showError('OHLC xlsx/csv 파일을 선택하세요. 0110 체결 파일은 선택 사항입니다.');
+      return;
+    }
+    const form = new FormData();
+    form.append('date', $('execution-chart-upload-date')?.value || '');
+    form.append('stock_code', $('execution-chart-upload-code')?.value || '000660');
+    form.append('stock_name', $('execution-chart-upload-name')?.value || 'SK하이닉스');
+    form.append('ohlc_file', ohlcFile, ohlcFile.name);
+    if (executionFile) form.append('execution_file', executionFile, executionFile.name);
+    setStatus('업로드중');
+    try {
+      const result = await apiJson('/api/execution_chart_upload', { method: 'POST', body: form });
+      state.index = result.index || await apiJson('/api/execution_chart_index');
+      fillDateSelect();
+      const item = result.item;
+      if (item) {
+        const dateSelect = $('execution-chart-date');
+        if (dateSelect) dateSelect.value = item.date;
+        fillCodeSelect();
+        const codeSelect = $('execution-chart-code');
+        if (codeSelect) codeSelect.value = item.stock_code;
+      }
+      await loadSelectedChart();
+    } catch (error) {
+      showError(`업로드 실패: ${error.message}`);
     }
   }
 
@@ -463,6 +503,7 @@
     $('execution-chart-date')?.addEventListener('change', () => { fillCodeSelect(); loadSelectedChart(); });
     $('execution-chart-code')?.addEventListener('change', loadSelectedChart);
     $('execution-chart-reload')?.addEventListener('click', loadSelectedChart);
+    $('execution-chart-upload-button')?.addEventListener('click', uploadFiles);
     window.addEventListener('resize', () => window.requestAnimationFrame(renderCharts));
     setupResizer();
     restorePanelWidth();
