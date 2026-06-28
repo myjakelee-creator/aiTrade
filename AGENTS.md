@@ -2,6 +2,8 @@
 
 This repository uses AI assistants as implementation agents under owner approval.
 
+Representative title: 대표님.
+
 Core operating rule: the owner gives the initial instruction and approves the final result. AI agents must not require the owner to copy and paste messages between ChatGPT, Codex, and GitHub.
 
 ## Repository workflow
@@ -11,6 +13,7 @@ Core operating rule: the owner gives the initial instruction and approves the fi
 3. Keep commits grouped by meaningful work units. Do not create tiny commits for every minor edit.
 4. Before changing code, read the relevant current-status and design documents.
 5. Keep documentation minimal. Do not create new documents unless the task explicitly requires it. Prefer updating existing core documents.
+6. Use the latest PR or issue comments as task context when the owner points Codex at a GitHub item. Do not require the owner to copy long instructions between tools.
 
 ## StockBoard baseline documents
 
@@ -27,6 +30,9 @@ Use these as the primary StockBoard references when present:
 - Do not remove existing diagnostics without replacing them with equivalent or better diagnostics.
 - Do not introduce automatic cloud upload or scheduled execution without owner approval.
 - Prefer small, reviewable scope, but commit only after a meaningful unit of work is complete.
+- Do not push `main`.
+- Do not push tags unless the owner explicitly requests it.
+- Never commit `data/runtime/`, `data/execution_charts/`, credentials, tokens, account files, or local secret files.
 
 ## Validation expectations
 
@@ -39,7 +45,15 @@ A final report must include:
 - Commands or checks run
 - Results of those checks
 - Items not verified and why
+- Commit hash, when a commit was created
+- Push status
 - Suggested next step
+
+Before final report, run these checks when relevant:
+
+- `git status --short`
+- `git diff --check`
+- relevant Python `py_compile` checks
 
 ## Pull request expectations
 
