@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 
 data/runtime/
+data/execution_charts/
 *.pid
 
 _zz_/
