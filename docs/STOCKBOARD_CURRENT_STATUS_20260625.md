@@ -225,6 +225,11 @@ DONE 100. 브라우저 수신 기준 최근 5분강도 임시 계산
 DONE 101. opt10046 close_5m_strength 장마감 조회/저장
 DONE 107. opt10004 orderbook snapshot 장마감 잔량비 조회/저장
 DONE 108. Direct API Debug panel 운영 toggle
+DONE 109. close metrics persistent snapshot 저장/복원
+DONE 110. close metrics mouse wheel next-batch trigger
+DONE 111. close metrics requested stale retry 60초
+DONE 112. regular_close_snapshot / display_price / price_source 1차 구현
+DONE 113. realtime_patch unavailable display sanitizing / frontend guard
 
 ### TODO
 
@@ -247,14 +252,14 @@ TODO 74. 영웅문 HTS 종목 동기화 조사
 TODO 75. 공식 TODO 문서 병합 갱신
 TODO 76. suffix 진단 Store 오염 방지 패치 정규장 검증
 TODO 77. 정규장 가격 대조
-TODO 78. 15:30 regular_close_snapshot 구조 설계/구현
-TODO 79. 15:30~15:40 regular_close_snapshot 고정 표시
-TODO 80. 15:40 이후 aftermarket_realtime / regular_close_snapshot fallback 정책
-TODO 81. price_source / display_price / display_change_rate 필드 정식화
+TODO 78. 15:30 regular_close_snapshot 구조 설계/구현: 1차 구현 완료, 정규장 15:30 실전 검증 TODO
+TODO 79. 15:30~15:40 regular_close_snapshot 고정 표시: 1차 구현 완료, 정규장 실전 검증 TODO
+TODO 80. 15:40 이후 aftermarket_realtime / regular_close_snapshot fallback 정책: 1차 구현 완료, 정규장 실전 검증 TODO
+TODO 81. price_source / display_price / display_change_rate 필드 정식화: 1차 구현 완료, 정규장 실전 검증 TODO
 TODO 82. 실시간 렌더링 최적화, 변경된 셀만 그리기, 일봉/색상바 throttle
 TODO 102. HTML module split
-TODO 104. regular_close_snapshot
-TODO 105. price_source/display_price/display_change_rate 정식화
+TODO 104. regular_close_snapshot: 1차 구현 완료, 정규장 15:30 실전 검증 TODO
+TODO 105. price_source/display_price/display_change_rate 정식화: 1차 구현 완료, 정규장 실전 검증 TODO
 TODO 106. realtime_patch payload delta 경량화
 
 ## 4. 현재 완료 상태
@@ -618,9 +623,9 @@ AHK_RUNNING=True
 | 10 | TooltipSinglePath | DONE |
 | 11 | FiveMinuteStrengthBrowserDelta | DONE/임시 |
 | 12 | opt10046Close5mStrength | DONE |
-| 13 | RegularCloseSnapshot1530 | TODO |
-| 14 | PriceSourceDisplayPolicy | TODO |
-| 15 | AftermarketFallbackPolicy | TODO |
+| 13 | RegularCloseSnapshot1530 | DONE/1차, 정규장 검증 필요 |
+| 14 | PriceSourceDisplayPolicy | DONE/1차, 정규장 검증 필요 |
+| 15 | AftermarketFallbackPolicy | DONE/1차, 정규장 검증 필요 |
 | 16 | SuffixStoreIsolationRegularVerify | WIP |
 | 17 | RealtimePatchPayloadDelta | TODO |
 | 18 | DirectDebugPanelToggle | DONE |
@@ -650,6 +655,10 @@ AHK_RUNNING=True
 | 42 | DayStrengthBackfill | TODO |
 | 43 | MarketSupplyRefresh | TODO |
 | 44 | SignalRankingStrategyFormalize | TODO |
+| 45 | CloseMetricsPersistentSnapshot | DONE |
+| 46 | CloseMetricsWheelNextBatch | DONE |
+| 47 | CloseMetricsRequestedRetry60s | DONE |
+| 48 | RealtimePatchDisplayUnavailableGuard | DONE |
 
 ## 13. 2026-06-27 장마감 조회 snapshot 확정
 
@@ -699,6 +708,25 @@ AHK_RUNNING=True
 ### 유지 TODO
 
 - HTML module split은 TODO로 유지한다.
+
+## 13A. 2026-06-28 close metrics / display price 1차 반영
+
+- close metrics snapshot은 `data/runtime/stockboard_close_metrics_snapshots.json`에 runtime 저장/복원한다. `data/runtime/`은 git ignore 대상이다.
+- RealtimeStore 초기화와 `clear()` 이후 persistent close metrics snapshot을 다시 로드한다.
+- `bid_pct=0`, `ask_pct=0`, `strength_5m=0`, `realtime_strength_snapshot=0`은 유효값으로 보존한다.
+- close metrics 완료 판정은 기존대로 `strength_source === 'opt10046'`, `orderbook_source === 'opt10004'`를 유지한다.
+- 다음 버튼과 scroll trigger는 유지하며, 아래 방향 mouse wheel trigger가 `requestNextCloseMetricsBatch('wheel')`을 호출한다.
+- requested 상태가 60초 이상 완료되지 않으면 재요청 가능하게 한다. completed code는 재요청하지 않고 pending code는 즉시 재요청하지 않는다.
+- close metrics batch size 20, throttle 1000ms, lazy refresh delay 10000ms는 유지한다.
+- `/api/top100` smoke 기준 `ROW_COUNT=180`, `DISPLAY_PRICE_COUNT=180`, `DISPLAY_CHANGE_RATE_COUNT=180`, `PRICE_SOURCE_COUNT=180`, `OPT10046_COUNT=180`, `OPT10004_COUNT=180`을 확인했다.
+- `regular_close_snapshot` / `display_price` / `price_source`는 1차 구현 완료 상태다. 정규장 15:30 실전 검증은 아직 TODO다.
+- 15:30~15:40은 regular close snapshot 고정 표시, 15:40 이후는 fresh `_AL` realtime 우선 / 없으면 regular close fallback 정책으로 구현했다.
+- 실시간성 판단은 FID20이 아니라 `received_at` / `sequence` 기준이다. FID20은 체결 원천시각 보존용이다.
+- `/api/realtime_patch`는 delta/patch 대상 row만 내려올 수 있으므로 patch row count가 180이 아니어도 화면 전체 row count와 모순이 아니다.
+- 휴일/실시간 없음 상태에서 realtime_patch가 `display_price` 없이 `price_source=unavailable`을 내려 정상 표시값을 덮는 위험을 막기 위해 backend sanitizing과 frontend guard를 추가했다.
+- backend는 unavailable display patch에서 표시용 필드를 제거하고 `display_patch_status=unavailable_omitted`만 남긴다.
+- frontend는 unavailable patch에 유효 display 값이 없으면 현재가/등락률/일봉 display 업데이트를 건너뛴다.
+- 휴일 smoke는 통과했지만 정규장 15:30 실전 검증은 별도 TODO로 유지한다.
 
 ## 14. Direct API Debug panel 운영 toggle
 
@@ -2032,8 +2060,8 @@ $rows = Invoke-RestMethod 'http://127.0.0.1:8000/api/top100'
 
 ### 다음 TODO 우선순위 후보
 
-1. 15:30 `regular_close_snapshot` / `price_source` 정책 정리.
-2. 장마감 표시 정책 정리.
+1. 15:30 `regular_close_snapshot` / `price_source` 정규장 실전 검증.
+2. 장마감 표시 정책 정규장 실전 검증.
 3. 후보5 선발 기준 v0.2.
 4. Signal Engine / Ranking Engine 실제 연동.
 5. render/main loop 추가 분리는 당분간 보류.

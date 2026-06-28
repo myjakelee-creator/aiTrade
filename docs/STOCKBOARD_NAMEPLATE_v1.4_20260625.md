@@ -52,6 +52,18 @@ normalized_code = 005930
 
 | 화면명 | 내부키 | 데이터 원천 | 상태 | 비고 |
 |---|---|---|---|---|
+| 표시 현재가 | display_price | 서버 표시 정책 산출 | DONE/1차 | 화면 표시용 현재가. 15:30~15:40 regular_close_snapshot 고정, 15:40 이후 fresh realtime 우선/fallback 적용 |
+| 표시 등락률 | display_change_rate | 서버 표시 정책 산출 | DONE/1차 | 화면 표시용 등락률. `price`/`change_rate` 원천 필드는 덮어쓰지 않음 |
+| 표시 일봉 | display_ohlc | 서버 표시 정책 산출 | DONE/1차 | 화면 표시용 일봉. 없으면 기존 `realtime_ohlc` / `ohlc` fallback |
+| 표시 가격 원천 | price_source | 서버 표시 정책 산출 | DONE/1차 | `realtime`, `regular_close_snapshot`, `aftermarket_realtime`, `regular_close_snapshot_fallback`, `close_snapshot_candidate`, `unavailable` |
+| 표시 일봉 원천 | display_ohlc_source | 서버 표시 정책 산출 | DONE/1차 | `display_ohlc` 원천. unavailable patch는 표시값 덮어쓰기 금지 |
+| patch 표시 진단 | display_patch_status | `/api/realtime_patch` 진단 | DONE/진단 | 표시값 없는 `price_source=unavailable` patch는 `unavailable_omitted`로 진단만 남김 |
+| 정규장 마감 현재가 | regular_close_price | RealtimeStore snapshot | DONE/1차 | 15:30 이후 최초 snapshot. 정규장 실전 검증 TODO |
+| 정규장 마감 등락률 | regular_close_change_rate | RealtimeStore snapshot | DONE/1차 | 15:30 이후 최초 snapshot. 정규장 실전 검증 TODO |
+| 정규장 마감 일봉 | regular_close_ohlc | RealtimeStore snapshot | DONE/1차 | 15:30 이후 최초 snapshot. 정규장 실전 검증 TODO |
+| 정규장 마감 snapshot 시각 | regular_close_snapshot_at | RealtimeStore snapshot | DONE/1차 | snapshot 생성 시각 |
+| 정규장 마감 snapshot 원천 | regular_close_snapshot_source | RealtimeStore snapshot | DONE/1차 | realtime_al / price_change_rate_base_ohlc / rest_price_base_ohlc / unavailable |
+| 정규장 마감 snapshot 상태 | regular_close_snapshot_status | RealtimeStore snapshot | DONE/1차 | ok / unavailable / error |
 | 순위 | rank / displayed_rank | 화면 산출 | 산출 | `tradable_stock_master.csv` 필터 후 StockBoard 표시 순위 |
 | 전일 | rank_diff | 화면 산출 | 산출 | 전일 대비 순위 변화 |
 | 전일순위 | prev_rank | 거래대금 순위 | 예정 | 향후 연결 |
@@ -126,6 +138,11 @@ Source 필드 후보:
 | price_source | 현재가 |
 | display_price | 장상태별 표시 현재가 |
 | display_change_rate | 장상태별 표시 등락률 |
+| display_ohlc | 장상태별 표시 일봉 |
+| display_ohlc_source | 장상태별 표시 일봉 원천 |
+| display_patch_status | realtime_patch 표시 필드 진단 |
+| regular_close_snapshot_source | 정규장 마감 snapshot 원천 |
+| regular_close_snapshot_status | 정규장 마감 snapshot 상태 |
 | trade_value_source | 금액(억) |
 | ohlc_source | 일봉 |
 | realtime_ohlc_source | 실시간 일봉 |
@@ -147,6 +164,9 @@ Source 필드 후보:
 Fallback 원칙:
 
 - 현재가/등락률/금액(억)/일봉은 `close_snapshot` 표시 가능.
+- 표시 현재가/등락률/일봉은 `display_price` / `display_change_rate` / `display_ohlc`를 우선 사용한다.
+- 15:30~15:40은 `regular_close_snapshot`, 15:40 이후는 fresh `_AL` realtime 우선 / 없으면 `regular_close_snapshot_fallback` 정책이다.
+- `/api/realtime_patch`에서 표시값 없는 `price_source=unavailable`은 화면 표시값을 덮지 않고 `display_patch_status=unavailable_omitted`로만 진단한다.
 - 일봉은 `realtime_ohlc` 우선, 없으면 기존 `ohlc` fallback.
 - 잔량비는 realtime 호가가 없으면 `unavailable`.
 - 순간강도는 realtime FID228이 없으면 `unavailable`.
@@ -286,10 +306,10 @@ Fallback 원칙:
 | 선발기준 레고블럭 | candidate_model_registry | 후보 모델 추가/삭제/가중치 변경 관리 |
 | suffix 진단 Store 오염 방지 검증 | suffix_store_isolation_verification | 내일 정규장 OFF -> ON -> OFF 재검증 |
 | 정규장 가격 대조 | regular_session_price_compare | HTS와 6자리 key / `_AL` source 대조 |
-| 정규장 마감 snapshot | regular_close_snapshot | 15:30 마감값 고정 구조 설계/구현 |
-| 마감 직후 고정 표시 | regular_close_display_lock | 15:30~15:40 `regular_close_snapshot` 고정 표시 |
-| 애프터마켓 fallback | aftermarket_price_policy | 15:40 이후 aftermarket_realtime / regular_close_snapshot fallback 정책 |
-| 표시 가격 필드 정식화 | display_price_policy | `price_source` / `display_price` / `display_change_rate` 필드 정식화 |
+| 정규장 마감 snapshot | regular_close_snapshot | DONE/1차. 15:30 마감값 고정 구조 구현, 정규장 실전 검증 TODO |
+| 마감 직후 고정 표시 | regular_close_display_lock | DONE/1차. 15:30~15:40 `regular_close_snapshot` 고정 표시, 정규장 실전 검증 TODO |
+| 애프터마켓 fallback | aftermarket_price_policy | DONE/1차. 15:40 이후 aftermarket_realtime / regular_close_snapshot fallback, 정규장 실전 검증 TODO |
+| 표시 가격 필드 정식화 | display_price_policy | DONE/1차. `price_source` / `display_price` / `display_change_rate` / `display_ohlc` |
 | 렌더링 최적화 | realtime_render_optimization | 변경된 셀만 그리기, 일봉/색상바 throttle |
 
 ---
@@ -450,6 +470,9 @@ HTML은 보여준다.
 | strength_5m_enabled | opt10046 5분강도 backend 조회 활성 여부. 현재 False | DONE/진단 |
 | close_5m_strength | 장마감 opt10046 5분강도 snapshot | DONE |
 | orderbook_close_snapshot | 장마감 opt10004 총매수/총매도잔량 snapshot | DONE |
+| close_metrics_persistent_file | `data/runtime/stockboard_close_metrics_snapshots.json` | DONE/운영 |
+| close_metrics_requested_retry_ttl_sec | requested stale retry 60초 | DONE |
+| close_metrics_wheel_trigger | 아래 방향 mouse wheel next-batch trigger | DONE |
 
 ## E palette 고정값
 
