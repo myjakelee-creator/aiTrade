@@ -16,6 +16,9 @@ from typing import Iterable
 
 
 RESULT_RELATIVE_PATH = Path("data/runtime/aitrade_agent_result.json")
+DEFAULT_TASK_RELATIVE_PATH = Path("data/runtime/aitrade_agent_task.txt")
+ALLOWED_FILE_PREFIX = "# allowed-file:"
+ALLOWED_GLOB_PREFIX = "# allowed-glob:"
 
 
 def run_command(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -131,10 +134,14 @@ def print_summary(result: dict[str, object], result_path: Path) -> None:
     print(f"summary: {result['summary']}")
     print(f"safe: {result['safe']}")
     print(f"branch: {result['branch']}")
-    print(f"changed_files: {len(result['changed_files'])}")
-    print(f"violations: {len(result['violations'])}")
+    print(f"changed_files: {result['changed_files']}")
+    print(f"violations: {result['violations']}")
     print(f"codex_exit_code: {result['codex_exit_code']}")
     print(f"result_json: {result_path}")
+
+
+def read_text_file(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace")
 
 
 def read_prompt(args: argparse.Namespace, repo_root: Path) -> str:
@@ -145,11 +152,52 @@ def read_prompt(args: argparse.Namespace, repo_root: Path) -> str:
         prompt_path = Path(args.prompt_file)
         if not prompt_path.is_absolute():
             prompt_path = repo_root / prompt_path
-        prompt_parts.append(prompt_path.read_text(encoding="utf-8", errors="replace"))
+        prompt_parts.append(read_text_file(prompt_path))
+    if not prompt_parts:
+        default_prompt_path = repo_root / DEFAULT_TASK_RELATIVE_PATH
+        if not default_prompt_path.exists():
+            raise ValueError(
+                "--prompt or --prompt-file was not provided, and the default task file "
+                f"does not exist: {DEFAULT_TASK_RELATIVE_PATH.as_posix()}"
+            )
+        prompt_parts.append(read_text_file(default_prompt_path))
     prompt = "\n\n".join(part.strip() for part in prompt_parts if part and part.strip())
     if not prompt:
-        raise ValueError("--prompt or --prompt-file is required unless --self-test is used")
+        raise ValueError("Prompt is empty. Add instructions to --prompt, --prompt-file, or the default task file.")
     return prompt
+
+
+def extract_allowed_directives(prompt: str, repo_root: Path) -> tuple[set[str], list[str]]:
+    allowed_files: set[str] = set()
+    allowed_globs: list[str] = []
+    for line in prompt.splitlines():
+        stripped = line.lstrip("\ufeff").strip()
+        if stripped.startswith(ALLOWED_FILE_PREFIX):
+            path_text = stripped[len(ALLOWED_FILE_PREFIX) :].strip()
+            if path_text:
+                allowed_files.add(normalize_repo_path(path_text, repo_root))
+        elif stripped.startswith(ALLOWED_GLOB_PREFIX):
+            pattern = stripped[len(ALLOWED_GLOB_PREFIX) :].strip()
+            if pattern:
+                allowed_globs.append(normalize_repo_path(pattern, repo_root))
+    return allowed_files, allowed_globs
+
+
+def print_last_result(repo_root: Path) -> int:
+    result_path = repo_root / RESULT_RELATIVE_PATH
+    if not result_path.exists():
+        print(f"No aiTrade Local Agent result found: {result_path}")
+        print("Run scripts\\run_aitrade_agent_once.cmd first, or run tools\\aitrade_agent.py with a task.")
+        return 1
+    result = json.loads(read_text_file(result_path))
+    print_summary(result, result_path)
+    stdout = str(result.get("codex_stdout") or "")
+    if stdout:
+        print("codex_stdout_excerpt:")
+        print(stdout[:2000])
+        if len(stdout) > 2000:
+            print("... truncated ...")
+    return 0
 
 
 def evaluate_policy(
@@ -207,6 +255,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--allowed-file", action="append", default=[], help="Allowed changed file.")
     parser.add_argument("--allowed-glob", action="append", default=[], help="Allowed changed glob.")
     parser.add_argument("--self-test", action="store_true", help="Check local prerequisites only.")
+    parser.add_argument("--show-result", action="store_true", help="Show the last result JSON summary.")
     return parser.parse_args(argv)
 
 
@@ -214,14 +263,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     try:
         repo_root = find_repo_root()
+        if args.show_result:
+            return print_last_result(repo_root)
         if args.self_test:
             return self_test(repo_root)
 
         prompt = read_prompt(args, repo_root)
-        allowed_files = {
+        prompt_allowed_files, prompt_allowed_globs = extract_allowed_directives(prompt, repo_root)
+        allowed_files = prompt_allowed_files | {
             normalize_repo_path(path, repo_root) for path in args.allowed_file if path.strip()
         }
-        allowed_globs = [
+        allowed_globs = prompt_allowed_globs + [
             normalize_repo_path(pattern, repo_root) for pattern in args.allowed_glob if pattern.strip()
         ]
         pre_status = git_status(repo_root)
