@@ -29,6 +29,7 @@ def prepare_display_rows(top100_rows, tradable_codes, program_net_by_code):
     filtered_rows = [row for row in top100_rows if row["stock_code"] in tradable_codes]
     for display_rank, row in enumerate(filtered_rows, start=1):
         row["rank"] = display_rank
+        row["displayed_rank"] = display_rank
         row["program_net"] = program_net_by_code.get(row["stock_code"])
     return filtered_rows
 
