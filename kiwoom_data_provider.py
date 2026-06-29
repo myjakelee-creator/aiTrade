@@ -111,6 +111,18 @@ def issue_access_token():
     return token
 
 
+def _top100_original_order_key(index_and_row):
+    raw_index, row = index_and_row
+    original_rank = row.get("original_rank")
+    if isinstance(original_rank, bool) or not isinstance(original_rank, (int, float)):
+        original_rank = None
+    return (
+        original_rank is None,
+        original_rank if original_rank is not None else raw_index,
+        raw_index,
+    )
+
+
 def fetch_trade_value_top100(access_token):
     """Fetch up to three ka10032 pages and return at most 300 unique rows."""
     page_counts = [0, 0, 0]
@@ -152,20 +164,21 @@ def fetch_trade_value_top100(access_token):
         if continuation != "Y" or not next_key:
             break
 
-    unique_rows = {}
+    unique_rows = []
+    seen_codes = set()
     for row in collected_rows:
         stock_code = row["stock_code"]
-        if stock_code and stock_code not in unique_rows:
-            unique_rows[stock_code] = row
+        if stock_code and stock_code not in seen_codes:
+            seen_codes.add(stock_code)
+            unique_rows.append(row)
 
-    rows = sorted(
-        unique_rows.values(),
-        key=lambda row: (
-            row["trade_value_eok"] is not None,
-            row["trade_value_eok"] if row["trade_value_eok"] is not None else 0,
-        ),
-        reverse=True,
-    )[:300]
+    rows = [
+        row
+        for _, row in sorted(
+            enumerate(unique_rows),
+            key=_top100_original_order_key,
+        )
+    ][:300]
     return rows, page_counts
 
 
