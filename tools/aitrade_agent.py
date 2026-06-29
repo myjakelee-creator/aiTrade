@@ -25,6 +25,59 @@ ALLOWED_FILE_PREFIX = "# allowed-file:"
 ALLOWED_GLOB_PREFIX = "# allowed-glob:"
 DEFAULT_ISSUE_REPO = "myjakelee-creator/aiTrade"
 ISSUE_TASK_MARKERS = ("[AITRADE_AGENT_TASK]", "[AITRADE_TASK_SPEC_CURRENT]")
+STOCKBOARD_BASELINE_DOCS = (
+    "docs/STOCKBOARD_CURRENT_STATUS_20260625.md",
+    "docs/STOCKBOARD_NAMEPLATE_v1.4_20260625.md",
+    "docs/OPENAPI_HELP_MASTER_UPDATED_20260625.md",
+)
+GOAL_FORBIDDEN_RULES = (
+    "commit 금지",
+    "push 금지",
+    "서버 실행/재시작 금지",
+    "HTS/OpenAPI 조작 금지",
+    ".env 수정 금지",
+    "CSV 수정 금지",
+    "AHK 수정 금지",
+    "launcher 수정 금지",
+    "새 문서 생성 금지",
+)
+GOAL_PROFILES: dict[str, dict[str, object]] = {
+    "readonly": {
+        "description": "파일 수정 금지. allowed-file 없음. 진단/조사/계획 전용.",
+        "allowed_files": (),
+        "allowed_globs": (),
+        "extra_rules": ("파일 수정 금지", "진단/조사/계획 전용으로만 작업"),
+    },
+    "agent": {
+        "description": "Local Agent 스크립트와 도구 파일만 수정 가능.",
+        "allowed_files": (
+            "tools/aitrade_agent.py",
+            "scripts/start_aitrade_agent.cmd",
+            "scripts/run_aitrade_agent_once.cmd",
+            "scripts/run_aitrade_agent_issue.cmd",
+            "scripts/run_aitrade_agent_goal.cmd",
+            "scripts/show_aitrade_agent_result.cmd",
+        ),
+        "allowed_globs": (),
+        "extra_rules": (),
+    },
+    "price-lane": {
+        "description": "StockBoard price lane backend 파일만 수정 가능.",
+        "allowed_files": (
+            "kiwoom_data_provider.py",
+            "stockboard_store.py",
+            "stockboard_server.py",
+        ),
+        "allowed_globs": (),
+        "extra_rules": (),
+    },
+    "stockboard-ui": {
+        "description": "StockBoard UI 문서/asset 파일만 수정 가능.",
+        "allowed_files": ("docs/stockboard_v0_3_0_sample.html", "docs/assets/stockboard.css"),
+        "allowed_globs": ("docs/assets/*.js",),
+        "extra_rules": (),
+    },
+}
 
 
 def run_command(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -128,6 +181,7 @@ def build_result(
     safe: bool,
     summary: str,
     issue_context: dict[str, object] | None = None,
+    task_context: dict[str, object] | None = None,
 ) -> dict[str, object]:
     result: dict[str, object] = {
         "timestamp": utc_now_iso(),
@@ -143,6 +197,8 @@ def build_result(
     }
     if issue_context:
         result.update(issue_context)
+    if task_context:
+        result.update(task_context)
     return result
 
 
@@ -166,6 +222,8 @@ def print_summary(result: dict[str, object], result_path: Path) -> None:
     print(f"violations: {result['violations']}")
     print(f"codex_exit_code: {result['codex_exit_code']}")
     for key in (
+        "goal",
+        "goal_profile",
         "task_source",
         "issue_number",
         "issue_repo",
@@ -204,6 +262,102 @@ def read_prompt(args: argparse.Namespace, repo_root: Path) -> str:
     if not prompt:
         raise ValueError("Prompt is empty. Add instructions to --prompt, --prompt-file, or the default task file.")
     return prompt
+
+
+def goal_profile_config(profile: str) -> dict[str, object]:
+    normalized = profile.strip().lower()
+    if normalized not in GOAL_PROFILES:
+        raise ValueError(
+            f"Unknown --goal-profile: {profile}. Supported profiles: "
+            + ", ".join(sorted(GOAL_PROFILES))
+        )
+    return GOAL_PROFILES[normalized]
+
+
+def build_goal_task(goal: str, profile: str, repo_root: Path) -> tuple[str, dict[str, object]]:
+    goal_text = goal.strip()
+    if not goal_text:
+        raise ValueError("--goal is empty")
+    profile_name = profile.strip().lower()
+    profile_config = goal_profile_config(profile_name)
+    allowed_files = tuple(str(path) for path in profile_config["allowed_files"])
+    allowed_globs = tuple(str(pattern) for pattern in profile_config["allowed_globs"])
+    extra_rules = tuple(str(rule) for rule in profile_config["extra_rules"])
+
+    lines: list[str] = []
+    for path in allowed_files:
+        lines.append(f"{ALLOWED_FILE_PREFIX} {normalize_repo_path(path, repo_root)}")
+    for pattern in allowed_globs:
+        lines.append(f"{ALLOWED_GLOB_PREFIX} {normalize_repo_path(pattern, repo_root)}")
+    if lines:
+        lines.append("")
+    lines.extend(
+        [
+            f"목표: {goal_text}",
+            f"profile: {profile_name}",
+            "",
+            "작업 전 필수 확인:",
+            "- AGENTS.md를 먼저 읽고 지침을 따른다.",
+            "- 관련 StockBoard 기준 문서를 UTF-8로 읽는다:",
+        ]
+    )
+    for doc_path in STOCKBOARD_BASELINE_DOCS:
+        lines.append(f"  - {doc_path}")
+    lines.extend(
+        [
+            "- 코드 변경 전 `git status --short`를 먼저 확인한다.",
+            "",
+            "허용 파일 범위:",
+        ]
+    )
+    if allowed_files:
+        for path in allowed_files:
+            lines.append(f"- {path}")
+    if allowed_globs:
+        for pattern in allowed_globs:
+            lines.append(f"- {pattern}")
+    if not allowed_files and not allowed_globs:
+        lines.append("- 없음. 이 profile에서는 파일 수정 금지.")
+    lines.extend(["", "금지 파일/작업:"])
+    for rule in GOAL_FORBIDDEN_RULES:
+        lines.append(f"- {rule}")
+    for rule in extra_rules:
+        lines.append(f"- {rule}")
+    lines.extend(
+        [
+            "",
+            "검증 명령:",
+            "- `git diff --check` (변경이 있을 때)",
+            "- 관련 Python 파일 변경 시 `python -m py_compile <file>`",
+            "- 작업 성격에 맞는 최소 검증 명령",
+            "- 마지막에 `git status --short`",
+            "",
+            "최종 보고 형식:",
+            "- 변경 파일",
+            "- 요약",
+            "- 검증 명령과 결과",
+            "- 미검증 항목과 이유",
+            "- commit 없음",
+            "- push 없음",
+            "- suggested next step",
+            "",
+            "중요:",
+            "- commit/push 금지.",
+            "- 허용 파일 범위를 준수한다.",
+            "- 금지 파일/작업을 준수한다.",
+            "- 자동 cloud upload, scheduled execution, server start/restart를 하지 않는다.",
+        ]
+    )
+    task = "\n".join(lines).strip() + "\n"
+    context = {
+        "task_source": "generated_goal",
+        "goal": goal_text,
+        "goal_profile": profile_name,
+        "generated_task_preview": task,
+        "goal_allowed_files": list(allowed_files),
+        "goal_allowed_globs": list(allowed_globs),
+    }
+    return task, context
 
 
 def parse_repo_from_remote(remote_url: str) -> str | None:
@@ -443,6 +597,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--prompt-file", help="UTF-8 prompt file path.")
     parser.add_argument("--allowed-file", action="append", default=[], help="Allowed changed file.")
     parser.add_argument("--allowed-glob", action="append", default=[], help="Allowed changed glob.")
+    parser.add_argument("--goal", help="Short goal text. The agent generates a standard task prompt.")
+    parser.add_argument(
+        "--goal-profile",
+        default="readonly",
+        help="Goal profile: readonly, agent, price-lane, or stockboard-ui. Defaults to readonly.",
+    )
+    parser.add_argument(
+        "--goal-draft-only",
+        action="store_true",
+        help="Save the generated goal task preview without running Codex CLI.",
+    )
     parser.add_argument("--issue", type=int, help="Fetch prompt text from a GitHub issue.")
     parser.add_argument("--repo", help="GitHub repository in owner/name form. Defaults to origin or aiTrade.")
     parser.add_argument(
@@ -465,6 +630,7 @@ def build_error_result(
     repo_root: Path,
     exc: Exception,
     issue_context: dict[str, object] | None = None,
+    task_context: dict[str, object] | None = None,
 ) -> dict[str, object]:
     branch = git_branch(repo_root)
     pre_status = git_status(repo_root)
@@ -481,11 +647,13 @@ def build_error_result(
         safe=False,
         summary=f"agent_error: {exc}",
         issue_context=issue_context,
+        task_context=task_context,
     )
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
+    task_context: dict[str, object] = {}
     try:
         repo_root = find_repo_root()
         if args.show_result:
@@ -494,9 +662,15 @@ def main(argv: list[str] | None = None) -> int:
             return self_test(repo_root)
         if args.issue_fetch_only and args.issue is None:
             raise ValueError("--issue-fetch-only requires --issue")
+        if args.goal_draft_only and not args.goal:
+            raise ValueError("--goal-draft-only requires --goal")
+        if args.goal and args.issue is not None:
+            raise ValueError("--goal cannot be combined with --issue")
 
         issue_context: dict[str, object] = {}
-        if args.issue is not None:
+        if args.goal:
+            prompt, task_context = build_goal_task(args.goal, args.goal_profile, repo_root)
+        elif args.issue is not None:
             issue_repo = args.repo or infer_issue_repo(repo_root)
             try:
                 prompt, issue_context = fetch_issue_task(
@@ -515,7 +689,12 @@ def main(argv: list[str] | None = None) -> int:
                     "issue_repo": issue_repo,
                     "issue_title": None,
                 }
-                result = build_error_result(repo_root=repo_root, exc=exc, issue_context=issue_context)
+                result = build_error_result(
+                    repo_root=repo_root,
+                    exc=exc,
+                    issue_context=issue_context,
+                    task_context=task_context,
+                )
                 result_path = write_result(repo_root, result)
                 print_summary(result, result_path)
                 return 1
@@ -531,6 +710,34 @@ def main(argv: list[str] | None = None) -> int:
         ]
         pre_status = git_status(repo_root)
         branch = git_branch(repo_root)
+        if args.goal_draft_only:
+            post_status = git_status(repo_root)
+            changed_files = status_changed_files(post_status)
+            draft_changed_files = status_changed_files(status_lines_added_after(pre_status, post_status))
+            violations, safe, summary = evaluate_policy(
+                draft_changed_files,
+                allowed_files,
+                allowed_globs,
+                None,
+            )
+            if safe:
+                summary = "goal_draft_ok"
+            result = build_result(
+                repo_root=repo_root,
+                branch=branch,
+                pre_status=pre_status,
+                post_status=post_status,
+                changed_files=changed_files,
+                violations=violations,
+                codex_exit_code=None,
+                safe=safe,
+                summary=summary,
+                issue_context=issue_context,
+                task_context=task_context,
+            )
+            result_path = write_result(repo_root, result)
+            print_summary(result, result_path)
+            return 0 if safe else 1
         if args.issue_fetch_only:
             post_status = git_status(repo_root)
             changed_files = status_changed_files(post_status)
@@ -554,6 +761,7 @@ def main(argv: list[str] | None = None) -> int:
                 safe=safe,
                 summary=summary,
                 issue_context=issue_context,
+                task_context=task_context,
             )
             result_path = write_result(repo_root, result)
             print_summary(result, result_path)
@@ -590,6 +798,7 @@ def main(argv: list[str] | None = None) -> int:
             safe=safe,
             summary=summary,
             issue_context=issue_context,
+            task_context=task_context,
         )
         result["codex_stdout"] = codex_result.stdout
         result["codex_stderr"] = codex_result.stderr
@@ -599,7 +808,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         try:
             repo_root = find_repo_root()
-            result = build_error_result(repo_root=repo_root, exc=exc)
+            result = build_error_result(repo_root=repo_root, exc=exc, task_context=task_context)
             result_path = write_result(repo_root, result)
             print_summary(result, result_path)
         except Exception:
