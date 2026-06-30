@@ -78,6 +78,15 @@ ADAPTIVE_NORMAL_REQUIRED_OK = int(
 ADAPTIVE_RECOVERY_INTERVAL_MULTIPLIER = float(
     os.getenv("STOCKBOARD_ADAPTIVE_RECOVERY_INTERVAL_MULTIPLIER", "2.0")
 )
+ADAPTIVE_PENDING_GAP_MIN = int(
+    os.getenv("STOCKBOARD_ADAPTIVE_PENDING_GAP_MIN", "3")
+)
+ADAPTIVE_PENDING_GAP_REQUIRED_STREAK = int(
+    os.getenv("STOCKBOARD_ADAPTIVE_PENDING_GAP_REQUIRED_STREAK", "2")
+)
+ADAPTIVE_RESUME_BIAS_SEC = float(
+    os.getenv("STOCKBOARD_ADAPTIVE_RESUME_BIAS_SEC", "30")
+)
 
 
 def _listening_pids(host, port):
@@ -306,6 +315,112 @@ def _apply_freshness_fields(row):
     )
     row["price_status"] = "fresh" if row["price_fresh"] else "stale_or_missing"
     return row
+
+
+def _live_expected_for_gate(now=None):
+    return _market_session(now) in {"정규장", "애프터마켓"}
+
+
+def _gate_age_status(age_sec, max_age_sec, live_expected):
+    if live_expected:
+        if age_sec is None:
+            return "bad_missing"
+        if age_sec > max_age_sec:
+            return "bad_stale"
+        return "ok"
+    if age_sec is None:
+        return "no_live_expected"
+    if age_sec > max_age_sec:
+        return "inactive_session"
+    return "ok"
+
+
+def _combine_gate_status(price_status, orderbook_status):
+    bad_statuses = []
+    if price_status.startswith("bad_"):
+        bad_statuses.append("bad_price_age")
+    if orderbook_status.startswith("bad_"):
+        bad_statuses.append("bad_orderbook_age")
+    if bad_statuses:
+        return "+".join(bad_statuses)
+    inactive_statuses = [
+        status
+        for status in (price_status, orderbook_status)
+        if status in {"no_live_expected", "inactive_session"}
+    ]
+    if inactive_statuses:
+        return "+".join(dict.fromkeys(inactive_statuses))
+    return "ok"
+
+
+def _hot_quote_gate_diagnostic(
+    stock_code,
+    quote,
+    max_price_age_sec,
+    max_orderbook_age_sec,
+    now_dt,
+    selected=False,
+):
+    market_session = _market_session(now_dt)
+    live_expected = _live_expected_for_gate(now_dt)
+    if not isinstance(quote, dict):
+        status = "missing_price_light_quote" if live_expected else "no_live_expected"
+        return {
+            "diagnostic": {
+                "stock_code": stock_code,
+                "price_age_sec": None,
+                "orderbook_age_sec": None,
+                "status": status,
+                "price_live_status": status,
+                "orderbook_live_status": status,
+                "market_session": market_session,
+                "live_expected": live_expected,
+                "selected": bool(selected),
+                "diagnostic_scope": "selected_hot" if selected else "hot_candidate",
+            },
+            "bad_reasons": ["hot_price_light_missing"] if live_expected else [],
+            "price_sequence": 0,
+        }
+
+    price_age_sec = _age_seconds(
+        quote.get("price_received_at") or quote.get("received_at")
+    )
+    orderbook_age_sec = _age_seconds(quote.get("orderbook_received_at"))
+    price_status = _gate_age_status(
+        price_age_sec, max_price_age_sec, live_expected
+    )
+    orderbook_status = _gate_age_status(
+        orderbook_age_sec, max_orderbook_age_sec, live_expected
+    )
+    bad_reasons = []
+    if price_status.startswith("bad_"):
+        bad_reasons.append("hot_price_age_bad")
+    if orderbook_status.startswith("bad_"):
+        bad_reasons.append("hot_orderbook_age_bad")
+    try:
+        price_sequence = int(quote.get("price_sequence") or 0)
+    except (TypeError, ValueError):
+        price_sequence = 0
+    return {
+        "diagnostic": {
+            "stock_code": stock_code,
+            "price_age_sec": price_age_sec,
+            "orderbook_age_sec": orderbook_age_sec,
+            "price_sequence": quote.get("price_sequence"),
+            "orderbook_sequence": quote.get("orderbook_sequence"),
+            "orderbook_source": quote.get("orderbook_source"),
+            "realtime_source_code": quote.get("realtime_source_code"),
+            "status": _combine_gate_status(price_status, orderbook_status),
+            "price_live_status": price_status,
+            "orderbook_live_status": orderbook_status,
+            "market_session": market_session,
+            "live_expected": live_expected,
+            "selected": bool(selected),
+            "diagnostic_scope": "selected_hot" if selected else "hot_candidate",
+        },
+        "bad_reasons": bad_reasons,
+        "price_sequence": price_sequence,
+    }
 
 
 def _is_realtime_fresh(row):
@@ -1121,6 +1236,13 @@ def make_handler(
         "reason": "init",
         "ok_streak": 0,
         "bad_streak": 0,
+        "pending_gap_streak": 0,
+        "pending_gap": 0,
+        "pending_gap_strong": False,
+        "health_reasons": [],
+        "bias_reason": None,
+        "resume_bias_until_monotonic": None,
+        "last_resume_signal": None,
         "last_changed_at": datetime.now(KST).isoformat(timespec="seconds"),
         "hot_api_latency_samples_ms": deque(maxlen=12),
         "last_hot_api_latency_ms": None,
@@ -1181,6 +1303,17 @@ def make_handler(
                 "reason": adaptive_speed_state["reason"],
                 "ok_streak": adaptive_speed_state["ok_streak"],
                 "bad_streak": adaptive_speed_state["bad_streak"],
+                "pending_gap_streak": adaptive_speed_state.get(
+                    "pending_gap_streak", 0
+                ),
+                "pending_gap": adaptive_speed_state.get("pending_gap", 0),
+                "pending_gap_strong": adaptive_speed_state.get(
+                    "pending_gap_strong", False
+                ),
+                "health_reasons": list(
+                    adaptive_speed_state.get("health_reasons") or []
+                ),
+                "bias_reason": adaptive_speed_state.get("bias_reason"),
                 "last_changed_at": adaptive_speed_state["last_changed_at"],
                 "last_evaluated_at": adaptive_speed_state["last_evaluated_at"],
                 "last_hot_api_latency_ms": (
@@ -1199,9 +1332,10 @@ def make_handler(
                     "hot_last_served_price_sequence"
                 ),
                 "opening_bias": adaptive_speed_state.get("opening_bias"),
+                "resume_bias": adaptive_speed_state.get("resume_bias"),
                 "thresholds": {
                     "opening_bias_window": "09:00~09:03",
-                    "opening_bias_policy": "diagnostic_only",
+                    "opening_bias_policy": "low_start_until_hot_health_recovers",
                     "hot_price_max_age_sec": ADAPTIVE_HOT_PRICE_MAX_AGE_SEC,
                     "hot_orderbook_max_age_sec": (
                         ADAPTIVE_HOT_ORDERBOOK_MAX_AGE_SEC
@@ -1212,6 +1346,11 @@ def make_handler(
                     "recovery_interval_multiplier": (
                         ADAPTIVE_RECOVERY_INTERVAL_MULTIPLIER
                     ),
+                    "pending_gap_min": ADAPTIVE_PENDING_GAP_MIN,
+                    "pending_gap_required_streak": (
+                        ADAPTIVE_PENDING_GAP_REQUIRED_STREAK
+                    ),
+                    "resume_bias_sec": ADAPTIVE_RESUME_BIAS_SEC,
                 },
             }
 
@@ -1233,7 +1372,73 @@ def make_handler(
                 < ADAPTIVE_OPENING_BIAS_END_MINUTE
             ),
             "window": "09:00~09:03",
-            "policy": "diagnostic_only",
+            "policy": "low_start_until_hot_health_recovers",
+        }
+
+    def _resume_bias_signal(provider_status):
+        if not isinstance(provider_status, dict):
+            return None
+        signal_fields = (
+            "market_interrupt_signal",
+            "market_resume_signal",
+            "trading_resume_signal",
+            "sidecar_signal",
+            "circuit_breaker_signal",
+            "market_operation_signal",
+        )
+        text_parts = []
+        for field in signal_fields:
+            value = provider_status.get(field)
+            if value:
+                text_parts.append(f"{field}={value}")
+        for field in (
+            "market_state",
+            "market_status",
+            "market_operation_state",
+            "fid215_state",
+            "fid215",
+        ):
+            value = provider_status.get(field)
+            if value:
+                text_parts.append(f"{field}={value}")
+        text = " ".join(str(part).lower() for part in text_parts)
+        if not text:
+            return None
+        keywords = (
+            "resume",
+            "reopen",
+            "sidecar",
+            "circuit",
+            "breaker",
+            "halt",
+            "suspend",
+            "거래재개",
+            "사이드카",
+            "서킷",
+            "중단",
+            "재개",
+        )
+        if not any(keyword in text for keyword in keywords):
+            return None
+        return text[:240]
+
+    def _adaptive_resume_bias(now_dt, provider_status):
+        now_mono = time.monotonic()
+        signal = _resume_bias_signal(provider_status)
+        with price_light_lock:
+            if signal and signal != adaptive_speed_state.get("last_resume_signal"):
+                adaptive_speed_state["last_resume_signal"] = signal
+                adaptive_speed_state["resume_bias_until_monotonic"] = (
+                    now_mono + max(0.0, ADAPTIVE_RESUME_BIAS_SEC)
+                )
+            until = adaptive_speed_state.get("resume_bias_until_monotonic")
+        active = until is not None and now_mono < until
+        return {
+            "active": active,
+            "window_sec": ADAPTIVE_RESUME_BIAS_SEC,
+            "signal": signal,
+            "until_monotonic": until,
+            "market_session": _market_session(now_dt),
         }
 
     def evaluate_adaptive_speed(hot_codes, price_light_snapshot=None):
@@ -1241,6 +1446,18 @@ def make_handler(
             return adaptive_speed_snapshot()
         now_dt = datetime.now(KST)
         opening_bias = _adaptive_opening_bias(now_dt)
+        live_expected = _live_expected_for_gate(now_dt)
+        provider_status = None
+        provider_hot_refresh_pending = False
+        if realtime_provider is not None:
+            try:
+                provider_status = realtime_provider.status()
+                provider_hot_refresh_pending = bool(
+                    provider_status.get("orderbook_hot_refresh_pending")
+                )
+            except Exception:
+                provider_hot_refresh_pending = True
+        resume_bias = _adaptive_resume_bias(now_dt, provider_status)
 
         snapshot = price_light_snapshot
         if snapshot is None:
@@ -1257,50 +1474,47 @@ def make_handler(
             snapshot_price_sequence = 0
         with price_light_lock:
             last_hot_sequence = hot_lane_last_served_price_sequence
-        if last_hot_sequence > 0 and snapshot_price_sequence > last_hot_sequence:
-            bad_reasons.append("hot_patch_pending")
+            previous_pending_streak = adaptive_speed_state.get(
+                "pending_gap_streak", 0
+            )
+        pending_gap = (
+            max(0, snapshot_price_sequence - last_hot_sequence)
+            if last_hot_sequence > 0
+            else 0
+        )
+        pending_gap_streak = (
+            previous_pending_streak + 1
+            if pending_gap >= max(1, ADAPTIVE_PENDING_GAP_MIN)
+            else 0
+        )
+        pending_gap_strong = (
+            pending_gap_streak >= max(1, ADAPTIVE_PENDING_GAP_REQUIRED_STREAK)
+        )
+        if pending_gap_strong:
+            bad_reasons.append("hot_pending_gap_accumulated")
+        selected_codes = set(selected_hot_snapshot())
         for stock_code in hot_codes:
             quote = hot_quotes.get(stock_code)
-            if not isinstance(quote, dict):
-                bad_reasons.append("hot_quote_missing")
-                diagnostics.append({"stock_code": stock_code, "status": "missing"})
-                continue
-            price_age_sec = _age_seconds(
-                quote.get("price_received_at") or quote.get("received_at")
+            gate_result = _hot_quote_gate_diagnostic(
+                stock_code,
+                quote,
+                ADAPTIVE_HOT_PRICE_MAX_AGE_SEC,
+                ADAPTIVE_HOT_ORDERBOOK_MAX_AGE_SEC,
+                now_dt,
+                selected=stock_code in selected_codes,
             )
-            orderbook_age_sec = _age_seconds(quote.get("orderbook_received_at"))
-            status = "ok"
-            if (
-                price_age_sec is None
-                or price_age_sec > ADAPTIVE_HOT_PRICE_MAX_AGE_SEC
-            ):
-                status = "bad_price_age"
-                bad_reasons.append("hot_price_age_high")
-            if (
-                orderbook_age_sec is None
-                or orderbook_age_sec > ADAPTIVE_HOT_ORDERBOOK_MAX_AGE_SEC
-            ):
-                status = (
-                    "bad_orderbook_age" if status == "ok" else f"{status}+orderbook"
-                )
-                bad_reasons.append("hot_orderbook_age_high")
-            diagnostics.append(
-                {
-                    "stock_code": stock_code,
-                    "price_age_sec": price_age_sec,
-                    "orderbook_age_sec": orderbook_age_sec,
-                    "status": status,
-                }
+            bad_reasons.extend(
+                "hot_price_age_high"
+                if reason == "hot_price_age_bad"
+                else "hot_orderbook_age_high"
+                if reason == "hot_orderbook_age_bad"
+                else "hot_quote_missing"
+                if reason == "hot_price_light_missing"
+                else reason
+                for reason in gate_result["bad_reasons"]
             )
-        provider_hot_refresh_pending = False
-        if realtime_provider is not None:
-            try:
-                provider_hot_refresh_pending = bool(
-                    realtime_provider.status().get("orderbook_hot_refresh_pending")
-                )
-            except Exception:
-                provider_hot_refresh_pending = True
-        if provider_hot_refresh_pending:
+            diagnostics.append(gate_result["diagnostic"])
+        if provider_hot_refresh_pending and live_expected:
             bad_reasons.append("hot_orderbook_refresh_pending")
         with price_light_lock:
             samples = list(adaptive_speed_state["hot_api_latency_samples_ms"])
@@ -1319,12 +1533,23 @@ def make_handler(
             adaptive_speed_state["hot_last_served_price_sequence"] = (
                 last_hot_sequence
             )
+            adaptive_speed_state["pending_gap"] = pending_gap
+            adaptive_speed_state["pending_gap_streak"] = pending_gap_streak
+            adaptive_speed_state["pending_gap_strong"] = pending_gap_strong
+            adaptive_speed_state["health_reasons"] = unique_bad_reasons
             adaptive_speed_state["opening_bias"] = opening_bias
+            adaptive_speed_state["resume_bias"] = resume_bias
+            adaptive_speed_state["bias_reason"] = None
             if unique_bad_reasons:
                 adaptive_speed_state["ok_streak"] = 0
                 adaptive_speed_state["bad_streak"] += 1
                 reason = unique_bad_reasons[0]
-                mode = "protect" if reason == "hot_api_latency_high" else "degraded"
+                mode = (
+                    "protect"
+                    if reason
+                    in {"hot_api_latency_high", "hot_pending_gap_accumulated"}
+                    else "degraded"
+                )
                 _set_adaptive_mode_locked(mode, reason)
             else:
                 adaptive_speed_state["bad_streak"] = 0
@@ -1332,10 +1557,18 @@ def make_handler(
                 required_recovery = max(1, ADAPTIVE_RECOVERY_REQUIRED_OK)
                 required_normal = max(required_recovery, ADAPTIVE_NORMAL_REQUIRED_OK)
                 ok_streak = adaptive_speed_state["ok_streak"]
+                bias_reason = None
+                if opening_bias.get("active"):
+                    bias_reason = "opening_bias"
+                if resume_bias.get("active"):
+                    bias_reason = "resume_bias"
+                adaptive_speed_state["bias_reason"] = bias_reason
                 if ok_streak >= required_normal:
                     _set_adaptive_mode_locked("normal", "hot_lane_stable")
                 elif ok_streak >= required_recovery:
                     _set_adaptive_mode_locked("recovery", "hot_lane_recovering")
+                elif bias_reason:
+                    _set_adaptive_mode_locked("degraded", bias_reason)
         return adaptive_speed_snapshot()
 
     def note_hot_lane_served(payload):
@@ -1378,7 +1611,7 @@ def make_handler(
         if adaptive["mode"] in {"protect", "degraded"}:
             reason = f"adaptive_{adaptive['mode']}"
             retry_after_ms = max(1, int(max(min_interval, 0.5) * 1000))
-            hard_skip = True
+            hard_skip = adaptive["mode"] == "protect"
         elif elapsed < min_interval:
             retry_after_ms = max(1, int((min_interval - elapsed) * 1000))
             reason = "price_light_min_interval"
@@ -1387,13 +1620,24 @@ def make_handler(
             hot_pending_sequence = int(hot_snapshot.get("price_sequence") or 0)
         except Exception:
             hot_pending_sequence = last_hot_sequence
-        if hot_pending_sequence > last_hot_sequence:
+        pending_gap = (
+            max(0, hot_pending_sequence - last_hot_sequence)
+            if last_hot_sequence > 0
+            else 0
+        )
+        if (
+            pending_gap >= max(1, ADAPTIVE_PENDING_GAP_MIN)
+            and adaptive.get("pending_gap_strong")
+        ):
             reason = "hot_lane_pending_delta"
             retry_after_ms = retry_after_ms or int(min_interval * 1000)
         if realtime_provider is not None:
             try:
                 provider_status = realtime_provider.status()
-                if provider_status.get("orderbook_hot_refresh_pending"):
+                if (
+                    provider_status.get("orderbook_hot_refresh_pending")
+                    and _live_expected_for_gate()
+                ):
                     reason = "hot_lane_refresh_pending"
                     retry_after_ms = retry_after_ms or int(min_interval * 1000)
             except Exception:
@@ -1428,57 +1672,29 @@ def make_handler(
         hot_diagnostics = []
         bad_reasons = []
         adaptive = evaluate_adaptive_speed(hot_codes, price_light_snapshot)
-        if adaptive["mode"] in {"protect", "degraded"}:
+        if adaptive["mode"] == "protect":
             bad_reasons.append(f"adaptive_{adaptive['mode']}")
         max_price_age = max(0.0, CANDIDATE_SAFE_PRICE_MAX_AGE_SEC)
         max_orderbook_age = max(0.0, CANDIDATE_SAFE_ORDERBOOK_MAX_AGE_SEC)
         hot_price_sequence = 0
+        now_dt = datetime.now(KST)
+        live_expected = _live_expected_for_gate(now_dt)
+        selected_codes = set(selected_hot_snapshot())
         for stock_code in hot_codes:
             quote = hot_quotes.get(stock_code)
-            if not isinstance(quote, dict):
-                hot_diagnostics.append(
-                    {
-                        "stock_code": stock_code,
-                        "price_age_sec": None,
-                        "orderbook_age_sec": None,
-                        "status": "missing_price_light_quote",
-                    }
-                )
-                bad_reasons.append("hot_price_light_missing")
-                continue
-            price_age_sec = _age_seconds(
-                quote.get("price_received_at") or quote.get("received_at")
+            gate_result = _hot_quote_gate_diagnostic(
+                stock_code,
+                quote,
+                max_price_age,
+                max_orderbook_age,
+                now_dt,
+                selected=stock_code in selected_codes,
             )
-            orderbook_age_sec = _age_seconds(
-                quote.get("orderbook_received_at")
+            hot_price_sequence = max(
+                hot_price_sequence, gate_result["price_sequence"]
             )
-            try:
-                hot_price_sequence = max(
-                    hot_price_sequence, int(quote.get("price_sequence") or 0)
-                )
-            except (TypeError, ValueError):
-                pass
-            status = "ok"
-            if price_age_sec is None or price_age_sec > max_price_age:
-                status = "bad_price_age"
-                bad_reasons.append("hot_price_age_bad")
-            if orderbook_age_sec is None or orderbook_age_sec > max_orderbook_age:
-                status = (
-                    "bad_orderbook_age" if status == "ok" else f"{status}+orderbook"
-                )
-                bad_reasons.append("hot_orderbook_age_bad")
-            hot_diagnostics.append(
-                {
-                    "stock_code": stock_code,
-                    "price_age_sec": price_age_sec,
-                    "orderbook_age_sec": orderbook_age_sec,
-                    "price_sequence": quote.get("price_sequence"),
-                    "orderbook_sequence": quote.get("orderbook_sequence"),
-                    "orderbook_source": quote.get("orderbook_source"),
-                    "realtime_source_code": quote.get("realtime_source_code"),
-                    "status": status,
-                }
-            )
+            bad_reasons.extend(gate_result["bad_reasons"])
+            hot_diagnostics.append(gate_result["diagnostic"])
         hot_patch_pending = (
             last_hot_sequence > 0 and hot_price_sequence > last_hot_sequence
         )
@@ -1495,9 +1711,18 @@ def make_handler(
                 )
             except Exception as error:
                 provider_hot_refresh_error = str(error)
-        if hot_patch_pending:
-            bad_reasons.append("hot_patch_pending")
-        if provider_hot_refresh_pending:
+        hot_patch_gap = (
+            max(0, hot_price_sequence - last_hot_sequence)
+            if last_hot_sequence > 0
+            else 0
+        )
+        hot_patch_pending_strong = (
+            hot_patch_gap >= max(1, ADAPTIVE_PENDING_GAP_MIN)
+            and adaptive.get("pending_gap_strong")
+        )
+        if hot_patch_pending_strong:
+            bad_reasons.append("hot_pending_gap_accumulated")
+        if provider_hot_refresh_pending and live_expected:
             bad_reasons.append("hot_orderbook_refresh_pending")
         skip_reason = next(iter(dict.fromkeys(bad_reasons)), None)
         allowed = skip_reason is None
@@ -1510,6 +1735,8 @@ def make_handler(
             "hot_price_sequence": hot_price_sequence,
             "hot_last_served_price_sequence": last_hot_sequence,
             "hot_patch_pending": hot_patch_pending,
+            "hot_patch_gap": hot_patch_gap,
+            "hot_patch_pending_strong": hot_patch_pending_strong,
             "orderbook_hot_refresh_pending": provider_hot_refresh_pending,
             "orderbook_hot_refresh_error": provider_hot_refresh_error,
             "hot_diagnostics": hot_diagnostics,
