@@ -1416,6 +1416,7 @@ class KiwoomOpenApiRealtimeProvider:
             or "numeric"
         )
         self._orderbook_hot_codes = []
+        self._hot_priority_codes = []
         self._orderbook_rotate_pool = []
         self._orderbook_current_rotate_codes = []
         self._orderbook_next_rotate_index = 0
@@ -1714,13 +1715,38 @@ class KiwoomOpenApiRealtimeProvider:
         if self._orderbook_mode == "off":
             return [], []
         unique_codes = list(dict.fromkeys(codes))
-        hot_codes = unique_codes[: self._orderbook_hot_limit]
+        priority_codes = [
+            code
+            for code in self._hot_priority_codes
+            if code in set(unique_codes)
+        ]
+        hot_candidates = list(dict.fromkeys(priority_codes + unique_codes))
+        hot_limit = max(self._orderbook_hot_limit, len(priority_codes))
+        hot_codes = hot_candidates[:hot_limit]
         if self._orderbook_mode == "hot_only":
             return hot_codes, []
         rotate_pool = [
             code for code in unique_codes if code not in set(hot_codes)
         ]
         return hot_codes, rotate_pool
+
+    def set_hot_priority_codes(self, codes):
+        priority_codes = []
+        for code in codes or []:
+            normalized_code = _stock_code(code)
+            if normalized_code is None:
+                continue
+            register_code = None
+            with self._lock:
+                for registered, normalized in self._registered_code_to_normalized.items():
+                    if normalized == normalized_code:
+                        register_code = registered
+                        break
+            priority_codes.append(register_code or f"{normalized_code}_AL")
+        priority_codes = list(dict.fromkeys(priority_codes))
+        with self._lock:
+            self._hot_priority_codes = priority_codes
+        return priority_codes
 
     def _next_orderbook_rotate_batch(self):
         pool = list(self._orderbook_rotate_pool)
@@ -3443,6 +3469,9 @@ class KiwoomOpenApiRealtimeProvider:
                 "orderbook_mode": self._orderbook_mode,
                 "orderbook_hot_source": self._orderbook_hot_source,
                 "orderbook_hot_limit": self._orderbook_hot_limit,
+                "hot_priority_codes_sample": list(
+                    self._hot_priority_codes[:20]
+                ),
                 "orderbook_rotate_batch": self._orderbook_rotate_batch,
                 "orderbook_rotate_interval_sec": (
                     self._orderbook_rotate_interval_sec

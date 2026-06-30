@@ -7,6 +7,7 @@ from copy import deepcopy
 from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import RLock
 from urllib.parse import parse_qs, urlparse
 
 from kiwoom_data_provider import (
@@ -16,6 +17,7 @@ from kiwoom_data_provider import (
 )
 from stockboard_engine import (
     KST,
+    _stock_code,
     _program_net_enabled,
     _query_date,
     _request_sleep_sec,
@@ -34,6 +36,7 @@ REGULAR_CLOSE_START_MINUTE = 30
 AFTERMARKET_START_HOUR = 15
 AFTERMARKET_START_MINUTE = 40
 AFTERMARKET_REALTIME_FRESH_SEC = 60.0
+HOT_LANE_CANDIDATE_LIMIT = 5
 
 
 def _listening_pids(host, port):
@@ -405,6 +408,45 @@ def _parse_codes_query(query):
     ]
 
 
+def _parse_hot_code_query(query):
+    codes = []
+    for key in ("selected", "selected_codes", "hot_codes", "codes", "code"):
+        for value in query.get(key, []):
+            codes.extend(
+                code.strip()
+                for code in str(value).split(",")
+                if code.strip()
+            )
+    normalized = []
+    for code in codes:
+        stock_code = _stock_code(code)
+        if stock_code is not None:
+            normalized.append(stock_code)
+    return list(dict.fromkeys(normalized))
+
+
+def _hot_candidate_codes(rows, limit=HOT_LANE_CANDIDATE_LIMIT):
+    enriched_rows = enrich_candidate_fields(deepcopy(rows))
+    candidate_rows = [
+        row for row in enriched_rows if isinstance(row.get("candidate_rank"), int)
+    ]
+    candidate_rows.sort(key=lambda row: row.get("candidate_rank"))
+    return [
+        row["stock_code"]
+        for row in candidate_rows[:limit]
+        if _stock_code(row.get("stock_code")) is not None
+    ]
+
+
+def _hot_lane_codes(rows, selected_codes=None):
+    selected = [
+        code
+        for code in (_stock_code(raw_code) for raw_code in (selected_codes or []))
+        if code is not None
+    ]
+    return list(dict.fromkeys(_hot_candidate_codes(rows) + selected))
+
+
 def _overlay_close_metrics(row, snapshot):
     if not isinstance(snapshot, dict):
         return
@@ -453,127 +495,116 @@ def _overlay_close_metrics(row, snapshot):
         )
 
 
+def _overlay_quote_latest(row, quote):
+    if not isinstance(quote, dict):
+        return
+    realtime_price = _realtime_abs_number(quote.get("price"))
+    realtime_change_rate = _realtime_number(quote.get("change_rate"))
+    row["realtime_price"] = realtime_price
+    row["realtime_change_rate"] = realtime_change_rate
+    row["realtime_trade_time"] = quote.get("trade_time")
+    row["realtime_strength"] = _realtime_number(
+        quote.get("execution_strength")
+    )
+    row["realtime_acc_volume"] = _realtime_number(
+        quote.get("cumulative_volume")
+    )
+    row["realtime_acc_trade_value"] = _realtime_number(
+        quote.get("cumulative_value")
+    )
+    trade_value_diagnostics = _realtime_acc_trade_value_diagnostics(
+        quote.get("cumulative_value")
+    )
+    row["realtime_acc_trade_value_raw"] = trade_value_diagnostics["raw"]
+    row["realtime_acc_trade_value_million"] = trade_value_diagnostics["million"]
+    row["realtime_acc_trade_value_eok_candidate"] = (
+        trade_value_diagnostics["eok_candidate"]
+    )
+    row["session_strength"] = _realtime_number(quote.get("session_strength"))
+    row["session_buy_qty_live"] = _realtime_number(
+        quote.get("session_buy_qty_live")
+    )
+    row["session_sell_qty_live"] = _realtime_number(
+        quote.get("session_sell_qty_live")
+    )
+    row["session_strength_source"] = quote.get("session_strength_source")
+    for field in (
+        "strength_5m",
+        "strength_20m",
+        "strength_60m",
+        "strength_snapshot_at",
+        "strength_source",
+        "strength_stale_sec",
+        "strength_status",
+    ):
+        if field in quote:
+            row[field] = quote.get(field)
+    realtime_ohlc = quote.get("realtime_ohlc")
+    if realtime_ohlc is not None:
+        row["realtime_ohlc"] = deepcopy(realtime_ohlc)
+        row["realtime_ohlc_source"] = quote.get("realtime_ohlc_source")
+    row["realtime_received_at"] = quote.get("received_at")
+    row["realtime_received_code"] = quote.get("received_code")
+    row["realtime_registered_code"] = quote.get("registered_code")
+    row["realtime_source_code"] = quote.get("realtime_source_code") or quote.get(
+        "source_code"
+    )
+    row["realtime_source"] = "tick"
+    row["realtime_lane"] = "slow_latest"
+    row["realtime_is_stale"] = False
+    if realtime_price is not None:
+        row["price"] = realtime_price
+    if realtime_change_rate is not None:
+        row["change_rate"] = realtime_change_rate
+
+    row["bid_volume"] = _realtime_number(
+        quote.get("bid_volume")
+        if "bid_volume" in quote
+        else quote.get("total_bid_qty")
+    )
+    row["ask_volume"] = _realtime_number(
+        quote.get("ask_volume")
+        if "ask_volume" in quote
+        else quote.get("total_ask_qty")
+    )
+    row["bid_ask_ratio"] = _realtime_number(quote.get("bid_ask_ratio"))
+    row["best_bid_price"] = _realtime_abs_number(quote.get("best_bid"))
+    row["best_ask_price"] = _realtime_abs_number(quote.get("best_ask"))
+    row["orderbook_received_at"] = quote.get("orderbook_received_at")
+    row["orderbook_age_sec"] = _age_seconds(
+        quote.get("orderbook_received_at") or quote.get("received_at")
+    )
+    row["orderbook_source"] = quote.get("orderbook_source")
+    if (
+        quote.get("orderbook_status") is not None
+        or row.get("orderbook_received_at") is not None
+        or row.get("bid_volume") is not None
+        or row.get("ask_volume") is not None
+    ):
+        row["orderbook_status"] = quote.get("orderbook_status") or "ok"
+
+
 def _top100_with_realtime(rows, realtime_store):
     response_rows = [deepcopy(row) for row in rows]
     codes = [row.get("stock_code") for row in response_rows]
     try:
-        snapshot = realtime_store.snapshot_many(codes)
+        snapshot = realtime_store.snapshot_latest_many(codes)
     except Exception as error:
         print(
             f"warning: realtime overlay skipped for /api/top100: {error}",
             file=sys.stderr,
             flush=True,
         )
-        snapshot = {"trade_events": {}, "orderbook_events": {}, "close_metrics": {}}
+        snapshot = {"quotes": {}, "close_metrics": {}}
 
-    trade_events = snapshot.get("trade_events", {})
-    orderbook_events = snapshot.get("orderbook_events", {})
+    quotes = snapshot.get("quotes", {})
     close_metrics = snapshot.get("close_metrics", {})
     for row in response_rows:
         stock_code = row.get("stock_code")
         row["rest_price"] = row.get("price")
         row["rest_change_rate"] = row.get("change_rate")
         _overlay_close_metrics(row, close_metrics.get(stock_code))
-
-        trade_event = _latest_event(trade_events, stock_code)
-        if trade_event is not None:
-            realtime_price = _realtime_abs_number(trade_event.get("price"))
-            realtime_change_rate = _realtime_number(
-                trade_event.get("change_rate")
-            )
-            row["realtime_price"] = realtime_price
-            row["realtime_change_rate"] = realtime_change_rate
-            row["realtime_trade_time"] = trade_event.get("trade_time")
-            row["realtime_strength"] = _realtime_number(
-                trade_event.get("execution_strength")
-            )
-            row["realtime_acc_volume"] = _realtime_number(
-                trade_event.get("cumulative_volume")
-            )
-            row["realtime_acc_trade_value"] = _realtime_number(
-                trade_event.get("cumulative_value")
-            )
-            trade_value_diagnostics = _realtime_acc_trade_value_diagnostics(
-                trade_event.get("cumulative_value")
-            )
-            row["realtime_acc_trade_value_raw"] = trade_value_diagnostics["raw"]
-            row["realtime_acc_trade_value_million"] = trade_value_diagnostics[
-                "million"
-            ]
-            row["realtime_acc_trade_value_eok_candidate"] = (
-                trade_value_diagnostics["eok_candidate"]
-            )
-            row["session_strength"] = _realtime_number(
-                trade_event.get("session_strength")
-            )
-            row["session_buy_qty_live"] = _realtime_number(
-                trade_event.get("session_buy_qty_live")
-            )
-            row["session_sell_qty_live"] = _realtime_number(
-                trade_event.get("session_sell_qty_live")
-            )
-            row["session_strength_source"] = trade_event.get(
-                "session_strength_source"
-            )
-            for field in (
-                "strength_5m",
-                "strength_20m",
-                "strength_60m",
-                "strength_snapshot_at",
-                "strength_source",
-                "strength_stale_sec",
-            ):
-                if field in trade_event:
-                    row[field] = trade_event.get(field)
-            realtime_ohlc = trade_event.get("realtime_ohlc")
-            if realtime_ohlc is not None:
-                row["realtime_ohlc"] = deepcopy(realtime_ohlc)
-                row["realtime_ohlc_source"] = trade_event.get(
-                    "realtime_ohlc_source"
-                )
-            row["realtime_received_at"] = trade_event.get("received_at")
-            row["realtime_received_code"] = trade_event.get("received_code")
-            row["realtime_registered_code"] = trade_event.get("registered_code")
-            row["realtime_source_code"] = trade_event.get(
-                "realtime_source_code"
-            ) or trade_event.get("source_code")
-            row["realtime_source"] = "tick"
-            row["realtime_is_stale"] = False
-            if realtime_price is not None:
-                row["price"] = realtime_price
-            if realtime_change_rate is not None:
-                row["change_rate"] = realtime_change_rate
-
-        orderbook_event = _latest_event(orderbook_events, stock_code)
-        if orderbook_event is not None:
-            row["bid_volume"] = _realtime_number(
-                orderbook_event.get("bid_volume")
-                if "bid_volume" in orderbook_event
-                else orderbook_event.get("total_bid_qty")
-            )
-            row["ask_volume"] = _realtime_number(
-                orderbook_event.get("ask_volume")
-                if "ask_volume" in orderbook_event
-                else orderbook_event.get("total_ask_qty")
-            )
-            row["bid_ask_ratio"] = _realtime_number(
-                orderbook_event.get("bid_ask_ratio")
-            )
-            row["best_bid_price"] = _realtime_abs_number(
-                orderbook_event.get("best_bid")
-            )
-            row["best_ask_price"] = _realtime_abs_number(
-                orderbook_event.get("best_ask")
-            )
-            row["orderbook_received_at"] = orderbook_event.get("received_at")
-            row["orderbook_age_sec"] = _age_seconds(
-                orderbook_event.get("orderbook_received_at")
-                or orderbook_event.get("received_at")
-            )
-            row["orderbook_source"] = (
-                orderbook_event.get("orderbook_source") or "orderbook"
-            )
-            row["orderbook_status"] = "ok"
+        _overlay_quote_latest(row, quotes.get(stock_code))
         if _market_clock_phase() != "regular":
             try:
                 regular_snapshot = realtime_store.ensure_regular_close_snapshot(
@@ -593,16 +624,20 @@ def _realtime_patch_payload(
     since_sequence=None,
     fallback=False,
     fallback_reason=None,
+    stock_codes=None,
+    lane="realtime_patch",
 ):
     mode = "full"
     if fallback or since_sequence is None:
-        snapshot = realtime_store.snapshot_quotes_only()
+        snapshot = realtime_store.snapshot_quotes_only(stock_codes)
     else:
         try:
-            snapshot = realtime_store.snapshot_quotes_since(since_sequence)
+            snapshot = realtime_store.snapshot_quotes_since(
+                since_sequence, stock_codes
+            )
             mode = "delta"
         except Exception as error:
-            snapshot = realtime_store.snapshot_quotes_only()
+            snapshot = realtime_store.snapshot_quotes_only(stock_codes)
             fallback = True
             fallback_reason = str(error) or "delta_failed"
     patches = []
@@ -716,9 +751,11 @@ def _realtime_patch_payload(
         "sequence": snapshot.get("sequence"),
         "updated_at": snapshot.get("updated_at"),
         "mode": mode,
+        "lane": lane,
         "since_sequence": since_sequence,
         "fallback": bool(fallback),
         "fallback_reason": fallback_reason,
+        "requested_codes": list(stock_codes) if stock_codes is not None else None,
         "rows": patches,
     }
 
@@ -763,6 +800,48 @@ def make_handler(
     realtime_provider_registered_count,
     realtime_provider_register_error,
 ):
+    selected_hot_lock = RLock()
+    selected_hot_codes = set(
+        _parse_hot_code_query(
+            {"codes": [os.getenv("STOCKBOARD_HOT_SELECTED_CODES", "")]}
+        )
+    )
+
+    def selected_hot_snapshot():
+        with selected_hot_lock:
+            return sorted(selected_hot_codes)
+
+    def set_selected_hot_codes(codes):
+        normalized_codes = {
+            code
+            for code in (_stock_code(raw_code) for raw_code in (codes or []))
+            if code is not None
+        }
+        with selected_hot_lock:
+            selected_hot_codes.clear()
+            selected_hot_codes.update(normalized_codes)
+            selected = sorted(selected_hot_codes)
+        if realtime_provider is not None and hasattr(
+            realtime_provider, "set_hot_priority_codes"
+        ):
+            try:
+                realtime_provider.set_hot_priority_codes(
+                    _hot_lane_codes(rows, selected)
+                )
+            except Exception as error:
+                print(
+                    f"warning: hot priority update skipped: {error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        return selected
+
+    def current_hot_lane_codes(query_selected=None):
+        selected = selected_hot_snapshot()
+        if query_selected:
+            selected = list(dict.fromkeys(selected + list(query_selected)))
+        return _hot_lane_codes(rows, selected)
+
     class RequestHandler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(DOCS_DIR), **kwargs)
@@ -845,6 +924,55 @@ def make_handler(
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if request_path == "/api/hot_selected":
+                if str(query.get("clear", ["0"])[0]).strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                }:
+                    selected = set_selected_hot_codes([])
+                elif any(
+                    key in query
+                    for key in ("selected", "selected_codes", "hot_codes", "codes", "code")
+                ):
+                    selected = set_selected_hot_codes(
+                        _parse_hot_code_query(query)
+                    )
+                else:
+                    selected = selected_hot_snapshot()
+                response_payload = {
+                    "lane": "hot",
+                    "selected_codes": selected,
+                    "hot_codes": current_hot_lane_codes(selected),
+                    "candidate_codes": _hot_candidate_codes(rows),
+                }
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if request_path == "/api/hot_lane_status":
+                selected = selected_hot_snapshot()
+                response_payload = {
+                    "lane": "hot",
+                    "candidate_limit": HOT_LANE_CANDIDATE_LIMIT,
+                    "candidate_codes": _hot_candidate_codes(rows),
+                    "selected_codes": selected,
+                    "hot_codes": current_hot_lane_codes(),
+                    "slow_lane": "top100_latest_only",
+                }
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if request_path == "/api/realtime_patch":
                 since_sequence = None
                 fallback = False
@@ -864,6 +992,42 @@ def make_handler(
                     fallback=fallback,
                     fallback_reason=fallback_reason,
                 )
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if request_path == "/api/hot_realtime_patch":
+                since_sequence = None
+                fallback = False
+                fallback_reason = None
+                if "since_sequence" in query:
+                    try:
+                        since_sequence = int(query["since_sequence"][0])
+                        if since_sequence < 0:
+                            raise ValueError
+                    except (TypeError, ValueError):
+                        since_sequence = None
+                        fallback = True
+                        fallback_reason = "invalid_since_sequence"
+                query_selected = _parse_hot_code_query(query)
+                hot_codes = current_hot_lane_codes(query_selected)
+                response_payload = _realtime_patch_payload(
+                    realtime_store,
+                    since_sequence=since_sequence,
+                    fallback=fallback,
+                    fallback_reason=fallback_reason,
+                    stock_codes=hot_codes,
+                    lane="hot",
+                )
+                response_payload["hot_codes"] = hot_codes
+                response_payload["selected_codes"] = list(
+                    dict.fromkeys(selected_hot_snapshot() + query_selected)
+                )
+                response_payload["candidate_codes"] = _hot_candidate_codes(rows)
                 body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1260,6 +1424,10 @@ def main():
     realtime_provider_register_error = None
     try:
         realtime_provider = KiwoomOpenApiRealtimeProvider(store=realtime_store)
+        if hasattr(realtime_provider, "set_hot_priority_codes"):
+            realtime_provider.set_hot_priority_codes(
+                _hot_lane_codes(filtered_rows)
+            )
     except Exception as error:
         realtime_provider_error = str(error)
         print(

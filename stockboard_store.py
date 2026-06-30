@@ -842,6 +842,22 @@ class RealtimeStore:
             },
         }
 
+    def _latest_snapshot_for_codes(self, stock_codes):
+        return {
+            "sequence": self._sequence,
+            "updated_at": self._updated_at,
+            "quotes": {
+                code: deepcopy(self._quotes[code])
+                for code in stock_codes
+                if code in self._quotes
+            },
+            "close_metrics": {
+                code: deepcopy(self._close_metric_snapshots[code])
+                for code in stock_codes
+                if code in self._close_metric_snapshots
+            },
+        }
+
     def snapshot(self):
         with self._lock:
             return self._snapshot_for_codes(tuple(self._quotes))
@@ -850,6 +866,11 @@ class RealtimeStore:
         codes = tuple(dict.fromkeys(self._normalized_code(code) for code in stock_codes))
         with self._lock:
             return self._snapshot_for_codes(codes)
+
+    def snapshot_latest_many(self, stock_codes):
+        codes = tuple(dict.fromkeys(self._normalized_code(code) for code in stock_codes))
+        with self._lock:
+            return self._latest_snapshot_for_codes(codes)
 
     def snapshot_quotes_only(self, stock_codes=None):
         if stock_codes is None:
