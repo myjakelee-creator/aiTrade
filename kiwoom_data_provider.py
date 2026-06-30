@@ -1297,6 +1297,11 @@ class KiwoomOpenApiRealtimeProvider:
         self._qt_pump_last_at = None
         self._pending_register_codes = None
         self._pending_unregister = False
+        self._pending_orderbook_hot_refresh = False
+        self._orderbook_hot_refresh_requested_at = None
+        self._orderbook_hot_refresh_completed_at = None
+        self._orderbook_hot_refresh_error = None
+        self._registered_code_order = []
         self._realreg_requested = False
         self._realreg_succeeded = False
         self._realreg_error = None
@@ -1734,21 +1739,30 @@ class KiwoomOpenApiRealtimeProvider:
         return hot_codes, rotate_pool
 
     def set_hot_priority_codes(self, codes):
+        with self._lock:
+            registered_code_to_normalized = dict(
+                self._registered_code_to_normalized
+            )
+        normalized_to_registered = {}
+        for registered, normalized in registered_code_to_normalized.items():
+            normalized_to_registered.setdefault(normalized, registered)
         priority_codes = []
         for code in codes or []:
             normalized_code = _stock_code(code)
             if normalized_code is None:
                 continue
-            register_code = None
-            with self._lock:
-                for registered, normalized in self._registered_code_to_normalized.items():
-                    if normalized == normalized_code:
-                        register_code = registered
-                        break
+            register_code = normalized_to_registered.get(normalized_code)
             priority_codes.append(register_code or f"{normalized_code}_AL")
         priority_codes = list(dict.fromkeys(priority_codes))
         with self._lock:
+            changed = priority_codes != self._hot_priority_codes
             self._hot_priority_codes = priority_codes
+            if changed and self._orderbook_mode != "off":
+                self._pending_orderbook_hot_refresh = True
+                self._orderbook_hot_refresh_requested_at = (
+                    datetime.now().isoformat(timespec="seconds")
+                )
+                self._orderbook_hot_refresh_error = None
         return priority_codes
 
     def _next_orderbook_rotate_batch(self):
@@ -3017,6 +3031,81 @@ class KiwoomOpenApiRealtimeProvider:
     def _process_pending_realtime_requests(self):
         self._process_pending_unregister()
         self._process_pending_register()
+        self._process_pending_orderbook_hot_refresh()
+
+    def _process_pending_orderbook_hot_refresh(self):
+        with self._lock:
+            if not self._pending_orderbook_hot_refresh:
+                return
+            control = self._control
+            login_state = self._login_state
+            registered_codes = list(self._registered_code_order)
+            if not registered_codes:
+                registered_codes = list(self._registered_codes)
+        if self._orderbook_mode == "off":
+            with self._lock:
+                self._pending_orderbook_hot_refresh = False
+                self._orderbook_hot_refresh_error = "disabled_by_env"
+            return
+        if login_state == "requested":
+            return
+        if control is None or login_state != "connected":
+            with self._lock:
+                self._pending_orderbook_hot_refresh = False
+                self._orderbook_hot_refresh_error = (
+                    "QAx control is not available"
+                    if control is None
+                    else f"login_state={login_state}"
+                )
+            return
+        if not registered_codes:
+            with self._lock:
+                self._pending_orderbook_hot_refresh = False
+                self._orderbook_hot_refresh_error = "no_registered_codes"
+            return
+
+        orderbook_hot_codes, orderbook_rotate_pool = self._orderbook_groups(
+            registered_codes
+        )
+        try:
+            self._disconnect_realdata_screen(self._ORDERBOOK_HOT_SCREEN)
+            if orderbook_hot_codes:
+                self._register_orderbook_screen(
+                    self._ORDERBOOK_HOT_SCREEN, orderbook_hot_codes
+                )
+            with self._lock:
+                self._pending_orderbook_hot_refresh = False
+                self._orderbook_hot_refresh_completed_at = (
+                    datetime.now().isoformat(timespec="seconds")
+                )
+                self._orderbook_hot_refresh_error = None
+                self._orderbook_realreg_requested = True
+                self._orderbook_realreg_succeeded = True
+                self._orderbook_realreg_error = None
+                if self._ORDERBOOK_HOT_SCREEN not in self._orderbook_realreg_screens:
+                    self._orderbook_realreg_screens = list(
+                        self._orderbook_realreg_screens
+                    ) + [self._ORDERBOOK_HOT_SCREEN]
+                self._orderbook_realreg_screen_count = len(
+                    self._orderbook_realreg_screens
+                )
+                self._orderbook_realreg_code_count = len(
+                    set(orderbook_hot_codes) | set(self._orderbook_current_rotate_codes)
+                )
+                self._orderbook_hot_codes = list(orderbook_hot_codes)
+                self._orderbook_rotate_pool = list(orderbook_rotate_pool)
+                self._orderbook_last_rotate_at = None
+                self._orderbook_last_rotate_at_text = None
+                self._orderbook_registered_count = len(
+                    set(orderbook_hot_codes) | set(self._orderbook_current_rotate_codes)
+                )
+        except Exception as error:
+            with self._lock:
+                self._pending_orderbook_hot_refresh = False
+                self._orderbook_hot_refresh_error = str(error)
+                self._orderbook_realreg_succeeded = False
+                self._orderbook_realreg_error = str(error)
+                self._last_error = f"orderbook hot refresh failed: {error}"
 
     def _process_pending_unregister(self):
         with self._lock:
@@ -3048,6 +3137,7 @@ class KiwoomOpenApiRealtimeProvider:
             if error_message is None:
                 self._registered_codes.clear()
                 self._registered_code_to_normalized.clear()
+                self._registered_code_order = []
                 self._realreg_succeeded = False
                 self._realreg_screen_count = 0
                 self._realreg_code_count = 0
@@ -3232,6 +3322,7 @@ class KiwoomOpenApiRealtimeProvider:
 
         with self._lock:
             self._registered_codes = set(codes)
+            self._registered_code_order = list(codes)
             self._realreg_succeeded = True
             self._realreg_error = None
             self._realreg_screen_count = len(screens)
@@ -3401,6 +3492,7 @@ class KiwoomOpenApiRealtimeProvider:
         )
         with self._lock:
             self._registered_codes = set(register_codes)
+            self._registered_code_order = list(register_codes)
             self._registered_code_to_normalized = dict(register_to_normalized)
             self._original_registered_codes = dict(original_codes)
             self._pending_register_codes = tuple(register_codes)
@@ -3514,6 +3606,18 @@ class KiwoomOpenApiRealtimeProvider:
                 ),
                 "orderbook_display": self._orderbook_display,
                 "orderbook_registered_count": self._orderbook_registered_count,
+                "orderbook_hot_refresh_pending": (
+                    self._pending_orderbook_hot_refresh
+                ),
+                "orderbook_hot_refresh_requested_at": (
+                    self._orderbook_hot_refresh_requested_at
+                ),
+                "orderbook_hot_refresh_completed_at": (
+                    self._orderbook_hot_refresh_completed_at
+                ),
+                "orderbook_hot_refresh_error": (
+                    self._orderbook_hot_refresh_error
+                ),
                 "orderbook_hot_codes_sample": list(
                     self._orderbook_hot_codes[:20]
                 ),

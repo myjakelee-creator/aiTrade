@@ -970,7 +970,8 @@
   window.addEventListener('pointercancel', finishColumnResize);
   /* JS: constants / state */
   const TOP100_REFRESH_MS = 30000;
-  const REALTIME_PATCH_REFRESH_MS = 500;
+  const HOT_REALTIME_PATCH_REFRESH_MS = 500;
+  const TOP100_POOL_REALTIME_PATCH_REFRESH_MS = 5000;
   const REALTIME_PATCH_DELTA_ENABLED = true;
   const FIVE_MIN_STRENGTH_WINDOW_MS = 5 * 60 * 1000;
   const CLOSE_METRICS_LAZY_BATCH_SIZE = STOCKBOARD_CLOSE_METRICS.batchSize;
@@ -987,7 +988,8 @@
     selectedRow: null,
     selectedStockCode: null,
     fiveMinuteStrengthSamples: new Map(),
-    lastRealtimePatchSequence: null,
+    lastHotRealtimePatchSequence: null,
+    lastTop100RealtimePatchSequence: null,
     boardSort: loadBoardSortState(),
     displayDensity: currentDisplayDensity,
     displayMode: loadDisplayMode(),
@@ -2507,6 +2509,36 @@
     return selectedBoard.querySelector(`tr[data-stock-code="${code}"]`);
   }
 
+  function currentHotRealtimeCodes() {
+    return Array.from(new Set([
+      ...top100State.candidateRows.map(row => row.code),
+      top100State.selectedStockCode
+    ].filter(Boolean)));
+  }
+
+  function buildHotRealtimePatchUrl(options = {}) {
+    const params = new URLSearchParams();
+    const selectedCode = normalizeCode(options.selectedCode || top100State.selectedStockCode);
+    if (selectedCode) params.set('selected', selectedCode);
+    const useDelta = REALTIME_PATCH_DELTA_ENABLED
+      && !options.forceFull
+      && top100State.lastHotRealtimePatchSequence !== null;
+    if (useDelta) {
+      params.set('since_sequence', String(top100State.lastHotRealtimePatchSequence));
+    }
+    const query = params.toString();
+    return query ? `/api/hot_realtime_patch?${query}` : '/api/hot_realtime_patch';
+  }
+
+  function buildTop100PoolRealtimePatchUrl(options = {}) {
+    const useDelta = REALTIME_PATCH_DELTA_ENABLED
+      && !options.forceFull
+      && top100State.lastTop100RealtimePatchSequence !== null;
+    return useDelta
+      ? `/api/realtime_patch?since_sequence=${encodeURIComponent(top100State.lastTop100RealtimePatchSequence)}`
+      : '/api/realtime_patch';
+  }
+
   window.StockBoardSelected = Object.freeze({
     update(code) {
       syncSelectedBoard(normalizeCode(code));
@@ -2514,7 +2546,10 @@
   });
 
   document.addEventListener('stockboard:active-stock-change', event => {
-    window.StockBoardSelected.update(event.detail?.stockCode);
+    const code = normalizeCode(event.detail?.stockCode);
+    window.StockBoardSelected.update(code);
+    notifyHotSelectedCode(code);
+    loadHotRealtimePatch({ forceFull: true, selectedCode: code });
   });
 
   function applyRealtimePatchToRow(tableRow, row, patch) {
@@ -3321,7 +3356,7 @@
       const result = window.StockBoardTop100.update(rows);
       setStatusLamp('kiwoom', 'ok', 'Kiwoom TOP100 데이터 정상');
       markSuccessfulUpdate();
-      loadRealtimePatch({ forceFull: true });
+      loadHotRealtimePatch({ forceFull: true });
       return result;
     })
     .catch(error => {
@@ -3344,7 +3379,7 @@
       const result = window.StockBoardTop100.refresh(rows);
       setStatusLamp('kiwoom', 'ok', 'Kiwoom TOP100 데이터 정상');
       markSuccessfulUpdate();
-      loadRealtimePatch({ forceFull: true });
+      loadHotRealtimePatch({ forceFull: true });
       return result;
     } catch (error) {
       console.warn(error);
@@ -3360,48 +3395,92 @@
 
   window.setInterval(refreshTop100, TOP100_REFRESH_MS);
 
-  let realtimePatchLoading = false;
-  async function loadRealtimePatch(options = {}) {
-    if (realtimePatchLoading || top100State.rowByCode.size === 0) return null;
-    realtimePatchLoading = true;
+  let hotRealtimePatchLoading = false;
+  let top100PoolRealtimePatchLoading = false;
+
+  async function notifyHotSelectedCode(code) {
+    const selectedCode = normalizeCode(code);
+    if (!selectedCode) return null;
     try {
-      const useDelta = REALTIME_PATCH_DELTA_ENABLED
-        && !options.forceFull
-        && top100State.lastRealtimePatchSequence !== null;
-      const patchUrl = useDelta
-        ? `/api/realtime_patch?since_sequence=${encodeURIComponent(top100State.lastRealtimePatchSequence)}`
-        : '/api/realtime_patch';
+      const response = await fetch(`/api/hot_selected?selected=${encodeURIComponent(selectedCode)}`, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`HOT selected update failed: ${response.status}`);
+      return await response.json();
+    } catch (error) {
+      console.warn(error);
+      return null;
+    }
+  }
+
+  function applyHotRealtimePatch(patches) {
+    const renderedRowByCode = new Map(top100State.renderedRows.map(row => [row.code, row]));
+    const candidateRowByCode = new Map(top100State.candidateRows.map(row => [row.code, row]));
+    patches.forEach(patch => {
+      const code = normalizeCode(firstValue(patch, ['stock_code', 'code']));
+      if (!code) return;
+      const candidateTableRow = findCandidateTableRow(code);
+      const candidateRow = candidateRowByCode.get(code);
+      if (candidateTableRow) applyRealtimePatchToRow(candidateTableRow, candidateRow, patch);
+      if (code === top100State.selectedStockCode) {
+        const selectedTableRow = findSelectedTableRow(code);
+        const selectedRow = renderedRowByCode.get(code) || candidateRowByCode.get(code) || top100State.selectedRow;
+        if (selectedTableRow) applyRealtimePatchToRow(selectedTableRow, selectedRow, patch);
+      }
+    });
+  }
+
+  function applyTop100PoolRealtimePatch(patches) {
+    const renderedRowByCode = new Map(top100State.renderedRows.map(row => [row.code, row]));
+    patches.forEach(patch => {
+      const code = normalizeCode(firstValue(patch, ['stock_code', 'code']));
+      if (!code) return;
+      const tableRow = findRenderedTableRow(code);
+      const row = renderedRowByCode.get(code);
+      if (tableRow) applyRealtimePatchToRow(tableRow, row, patch);
+    });
+  }
+
+  async function loadHotRealtimePatch(options = {}) {
+    if (hotRealtimePatchLoading || currentHotRealtimeCodes().length === 0) return null;
+    hotRealtimePatchLoading = true;
+    try {
+      const patchUrl = buildHotRealtimePatchUrl(options);
       const response = await fetch(patchUrl, { cache: 'no-store' });
-      if (!response.ok) throw new Error(`Realtime patch failed: ${response.status}`);
+      if (!response.ok) throw new Error(`HOT realtime patch failed: ${response.status}`);
       const payload = await response.json();
       const patches = Array.isArray(payload.rows) ? payload.rows : [];
       if (Number.isFinite(Number(payload.sequence))) {
-        top100State.lastRealtimePatchSequence = Number(payload.sequence);
+        top100State.lastHotRealtimePatchSequence = Number(payload.sequence);
       }
-      if (!patches.length) return { received: 0, sequence: top100State.lastRealtimePatchSequence };
-      const renderedRowByCode = new Map(top100State.renderedRows.map(row => [row.code, row]));
-      const candidateRowByCode = new Map(top100State.candidateRows.map(row => [row.code, row]));
-      patches.forEach(patch => {
-        const code = normalizeCode(firstValue(patch, ['stock_code', 'code']));
-        if (!code) return;
-        const tableRow = findRenderedTableRow(code);
-        const row = renderedRowByCode.get(code);
-        if (tableRow) applyRealtimePatchToRow(tableRow, row, patch);
-        const candidateTableRow = findCandidateTableRow(code);
-        const candidateRow = candidateRowByCode.get(code);
-        if (candidateTableRow) applyRealtimePatchToRow(candidateTableRow, candidateRow, patch);
-        if (code === top100State.selectedStockCode) {
-          const selectedTableRow = findSelectedTableRow(code);
-          const selectedRow = renderedRowByCode.get(code) || candidateRowByCode.get(code) || top100State.selectedRow;
-          if (selectedTableRow) applyRealtimePatchToRow(selectedTableRow, selectedRow, patch);
-        }
-      });
+      if (!patches.length) return { received: 0, sequence: top100State.lastHotRealtimePatchSequence };
+      applyHotRealtimePatch(patches);
       return { received: patches.length };
     } catch (error) {
       console.warn(error);
       return null;
     } finally {
-      realtimePatchLoading = false;
+      hotRealtimePatchLoading = false;
+    }
+  }
+
+  async function loadTop100PoolRealtimePatch(options = {}) {
+    if (top100PoolRealtimePatchLoading || top100State.rowByCode.size === 0) return null;
+    top100PoolRealtimePatchLoading = true;
+    try {
+      const response = await fetch(buildTop100PoolRealtimePatchUrl(options), { cache: 'no-store' });
+      if (!response.ok) throw new Error(`Top100 pool realtime patch failed: ${response.status}`);
+      const payload = await response.json();
+      const patches = Array.isArray(payload.rows) ? payload.rows : [];
+      if (Number.isFinite(Number(payload.sequence))) {
+        top100State.lastTop100RealtimePatchSequence = Number(payload.sequence);
+      }
+      if (!patches.length) return { received: 0, sequence: top100State.lastTop100RealtimePatchSequence };
+      applyTop100PoolRealtimePatch(patches);
+      return { received: patches.length };
+    } catch (error) {
+      console.warn(error);
+      return null;
+    } finally {
+      top100PoolRealtimePatchLoading = false;
     }
   }
 
@@ -3546,7 +3625,8 @@
   }
 
   startDirectApiDebugPanel();
-  window.setInterval(loadRealtimePatch, REALTIME_PATCH_REFRESH_MS);
+  window.setInterval(loadHotRealtimePatch, HOT_REALTIME_PATCH_REFRESH_MS);
+  window.setInterval(loadTop100PoolRealtimePatch, TOP100_POOL_REALTIME_PATCH_REFRESH_MS);
 </script>
 <script>
 /* JS: selection / clipboard bridge helper */
