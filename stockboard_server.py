@@ -44,6 +44,15 @@ PRICE_LIGHT_MIN_INTERVAL_SEC = float(
 PRICE_LIGHT_MAX_CONSECUTIVE_SKIPS = int(
     os.getenv("STOCKBOARD_PRICE_LIGHT_MAX_CONSECUTIVE_SKIPS", "3")
 )
+CANDIDATE_SAFE_PRICE_MAX_AGE_SEC = float(
+    os.getenv("STOCKBOARD_CANDIDATE_SAFE_PRICE_MAX_AGE_SEC", "5.0")
+)
+CANDIDATE_SAFE_ORDERBOOK_MAX_AGE_SEC = float(
+    os.getenv("STOCKBOARD_CANDIDATE_SAFE_ORDERBOOK_MAX_AGE_SEC", "15.0")
+)
+CANDIDATE_SAFE_BACKOFF_MS = int(
+    os.getenv("STOCKBOARD_CANDIDATE_SAFE_BACKOFF_MS", "1000")
+)
 
 
 def _listening_pids(host, port):
@@ -768,6 +777,96 @@ def _price_light_patch_payload(
     }
 
 
+def _price_light_candidate_rows(rows, price_light_snapshot):
+    quotes = price_light_snapshot.get("quotes", {})
+    response_rows = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        stock_code = _stock_code(row.get("stock_code"))
+        if stock_code is None:
+            continue
+        quote = quotes.get(stock_code)
+        if not isinstance(quote, dict):
+            continue
+        preview_row = deepcopy(row)
+        price = _realtime_abs_number(quote.get("price"))
+        change_rate = _realtime_number(quote.get("change_rate"))
+        preview_row["rest_price"] = preview_row.get("price")
+        preview_row["rest_change_rate"] = preview_row.get("change_rate")
+        preview_row["price"] = price
+        preview_row["change_rate"] = change_rate
+        preview_row["realtime_price"] = price
+        preview_row["realtime_change_rate"] = change_rate
+        preview_row["price_received_at"] = quote.get("price_received_at")
+        preview_row["price_updated_at"] = quote.get("price_updated_at")
+        preview_row["price_sequence"] = quote.get("price_sequence")
+        preview_row["received_code"] = quote.get("received_code")
+        preview_row["normalized_code"] = quote.get("normalized_code")
+        preview_row["registered_code"] = quote.get("registered_code")
+        preview_row["original_registered_code"] = quote.get(
+            "original_registered_code"
+        )
+        preview_row["realtime_source_code"] = quote.get("realtime_source_code")
+        preview_row["source_code"] = quote.get("source_code")
+        preview_row["bid_volume"] = _realtime_number(quote.get("bid_volume"))
+        preview_row["ask_volume"] = _realtime_number(quote.get("ask_volume"))
+        preview_row["bid_ask_ratio"] = _realtime_number(
+            quote.get("bid_ask_ratio")
+        )
+        preview_row["orderbook_received_at"] = quote.get("orderbook_received_at")
+        preview_row["orderbook_updated_at"] = quote.get("orderbook_updated_at")
+        preview_row["orderbook_sequence"] = quote.get("orderbook_sequence")
+        preview_row["orderbook_source"] = quote.get("orderbook_source")
+        preview_row["candidate_lane"] = "safe_price_light_preview"
+        _apply_freshness_fields(preview_row)
+        response_rows.append(preview_row)
+    return response_rows
+
+
+def _candidate_rows_only(rows, limit=HOT_LANE_CANDIDATE_LIMIT):
+    candidate_rows = [
+        row for row in rows if isinstance(row.get("candidate_rank"), int)
+    ]
+    candidate_rows.sort(key=lambda row: row.get("candidate_rank"))
+    return candidate_rows[:limit]
+
+
+def _candidate_safe_lane_payload(
+    rows,
+    price_light_snapshot,
+    hot_codes,
+    gate,
+    limit=HOT_LANE_CANDIDATE_LIMIT,
+):
+    candidate_rows = []
+    if gate["allowed"]:
+        preview_rows = _price_light_candidate_rows(rows, price_light_snapshot)
+        candidate_rows = _candidate_rows_only(
+            enrich_candidate_fields(preview_rows), limit=limit
+        )
+    return {
+        "lane": "candidate_safe_ranking",
+        "purpose": "preview_diagnostic",
+        "source": "store_price_light_snapshot",
+        "candidate_limit": limit,
+        "sequence": price_light_snapshot.get("sequence"),
+        "price_sequence": price_light_snapshot.get("price_sequence"),
+        "updated_at": price_light_snapshot.get("updated_at"),
+        "skipped": not gate["allowed"],
+        "skip_reason": gate["skip_reason"],
+        "retry_after_ms": gate["retry_after_ms"],
+        "gate": gate,
+        "hot_codes": list(hot_codes),
+        "candidate_codes": [
+            row.get("stock_code")
+            for row in candidate_rows
+            if _stock_code(row.get("stock_code")) is not None
+        ],
+        "rows": candidate_rows,
+    }
+
+
 def _realtime_patch_payload(
     realtime_store,
     since_sequence=None,
@@ -1102,6 +1201,97 @@ def make_handler(
             "hot_last_served_price_sequence": last_hot_sequence,
         }
 
+    def candidate_safe_gate(hot_codes, price_light_snapshot):
+        with price_light_lock:
+            last_hot_sequence = hot_lane_last_served_price_sequence
+        hot_quotes = price_light_snapshot.get("quotes", {})
+        hot_diagnostics = []
+        bad_reasons = []
+        max_price_age = max(0.0, CANDIDATE_SAFE_PRICE_MAX_AGE_SEC)
+        max_orderbook_age = max(0.0, CANDIDATE_SAFE_ORDERBOOK_MAX_AGE_SEC)
+        hot_price_sequence = 0
+        for stock_code in hot_codes:
+            quote = hot_quotes.get(stock_code)
+            if not isinstance(quote, dict):
+                hot_diagnostics.append(
+                    {
+                        "stock_code": stock_code,
+                        "price_age_sec": None,
+                        "orderbook_age_sec": None,
+                        "status": "missing_price_light_quote",
+                    }
+                )
+                bad_reasons.append("hot_price_light_missing")
+                continue
+            price_age_sec = _age_seconds(
+                quote.get("price_received_at") or quote.get("received_at")
+            )
+            orderbook_age_sec = _age_seconds(
+                quote.get("orderbook_received_at")
+            )
+            try:
+                hot_price_sequence = max(
+                    hot_price_sequence, int(quote.get("price_sequence") or 0)
+                )
+            except (TypeError, ValueError):
+                pass
+            status = "ok"
+            if price_age_sec is None or price_age_sec > max_price_age:
+                status = "bad_price_age"
+                bad_reasons.append("hot_price_age_bad")
+            if orderbook_age_sec is None or orderbook_age_sec > max_orderbook_age:
+                status = (
+                    "bad_orderbook_age" if status == "ok" else f"{status}+orderbook"
+                )
+                bad_reasons.append("hot_orderbook_age_bad")
+            hot_diagnostics.append(
+                {
+                    "stock_code": stock_code,
+                    "price_age_sec": price_age_sec,
+                    "orderbook_age_sec": orderbook_age_sec,
+                    "price_sequence": quote.get("price_sequence"),
+                    "orderbook_sequence": quote.get("orderbook_sequence"),
+                    "orderbook_source": quote.get("orderbook_source"),
+                    "realtime_source_code": quote.get("realtime_source_code"),
+                    "status": status,
+                }
+            )
+        hot_patch_pending = (
+            last_hot_sequence > 0 and hot_price_sequence > last_hot_sequence
+        )
+        provider_hot_refresh_pending = False
+        provider_hot_refresh_error = None
+        if realtime_provider is not None:
+            try:
+                provider_status = realtime_provider.status()
+                provider_hot_refresh_pending = bool(
+                    provider_status.get("orderbook_hot_refresh_pending")
+                )
+                provider_hot_refresh_error = provider_status.get(
+                    "orderbook_hot_refresh_error"
+                )
+            except Exception as error:
+                provider_hot_refresh_error = str(error)
+        if hot_patch_pending:
+            bad_reasons.append("hot_patch_pending")
+        if provider_hot_refresh_pending:
+            bad_reasons.append("hot_orderbook_refresh_pending")
+        skip_reason = next(iter(dict.fromkeys(bad_reasons)), None)
+        allowed = skip_reason is None
+        return {
+            "allowed": allowed,
+            "skip_reason": skip_reason,
+            "retry_after_ms": None if allowed else max(1, CANDIDATE_SAFE_BACKOFF_MS),
+            "max_price_age_sec": max_price_age,
+            "max_orderbook_age_sec": max_orderbook_age,
+            "hot_price_sequence": hot_price_sequence,
+            "hot_last_served_price_sequence": last_hot_sequence,
+            "hot_patch_pending": hot_patch_pending,
+            "orderbook_hot_refresh_pending": provider_hot_refresh_pending,
+            "orderbook_hot_refresh_error": provider_hot_refresh_error,
+            "hot_diagnostics": hot_diagnostics,
+        }
+
     def note_price_light_served():
         nonlocal price_light_last_served_at
         with price_light_lock:
@@ -1249,7 +1439,63 @@ def make_handler(
                             last_hot_price_sequence
                         ),
                     },
+                    "candidate_safe_ranking_lane": {
+                        "lane": "candidate_safe_ranking",
+                        "purpose": "preview_diagnostic",
+                        "source": "store_price_light_snapshot",
+                        "price_max_age_sec": CANDIDATE_SAFE_PRICE_MAX_AGE_SEC,
+                        "orderbook_max_age_sec": (
+                            CANDIDATE_SAFE_ORDERBOOK_MAX_AGE_SEC
+                        ),
+                        "backoff_ms": CANDIDATE_SAFE_BACKOFF_MS,
+                        "commits_to_top100": False,
+                    },
                 }
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if request_path in (
+                "/api/candidate_safe_ranking",
+                "/api/candidate_preview",
+            ):
+                query_selected = _parse_hot_code_query(query)
+                hot_codes = current_hot_lane_codes(query_selected)
+                stock_codes = list(dict.fromkeys(_price_light_codes(rows) + hot_codes))
+                try:
+                    price_light_snapshot = realtime_store.snapshot_price_light(
+                        stock_codes
+                    )
+                except Exception as error:
+                    price_light_snapshot = {
+                        "sequence": None,
+                        "price_sequence": None,
+                        "updated_at": None,
+                        "quotes": {},
+                    }
+                    gate = {
+                        "allowed": False,
+                        "skip_reason": "price_light_snapshot_error",
+                        "retry_after_ms": max(1, CANDIDATE_SAFE_BACKOFF_MS),
+                        "error": str(error),
+                        "hot_diagnostics": [],
+                    }
+                else:
+                    gate = candidate_safe_gate(hot_codes, price_light_snapshot)
+                response_payload = _candidate_safe_lane_payload(
+                    rows,
+                    price_light_snapshot,
+                    hot_codes,
+                    gate,
+                )
+                response_payload["selected_codes"] = list(
+                    dict.fromkeys(selected_hot_snapshot() + query_selected)
+                )
+                response_payload["requested_codes"] = stock_codes
                 body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
