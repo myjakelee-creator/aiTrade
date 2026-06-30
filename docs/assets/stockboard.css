@@ -93,19 +93,19 @@
   .enhanced-board td:nth-child(3){text-align:center;vertical-align:middle}
   .note{text-align:left!important;font-size:12px;min-width:0}
   .note .momentum{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  #trading-board,#candidate-board{table-layout:fixed;min-width:0}
-  #trading-board th,#candidate-board th{position:relative;overflow:visible}
-  #trading-board .column-label,#candidate-board .column-label{display:block;overflow:hidden;text-overflow:ellipsis}
-  #trading-board .column-resizer,#candidate-board .column-resizer{position:absolute;top:0;right:-4px;width:8px;height:100%;z-index:5;cursor:col-resize;touch-action:none;user-select:none}
-  #trading-board .metric,#candidate-board .metric{min-width:0}
-  #trading-board .note,#candidate-board .note{min-width:0}
+  #trading-board,#candidate-board,#selected-board{table-layout:fixed;min-width:0}
+  #trading-board th,#candidate-board th,#selected-board th{position:relative;overflow:visible}
+  #trading-board .column-label,#candidate-board .column-label,#selected-board .column-label{display:block;overflow:hidden;text-overflow:ellipsis}
+  #trading-board .column-resizer,#candidate-board .column-resizer,#selected-board .column-resizer{position:absolute;top:0;right:-4px;width:8px;height:100%;z-index:5;cursor:col-resize;touch-action:none;user-select:none}
+  #trading-board .metric,#candidate-board .metric,#selected-board .metric{min-width:0}
+  #trading-board .note,#candidate-board .note,#selected-board .note{min-width:0}
   #trading-board .rank-cell{text-align:center}
   #trading-board .stock-name{text-align:left}
   #trading-board .number-cell{text-align:right;font-variant-numeric:tabular-nums}
   #trading-board th[data-sort-key]{cursor:pointer}
   #trading-board th.sorted{background:#dbe7f3}
   #trading-board .sort-indicator{display:inline-block;min-width:12px;margin-left:3px;color:#1266d6;font-size:11px}
-  #trading-board td.realtime-flash,#candidate-board td.realtime-flash{background:#fff3b0;transition:background-color .18s ease}
+  #trading-board td.realtime-flash,#candidate-board td.realtime-flash,#selected-board td.realtime-flash{background:#fff3b0;transition:background-color .18s ease}
   .enhanced-board .flow-number{text-align:right;font-variant-numeric:tabular-nums}
   .flow-zero{color:#7f8c8d}
   body.column-resizing{cursor:col-resize;user-select:none}
@@ -145,9 +145,10 @@
   .balance-tooltip{position:fixed;z-index:10000;display:none;max-width:260px;padding:7px 9px;border:1px solid rgba(148,163,184,.8);border-radius:3px;background:#fff;color:#111827;font-size:12px;font-weight:400;line-height:1.45;white-space:pre-line;box-shadow:0 6px 18px rgba(15,23,42,.18);pointer-events:none}
   .ohlc-tooltip{position:fixed;z-index:10000;display:none;max-width:280px;padding:7px 9px;border:1px solid rgba(148,163,184,.8);border-radius:3px;background:#fff;color:#111827;font-size:12px;font-weight:400;line-height:1.45;white-space:pre-line;box-shadow:0 6px 18px rgba(15,23,42,.18);pointer-events:none}
   .balance-tooltip.visible,.ohlc-tooltip.visible{display:block}
-  #candidate-board .stock-name{text-align:left}
-  #candidate-board td:nth-child(5),#candidate-board td:nth-child(6),#candidate-board td:nth-child(7){text-align:right;font-variant-numeric:tabular-nums}
-  #candidate-board .note{min-width:0}
+  #candidate-board .stock-name,#selected-board .stock-name{text-align:left}
+  #candidate-board td:nth-child(5),#candidate-board td:nth-child(6),#candidate-board td:nth-child(7),
+  #selected-board td:nth-child(5),#selected-board td:nth-child(6),#selected-board td:nth-child(7){text-align:right;font-variant-numeric:tabular-nums}
+  #candidate-board .note,#selected-board .note{min-width:0}
   .active-stock-row {
     outline: 1px solid rgba(255, 214, 102, 0.95);
     outline-offset: -1px;

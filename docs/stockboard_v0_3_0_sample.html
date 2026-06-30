@@ -65,15 +65,21 @@
   </div>
 
   <!-- HTML: candidate board -->
-  <div class="section sec-orange">▶ 유력 후보 상위 5종목</div>
+  <div class="section sec-orange">▶ HOT5 유력 후보 5종목</div>
   <table class="grid board enhanced-board" id="candidate-board">
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>5분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
   </table>
 
-  <!-- HTML: trading board -->
-  <div class="section sec-blue">▶ 거래대금 상위 종목 <span id="ranking-row-count">0개</span></div>
-  <table class="grid board enhanced-board" id="trading-board">
+  <!-- HTML: selected stock board -->
+  <div class="section sec-orange">▶ Selected 1종목</div>
+  <table class="grid board enhanced-board" id="selected-board">
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>5분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
+  </table>
+
+  <!-- HTML: trading board -->
+  <div class="section sec-blue">▶ Top100 Pool <span id="ranking-row-count">0개</span></div>
+  <table class="grid board enhanced-board" id="trading-board">
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th></tr>
   </table>
 </div>
 <script src="assets/stockboard_format.js?v=5f_format_split_20260627"></script>
@@ -169,6 +175,7 @@
 
   const board = document.getElementById('trading-board');
   const candidateBoard = document.getElementById('candidate-board');
+  const selectedBoard = document.getElementById('selected-board');
   const densityToggle = document.getElementById('density-toggle');
   const displayModeToggle = document.getElementById('display-mode-toggle');
   const nextScrollButton = document.getElementById('next-scroll');
@@ -735,6 +742,8 @@
     { label: '큰손', defaultWidth: 56, minWidth: 48, sortKey: 'bigHand', sortDefault: 'desc' },
     { label: '모멘텀', defaultWidth: 90, minWidth: 70, sortKey: 'note', sortDefault: 'asc' }
   ];
+  const top100PoolColumnIndexes = [0, 1, 2, 3, 4, 5, 6];
+  const top100PoolColumns = top100PoolColumnIndexes.map(index => boardColumns[index]);
   const boardSortDefaults = Object.fromEntries(
     boardColumns
       .filter(column => column.sortKey)
@@ -824,25 +833,35 @@
   let boardColumnWidths = boardColumns.map((column, index) =>
     boardColumnManualWidths[index] ?? boardColumnDefaultWidth(index)
   );
-  const columnGroupMarkup = `<colgroup>${boardColumns.map((column, index) =>
-    `<col style="width:var(--trading-column-${index}-width)">`).join('')}</colgroup>`;
-  function buildBoardHeader() {
-    return `${columnGroupMarkup}<tr>${boardColumns.map((column, index) =>
+  function buildColumnGroupMarkup(columns) {
+    return `<colgroup>${columns.map((column, index) =>
+      `<col style="width:var(--trading-column-${index}-width)">`).join('')}</colgroup>`;
+  }
+  function buildBoardHeader(columns = boardColumns) {
+    return `${buildColumnGroupMarkup(columns)}<tr>${columns.map((column, index) =>
       `<th${column.sortKey ? ` data-sort-key="${column.sortKey}"` : ''}><span class="column-label">${column.label}${column.sortKey ? '<span class="sort-indicator"></span>' : ''}</span><span class="column-resizer" data-column-index="${index}" aria-hidden="true"></span></th>`).join('')}</tr>`;
   }
   let boardHeader = buildBoardHeader();
-  board.innerHTML = `${boardHeader}<tr><td colspan="15">거래 가능 종목 마스터를 불러오는 중입니다.</td></tr>`;
+  let top100PoolHeader = buildBoardHeader(top100PoolColumns);
+  board.innerHTML = `${top100PoolHeader}<tr><td colspan="7">거래 가능 종목 마스터를 불러오는 중입니다.</td></tr>`;
   candidateBoard.innerHTML = boardHeader;
+  selectedBoard.innerHTML = `${boardHeader}<tr><td colspan="15">선택된 종목이 없습니다.</td></tr>`;
 
   function applyColumnWidths() {
-    const tables = [board, candidateBoard];
     const totalWidth = boardColumnWidths.reduce((total, width) => total + width, 0);
-    tables.forEach(table => {
+    const poolWidth = top100PoolColumnIndexes.reduce((total, columnIndex) =>
+      total + (boardColumnWidths[columnIndex] || 0), 0
+    );
+    [candidateBoard, selectedBoard].forEach(table => {
       boardColumnWidths.forEach((width, index) => {
         table.style.setProperty(`--trading-column-${index}-width`, `${width}px`);
       });
       table.style.width = `${totalWidth}px`;
     });
+    top100PoolColumnIndexes.forEach((columnIndex, poolIndex) => {
+      board.style.setProperty(`--trading-column-${poolIndex}-width`, `${boardColumnWidths[columnIndex]}px`);
+    });
+    board.style.width = `${poolWidth}px`;
     marketOverview.style.width = `${totalWidth}px`;
   }
 
@@ -909,7 +928,7 @@
     event.stopPropagation();
   }
 
-  [board, candidateBoard].forEach(table => {
+  [board, candidateBoard, selectedBoard].forEach(table => {
     table.addEventListener('pointerdown', startColumnResize);
     table.addEventListener('dblclick', restoreColumnWidth);
   });
@@ -925,10 +944,18 @@
     boardColumnManualWidths[columnIndex] = width;
     boardColumnWidths[columnIndex] = width;
     const totalWidth = boardColumnWidths.reduce((total, value) => total + value, 0);
-    [board, candidateBoard].forEach(table => {
+    const poolWidth = top100PoolColumnIndexes.reduce((total, value) =>
+      total + (boardColumnWidths[value] || 0), 0
+    );
+    [candidateBoard, selectedBoard].forEach(table => {
       table.style.setProperty(`--trading-column-${columnIndex}-width`, `${width}px`);
       table.style.width = `${totalWidth}px`;
     });
+    const poolIndex = top100PoolColumnIndexes.indexOf(columnIndex);
+    if (poolIndex >= 0) {
+      board.style.setProperty(`--trading-column-${poolIndex}-width`, `${width}px`);
+      board.style.width = `${poolWidth}px`;
+    }
     marketOverview.style.width = `${totalWidth}px`;
   });
 
@@ -957,6 +984,8 @@
     apiError: null,
     renderedRows: [],
     candidateRows: [],
+    selectedRow: null,
+    selectedStockCode: null,
     fiveMinuteStrengthSamples: new Map(),
     lastRealtimePatchSequence: null,
     boardSort: loadBoardSortState(),
@@ -2089,10 +2118,11 @@
 
   function showBoardMessage(message) {
     top100State.rowByCode.clear();
-    board.innerHTML = `${boardHeader}<tr><td colspan="15">${escapeHtml(message)}</td></tr>`;
+    board.innerHTML = `${top100PoolHeader}<tr><td colspan="7">${escapeHtml(message)}</td></tr>`;
   }
 
   function setCell(cell, html, className = '', title = '', flashOnChange = false) {
+    if (!cell) return;
     const changed = cell.dataset.renderedHtml !== html;
     if (changed) {
       cell.innerHTML = html;
@@ -2107,6 +2137,7 @@
 
   /* JS: render functions */
   function setVisualCell(cell, view, className, tooltipKind = 'balance') {
+    if (!cell) return;
     const html = view?.html ?? '';
     const tooltip = view?.tooltip || '';
     setCell(cell, html, className, '');
@@ -2414,8 +2445,52 @@
     return tableRow;
   }
 
+  function updateTop100PoolRow(tableRow, row, flashRealtime = false) {
+    const grade = row.grade === '-' ? '-' : `<span class="grade ${row.gradeClass}">${escapeHtml(row.grade)}</span>`;
+    const cells = tableRow.cells;
+    setCell(cells[0], escapeHtml(row.rank), 'rank-cell', row.rankCellTooltip);
+    setCell(cells[1], escapeHtml(row.previousRank), classNames('rank-cell', row.rankMovementClass), row.rankTooltip);
+    setCell(cells[2], grade, '', row.candidateGradeTooltip || '');
+    setCell(cells[3], escapeHtml(row.name), 'stock-name', `종목코드: ${row.code}`);
+    setCell(cells[4], escapeHtml(row.price), 'number-cell', '', flashRealtime);
+    setCell(cells[5], escapeHtml(row.changeRate), classNames('number-cell', row.changeClass), '', flashRealtime);
+    setCell(cells[6], escapeHtml(row.amount), 'number-cell');
+  }
+
+  function createTop100PoolRow(row) {
+    const tableRow = document.createElement('tr');
+    tableRow.dataset.stockCode = row.code;
+    tableRow.dataset.hasOhlc = hasDisplayOhlc(row) ? 'true' : 'false';
+    for (let index = 0; index < top100PoolColumns.length; index += 1) tableRow.insertCell();
+    updateTop100PoolRow(tableRow, row);
+    return tableRow;
+  }
+
   function updateCandidateRow(tableRow, row) {
     updateBoardRow(tableRow, row);
+  }
+
+  function renderSelectedBoardRow(row) {
+    top100State.selectedRow = row || null;
+    selectedBoard.innerHTML = boardHeader;
+    if (!row) {
+      selectedBoard.tBodies[0].innerHTML = '<tr><td colspan="15">선택된 종목이 없습니다.</td></tr>';
+      return;
+    }
+    const tableRow = createBoardRow(row);
+    selectedBoard.tBodies[0].appendChild(tableRow);
+  }
+
+  function findRowForSelectedCode(code) {
+    if (!code) return null;
+    return top100State.renderedRows.find(row => row.code === code)
+      || top100State.candidateRows.find(row => row.code === code)
+      || null;
+  }
+
+  function syncSelectedBoard(code = top100State.selectedStockCode) {
+    top100State.selectedStockCode = code || top100State.selectedStockCode || null;
+    renderSelectedBoardRow(findRowForSelectedCode(top100State.selectedStockCode));
   }
 
   function findRenderedTableRow(code) {
@@ -2427,6 +2502,20 @@
     return top100State.candidateRowByCode.get(code)
       || candidateBoard.querySelector(`tr[data-stock-code="${code}"]`);
   }
+
+  function findSelectedTableRow(code) {
+    return selectedBoard.querySelector(`tr[data-stock-code="${code}"]`);
+  }
+
+  window.StockBoardSelected = Object.freeze({
+    update(code) {
+      syncSelectedBoard(normalizeCode(code));
+    }
+  });
+
+  document.addEventListener('stockboard:active-stock-change', event => {
+    window.StockBoardSelected.update(event.detail?.stockCode);
+  });
 
   function applyRealtimePatchToRow(tableRow, row, patch) {
     const patchPriceSource = firstValue(patch, ['price_source', 'priceSource']);
@@ -2816,6 +2905,10 @@
     });
   }
 
+  function renderedOhlcCount() {
+    return document.querySelectorAll('#candidate-board .ohlc-chart,#selected-board .ohlc-chart').length;
+  }
+
   function updateVisibleCandleCells() {
     top100State.renderedRows.forEach(row => {
       const tableRow = top100State.rowByCode.get(row.code);
@@ -2825,7 +2918,14 @@
       }
     });
     updateCandidateCandleCells();
-    top100State.diagnostics.domOhlc = board.querySelectorAll('.ohlc-chart').length;
+    if (top100State.selectedRow) {
+      const selectedTableRow = findSelectedTableRow(top100State.selectedRow.code);
+      if (selectedTableRow) {
+        setVisualCell(selectedTableRow.cells[7], ohlcCellView(top100State.selectedRow), 'ohlc-cell visual-cell', 'ohlc');
+        refreshOhlcTooltip(selectedTableRow.cells[7]);
+      }
+    }
+    top100State.diagnostics.domOhlc = renderedOhlcCount();
     top100State.diagnostics.renderedOhlc = top100State.diagnostics.domOhlc;
     updateDataDiagnostics();
   }
@@ -2838,11 +2938,12 @@
 
   function handleCandleCellClick(event) {
     const cell = event.target?.closest?.('td.ohlc-cell');
-    if (!cell || !cell.closest('#candidate-board,#trading-board')) return;
+    if (!cell || !cell.closest('#candidate-board,#selected-board,#trading-board')) return;
     toggleCandleMode();
   }
 
   candidateBoard.addEventListener('click', handleCandleCellClick);
+  selectedBoard.addEventListener('click', handleCandleCellClick);
   board.addEventListener('click', handleCandleCellClick);
 
   function updateBoardSortIndicators() {
@@ -2909,6 +3010,7 @@
     if (boardColumns[11].label !== foreignLabel) {
       boardColumns[11].label = foreignLabel;
       boardHeader = buildBoardHeader();
+      top100PoolHeader = buildBoardHeader(top100PoolColumns);
     }
     rankingRowCount.textContent = `${rows.length}개`;
     updateGradeDistribution(rows);
@@ -2917,6 +3019,7 @@
     top100State.diagnostics.renderOhlc = rows.filter(hasDisplayOhlc).length;
     top100State.candleDomain = candleDomain(rows);
     renderCandidateBoard(rows);
+    syncSelectedBoard();
     if (!rows.length) {
       showBoardMessage('표시할 거래대금 순위 종목이 없습니다.');
       updateBoardSortIndicators();
@@ -2927,14 +3030,14 @@
     }
 
     top100State.rowByCode.clear();
-    board.innerHTML = boardHeader;
+    board.innerHTML = top100PoolHeader;
     displayRows.forEach(row => {
-      const tableRow = createBoardRow(row);
+      const tableRow = createTop100PoolRow(row);
       board.tBodies[0].appendChild(tableRow);
       top100State.rowByCode.set(row.code, tableRow);
     });
     updateBoardSortIndicators();
-    top100State.diagnostics.domOhlc = board.querySelectorAll('.ohlc-chart').length;
+    top100State.diagnostics.domOhlc = renderedOhlcCount();
     top100State.diagnostics.renderedOhlc = top100State.diagnostics.domOhlc;
     updateDataDiagnostics();
   }
@@ -3149,7 +3252,7 @@
           return;
         }
         tableRow.dataset.hasOhlc = hasOhlc(row) ? 'true' : 'false';
-        updateBoardRow(tableRow, row, true);
+        updateTop100PoolRow(tableRow, row, true);
         updatedCount += 1;
       });
 
@@ -3161,8 +3264,9 @@
         tableRow.dataset.hasOhlc = hasOhlc(row) ? 'true' : 'false';
         updateBoardRow(tableRow, row, true);
       });
+      syncSelectedBoard(top100State.selectedStockCode);
 
-      top100State.diagnostics.domOhlc = board.querySelectorAll('.ohlc-chart').length;
+      top100State.diagnostics.domOhlc = renderedOhlcCount();
       top100State.diagnostics.renderedOhlc = top100State.diagnostics.domOhlc;
       updateDataDiagnostics();
       if (missingCount) console.warn(`TOP100 refresh skipped ${missingCount} missing rows`);
@@ -3178,7 +3282,7 @@
       return {
         ...top100State.diagnostics,
         renderedCount: top100State.rowByCode.size,
-        renderedCandleCount: board.querySelectorAll('.ohlc-chart').length
+        renderedCandleCount: renderedOhlcCount()
       };
     }
   });
@@ -3286,6 +3390,11 @@
         const candidateTableRow = findCandidateTableRow(code);
         const candidateRow = candidateRowByCode.get(code);
         if (candidateTableRow) applyRealtimePatchToRow(candidateTableRow, candidateRow, patch);
+        if (code === top100State.selectedStockCode) {
+          const selectedTableRow = findSelectedTableRow(code);
+          const selectedRow = renderedRowByCode.get(code) || candidateRowByCode.get(code) || top100State.selectedRow;
+          if (selectedTableRow) applyRealtimePatchToRow(selectedTableRow, selectedRow, patch);
+        }
       });
       return { received: patches.length };
     } catch (error) {
@@ -3613,6 +3722,9 @@
     }
     activeStockCode = normalizedCode;
     applyActiveStockClass({ silentMissing: true });
+    document.dispatchEvent(new CustomEvent('stockboard:active-stock-change', {
+      detail: { stockCode: activeStockCode }
+    }));
     if (options.scroll) {
       const row = getMainTableRows().find((candidate) => findStockCodeFromElement(candidate) === activeStockCode)
         || getStockRows().find((candidate) => findStockCodeFromElement(candidate) === activeStockCode);
