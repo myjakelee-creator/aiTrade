@@ -1385,6 +1385,16 @@ class KiwoomOpenApiRealtimeProvider:
         self._unregister_succeeded = False
         self._unregister_error = None
         self._price_fast_mode = _env_bool("STOCKBOARD_PRICE_FAST_MODE", False)
+        self._price_light_lane_enabled = _env_bool(
+            "STOCKBOARD_PRICE_LIGHT_LANE_ENABLED", True
+        )
+        self._price_light_top_limit = max(
+            0, _env_int("STOCKBOARD_PRICE_LIGHT_TOP_LIMIT", 100)
+        )
+        self._price_light_min_interval_sec = max(
+            0.0,
+            float(os.getenv("STOCKBOARD_PRICE_LIGHT_MIN_INTERVAL_SEC", "0.25")),
+        )
         self._realtime_code_limit = max(
             0, _env_int("STOCKBOARD_REALTIME_CODE_LIMIT", 0)
         )
@@ -3592,6 +3602,13 @@ class KiwoomOpenApiRealtimeProvider:
                 "registered_count": len(self._registered_codes),
                 "display_mode": self._display_mode,
                 "price_fast_mode": self._price_fast_mode,
+                "price_light_lane_enabled": self._price_light_lane_enabled,
+                "price_light_lane_priority": "below_hot",
+                "price_light_lane_fids": "10;12",
+                "price_light_top_limit": self._price_light_top_limit,
+                "price_light_min_interval_sec": (
+                    self._price_light_min_interval_sec
+                ),
                 "realtime_code_limit": self._realtime_code_limit,
                 "orderbook_realtime_enabled": self._orderbook_realtime_enabled,
                 "orderbook_mode": self._orderbook_mode,

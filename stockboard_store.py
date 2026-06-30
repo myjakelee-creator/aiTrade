@@ -990,6 +990,73 @@ class RealtimeStore:
                 },
             }
 
+    def snapshot_price_light(self, stock_codes=None, since_price_sequence=None):
+        if since_price_sequence is not None:
+            since_price_sequence = int(since_price_sequence)
+            if since_price_sequence < 0:
+                raise ValueError("since_price_sequence must be non-negative")
+        if stock_codes is None:
+            with self._lock:
+                codes = tuple(self._quotes)
+        else:
+            codes = tuple(
+                dict.fromkeys(self._normalized_code(code) for code in stock_codes)
+            )
+        with self._lock:
+            if since_price_sequence is not None and since_price_sequence > self._sequence:
+                raise ValueError("price_sequence_ahead")
+            quotes = {}
+            max_price_sequence = 0
+            updated_at = None
+            for code in codes:
+                quote = self._quotes.get(code)
+                if not quote:
+                    continue
+                price_sequence = quote.get("price_sequence") or 0
+                try:
+                    price_sequence = int(price_sequence)
+                except (TypeError, ValueError):
+                    price_sequence = 0
+                max_price_sequence = max(max_price_sequence, price_sequence)
+                if (
+                    since_price_sequence is not None
+                    and price_sequence <= since_price_sequence
+                ):
+                    continue
+                quotes[code] = {
+                    "stock_code": code,
+                    "price": quote.get("price"),
+                    "change_rate": quote.get("change_rate"),
+                    "price_received_at": quote.get("price_received_at"),
+                    "price_updated_at": quote.get("price_updated_at"),
+                    "price_sequence": quote.get("price_sequence"),
+                    "received_code": quote.get("received_code"),
+                    "normalized_code": quote.get("normalized_code"),
+                    "registered_code": quote.get("registered_code"),
+                    "original_registered_code": quote.get(
+                        "original_registered_code"
+                    ),
+                    "realtime_source_code": quote.get("realtime_source_code"),
+                    "source_code": quote.get("source_code"),
+                    "received_at": quote.get("received_at"),
+                    "updated_at": quote.get("updated_at"),
+                    "sequence": quote.get("sequence"),
+                }
+                timestamp = (
+                    quote.get("price_updated_at")
+                    or quote.get("price_received_at")
+                    or quote.get("updated_at")
+                    or quote.get("received_at")
+                )
+                if timestamp and (updated_at is None or str(timestamp) > str(updated_at)):
+                    updated_at = timestamp
+            return {
+                "sequence": self._sequence,
+                "price_sequence": max_price_sequence,
+                "updated_at": updated_at or self._updated_at,
+                "quotes": quotes,
+            }
+
     def remove_stale(self, max_age_seconds, now=None):
         if max_age_seconds < 0:
             raise ValueError("max_age_seconds must be non-negative")

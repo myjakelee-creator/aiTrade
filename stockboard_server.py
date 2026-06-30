@@ -37,6 +37,13 @@ AFTERMARKET_START_HOUR = 15
 AFTERMARKET_START_MINUTE = 40
 AFTERMARKET_REALTIME_FRESH_SEC = 60.0
 HOT_LANE_CANDIDATE_LIMIT = 5
+PRICE_LIGHT_TOP_LIMIT = int(os.getenv("STOCKBOARD_PRICE_LIGHT_TOP_LIMIT", "100"))
+PRICE_LIGHT_MIN_INTERVAL_SEC = float(
+    os.getenv("STOCKBOARD_PRICE_LIGHT_MIN_INTERVAL_SEC", "0.25")
+)
+PRICE_LIGHT_MAX_CONSECUTIVE_SKIPS = int(
+    os.getenv("STOCKBOARD_PRICE_LIGHT_MAX_CONSECUTIVE_SKIPS", "3")
+)
 
 
 def _listening_pids(host, port):
@@ -474,6 +481,22 @@ def _hot_lane_codes(rows, selected_codes=None):
     return list(dict.fromkeys(_hot_candidate_codes(rows) + selected))
 
 
+def _price_light_codes(rows, limit=PRICE_LIGHT_TOP_LIMIT):
+    codes = []
+    seen_codes = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        stock_code = _stock_code(row.get("stock_code"))
+        if stock_code is None or stock_code in seen_codes:
+            continue
+        seen_codes.add(stock_code)
+        codes.append(stock_code)
+        if limit > 0 and len(codes) >= limit:
+            break
+    return codes
+
+
 def _overlay_close_metrics(row, snapshot):
     if not isinstance(snapshot, dict):
         return
@@ -665,6 +688,86 @@ def _top100_with_realtime(rows, realtime_store):
     return response_rows
 
 
+def _parse_price_light_since(query):
+    for key in ("since_price_sequence", "since_sequence"):
+        if key not in query:
+            continue
+        try:
+            value = int(query[key][0])
+            if value < 0:
+                raise ValueError
+            return value, False, None
+        except (TypeError, ValueError):
+            return None, True, f"invalid_{key}"
+    return None, False, None
+
+
+def _price_light_patch_payload(
+    realtime_store,
+    stock_codes,
+    since_price_sequence=None,
+    fallback=False,
+    fallback_reason=None,
+    skipped=False,
+    skip_reason=None,
+    retry_after_ms=None,
+):
+    mode = "full"
+    try:
+        snapshot = realtime_store.snapshot_price_light(
+            stock_codes,
+            None if fallback or since_price_sequence is None else since_price_sequence,
+        )
+        if not fallback and since_price_sequence is not None:
+            mode = "delta"
+    except Exception as error:
+        snapshot = realtime_store.snapshot_price_light(stock_codes)
+        fallback = True
+        fallback_reason = str(error) or "price_light_delta_failed"
+    rows = []
+    if not skipped:
+        for stock_code, quote in snapshot.get("quotes", {}).items():
+            price = _realtime_abs_number(quote.get("price"))
+            change_rate = _realtime_number(quote.get("change_rate"))
+            row = {
+                "stock_code": stock_code,
+                "price": price,
+                "change_rate": change_rate,
+                "realtime_price": price,
+                "realtime_change_rate": change_rate,
+                "price_received_at": quote.get("price_received_at"),
+                "price_updated_at": quote.get("price_updated_at"),
+                "price_sequence": quote.get("price_sequence"),
+                "received_code": quote.get("received_code"),
+                "normalized_code": quote.get("normalized_code"),
+                "registered_code": quote.get("registered_code"),
+                "original_registered_code": quote.get("original_registered_code"),
+                "realtime_source_code": quote.get("realtime_source_code"),
+                "source_code": quote.get("source_code"),
+                "price_age_sec": _age_seconds(
+                    quote.get("price_received_at") or quote.get("received_at")
+                ),
+            }
+            rows.append(row)
+    return {
+        "sequence": snapshot.get("sequence"),
+        "price_sequence": snapshot.get("price_sequence"),
+        "updated_at": snapshot.get("updated_at"),
+        "mode": mode,
+        "lane": "price_light",
+        "priority": "below_hot",
+        "fields": ["price", "change_rate"],
+        "since_price_sequence": since_price_sequence,
+        "fallback": bool(fallback),
+        "fallback_reason": fallback_reason,
+        "skipped": bool(skipped),
+        "skip_reason": skip_reason,
+        "retry_after_ms": retry_after_ms,
+        "requested_codes": list(stock_codes) if stock_codes is not None else None,
+        "rows": rows,
+    }
+
+
 def _realtime_patch_payload(
     realtime_store,
     since_sequence=None,
@@ -687,6 +790,7 @@ def _realtime_patch_payload(
             fallback = True
             fallback_reason = str(error) or "delta_failed"
     patches = []
+    max_price_sequence = 0
     for stock_code, quote in snapshot.get("quotes", {}).items():
         price = _realtime_abs_number(quote.get("price"))
         change_rate = _realtime_number(quote.get("change_rate"))
@@ -804,8 +908,16 @@ def _realtime_patch_payload(
         _apply_display_price_fields(patch)
         _sanitize_realtime_display_patch(patch)
         patches.append(patch)
+        try:
+            max_price_sequence = max(
+                max_price_sequence,
+                int(patch.get("price_sequence") or 0),
+            )
+        except (TypeError, ValueError):
+            pass
     return {
         "sequence": snapshot.get("sequence"),
+        "price_sequence": max_price_sequence,
         "updated_at": snapshot.get("updated_at"),
         "mode": mode,
         "lane": lane,
@@ -876,6 +988,10 @@ def make_handler(
             {"codes": [os.getenv("STOCKBOARD_HOT_SELECTED_CODES", "")]}
         )
     )
+    price_light_lock = RLock()
+    price_light_last_served_at = 0.0
+    price_light_consecutive_skips = 0
+    hot_lane_last_served_price_sequence = 0
 
     def selected_hot_snapshot():
         with selected_hot_lock:
@@ -911,6 +1027,85 @@ def make_handler(
         if query_selected:
             selected = list(dict.fromkeys(selected + list(query_selected)))
         return _hot_lane_codes(rows, selected)
+
+    def note_hot_lane_served(payload):
+        nonlocal hot_lane_last_served_price_sequence
+        price_sequence = payload.get("price_sequence")
+        if price_sequence is None:
+            price_sequence = 0
+            for row in payload.get("rows", []):
+                try:
+                    price_sequence = max(
+                        price_sequence,
+                        int(row.get("price_sequence") or 0),
+                    )
+                except (TypeError, ValueError):
+                    continue
+        try:
+            price_sequence = int(price_sequence or 0)
+        except (TypeError, ValueError):
+            price_sequence = 0
+        with price_light_lock:
+            hot_lane_last_served_price_sequence = max(
+                hot_lane_last_served_price_sequence,
+                price_sequence,
+            )
+
+    def price_light_gate(hot_codes):
+        nonlocal price_light_consecutive_skips
+        now = time.monotonic()
+        with price_light_lock:
+            elapsed = now - price_light_last_served_at
+            last_hot_sequence = hot_lane_last_served_price_sequence
+            skip_count = price_light_consecutive_skips
+        min_interval = max(0.0, PRICE_LIGHT_MIN_INTERVAL_SEC)
+        retry_after_ms = None
+        if elapsed < min_interval:
+            retry_after_ms = max(1, int((min_interval - elapsed) * 1000))
+            reason = "price_light_min_interval"
+        else:
+            reason = None
+        try:
+            hot_snapshot = realtime_store.snapshot_price_light(hot_codes)
+            hot_pending_sequence = int(hot_snapshot.get("price_sequence") or 0)
+        except Exception:
+            hot_pending_sequence = last_hot_sequence
+        if hot_pending_sequence > last_hot_sequence:
+            reason = "hot_lane_pending_delta"
+            retry_after_ms = retry_after_ms or int(min_interval * 1000)
+        if realtime_provider is not None:
+            try:
+                provider_status = realtime_provider.status()
+                if provider_status.get("orderbook_hot_refresh_pending"):
+                    reason = "hot_lane_refresh_pending"
+                    retry_after_ms = retry_after_ms or int(min_interval * 1000)
+            except Exception:
+                pass
+        max_skips = max(0, PRICE_LIGHT_MAX_CONSECUTIVE_SKIPS)
+        if reason and (max_skips == 0 or skip_count < max_skips):
+            with price_light_lock:
+                price_light_consecutive_skips += 1
+            return {
+                "allowed": False,
+                "skip_reason": reason,
+                "retry_after_ms": retry_after_ms,
+                "hot_price_sequence": hot_pending_sequence,
+                "hot_last_served_price_sequence": last_hot_sequence,
+            }
+        with price_light_lock:
+            price_light_consecutive_skips = 0
+        return {
+            "allowed": True,
+            "skip_reason": None,
+            "retry_after_ms": None,
+            "hot_price_sequence": hot_pending_sequence,
+            "hot_last_served_price_sequence": last_hot_sequence,
+        }
+
+    def note_price_light_served():
+        nonlocal price_light_last_served_at
+        with price_light_lock:
+            price_light_last_served_at = time.monotonic()
 
     class RequestHandler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
@@ -1031,6 +1226,9 @@ def make_handler(
                 return
             if request_path == "/api/hot_lane_status":
                 selected = selected_hot_snapshot()
+                with price_light_lock:
+                    price_light_skip_count = price_light_consecutive_skips
+                    last_hot_price_sequence = hot_lane_last_served_price_sequence
                 response_payload = {
                     "lane": "hot",
                     "candidate_limit": HOT_LANE_CANDIDATE_LIMIT,
@@ -1038,7 +1236,62 @@ def make_handler(
                     "selected_codes": selected,
                     "hot_codes": current_hot_lane_codes(),
                     "slow_lane": "top100_latest_only",
+                    "price_light_lane": {
+                        "lane": "price_light",
+                        "priority": "below_hot",
+                        "top_limit": PRICE_LIGHT_TOP_LIMIT,
+                        "fields": ["price", "change_rate"],
+                        "max_consecutive_skips": (
+                            PRICE_LIGHT_MAX_CONSECUTIVE_SKIPS
+                        ),
+                        "consecutive_skips": price_light_skip_count,
+                        "hot_last_served_price_sequence": (
+                            last_hot_price_sequence
+                        ),
+                    },
                 }
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if request_path == "/api/price_light_patch":
+                since_price_sequence, fallback, fallback_reason = (
+                    _parse_price_light_since(query)
+                )
+                requested_codes = _parse_codes_query(query)
+                stock_codes = (
+                    [
+                        code
+                        for code in (_stock_code(raw_code) for raw_code in requested_codes)
+                        if code is not None
+                    ]
+                    if requested_codes
+                    else _price_light_codes(rows)
+                )
+                stock_codes = list(dict.fromkeys(stock_codes))
+                hot_codes = current_hot_lane_codes(_parse_hot_code_query(query))
+                gate = price_light_gate(hot_codes)
+                response_payload = _price_light_patch_payload(
+                    realtime_store,
+                    stock_codes,
+                    since_price_sequence=since_price_sequence,
+                    fallback=fallback,
+                    fallback_reason=fallback_reason,
+                    skipped=not gate["allowed"],
+                    skip_reason=gate["skip_reason"],
+                    retry_after_ms=gate["retry_after_ms"],
+                )
+                response_payload["hot_codes"] = hot_codes
+                response_payload["hot_price_sequence"] = gate["hot_price_sequence"]
+                response_payload["hot_last_served_price_sequence"] = gate[
+                    "hot_last_served_price_sequence"
+                ]
+                if gate["allowed"]:
+                    note_price_light_served()
                 body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1097,6 +1350,7 @@ def make_handler(
                     stock_codes=hot_codes,
                     lane="hot",
                 )
+                note_hot_lane_served(response_payload)
                 response_payload["hot_codes"] = hot_codes
                 response_payload["selected_codes"] = list(
                     dict.fromkeys(selected_hot_snapshot() + query_selected)
