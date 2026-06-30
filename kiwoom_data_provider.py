@@ -1483,11 +1483,14 @@ class KiwoomOpenApiRealtimeProvider:
             0, _env_int("STOCKBOARD_DROP_STALE_TRADE_SECONDS", 0)
         )
         self._stale_trade_drop_count = 0
+        self._stale_trade_suspect_count = 0
         self._last_stale_trade_lag_sec = None
+        self._last_stale_trade_suspect_lag_sec = None
         self._last_trade_lag_sec = None
         self._max_trade_lag_sec = None
         self._recent_trade_lags = deque(maxlen=200)
         self._latest_trade_lag_by_code = {}
+        self._last_accepted_trade_time_by_code = {}
 
     def _check_availability(self):
         if self._availability_checked:
@@ -2900,6 +2903,24 @@ class KiwoomOpenApiRealtimeProvider:
             return None
         return round((current - trade_time).total_seconds(), 3)
 
+    @staticmethod
+    def _trade_time_seconds(trade_time_raw):
+        if trade_time_raw in (None, ""):
+            return None
+        digits = "".join(char for char in str(trade_time_raw).strip() if char.isdigit())
+        if len(digits) < 6:
+            return None
+        digits = digits[:6]
+        try:
+            hour = int(digits[0:2])
+            minute = int(digits[2:4])
+            second = int(digits[4:6])
+        except ValueError:
+            return None
+        if hour > 23 or minute > 59 or second > 59:
+            return None
+        return hour * 3600 + minute * 60 + second
+
     def _record_trade_lag(self, normalized_code, lag_sec):
         if lag_sec is None:
             return
@@ -2938,6 +2959,20 @@ class KiwoomOpenApiRealtimeProvider:
         self._record_trade_lag(normalized_code, lag_sec)
         if lag_sec is None or lag_sec <= self._stale_trade_drop_seconds:
             return None
+        trade_time_seconds = self._trade_time_seconds(trade_time_raw)
+        with self._lock:
+            last_accepted_seconds = self._last_accepted_trade_time_by_code.get(
+                normalized_code
+            )
+            should_drop = (
+                trade_time_seconds is not None
+                and last_accepted_seconds is not None
+                and trade_time_seconds < last_accepted_seconds
+            )
+            if not should_drop:
+                self._stale_trade_suspect_count += 1
+                self._last_stale_trade_suspect_lag_sec = lag_sec
+                return None
         registered_code = received_code if received_code in registered_codes else None
         sample = {
             "stock_code": normalized_code,
@@ -2952,6 +2987,7 @@ class KiwoomOpenApiRealtimeProvider:
             "real_type": real_type,
             "trade_time_raw": trade_time_raw,
             "stale_trade_dropped": True,
+            "stale_trade_drop_reason": "older_than_last_accepted_and_lagged",
             "trade_lag_sec": lag_sec,
         }
         with self._lock:
@@ -3559,7 +3595,11 @@ class KiwoomOpenApiRealtimeProvider:
                 ),
                 "stale_trade_drop_seconds": self._stale_trade_drop_seconds,
                 "stale_trade_drop_count": self._stale_trade_drop_count,
+                "stale_trade_suspect_count": self._stale_trade_suspect_count,
                 "last_stale_trade_lag_sec": self._last_stale_trade_lag_sec,
+                "last_stale_trade_suspect_lag_sec": (
+                    self._last_stale_trade_suspect_lag_sec
+                ),
                 "last_trade_lag_sec": self._last_trade_lag_sec,
                 "max_trade_lag_sec": self._max_trade_lag_sec,
                 "avg_trade_lag_sec_recent": avg_trade_lag,
@@ -3735,9 +3775,20 @@ class KiwoomOpenApiRealtimeProvider:
                         sample = stale_sample
                     else:
                         sample = self._parse_trade_real_data(stock_code, real_type)
+                        trade_lag_sec = self._trade_lag_seconds(
+                            sample.get("trade_time_raw")
+                        )
+                        sample["trade_lag_sec"] = trade_lag_sec
+                        sample["fid20_trade_lag_sec"] = trade_lag_sec
+                        if (
+                            self._stale_trade_drop_seconds > 0
+                            and trade_lag_sec is not None
+                            and trade_lag_sec > self._stale_trade_drop_seconds
+                        ):
+                            sample["stale_trade_suspect"] = True
                         self._record_trade_lag(
                             sample.get("normalized_code"),
-                            self._trade_lag_seconds(sample.get("trade_time_raw")),
+                            trade_lag_sec,
                         )
                         self._store_trade_tick(sample, received_at)
             except Exception as error:
@@ -3963,6 +4014,9 @@ class KiwoomOpenApiRealtimeProvider:
             "price": normalize_kiwoom_price(sample.get("price_raw")),
             "change_rate": self._realdata_number(sample.get("change_rate_raw")),
             "trade_time": sample.get("trade_time_raw") or None,
+            "trade_lag_sec": sample.get("trade_lag_sec"),
+            "fid20_trade_lag_sec": sample.get("fid20_trade_lag_sec"),
+            "stale_trade_suspect": sample.get("stale_trade_suspect"),
             "volume": self._realdata_number(sample.get("trade_qty_raw")),
             "strength": self._realdata_number(
                 sample.get("execution_strength_raw")
@@ -3993,7 +4047,23 @@ class KiwoomOpenApiRealtimeProvider:
                 realtime_source_code=tick["realtime_source_code"],
                 source_code=tick["source_code"],
                 price_first=self._price_fast_mode,
+                trade_lag_sec=tick["trade_lag_sec"],
+                fid20_trade_lag_sec=tick["fid20_trade_lag_sec"],
+                stale_trade_suspect=tick["stale_trade_suspect"],
             )
+            trade_time_seconds = self._trade_time_seconds(tick["trade_time"])
+            if trade_time_seconds is not None:
+                with self._lock:
+                    previous_trade_time_seconds = (
+                        self._last_accepted_trade_time_by_code.get(stock_code)
+                    )
+                    if (
+                        previous_trade_time_seconds is None
+                        or trade_time_seconds > previous_trade_time_seconds
+                    ):
+                        self._last_accepted_trade_time_by_code[stock_code] = (
+                            trade_time_seconds
+                        )
         except Exception as error:
             with self._lock:
                 self._last_error = f"RealtimeStore.update_trade failed: {error}"
