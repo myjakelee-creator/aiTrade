@@ -87,6 +87,17 @@ ADAPTIVE_PENDING_GAP_REQUIRED_STREAK = int(
 ADAPTIVE_RESUME_BIAS_SEC = float(
     os.getenv("STOCKBOARD_ADAPTIVE_RESUME_BIAS_SEC", "30")
 )
+ROLLING_TRADE_API_FIELDS = (
+    "one_min_strength",
+    "one_min_buy_qty",
+    "one_min_sell_qty",
+    "big_hand_buy_count_1eok",
+    "big_hand_sell_count_1eok",
+    "big_hand_net_buy_count_1eok",
+    "big_hand_buy_sum_eok",
+    "big_hand_sell_sum_eok",
+    "big_hand_net_sum_eok",
+)
 
 
 def _listening_pids(host, port):
@@ -746,6 +757,8 @@ def _overlay_quote_latest(row, quote):
         quote.get("session_sell_qty_live")
     )
     row["session_strength_source"] = quote.get("session_strength_source")
+    for field in ROLLING_TRADE_API_FIELDS:
+        row[field] = _realtime_number(quote.get(field))
     for field in (
         "strength_5m",
         "strength_20m",
@@ -1105,6 +1118,27 @@ def _realtime_patch_payload(
                 quote.get("session_sell_qty_live")
             ),
             "session_strength_source": quote.get("session_strength_source"),
+            "one_min_strength": _realtime_number(quote.get("one_min_strength")),
+            "one_min_buy_qty": _realtime_number(quote.get("one_min_buy_qty")),
+            "one_min_sell_qty": _realtime_number(quote.get("one_min_sell_qty")),
+            "big_hand_buy_count_1eok": _realtime_number(
+                quote.get("big_hand_buy_count_1eok")
+            ),
+            "big_hand_sell_count_1eok": _realtime_number(
+                quote.get("big_hand_sell_count_1eok")
+            ),
+            "big_hand_net_buy_count_1eok": _realtime_number(
+                quote.get("big_hand_net_buy_count_1eok")
+            ),
+            "big_hand_buy_sum_eok": _realtime_number(
+                quote.get("big_hand_buy_sum_eok")
+            ),
+            "big_hand_sell_sum_eok": _realtime_number(
+                quote.get("big_hand_sell_sum_eok")
+            ),
+            "big_hand_net_sum_eok": _realtime_number(
+                quote.get("big_hand_net_sum_eok")
+            ),
             "realtime_strength_snapshot": _realtime_number(
                 quote.get("realtime_strength_snapshot")
             ),

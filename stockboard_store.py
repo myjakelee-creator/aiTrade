@@ -16,6 +16,8 @@ RUNTIME_DIR = Path(__file__).resolve().parent / "data" / "runtime"
 CLOSE_METRICS_PERSIST_PATH = (
     RUNTIME_DIR / "stockboard_close_metrics_snapshots.json"
 )
+ONE_MIN_TRADE_WINDOW_SEC = 60
+BIG_HAND_THRESHOLD_KRW = 100_000_000
 
 QUOTE_FIELDS = (
     "price",
@@ -69,6 +71,15 @@ QUOTE_FIELDS = (
     "session_sell_qty_live",
     "session_strength",
     "session_strength_source",
+    "one_min_strength",
+    "one_min_buy_qty",
+    "one_min_sell_qty",
+    "big_hand_buy_count_1eok",
+    "big_hand_sell_count_1eok",
+    "big_hand_net_buy_count_1eok",
+    "big_hand_buy_sum_eok",
+    "big_hand_sell_sum_eok",
+    "big_hand_net_sum_eok",
     "strength_5m",
     "strength_20m",
     "strength_60m",
@@ -163,6 +174,7 @@ class RealtimeStore:
         self._lock = RLock()
         self._quotes = {}
         self._trade_events = {}
+        self._trade_windows = {}
         self._orderbook_events = {}
         self._close_metric_snapshots = {}
         self._close_metrics_persistent_snapshots = {}
@@ -399,6 +411,106 @@ class RealtimeStore:
         return round((buy_number / sell_number) * 100, 4)
 
     @staticmethod
+    def _trade_qty_number(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0
+
+    @classmethod
+    def _one_min_trade_metrics(
+        cls,
+        window_state,
+        *,
+        now,
+        trade_price=None,
+        trade_qty=None,
+    ):
+        events = window_state["events"]
+        cutoff = now - ONE_MIN_TRADE_WINDOW_SEC
+        while events and events[0]["timestamp"] < cutoff:
+            expired = events.popleft()
+            side = expired.get("side")
+            qty_abs = expired.get("qty_abs") or 0
+            amount_eok = expired.get("amount_eok") or 0
+            if side == "buy":
+                window_state["buy_qty"] -= qty_abs
+                if expired.get("is_big_hand"):
+                    window_state["big_buy_count"] -= 1
+                    window_state["big_buy_sum_eok"] -= amount_eok
+            elif side == "sell":
+                window_state["sell_qty"] -= qty_abs
+                if expired.get("is_big_hand"):
+                    window_state["big_sell_count"] -= 1
+                    window_state["big_sell_sum_eok"] -= amount_eok
+
+        qty_number = cls._trade_qty_number(trade_qty)
+        price_number = cls._price_number(trade_price)
+        if qty_number:
+            side = "buy" if qty_number > 0 else "sell"
+            qty_abs = abs(qty_number)
+            amount_krw = None
+            amount_eok = None
+            is_big_hand = False
+            if price_number is not None:
+                amount_krw = price_number * qty_abs
+                amount_eok = amount_krw / BIG_HAND_THRESHOLD_KRW
+                is_big_hand = amount_krw >= BIG_HAND_THRESHOLD_KRW
+            events.append(
+                {
+                    "timestamp": now,
+                    "side": side,
+                    "qty_abs": qty_abs,
+                    "amount_eok": amount_eok,
+                    "is_big_hand": is_big_hand,
+                }
+            )
+            if side == "buy":
+                window_state["buy_qty"] += qty_abs
+                if is_big_hand:
+                    window_state["big_buy_count"] += 1
+                    window_state["big_buy_sum_eok"] += amount_eok or 0
+            else:
+                window_state["sell_qty"] += qty_abs
+                if is_big_hand:
+                    window_state["big_sell_count"] += 1
+                    window_state["big_sell_sum_eok"] += amount_eok or 0
+
+        buy_qty = max(0, window_state["buy_qty"])
+        sell_qty = max(0, window_state["sell_qty"])
+        big_buy_count = max(0, window_state["big_buy_count"])
+        big_sell_count = max(0, window_state["big_sell_count"])
+        big_buy_sum_eok = max(0, window_state["big_buy_sum_eok"])
+        big_sell_sum_eok = max(0, window_state["big_sell_sum_eok"])
+
+        return {
+            "one_min_strength": cls._session_strength(buy_qty, sell_qty),
+            "one_min_buy_qty": buy_qty,
+            "one_min_sell_qty": sell_qty,
+            "big_hand_buy_count_1eok": big_buy_count,
+            "big_hand_sell_count_1eok": big_sell_count,
+            "big_hand_net_buy_count_1eok": big_buy_count - big_sell_count,
+            "big_hand_buy_sum_eok": round(big_buy_sum_eok, 4),
+            "big_hand_sell_sum_eok": round(big_sell_sum_eok, 4),
+            "big_hand_net_sum_eok": round(
+                big_buy_sum_eok - big_sell_sum_eok,
+                4,
+            ),
+        }
+
+    @staticmethod
+    def _new_trade_window_state():
+        return {
+            "events": deque(),
+            "buy_qty": 0,
+            "sell_qty": 0,
+            "big_buy_count": 0,
+            "big_sell_count": 0,
+            "big_buy_sum_eok": 0,
+            "big_sell_sum_eok": 0,
+        }
+
+    @staticmethod
     def _snapshot_ratio(bid_volume, ask_volume):
         try:
             bid_number = float(bid_volume)
@@ -600,14 +712,18 @@ class RealtimeStore:
                 )
             session_buy_qty_live = quote.get("session_buy_qty_live") or 0
             session_sell_qty_live = quote.get("session_sell_qty_live") or 0
-            try:
-                trade_qty_number = float(trade_qty)
-            except (TypeError, ValueError):
-                trade_qty_number = 0
+            trade_qty_number = self._trade_qty_number(trade_qty)
             if trade_qty_number > 0:
                 session_buy_qty_live += trade_qty_number
             elif trade_qty_number < 0:
                 session_sell_qty_live += abs(trade_qty_number)
+            trade_window = self._trade_windows.get(code)
+            if trade_window is None:
+                trade_window = self._new_trade_window_state()
+                self._trade_windows[code] = trade_window
+            rolling_trade_price = trade_price
+            if rolling_trade_price is None:
+                rolling_trade_price = price
             values.update(
                 {
                     "session_buy_qty_live": session_buy_qty_live,
@@ -617,6 +733,14 @@ class RealtimeStore:
                     ),
                     "session_strength_source": "live_since_server_start",
                 }
+            )
+            values.update(
+                self._one_min_trade_metrics(
+                    trade_window,
+                    now=time.time(),
+                    trade_price=rolling_trade_price,
+                    trade_qty=trade_qty,
+                )
             )
             quote, timestamp_text, sequence = self._apply_update(code, values)
             self._mark_price_lane(quote, timestamp_text, sequence)
@@ -1076,6 +1200,7 @@ class RealtimeStore:
             for code in stale_codes:
                 self._quotes.pop(code, None)
                 self._trade_events.pop(code, None)
+                self._trade_windows.pop(code, None)
                 self._orderbook_events.pop(code, None)
                 self._last_seen.pop(code, None)
             return stale_codes
@@ -1088,6 +1213,7 @@ class RealtimeStore:
         with self._lock:
             self._quotes.clear()
             self._trade_events.clear()
+            self._trade_windows.clear()
             self._orderbook_events.clear()
             self._close_metric_snapshots.clear()
             self._close_metrics_persistent_snapshots.clear()

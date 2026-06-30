@@ -62,7 +62,7 @@
     const difference = Math.round(number - 100);
     const status = number < 100 ? '매도 우세' : number > 100 ? '매수 우세' : '균형';
     const differenceText = difference > 0 ? `+${difference}` : String(difference);
-    const tooltipLines = [`순간강도: ${number}`, status, `100 기준 ${differenceText}`];
+    const tooltipLines = [`순간강도: ${number.toFixed(2)}`, status, `100 기준 ${differenceText}`];
     if (number >= 200) tooltipLines.push('바 표시: 200 기준 매수 포화');
     if (number <= 0) tooltipLines.push('바 표시: 0 기준 매도 포화');
     return {

@@ -74,19 +74,19 @@
   <!-- HTML: candidate board -->
   <div class="section sec-orange">▶ HOT5 유력 후보 5종목 <span class="lane-speed-badge lane-speed-waiting" id="hot-lane-speed-badge">HOT5 확인중</span> <span class="lane-speed-badge lane-speed-hidden" id="candidate-lane-speed-badge"></span></div>
   <table class="grid board enhanced-board" id="candidate-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>5분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>5분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손(억)</th><th>모멘텀</th></tr>
   </table>
 
   <!-- HTML: selected stock board -->
   <div class="section sec-orange">▶ Selected 1종목</div>
   <table class="grid board enhanced-board" id="selected-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>5분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>5분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손(억)</th><th>모멘텀</th></tr>
   </table>
 
   <!-- HTML: trading board -->
   <div class="section sec-blue">▶ Top100 Pool <span id="ranking-row-count">0개</span> <span class="lane-speed-badge lane-speed-waiting" id="top100-lane-speed-badge">Top100 확인중</span></div>
   <table class="grid board enhanced-board" id="trading-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>5분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>5분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손(억)</th><th>모멘텀</th></tr>
   </table>
 </div>
 <script src="assets/stockboard_format.js?v=5f_format_split_20260627"></script>
@@ -756,7 +756,7 @@
     { label: '5분강도', defaultWidth: 56, minWidth: 48, sortKey: 'sessionStrength', sortDefault: 'desc' },
     { label: '외합(억)', defaultWidth: 64, minWidth: 54, sortKey: 'foreign', sortDefault: 'desc' },
     { label: '프로(억)', defaultWidth: 64, minWidth: 54, sortKey: 'program', sortDefault: 'desc' },
-    { label: '큰손', defaultWidth: 56, minWidth: 48, sortKey: 'bigHand', sortDefault: 'desc' },
+    { label: '큰손(억)', defaultWidth: 56, minWidth: 48, sortKey: 'bigHand', sortDefault: 'desc' },
     { label: '모멘텀', defaultWidth: 90, minWidth: 70, sortKey: 'note', sortDefault: 'asc' }
   ];
   const top100PoolColumnIndexes = boardColumns.map((column, index) => index);
@@ -857,6 +857,17 @@
   function buildBoardHeader(columns = boardColumns) {
     return `${buildColumnGroupMarkup(columns)}<tr>${columns.map((column, index) =>
       `<th${column.sortKey ? ` data-sort-key="${column.sortKey}"` : ''}><span class="column-label">${column.label}${column.sortKey ? '<span class="sort-indicator"></span>' : ''}</span><span class="column-resizer" data-column-index="${index}" aria-hidden="true"></span></th>`).join('')}</tr>`;
+  }
+  function setBoardColumnLabel(index, label) {
+    if (!boardColumns[index] || boardColumns[index].label === label) return false;
+    boardColumns[index].label = label;
+    boardHeader = buildBoardHeader();
+    top100PoolHeader = buildBoardHeader(top100PoolColumns);
+    [board, candidateBoard, selectedBoard].forEach(table => {
+      const labelElement = table?.querySelector?.(`th:nth-child(${index + 1}) .column-label`);
+      if (labelElement?.firstChild) labelElement.firstChild.nodeValue = label;
+    });
+    return true;
   }
   let boardHeader = buildBoardHeader();
   let top100PoolHeader = buildBoardHeader(top100PoolColumns);
@@ -1165,6 +1176,117 @@
     };
   }
 
+  function formatSignedCount(value) {
+    const number = numericValue(value);
+    if (number === null) return '-';
+    const integer = Math.trunc(number);
+    const formatted = Math.abs(integer).toLocaleString('en-US');
+    return `${integer > 0 ? '+' : integer < 0 ? '-' : ''}${formatted}건`;
+  }
+
+  function formatSignedEok(value) {
+    const number = numericValue(value);
+    if (number === null) return '-';
+    const formatted = Math.abs(number).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+    return `${number > 0 ? '+' : number < 0 ? '-' : ''}${formatted}억`;
+  }
+
+  function formatUnsignedEok(value) {
+    const number = numericValue(value);
+    if (number === null) return '-';
+    return `${number.toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    })}억`;
+  }
+
+  function formatStrengthDisplay(value) {
+    const number = numericValue(value);
+    return number === null ? displayValue(value) : number.toFixed(2);
+  }
+
+  function oneMinuteStrengthMetric(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const tooltip = `1분강도: ${formatStrengthDisplay(value)}`;
+    const force = sessionStrengthView(value);
+    if (force) force.tooltip = tooltip;
+    return {
+      value,
+      force,
+      sortValue: sortableNumber(value),
+      tooltip
+    };
+  }
+
+  const BIG_HAND_BUY_EOK_KEYS = [
+    'big_hand_buy_sum_eok',
+    'big_hand_buy_eok',
+    'bigHandBuyEok',
+    'big_hand_buy_amount_1eok',
+    'bigHandBuyAmount1eok'
+  ];
+  const BIG_HAND_SELL_EOK_KEYS = [
+    'big_hand_sell_sum_eok',
+    'big_hand_sell_eok',
+    'bigHandSellEok',
+    'big_hand_sell_amount_1eok',
+    'bigHandSellAmount1eok'
+  ];
+  const BIG_HAND_NET_EOK_KEYS = [
+    'big_hand_net_sum_eok',
+    'big_hand_net_buy_eok',
+    'bigHandNetBuyEok',
+    'big_hand_net_buy_amount_1eok',
+    'bigHandNetBuyAmount1eok',
+    'whale_score',
+    'big_hand',
+    'big_buy_score',
+    'big_money_score',
+    '큰손'
+  ];
+
+  function bigHandView(row) {
+    const netCount = firstValue(row, [
+      'big_hand_net_buy_count_1eok',
+      'bigHandNetBuyCount1eok'
+    ]);
+    const buyCount = firstValue(row, [
+      'big_hand_buy_count_1eok',
+      'bigHandBuyCount1eok'
+    ]);
+    const sellCount = firstValue(row, [
+      'big_hand_sell_count_1eok',
+      'bigHandSellCount1eok'
+    ]);
+    const buyEok = firstValue(row, BIG_HAND_BUY_EOK_KEYS);
+    const sellEok = firstValue(row, BIG_HAND_SELL_EOK_KEYS);
+    const netEok = firstValue(row, BIG_HAND_NET_EOK_KEYS);
+    const netCountNumber = numericValue(netCount);
+    const netEokNumber = numericValue(netEok);
+    if (netCountNumber === null && netEokNumber === null) {
+      return {
+        display: '-',
+        className: '',
+        sortValue: null,
+        tooltip: ['큰손(억): -', '큰손 순매수 우위'].join('\n')
+      };
+    }
+    const tooltip = [
+      `매수 ${formatSignedCount(buyCount).replace(/^[+-]/, '')} / 매도 ${formatSignedCount(sellCount).replace(/^[+-]/, '')} / 순매수 ${formatSignedCount(netCount)}`,
+      `매수 ${formatUnsignedEok(buyEok)} / 매도 ${formatUnsignedEok(sellEok)} / 순매수 ${formatSignedEok(netEok)}`
+    ].join('\n');
+    const toneNumber = netCountNumber ?? netEokNumber;
+    return {
+      display: formatSignedCount(netCount),
+      className: toneNumber > 0 ? 'plus' : toneNumber < 0 ? 'minus' : 'flow-zero',
+      sortValue: netCountNumber ?? netEokNumber,
+      tooltip
+    };
+  }
+
   function toneClass(tone, value) {
     if (tone === 'plus' || tone === 'up' || tone === 'positive') return 'plus';
     if (tone === 'minus' || tone === 'down' || tone === 'negative') return 'minus';
@@ -1349,7 +1471,7 @@
     const number = numericValue(value);
     if (number === null) return '-';
     const className = number > 100 ? 'fast-metric-strong' : number < 100 ? 'fast-metric-weak' : 'fast-metric-neutral';
-    return `<span class="${className}">${Math.trunc(number)}</span>`;
+    return `<span class="${className}">${number.toFixed(2)}</span>`;
   }
 
   function opt10046StrengthTooltip(value, value20, value60, snapshotAt, staleSec, status) {
@@ -1581,7 +1703,7 @@
     if (!strength) return '-';
     if (isFastDisplayMode()) {
       const value = row?.realtimeStrength ?? row?.realtime_strength ?? row?.sortRealtimeStrength ?? '-';
-      return `<span class="fast-metric-text" data-tooltip="${escapeHtml(strength.tooltip)}">${escapeHtml(displayValue(value))}</span>`;
+      return `<span class="fast-metric-text" data-tooltip="${escapeHtml(strength.tooltip)}">${escapeHtml(formatStrengthDisplay(value))}</span>`;
     }
     return `<div class="balance-box" data-tooltip="${escapeHtml(strength.tooltip)}" role="img" aria-label="${escapeHtml(strength.tooltip)}" style="--blue-width:${strength.blueWidth}%;--red-width:${strength.redWidth}%">
       <span class="balance-side balance-side-blue"></span>
@@ -1596,7 +1718,7 @@
     if (!strength) return '-';
     if (isFastDisplayMode()) {
       const value = row?.strength5m ?? row?.strength_5m ?? row?.sessionStrength ?? row?.session_strength ?? '-';
-      return `<span class="fast-metric-text" data-tooltip="${escapeHtml(strength.tooltip)}">${escapeHtml(displayValue(value))}</span>`;
+      return `<span class="fast-metric-text" data-tooltip="${escapeHtml(strength.tooltip)}">${escapeHtml(formatStrengthDisplay(value))}</span>`;
     }
     return `<div class="balance-box" data-tooltip="${escapeHtml(strength.tooltip)}" role="img" aria-label="${escapeHtml(strength.tooltip)}" style="--blue-width:${strength.blueWidth}%;--red-width:${strength.redWidth}%">
       <span class="balance-side balance-side-blue"></span>
@@ -1909,6 +2031,10 @@
       'daily_strength',
       '당일강도'
     ]);
+    const oneMinuteStrengthValue = firstValue(row, [
+      'one_min_strength',
+      'oneMinStrength'
+    ]);
     const sessionBuyQtyLive = firstValue(row, [
       'session_buy_qty_live',
       'sessionBuyQtyLive'
@@ -1935,8 +2061,7 @@
     const foreign = foreignSumView(foreignValue, foreignLabel, foreignSource);
     const programValue = firstValue(row, ['program_net', 'program_sum', 'program_net_eok', '프로(억)']);
     const program = signedFlowView(programValue, '프로(억)', '프로그램 순매수 합');
-    const bigHandValue = firstValue(row, ['whale_score', 'big_hand', 'big_buy_score', 'big_money_score', '큰손']);
-    const bigHand = signedFlowView(bigHandValue, '큰손', '큰손 순매수 우위');
+    const bigHand = bigHandView(row);
     const previousRankValue = firstValue(row, ['prev_rank', '전일순위', '전일']);
     const originalRankValue = firstValue(row, ['original_rank', 'rank']);
     const displayRankValue = firstValue(row, ['rank', '현재순위', '순위']);
@@ -1990,7 +2115,8 @@
       sessionBuyQtyLive,
       sessionSellQtyLive
     );
-    const fiveMinuteStrength = officialFiveMinuteStrength || browserFiveMinuteStrength;
+    const oneMinuteStrength = oneMinuteStrengthMetric(oneMinuteStrengthValue);
+    const fiveMinuteStrength = oneMinuteStrength || officialFiveMinuteStrength || browserFiveMinuteStrength;
     const displayPriceValue = firstValue(row, ['display_price', 'displayPrice']);
     const priceValue = displayPriceValue ?? firstValue(row, ['price']);
     const displayChangeRateValue = firstValue(row, [
@@ -2088,6 +2214,9 @@
       sortSessionStrength: fiveMinuteStrength.sortValue,
       sessionStrength: fiveMinuteStrength.value,
       session_strength: fiveMinuteStrength.value,
+      oneMinStrength: oneMinuteStrengthValue,
+      one_min_strength: oneMinuteStrengthValue,
+      strengthColumnLabel: oneMinuteStrength ? '1분강도' : '5분강도',
       strength5m: strength5mValue,
       strength_5m: strength5mValue,
       strength20m: strength20mValue,
@@ -2125,8 +2254,26 @@
       sortProgram: sortableNumber(programValue),
       programClass: program.className,
       programTooltip: program.tooltip,
+      big_hand_net_buy_count_1eok: firstValue(row, [
+        'big_hand_net_buy_count_1eok',
+        'bigHandNetBuyCount1eok'
+      ]),
+      big_hand_buy_count_1eok: firstValue(row, [
+        'big_hand_buy_count_1eok',
+        'bigHandBuyCount1eok'
+      ]),
+      big_hand_sell_count_1eok: firstValue(row, [
+        'big_hand_sell_count_1eok',
+        'bigHandSellCount1eok'
+      ]),
+      big_hand_buy_eok: firstValue(row, BIG_HAND_BUY_EOK_KEYS),
+      big_hand_sell_eok: firstValue(row, BIG_HAND_SELL_EOK_KEYS),
+      big_hand_net_buy_eok: firstValue(row, BIG_HAND_NET_EOK_KEYS),
+      big_hand_buy_sum_eok: firstValue(row, BIG_HAND_BUY_EOK_KEYS),
+      big_hand_sell_sum_eok: firstValue(row, BIG_HAND_SELL_EOK_KEYS),
+      big_hand_net_sum_eok: firstValue(row, BIG_HAND_NET_EOK_KEYS),
       bigHand: bigHand.display,
-      sortBigHand: sortableNumber(bigHandValue),
+      sortBigHand: sortableNumber(bigHand.sortValue),
       bigHandClass: bigHand.className,
       bigHandTooltip: bigHand.tooltip,
       candidateStatus,
@@ -2549,6 +2696,10 @@
       'session_strength',
       'sessionStrength'
     ]);
+    const oneMinuteStrength = firstValue(patch, [
+      'one_min_strength',
+      'oneMinStrength'
+    ]);
     const sessionBuyQtyLive = firstValue(patch, [
       'session_buy_qty_live',
       'sessionBuyQtyLive'
@@ -2583,12 +2734,17 @@
     row.strength_status = row.strengthStatus;
     if (
       sessionStrength !== null
+      || oneMinuteStrength !== null
+      || Object.hasOwn(patch, 'one_min_strength')
+      || Object.hasOwn(patch, 'oneMinStrength')
       || Object.hasOwn(patch, 'session_strength')
       || Object.hasOwn(patch, 'strength_5m')
       || Object.hasOwn(patch, 'strength5m')
     ) {
       row.sessionStrength = sessionStrength;
       row.session_strength = sessionStrength;
+      row.oneMinStrength = oneMinuteStrength ?? row.oneMinStrength;
+      row.one_min_strength = row.oneMinStrength;
       row.strength5m = firstValue(patch, ['strength_5m', 'strength5m']) ?? row.strength5m;
       row.strength_5m = row.strength5m;
       row.strength20m = firstValue(patch, ['strength_20m', 'strength20m']) ?? row.strength20m;
@@ -2623,20 +2779,23 @@
         `status: ${displayValue(row.strengthStatus)}`
       ].join('\n')
     } : null;
+    const oneMinuteStrengthMetricValue = oneMinuteStrengthMetric(row.oneMinStrength);
     const browserFiveMinuteStrength = updateFiveMinuteStrengthSample(
       row.code,
       row.sessionBuyQtyLive,
       row.sessionSellQtyLive
     );
-    const fiveMinuteStrength = officialFiveMinuteStrength || browserFiveMinuteStrength;
+    const fiveMinuteStrength = oneMinuteStrengthMetricValue || officialFiveMinuteStrength || browserFiveMinuteStrength;
     row.sessionStrength = fiveMinuteStrength.value;
     row.session_strength = fiveMinuteStrength.value;
+    row.strengthColumnLabel = oneMinuteStrengthMetricValue ? '1분강도' : '5분강도';
     row.sortSessionStrength = fiveMinuteStrength.sortValue;
     row.fiveMinuteStrengthTooltip = fiveMinuteStrength.tooltip;
     row.fiveMinuteStrengthBuyDelta = fiveMinuteStrength.buyDelta;
     row.fiveMinuteStrengthSellDelta = fiveMinuteStrength.sellDelta;
     row.sessionForce = fiveMinuteStrength.force;
     setVisualCell(tableRow.cells[10], fiveMinuteStrengthMetricView(row.sessionForce, row), 'balance-cell visual-cell');
+    if (oneMinuteStrengthMetricValue) setBoardColumnLabel(10, '1분강도');
     row.realtimeAccVolume = firstValue(patch, ['realtime_acc_volume']);
     row.realtimeAccTradeValue = firstValue(patch, ['realtime_acc_trade_value']);
     const realtimeAccTradeValueEokCandidate = firstValue(patch, [
@@ -2727,6 +2886,45 @@
     syncCloseMetricsCompletion([row]);
     row.bestBidPrice = firstValue(patch, ['best_bid_price']);
     row.bestAskPrice = firstValue(patch, ['best_ask_price']);
+    const bigHandPatchKeys = [
+      'big_hand_net_buy_count_1eok',
+      'bigHandNetBuyCount1eok',
+      'big_hand_buy_count_1eok',
+      'bigHandBuyCount1eok',
+      'big_hand_sell_count_1eok',
+      'bigHandSellCount1eok',
+      ...BIG_HAND_BUY_EOK_KEYS,
+      ...BIG_HAND_SELL_EOK_KEYS,
+      ...BIG_HAND_NET_EOK_KEYS
+    ];
+    if (bigHandPatchKeys.some(key => Object.hasOwn(patch, key))) {
+      Object.assign(row, {
+        big_hand_net_buy_count_1eok: firstValue(patch, [
+          'big_hand_net_buy_count_1eok',
+          'bigHandNetBuyCount1eok'
+        ]) ?? row.big_hand_net_buy_count_1eok,
+        big_hand_buy_count_1eok: firstValue(patch, [
+          'big_hand_buy_count_1eok',
+          'bigHandBuyCount1eok'
+        ]) ?? row.big_hand_buy_count_1eok,
+        big_hand_sell_count_1eok: firstValue(patch, [
+          'big_hand_sell_count_1eok',
+          'bigHandSellCount1eok'
+        ]) ?? row.big_hand_sell_count_1eok,
+        big_hand_buy_sum_eok: firstValue(patch, BIG_HAND_BUY_EOK_KEYS) ?? row.big_hand_buy_sum_eok,
+        big_hand_buy_eok: firstValue(patch, BIG_HAND_BUY_EOK_KEYS) ?? row.big_hand_buy_eok,
+        big_hand_sell_sum_eok: firstValue(patch, BIG_HAND_SELL_EOK_KEYS) ?? row.big_hand_sell_sum_eok,
+        big_hand_sell_eok: firstValue(patch, BIG_HAND_SELL_EOK_KEYS) ?? row.big_hand_sell_eok,
+        big_hand_net_sum_eok: firstValue(patch, BIG_HAND_NET_EOK_KEYS) ?? row.big_hand_net_sum_eok,
+        big_hand_net_buy_eok: firstValue(patch, BIG_HAND_NET_EOK_KEYS) ?? row.big_hand_net_buy_eok
+      });
+      const bigHand = bigHandView(row);
+      row.bigHand = bigHand.display;
+      row.sortBigHand = sortableNumber(bigHand.sortValue);
+      row.bigHandClass = bigHand.className;
+      row.bigHandTooltip = bigHand.tooltip;
+      setCell(tableRow.cells[13], escapeHtml(row.bigHand), classNames('flow-number', row.bigHandClass), row.bigHandTooltip);
+    }
     row.realtimeReceivedAt = firstValue(patch, ['received_at']);
     row.realtimeSequence = firstValue(patch, ['sequence']);
   }
@@ -2812,6 +3010,24 @@
       'realtimeAccTradeValue',
       'realtimeAccTradeValueEokCandidate',
       'realtime_acc_trade_value_eok_candidate',
+      'oneMinStrength',
+      'one_min_strength',
+      'strengthColumnLabel',
+      'sessionStrength',
+      'session_strength',
+      'sortSessionStrength',
+      'fiveMinuteStrengthTooltip',
+      'sessionForce',
+      'big_hand_net_buy_count_1eok',
+      'big_hand_buy_count_1eok',
+      'big_hand_sell_count_1eok',
+      ...BIG_HAND_BUY_EOK_KEYS,
+      ...BIG_HAND_SELL_EOK_KEYS,
+      ...BIG_HAND_NET_EOK_KEYS,
+      'bigHand',
+      'sortBigHand',
+      'bigHandClass',
+      'bigHandTooltip',
       'realtimeReceivedAt',
       'realtimeSequence'
     ].forEach(key => {
@@ -2979,11 +3195,13 @@
   function renderBoard(rows) {
     syncCloseMetricsCompletion(rows);
     const foreignLabel = rows.find(row => row.foreignLabel)?.foreignLabel || '외합(억)';
-    if (boardColumns[11].label !== foreignLabel) {
-      boardColumns[11].label = foreignLabel;
-      boardHeader = buildBoardHeader();
-      top100PoolHeader = buildBoardHeader(top100PoolColumns);
-    }
+    const hasOneMinuteStrength = rows.some(row =>
+      row.oneMinStrength !== null
+      && row.oneMinStrength !== undefined
+      && row.oneMinStrength !== ''
+    );
+    setBoardColumnLabel(10, hasOneMinuteStrength ? '1분강도' : '5분강도');
+    setBoardColumnLabel(11, foreignLabel);
     rankingRowCount.textContent = `${rows.length}개`;
     const displayRows = sortBoardRows(rows);
     top100State.renderedRows = displayRows;
