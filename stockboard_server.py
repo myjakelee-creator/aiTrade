@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import time
+from collections import deque
 from copy import deepcopy
 from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -52,6 +53,30 @@ CANDIDATE_SAFE_ORDERBOOK_MAX_AGE_SEC = float(
 )
 CANDIDATE_SAFE_BACKOFF_MS = int(
     os.getenv("STOCKBOARD_CANDIDATE_SAFE_BACKOFF_MS", "1000")
+)
+ADAPTIVE_SPEED_ENABLED = (
+    os.getenv("STOCKBOARD_ADAPTIVE_SPEED_ENABLED", "1").strip().lower()
+    not in {"0", "false", "no", "off"}
+)
+ADAPTIVE_OPENING_BIAS_START_MINUTE = 9 * 60
+ADAPTIVE_OPENING_BIAS_END_MINUTE = 9 * 60 + 3
+ADAPTIVE_HOT_PRICE_MAX_AGE_SEC = float(
+    os.getenv("STOCKBOARD_ADAPTIVE_HOT_PRICE_MAX_AGE_SEC", "1.5")
+)
+ADAPTIVE_HOT_ORDERBOOK_MAX_AGE_SEC = float(
+    os.getenv("STOCKBOARD_ADAPTIVE_HOT_ORDERBOOK_MAX_AGE_SEC", "3.0")
+)
+ADAPTIVE_HOT_API_LATENCY_MAX_MS = float(
+    os.getenv("STOCKBOARD_ADAPTIVE_HOT_API_LATENCY_MAX_MS", "250")
+)
+ADAPTIVE_RECOVERY_REQUIRED_OK = int(
+    os.getenv("STOCKBOARD_ADAPTIVE_RECOVERY_REQUIRED_OK", "3")
+)
+ADAPTIVE_NORMAL_REQUIRED_OK = int(
+    os.getenv("STOCKBOARD_ADAPTIVE_NORMAL_REQUIRED_OK", "6")
+)
+ADAPTIVE_RECOVERY_INTERVAL_MULTIPLIER = float(
+    os.getenv("STOCKBOARD_ADAPTIVE_RECOVERY_INTERVAL_MULTIPLIER", "2.0")
 )
 
 
@@ -1091,6 +1116,16 @@ def make_handler(
     price_light_last_served_at = 0.0
     price_light_consecutive_skips = 0
     hot_lane_last_served_price_sequence = 0
+    adaptive_speed_state = {
+        "mode": "normal",
+        "reason": "init",
+        "ok_streak": 0,
+        "bad_streak": 0,
+        "last_changed_at": datetime.now(KST).isoformat(timespec="seconds"),
+        "hot_api_latency_samples_ms": deque(maxlen=12),
+        "last_hot_api_latency_ms": None,
+        "last_evaluated_at": None,
+    }
 
     def selected_hot_snapshot():
         with selected_hot_lock:
@@ -1127,6 +1162,182 @@ def make_handler(
             selected = list(dict.fromkeys(selected + list(query_selected)))
         return _hot_lane_codes(rows, selected)
 
+    def record_hot_api_latency(latency_ms):
+        try:
+            latency_ms = round(float(latency_ms), 3)
+        except (TypeError, ValueError):
+            return
+        with price_light_lock:
+            adaptive_speed_state["last_hot_api_latency_ms"] = latency_ms
+            adaptive_speed_state["hot_api_latency_samples_ms"].append(latency_ms)
+
+    def adaptive_speed_snapshot():
+        with price_light_lock:
+            samples = list(adaptive_speed_state["hot_api_latency_samples_ms"])
+            return {
+                "enabled": ADAPTIVE_SPEED_ENABLED,
+                "profile": "price-lane",
+                "mode": adaptive_speed_state["mode"],
+                "reason": adaptive_speed_state["reason"],
+                "ok_streak": adaptive_speed_state["ok_streak"],
+                "bad_streak": adaptive_speed_state["bad_streak"],
+                "last_changed_at": adaptive_speed_state["last_changed_at"],
+                "last_evaluated_at": adaptive_speed_state["last_evaluated_at"],
+                "last_hot_api_latency_ms": (
+                    adaptive_speed_state["last_hot_api_latency_ms"]
+                ),
+                "hot_api_latency_avg_ms": (
+                    round(sum(samples) / len(samples), 3) if samples else None
+                ),
+                "hot_diagnostics": list(
+                    adaptive_speed_state.get("hot_diagnostics") or []
+                ),
+                "hot_price_sequence": adaptive_speed_state.get(
+                    "hot_price_sequence"
+                ),
+                "hot_last_served_price_sequence": adaptive_speed_state.get(
+                    "hot_last_served_price_sequence"
+                ),
+                "opening_bias": adaptive_speed_state.get("opening_bias"),
+                "thresholds": {
+                    "opening_bias_window": "09:00~09:03",
+                    "opening_bias_policy": "diagnostic_only",
+                    "hot_price_max_age_sec": ADAPTIVE_HOT_PRICE_MAX_AGE_SEC,
+                    "hot_orderbook_max_age_sec": (
+                        ADAPTIVE_HOT_ORDERBOOK_MAX_AGE_SEC
+                    ),
+                    "hot_api_latency_max_ms": ADAPTIVE_HOT_API_LATENCY_MAX_MS,
+                    "recovery_required_ok": ADAPTIVE_RECOVERY_REQUIRED_OK,
+                    "normal_required_ok": ADAPTIVE_NORMAL_REQUIRED_OK,
+                    "recovery_interval_multiplier": (
+                        ADAPTIVE_RECOVERY_INTERVAL_MULTIPLIER
+                    ),
+                },
+            }
+
+    def _set_adaptive_mode_locked(mode, reason):
+        previous = adaptive_speed_state["mode"]
+        adaptive_speed_state["mode"] = mode
+        adaptive_speed_state["reason"] = reason
+        if mode != previous:
+            adaptive_speed_state["last_changed_at"] = datetime.now(KST).isoformat(
+                timespec="seconds"
+            )
+
+    def _adaptive_opening_bias(now_dt):
+        minute = now_dt.hour * 60 + now_dt.minute
+        return {
+            "active": (
+                ADAPTIVE_OPENING_BIAS_START_MINUTE
+                <= minute
+                < ADAPTIVE_OPENING_BIAS_END_MINUTE
+            ),
+            "window": "09:00~09:03",
+            "policy": "diagnostic_only",
+        }
+
+    def evaluate_adaptive_speed(hot_codes, price_light_snapshot=None):
+        if not ADAPTIVE_SPEED_ENABLED:
+            return adaptive_speed_snapshot()
+        now_dt = datetime.now(KST)
+        opening_bias = _adaptive_opening_bias(now_dt)
+
+        snapshot = price_light_snapshot
+        if snapshot is None:
+            try:
+                snapshot = realtime_store.snapshot_price_light(hot_codes)
+            except Exception:
+                snapshot = {"quotes": {}}
+        hot_quotes = snapshot.get("quotes", {}) if isinstance(snapshot, dict) else {}
+        bad_reasons = []
+        diagnostics = []
+        try:
+            snapshot_price_sequence = int(snapshot.get("price_sequence") or 0)
+        except (AttributeError, TypeError, ValueError):
+            snapshot_price_sequence = 0
+        with price_light_lock:
+            last_hot_sequence = hot_lane_last_served_price_sequence
+        if last_hot_sequence > 0 and snapshot_price_sequence > last_hot_sequence:
+            bad_reasons.append("hot_patch_pending")
+        for stock_code in hot_codes:
+            quote = hot_quotes.get(stock_code)
+            if not isinstance(quote, dict):
+                bad_reasons.append("hot_quote_missing")
+                diagnostics.append({"stock_code": stock_code, "status": "missing"})
+                continue
+            price_age_sec = _age_seconds(
+                quote.get("price_received_at") or quote.get("received_at")
+            )
+            orderbook_age_sec = _age_seconds(quote.get("orderbook_received_at"))
+            status = "ok"
+            if (
+                price_age_sec is None
+                or price_age_sec > ADAPTIVE_HOT_PRICE_MAX_AGE_SEC
+            ):
+                status = "bad_price_age"
+                bad_reasons.append("hot_price_age_high")
+            if (
+                orderbook_age_sec is None
+                or orderbook_age_sec > ADAPTIVE_HOT_ORDERBOOK_MAX_AGE_SEC
+            ):
+                status = (
+                    "bad_orderbook_age" if status == "ok" else f"{status}+orderbook"
+                )
+                bad_reasons.append("hot_orderbook_age_high")
+            diagnostics.append(
+                {
+                    "stock_code": stock_code,
+                    "price_age_sec": price_age_sec,
+                    "orderbook_age_sec": orderbook_age_sec,
+                    "status": status,
+                }
+            )
+        provider_hot_refresh_pending = False
+        if realtime_provider is not None:
+            try:
+                provider_hot_refresh_pending = bool(
+                    realtime_provider.status().get("orderbook_hot_refresh_pending")
+                )
+            except Exception:
+                provider_hot_refresh_pending = True
+        if provider_hot_refresh_pending:
+            bad_reasons.append("hot_orderbook_refresh_pending")
+        with price_light_lock:
+            samples = list(adaptive_speed_state["hot_api_latency_samples_ms"])
+            latency_avg = sum(samples) / len(samples) if samples else 0.0
+            if samples and latency_avg > ADAPTIVE_HOT_API_LATENCY_MAX_MS:
+                bad_reasons.append("hot_api_latency_high")
+            unique_bad_reasons = list(dict.fromkeys(bad_reasons))
+            adaptive_speed_state["last_evaluated_at"] = now_dt.isoformat(
+                timespec="seconds"
+            )
+            adaptive_speed_state["hot_diagnostics"] = diagnostics
+            adaptive_speed_state["hot_api_latency_avg_ms"] = (
+                round(latency_avg, 3) if samples else None
+            )
+            adaptive_speed_state["hot_price_sequence"] = snapshot_price_sequence
+            adaptive_speed_state["hot_last_served_price_sequence"] = (
+                last_hot_sequence
+            )
+            adaptive_speed_state["opening_bias"] = opening_bias
+            if unique_bad_reasons:
+                adaptive_speed_state["ok_streak"] = 0
+                adaptive_speed_state["bad_streak"] += 1
+                reason = unique_bad_reasons[0]
+                mode = "protect" if reason == "hot_api_latency_high" else "degraded"
+                _set_adaptive_mode_locked(mode, reason)
+            else:
+                adaptive_speed_state["bad_streak"] = 0
+                adaptive_speed_state["ok_streak"] += 1
+                required_recovery = max(1, ADAPTIVE_RECOVERY_REQUIRED_OK)
+                required_normal = max(required_recovery, ADAPTIVE_NORMAL_REQUIRED_OK)
+                ok_streak = adaptive_speed_state["ok_streak"]
+                if ok_streak >= required_normal:
+                    _set_adaptive_mode_locked("normal", "hot_lane_stable")
+                elif ok_streak >= required_recovery:
+                    _set_adaptive_mode_locked("recovery", "hot_lane_recovering")
+        return adaptive_speed_snapshot()
+
     def note_hot_lane_served(payload):
         nonlocal hot_lane_last_served_price_sequence
         price_sequence = payload.get("price_sequence")
@@ -1157,13 +1368,20 @@ def make_handler(
             elapsed = now - price_light_last_served_at
             last_hot_sequence = hot_lane_last_served_price_sequence
             skip_count = price_light_consecutive_skips
+        adaptive = evaluate_adaptive_speed(hot_codes)
         min_interval = max(0.0, PRICE_LIGHT_MIN_INTERVAL_SEC)
+        if adaptive["mode"] == "recovery":
+            min_interval *= max(1.0, ADAPTIVE_RECOVERY_INTERVAL_MULTIPLIER)
         retry_after_ms = None
-        if elapsed < min_interval:
+        reason = None
+        hard_skip = False
+        if adaptive["mode"] in {"protect", "degraded"}:
+            reason = f"adaptive_{adaptive['mode']}"
+            retry_after_ms = max(1, int(max(min_interval, 0.5) * 1000))
+            hard_skip = True
+        elif elapsed < min_interval:
             retry_after_ms = max(1, int((min_interval - elapsed) * 1000))
             reason = "price_light_min_interval"
-        else:
-            reason = None
         try:
             hot_snapshot = realtime_store.snapshot_price_light(hot_codes)
             hot_pending_sequence = int(hot_snapshot.get("price_sequence") or 0)
@@ -1181,7 +1399,7 @@ def make_handler(
             except Exception:
                 pass
         max_skips = max(0, PRICE_LIGHT_MAX_CONSECUTIVE_SKIPS)
-        if reason and (max_skips == 0 or skip_count < max_skips):
+        if reason and (hard_skip or max_skips == 0 or skip_count < max_skips):
             with price_light_lock:
                 price_light_consecutive_skips += 1
             return {
@@ -1190,6 +1408,7 @@ def make_handler(
                 "retry_after_ms": retry_after_ms,
                 "hot_price_sequence": hot_pending_sequence,
                 "hot_last_served_price_sequence": last_hot_sequence,
+                "adaptive_speed": adaptive,
             }
         with price_light_lock:
             price_light_consecutive_skips = 0
@@ -1199,6 +1418,7 @@ def make_handler(
             "retry_after_ms": None,
             "hot_price_sequence": hot_pending_sequence,
             "hot_last_served_price_sequence": last_hot_sequence,
+            "adaptive_speed": adaptive,
         }
 
     def candidate_safe_gate(hot_codes, price_light_snapshot):
@@ -1207,6 +1427,9 @@ def make_handler(
         hot_quotes = price_light_snapshot.get("quotes", {})
         hot_diagnostics = []
         bad_reasons = []
+        adaptive = evaluate_adaptive_speed(hot_codes, price_light_snapshot)
+        if adaptive["mode"] in {"protect", "degraded"}:
+            bad_reasons.append(f"adaptive_{adaptive['mode']}")
         max_price_age = max(0.0, CANDIDATE_SAFE_PRICE_MAX_AGE_SEC)
         max_orderbook_age = max(0.0, CANDIDATE_SAFE_ORDERBOOK_MAX_AGE_SEC)
         hot_price_sequence = 0
@@ -1290,6 +1513,7 @@ def make_handler(
             "orderbook_hot_refresh_pending": provider_hot_refresh_pending,
             "orderbook_hot_refresh_error": provider_hot_refresh_error,
             "hot_diagnostics": hot_diagnostics,
+            "adaptive_speed": adaptive,
         }
 
     def note_price_light_served():
@@ -1419,12 +1643,15 @@ def make_handler(
                 with price_light_lock:
                     price_light_skip_count = price_light_consecutive_skips
                     last_hot_price_sequence = hot_lane_last_served_price_sequence
+                hot_codes = current_hot_lane_codes()
+                adaptive = evaluate_adaptive_speed(hot_codes)
                 response_payload = {
                     "lane": "hot",
                     "candidate_limit": HOT_LANE_CANDIDATE_LIMIT,
                     "candidate_codes": _hot_candidate_codes(rows),
                     "selected_codes": selected,
-                    "hot_codes": current_hot_lane_codes(),
+                    "hot_codes": hot_codes,
+                    "adaptive_speed": adaptive,
                     "slow_lane": "top100_latest_only",
                     "price_light_lane": {
                         "lane": "price_light",
@@ -1438,6 +1665,7 @@ def make_handler(
                         "hot_last_served_price_sequence": (
                             last_hot_price_sequence
                         ),
+                        "adaptive_mode": adaptive["mode"],
                     },
                     "candidate_safe_ranking_lane": {
                         "lane": "candidate_safe_ranking",
@@ -1449,6 +1677,7 @@ def make_handler(
                         ),
                         "backoff_ms": CANDIDATE_SAFE_BACKOFF_MS,
                         "commits_to_top100": False,
+                        "adaptive_mode": adaptive["mode"],
                     },
                 }
                 body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
@@ -1483,6 +1712,7 @@ def make_handler(
                         "retry_after_ms": max(1, CANDIDATE_SAFE_BACKOFF_MS),
                         "error": str(error),
                         "hot_diagnostics": [],
+                        "adaptive_speed": evaluate_adaptive_speed(hot_codes),
                     }
                 else:
                     gate = candidate_safe_gate(hot_codes, price_light_snapshot)
@@ -1536,6 +1766,7 @@ def make_handler(
                 response_payload["hot_last_served_price_sequence"] = gate[
                     "hot_last_served_price_sequence"
                 ]
+                response_payload["adaptive_speed"] = gate.get("adaptive_speed")
                 if gate["allowed"]:
                     note_price_light_served()
                 body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
@@ -1588,6 +1819,7 @@ def make_handler(
                         fallback_reason = "invalid_since_sequence"
                 query_selected = _parse_hot_code_query(query)
                 hot_codes = current_hot_lane_codes(query_selected)
+                started_at = time.monotonic()
                 response_payload = _realtime_patch_payload(
                     realtime_store,
                     since_sequence=since_sequence,
@@ -1596,7 +1828,11 @@ def make_handler(
                     stock_codes=hot_codes,
                     lane="hot",
                 )
+                record_hot_api_latency((time.monotonic() - started_at) * 1000)
                 note_hot_lane_served(response_payload)
+                response_payload["adaptive_speed"] = evaluate_adaptive_speed(
+                    hot_codes
+                )
                 response_payload["hot_codes"] = hot_codes
                 response_payload["selected_codes"] = list(
                     dict.fromkeys(selected_hot_snapshot() + query_selected)
