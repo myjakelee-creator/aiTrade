@@ -711,6 +711,28 @@ def report_issue(repo_root: Path, issue_number: int, repo: str, dry_run: bool) -
     return 0
 
 
+
+def maybe_report_after_run(
+    repo_root: Path,
+    result_path: Path,
+    args: argparse.Namespace,
+    exit_code: int,
+) -> int:
+    if args.report_issue is None:
+        return exit_code
+    try:
+        report_code = report_issue(
+            repo_root,
+            args.report_issue,
+            args.repo or DEFAULT_ISSUE_REPO,
+            args.report_dry_run,
+        )
+    except Exception as exc:
+        print(f"agent_error: report after run failed: {exc}", file=sys.stderr)
+        return 1
+    return exit_code if exit_code != 0 else report_code
+
+
 def evaluate_policy(
     changed_files: list[str],
     allowed_files: set[str],
@@ -834,17 +856,29 @@ def main(argv: list[str] | None = None) -> int:
         repo_root = find_repo_root()
         if args.show_result:
             return print_last_result(repo_root)
-        if args.report_issue is not None:
+        run_requested = any(
+            (
+                args.goal,
+                args.issue is not None,
+                args.prompt,
+                args.prompt_file,
+                args.self_test,
+                args.goal_draft_only,
+                args.issue_fetch_only,
+            )
+        )
+        if args.report_issue is not None and not run_requested:
             return report_issue(
                 repo_root,
                 args.report_issue,
                 args.repo or DEFAULT_ISSUE_REPO,
                 args.report_dry_run,
             )
-        if args.report_dry_run:
+        if args.report_dry_run and args.report_issue is None:
             raise ValueError("--report-dry-run requires --report-issue")
         if args.self_test:
-            return self_test(repo_root)
+            code = self_test(repo_root)
+            return maybe_report_after_run(repo_root, repo_root / RESULT_RELATIVE_PATH, args, code)
         if args.issue_fetch_only and args.issue is None:
             raise ValueError("--issue-fetch-only requires --issue")
         if args.goal_draft_only and not args.goal:
@@ -922,7 +956,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             result_path = write_result(repo_root, result)
             print_summary(result, result_path)
-            return 0 if safe else 1
+            return maybe_report_after_run(repo_root, result_path, args, 0 if safe else 1)
         if args.issue_fetch_only:
             post_status = git_status(repo_root)
             changed_files = status_changed_files(post_status)
@@ -950,7 +984,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             result_path = write_result(repo_root, result)
             print_summary(result, result_path)
-            return 0 if safe else 1
+            return maybe_report_after_run(repo_root, result_path, args, 0 if safe else 1)
 
         codex_args = [
             "codex",
@@ -989,13 +1023,14 @@ def main(argv: list[str] | None = None) -> int:
         result["codex_stderr"] = codex_result.stderr
         result_path = write_result(repo_root, result)
         print_summary(result, result_path)
-        return 0 if safe else 1
+        return maybe_report_after_run(repo_root, result_path, args, 0 if safe else 1)
     except Exception as exc:
         try:
             repo_root = find_repo_root()
             result = build_error_result(repo_root=repo_root, exc=exc, task_context=task_context)
             result_path = write_result(repo_root, result)
             print_summary(result, result_path)
+            return maybe_report_after_run(repo_root, result_path, args, 1)
         except Exception:
             print(f"agent_error: {exc}", file=sys.stderr)
         return 1
