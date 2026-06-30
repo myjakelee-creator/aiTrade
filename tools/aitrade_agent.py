@@ -80,10 +80,15 @@ GOAL_PROFILES: dict[str, dict[str, object]] = {
 }
 
 
-def run_command(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def run_command(
+    args: list[str],
+    cwd: Path | None = None,
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         args,
         cwd=str(cwd) if cwd else None,
+        input=input_text,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -231,6 +236,11 @@ def print_summary(result: dict[str, object], result_path: Path) -> None:
         "issue_url",
         "task_marker",
         "task_fetched_at",
+        "report_issue_number",
+        "report_issue_repo",
+        "report_issue_url",
+        "report_dry_run",
+        "report_comment_url",
     ):
         if key in result and result.get(key) is not None:
             print(f"{key}: {result.get(key)}")
@@ -418,6 +428,60 @@ def github_api_via_rest(path: str) -> object:
     return json.loads(body)
 
 
+def github_post_via_gh(path: str, payload: dict[str, object], repo_root: Path) -> object:
+    if shutil.which("gh") is None:
+        raise RuntimeError("gh CLI is not available")
+    result = run_command(
+        ["gh", "api", "-X", "POST", path, "--input", "-"],
+        cwd=repo_root,
+        input_text=json.dumps(payload, ensure_ascii=False),
+    )
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or "gh api post failed").strip())
+    return json.loads(result.stdout) if result.stdout.strip() else {}
+
+
+def github_post_via_rest(path: str, payload: dict[str, object]) -> object:
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if not token:
+        raise RuntimeError("GITHUB_TOKEN or GH_TOKEN is required for REST comment posting")
+    url = f"https://api.github.com{path}"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json; charset=utf-8",
+        "User-Agent": "aiTrade-local-agent",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    request = Request(
+        url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            body = response.read().decode("utf-8", errors="replace")
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"GitHub REST API post failed ({exc.code}): {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"GitHub REST API post failed: {exc.reason}") from exc
+    return json.loads(body) if body.strip() else {}
+
+
+def github_post(path: str, payload: dict[str, object], repo_root: Path) -> tuple[object, str]:
+    gh_error: str | None = None
+    try:
+        return github_post_via_gh(path, payload, repo_root), "gh"
+    except Exception as exc:
+        gh_error = str(exc)
+    try:
+        return github_post_via_rest(path, payload), "rest"
+    except Exception as exc:
+        raise RuntimeError(f"GitHub issue comment post failed. gh: {gh_error}; rest: {exc}") from exc
+
+
 def github_api(path: str, repo_root: Path) -> tuple[object, str]:
     gh_error: str | None = None
     try:
@@ -541,6 +605,112 @@ def print_last_result(repo_root: Path) -> int:
     return 0
 
 
+def truncate_text(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + f"\n\n... truncated {len(text) - max_chars} chars ..."
+
+
+def markdown_list(values: object) -> str:
+    if not isinstance(values, list) or not values:
+        return "- 없음"
+    return "\n".join(f"- `{value}`" for value in values)
+
+
+def build_issue_report_body(result: dict[str, object]) -> str:
+    stdout = truncate_text(str(result.get("codex_stdout") or "").strip(), 24000)
+    stderr = truncate_text(str(result.get("codex_stderr") or "").strip(), 8000)
+    result_json = truncate_text(json.dumps(result, ensure_ascii=False, indent=2), 24000)
+    lines = [
+        "## aiTrade Local Agent Report",
+        "",
+        f"- summary: `{result.get('summary')}`",
+        f"- safe: `{result.get('safe')}`",
+        f"- branch: `{result.get('branch')}`",
+        f"- codex_exit_code: `{result.get('codex_exit_code')}`",
+        f"- result_json: `{RESULT_RELATIVE_PATH.as_posix()}`",
+        f"- reported_at: `{utc_now_iso()}`",
+        "",
+        "### Changed files",
+        markdown_list(result.get("changed_files")),
+        "",
+        "### Violations",
+        markdown_list(result.get("violations")),
+    ]
+    if stdout:
+        lines.extend(
+            [
+                "",
+                "<details>",
+                "<summary>codex_stdout</summary>",
+                "",
+                "```text",
+                stdout,
+                "```",
+                "</details>",
+            ]
+        )
+    if stderr:
+        lines.extend(
+            [
+                "",
+                "<details>",
+                "<summary>codex_stderr</summary>",
+                "",
+                "```text",
+                stderr,
+                "```",
+                "</details>",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "<details>",
+            "<summary>result_json</summary>",
+            "",
+            "```json",
+            result_json,
+            "```",
+            "</details>",
+        ]
+    )
+    return truncate_text("\n".join(lines).strip() + "\n", 62000)
+
+
+def report_issue(repo_root: Path, issue_number: int, repo: str, dry_run: bool) -> int:
+    result_path = repo_root / RESULT_RELATIVE_PATH
+    if not result_path.exists():
+        raise FileNotFoundError(f"No aiTrade Local Agent result found: {result_path}")
+    result = json.loads(read_text_file(result_path))
+    body = build_issue_report_body(result)
+    owner_repo = repo.strip() or DEFAULT_ISSUE_REPO
+    result.update(
+        {
+            "report_issue_number": issue_number,
+            "report_issue_repo": owner_repo,
+            "report_issue_url": f"https://github.com/{owner_repo}/issues/{issue_number}",
+            "report_dry_run": dry_run,
+            "report_body_chars": len(body),
+        }
+    )
+    if dry_run:
+        result["summary"] = "report_dry_run_ok"
+        print_summary(result, result_path)
+        print("report_body:")
+        print(body)
+        return 0
+
+    comment_path = f"/repos/{owner_repo}/issues/{issue_number}/comments"
+    comment_obj, method = github_post(comment_path, {"body": body}, repo_root)
+    comment_url = comment_obj.get("html_url") if isinstance(comment_obj, dict) else None
+    result["report_method"] = method
+    result["report_comment_url"] = comment_url
+    result["summary"] = "report_issue_ok"
+    print_summary(result, result_path)
+    return 0
+
+
 def evaluate_policy(
     changed_files: list[str],
     allowed_files: set[str],
@@ -622,6 +792,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--self-test", action="store_true", help="Check local prerequisites only.")
     parser.add_argument("--show-result", action="store_true", help="Show the last result JSON summary.")
+    parser.add_argument("--report-issue", type=int, help="Post the current result JSON as a GitHub issue comment.")
+    parser.add_argument(
+        "--report-dry-run",
+        action="store_true",
+        help="Build and print the issue report body without posting a GitHub comment.",
+    )
     return parser.parse_args(argv)
 
 
@@ -658,6 +834,15 @@ def main(argv: list[str] | None = None) -> int:
         repo_root = find_repo_root()
         if args.show_result:
             return print_last_result(repo_root)
+        if args.report_issue is not None:
+            return report_issue(
+                repo_root,
+                args.report_issue,
+                args.repo or DEFAULT_ISSUE_REPO,
+                args.report_dry_run,
+            )
+        if args.report_dry_run:
+            raise ValueError("--report-dry-run requires --report-issue")
         if args.self_test:
             return self_test(repo_root)
         if args.issue_fetch_only and args.issue is None:
