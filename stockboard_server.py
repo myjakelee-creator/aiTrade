@@ -318,7 +318,7 @@ def _apply_freshness_fields(row):
 
 
 def _live_expected_for_gate(now=None):
-    return _market_session(now) in {"정규장", "애프터마켓"}
+    return _market_session(now) == "정규장"
 
 
 def _gate_age_status(age_sec, max_age_sec, live_expected):
@@ -351,6 +351,25 @@ def _combine_gate_status(price_status, orderbook_status):
     if inactive_statuses:
         return "+".join(dict.fromkeys(inactive_statuses))
     return "ok"
+
+
+def _diagnostic_counts_for_mode(diagnostic):
+    if not isinstance(diagnostic, dict):
+        return False
+    if diagnostic.get("live_expected") is False:
+        return False
+    statuses = {
+        diagnostic.get("status"),
+        diagnostic.get("price_live_status"),
+        diagnostic.get("orderbook_live_status"),
+    }
+    statuses.discard(None)
+    if statuses and all(
+        status in {"no_live_expected", "inactive_session"}
+        for status in statuses
+    ):
+        return False
+    return True
 
 
 def _hot_quote_gate_diagnostic(
@@ -1503,17 +1522,19 @@ def make_handler(
                 now_dt,
                 selected=stock_code in selected_codes,
             )
-            bad_reasons.extend(
-                "hot_price_age_high"
-                if reason == "hot_price_age_bad"
-                else "hot_orderbook_age_high"
-                if reason == "hot_orderbook_age_bad"
-                else "hot_quote_missing"
-                if reason == "hot_price_light_missing"
-                else reason
-                for reason in gate_result["bad_reasons"]
-            )
-            diagnostics.append(gate_result["diagnostic"])
+            diagnostic = gate_result["diagnostic"]
+            diagnostics.append(diagnostic)
+            if _diagnostic_counts_for_mode(diagnostic):
+                bad_reasons.extend(
+                    "hot_price_age_high"
+                    if reason == "hot_price_age_bad"
+                    else "hot_orderbook_age_high"
+                    if reason == "hot_orderbook_age_bad"
+                    else "hot_quote_missing"
+                    if reason == "hot_price_light_missing"
+                    else reason
+                    for reason in gate_result["bad_reasons"]
+                )
         if provider_hot_refresh_pending and live_expected:
             bad_reasons.append("hot_orderbook_refresh_pending")
         with price_light_lock:

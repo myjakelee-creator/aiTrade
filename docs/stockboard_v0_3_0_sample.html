@@ -54,18 +54,25 @@
     <tr><td class="blue" id="market-kospi-name">-</td><td id="market-kospi-index">-</td><td id="market-kospi-change">-</td><td><span class="plus" id="market-kospi-advance">-</span> / <span class="blue" id="market-kospi-decline">-</span></td><td id="market-kospi-individual">-</td><td id="market-kospi-foreign-spot">-</td><td id="market-kospi-institution">-</td><td id="market-kospi-program">-</td><td id="market-kospi-foreign-futures">-</td></tr>
     <tr><td class="blue" id="market-kosdaq-name">-</td><td id="market-kosdaq-index">-</td><td id="market-kosdaq-change">-</td><td><span class="plus" id="market-kosdaq-advance">-</span> / <span class="blue" id="market-kosdaq-decline">-</span></td><td id="market-kosdaq-individual">-</td><td id="market-kosdaq-foreign-spot">-</td><td id="market-kosdaq-institution">-</td><td id="market-kosdaq-program">-</td><td id="market-kosdaq-foreign-futures">-</td></tr>
   </table>
-  <aside class="grade-distribution" aria-label="거래대금 상위 등급분포">
-    <div class="grade-distribution-chart" id="grade-distribution-chart" role="img"></div>
-    <div class="grade-distribution-info">
-      <div class="grade-distribution-title">거래대금 상위 등급분포</div>
-      <div class="grade-distribution-legend" id="grade-distribution-legend"></div>
+  <aside class="market-distribution" aria-label="시장 종목 구성">
+    <div class="market-distribution-item">
+      <div class="market-distribution-chart" id="market-kospi-distribution-chart" role="img" aria-label="코스피 종목 구성 대기"></div>
+      <div class="market-distribution-label">코스피</div>
+    </div>
+    <div class="market-distribution-item">
+      <div class="market-distribution-chart" id="market-kosdaq-distribution-chart" role="img" aria-label="코스닥 종목 구성 대기"></div>
+      <div class="market-distribution-label">코스닥</div>
+    </div>
+    <div class="market-distribution-item">
+      <div class="market-distribution-chart" id="grade-distribution-chart" role="img" aria-label="등급분포 대기"></div>
+      <div class="market-distribution-label">등급분포</div>
     </div>
   </aside>
   </div>
   </div>
 
   <!-- HTML: candidate board -->
-  <div class="section sec-orange">▶ HOT5 유력 후보 5종목</div>
+  <div class="section sec-orange">▶ HOT5 유력 후보 5종목 <span class="lane-speed-badge lane-speed-waiting" id="hot-lane-speed-badge">HOT5 확인중</span> <span class="lane-speed-badge lane-speed-hidden" id="candidate-lane-speed-badge"></span></div>
   <table class="grid board enhanced-board" id="candidate-board">
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>5분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
   </table>
@@ -77,9 +84,9 @@
   </table>
 
   <!-- HTML: trading board -->
-  <div class="section sec-blue">▶ Top100 Pool <span id="ranking-row-count">0개</span></div>
+  <div class="section sec-blue">▶ Top100 Pool <span id="ranking-row-count">0개</span> <span class="lane-speed-badge lane-speed-waiting" id="top100-lane-speed-badge">Top100 확인중</span></div>
   <table class="grid board enhanced-board" id="trading-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>5분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손</th><th>모멘텀</th></tr>
   </table>
 </div>
 <script src="assets/stockboard_format.js?v=5f_format_split_20260627"></script>
@@ -182,6 +189,9 @@
   const debugToggle = document.getElementById('debug-toggle');
   const widthReset = document.getElementById('width-reset');
   const rankingRowCount = document.getElementById('ranking-row-count');
+  const hotLaneSpeedBadge = document.getElementById('hot-lane-speed-badge');
+  const top100LaneSpeedBadge = document.getElementById('top100-lane-speed-badge');
+  const candidateLaneSpeedBadge = document.getElementById('candidate-lane-speed-badge');
   const dataDiagnostics = document.getElementById('data-diagnostics');
   const directApiDebugPanel = document.getElementById('direct-api-debug-panel');
   const topbar = document.querySelector('.topbar');
@@ -197,8 +207,11 @@
   const marketOverview = document.getElementById('market-overview');
   const usMarketTable = document.querySelector('.us');
   const marketTable = document.querySelector('.market');
+  const marketDistributionCharts = {
+    kospi: document.getElementById('market-kospi-distribution-chart'),
+    kosdaq: document.getElementById('market-kosdaq-distribution-chart')
+  };
   const gradeDistributionChart = document.getElementById('grade-distribution-chart');
-  const gradeDistributionLegend = document.getElementById('grade-distribution-legend');
   const usMarketImpactValue = document.getElementById('us-market-impact-value');
   // Temporary UI-only fallback until a real US market impact value is supplied.
   const usMarketImpactFallback = '반도체 우호';
@@ -322,6 +335,63 @@
     return count.toLocaleString('en-US');
   }
 
+  function optionalMarketCount(value) {
+    const count = Number(value ?? 0);
+    return Number.isInteger(count) && count >= 0 ? count : 0;
+  }
+
+  function renderMarketDistributionChart(key, market) {
+    const chart = marketDistributionCharts[key];
+    if (!chart) return;
+    const advancers = optionalMarketCount(market.advancers);
+    const decliners = optionalMarketCount(market.decliners);
+    const unchanged = optionalMarketCount(firstValue(market, [
+      'unchanged_count',
+      'unchanged',
+      'steady_count',
+      'flat_count'
+    ]));
+    const upperLimit = optionalMarketCount(market.upper_limit_count);
+    const lowerLimit = optionalMarketCount(market.lower_limit_count);
+    const segments = [
+      { label: '상승', count: Math.max(0, advancers - upperLimit), color: '#E75F5F' },
+      { label: '하락', count: Math.max(0, decliners - lowerLimit), color: '#5F9EF5' },
+      { label: '보합', count: unchanged, color: '#E2E8F0' },
+      { label: '상한가', count: upperLimit, color: '#B91C1C' },
+      { label: '하한가', count: lowerLimit, color: '#1D4ED8' }
+    ];
+    const total = segments.reduce((sum, segment) => sum + segment.count, 0);
+    let boundary = 0;
+    chart.style.background = total
+      ? `conic-gradient(${segments.map(segment => {
+        const start = boundary;
+        boundary += segment.count / total * 100;
+        return `${segment.color} ${start}% ${boundary}%`;
+      }).join(',')})`
+      : '#e3e8ec';
+    const marketName = key === 'kospi' ? '코스피' : '코스닥';
+    const tooltip = [
+      `${marketName} 종목 구성`,
+      `상승: ${advancers.toLocaleString('en-US')}`,
+      `하락: ${decliners.toLocaleString('en-US')}`,
+      `보합: ${unchanged.toLocaleString('en-US')}`,
+      `상한가: ${upperLimit.toLocaleString('en-US')}`,
+      `하한가: ${lowerLimit.toLocaleString('en-US')}`
+    ].join('\n');
+    chart.dataset.tooltip = tooltip;
+    chart.setAttribute('aria-label', tooltip);
+  }
+
+  function conicGradientFromSegments(segments, total) {
+    if (!total) return '#e3e8ec';
+    let boundary = 0;
+    return `conic-gradient(${segments.map(segment => {
+      const start = boundary;
+      boundary += segment.count / total * 100;
+      return `${segment.color} ${start}% ${boundary}%`;
+    }).join(',')})`;
+  }
+
   function renderMarketFlow(cell, value, integer = false) {
     cell.classList.remove('plus', 'minus');
     if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -355,6 +425,7 @@
     renderMarketFlow(cells.institution, market.institution_eok);
     renderMarketFlow(cells.program, market.program_market_eok, true);
     renderMarketFlow(cells.foreignFutures, market.foreign_futures_eok);
+    renderMarketDistributionChart(key, market);
   }
 
   function renderMarketSupply(data) {
@@ -663,66 +734,12 @@
   }
 
   function initializeMarketColumnResize() {
-    const columns = [
-      { defaultWidth: 72, minWidth: 58 },
-      { defaultWidth: 94, minWidth: 72 },
-      { defaultWidth: 78, minWidth: 68 },
-      { defaultWidth: 146, minWidth: 118 },
-      { defaultWidth: 88, minWidth: 72 },
-      { defaultWidth: 88, minWidth: 72 },
-      { defaultWidth: 88, minWidth: 72 },
-      { defaultWidth: 88, minWidth: 72 },
-      { defaultWidth: 88, minWidth: 72 }
-    ];
-    const headerCells = () => Array.from(marketTable.rows[0].cells);
-    const colgroup = document.createElement('colgroup');
-    columns.forEach(() => colgroup.appendChild(document.createElement('col')));
-    marketTable.prepend(colgroup);
-
-    const controller = initializeUpperColumnResize({
-      root: marketTable,
-      columns,
-      storageKey: marketWidthStorageKey,
-      getHandleCells: headerCells,
-      applyWidths(widths) {
-        Array.from(colgroup.children).forEach((column, index) => {
-          column.style.width = `${widths[index]}px`;
-        });
-        const requestedWidth = widths.reduce((sum, width) => sum + width, 0);
-        marketTable.style.width = `${requestedWidth}px`;
-      },
-      measureWidth(columnIndex) {
-        const measurementTable = document.createElement('table');
-        measurementTable.className = 'grid market';
-        measurementTable.style.cssText = [
-          'position:fixed',
-          'left:-10000px',
-          'top:0',
-          'visibility:hidden',
-          'width:auto',
-          'min-width:0',
-          'table-layout:auto'
-        ].join(';');
-        const tableBody = measurementTable.createTBody();
-        Array.from(marketTable.rows).forEach(sourceRow => {
-          const sourceCell = sourceRow.cells[columnIndex];
-          if (!sourceCell) return;
-          const measurementRow = tableBody.insertRow();
-          const measurementCell = sourceCell.cloneNode(true);
-          measurementCell.querySelectorAll('.upper-column-resizer').forEach(resizer => resizer.remove());
-          measurementCell.style.width = 'auto';
-          measurementCell.style.maxWidth = 'none';
-          measurementCell.style.overflow = 'visible';
-          measurementRow.appendChild(measurementCell);
-        });
-        document.body.appendChild(measurementTable);
-        const measuredWidth = measurementTable.getBoundingClientRect().width + 2;
-        measurementTable.remove();
-        return measuredWidth;
-      }
-    });
-    new ResizeObserver(() => controller.reapplyWidths()).observe(marketTable.parentElement);
-    return controller;
+    marketTable.style.width = 'auto';
+    marketTable.style.tableLayout = 'auto';
+    return {
+      refreshAutomaticWidths() {},
+      reapplyWidths() {}
+    };
   }
 
   const boardColumns = [
@@ -742,7 +759,7 @@
     { label: '큰손', defaultWidth: 56, minWidth: 48, sortKey: 'bigHand', sortDefault: 'desc' },
     { label: '모멘텀', defaultWidth: 90, minWidth: 70, sortKey: 'note', sortDefault: 'asc' }
   ];
-  const top100PoolColumnIndexes = [0, 1, 2, 3, 4, 5, 6];
+  const top100PoolColumnIndexes = boardColumns.map((column, index) => index);
   const top100PoolColumns = top100PoolColumnIndexes.map(index => boardColumns[index]);
   const boardSortDefaults = Object.fromEntries(
     boardColumns
@@ -843,7 +860,7 @@
   }
   let boardHeader = buildBoardHeader();
   let top100PoolHeader = buildBoardHeader(top100PoolColumns);
-  board.innerHTML = `${top100PoolHeader}<tr><td colspan="7">거래 가능 종목 마스터를 불러오는 중입니다.</td></tr>`;
+  board.innerHTML = `${top100PoolHeader}<tr><td colspan="${top100PoolColumns.length}">거래 가능 종목 마스터를 불러오는 중입니다.</td></tr>`;
   candidateBoard.innerHTML = boardHeader;
   selectedBoard.innerHTML = `${boardHeader}<tr><td colspan="15">선택된 종목이 없습니다.</td></tr>`;
 
@@ -972,6 +989,7 @@
   const TOP100_REFRESH_MS = 30000;
   const HOT_REALTIME_PATCH_REFRESH_MS = 500;
   const TOP100_POOL_REALTIME_PATCH_REFRESH_MS = 5000;
+  const HOT_LANE_STATUS_REFRESH_MS = 2000;
   const REALTIME_PATCH_DELTA_ENABLED = true;
   const FIVE_MIN_STRENGTH_WINDOW_MS = 5 * 60 * 1000;
   const CLOSE_METRICS_LAZY_BATCH_SIZE = STOCKBOARD_CLOSE_METRICS.batchSize;
@@ -1501,7 +1519,7 @@
       `--body-left:${positions.bodyLeft}%`,
       `--body-right:${positions.bodyRight}%`
     ].join(';');
-    return `<div class="ohlc-chart ohlc-${direction}" style="${style}" role="img" aria-label="${escapedTooltip}" data-ohlc-tooltip="${escapedTooltip}" data-ohlc-source="${escapeHtml(source)}" data-candle-mode="${top100State.candleMode}" data-trading-date="${escapeHtml(candle.tradingDate)}" data-open="${escapeHtml(prices.open)}" data-high="${escapeHtml(prices.high)}" data-low="${escapeHtml(prices.low)}" data-close="${escapeHtml(prices.close)}" data-vwap="${escapeHtml(prices.vwap)}" data-prev-high="${escapeHtml(prices.prevHigh)}" data-prev-close="${escapeHtml(prices.prevClose)}" data-prev-low="${escapeHtml(prices.prevLow)}">
+    return `<div class="ohlc-chart ohlc-${direction}" style="${style}" role="img" aria-label="${escapedTooltip}" data-tooltip="${escapedTooltip}" data-ohlc-tooltip="${escapedTooltip}" data-ohlc-source="${escapeHtml(source)}" data-candle-mode="${top100State.candleMode}" data-trading-date="${escapeHtml(candle.tradingDate)}" data-open="${escapeHtml(prices.open)}" data-high="${escapeHtml(prices.high)}" data-low="${escapeHtml(prices.low)}" data-close="${escapeHtml(prices.close)}" data-vwap="${escapeHtml(prices.vwap)}" data-prev-high="${escapeHtml(prices.prevHigh)}" data-prev-close="${escapeHtml(prices.prevClose)}" data-prev-low="${escapeHtml(prices.prevLow)}">
       <i class="ohlc-range"></i>
       <i class="ohlc-body"></i>
       <i class="ohlc-open"></i>
@@ -1517,7 +1535,7 @@
 
   function metricMarkup(label, metric) {
     if (!metric) return '-';
-    return `<div class="metric" title="${escapeHtml(label)} ${escapeHtml(metric.value)}" style="--bar-width:${metric.barWidth}%;--bar-color:${metric.color}">
+    return `<div class="metric" data-tooltip="${escapeHtml(label)} ${escapeHtml(metric.value)}" style="--bar-width:${metric.barWidth}%;--bar-color:${metric.color}">
       <span class="metric-track"><i class="metric-fill"></i></span>
       <span class="metric-value">${escapeHtml(metric.value)}</span>
     </div>`;
@@ -1535,7 +1553,7 @@
       `source: ${source}`,
       `${originalLabel}: ${originalValue ?? '-'}`
     ].join('\n');
-    return `<div class="metric price-limit-metric" data-balance-tooltip="${escapeHtml(tooltip)}" title="${escapeHtml(tooltip)}" role="img" aria-label="${escapeHtml(tooltip)}" style="--bar-width:100%;--bar-color:${color}">
+    return `<div class="metric price-limit-metric" data-tooltip="${escapeHtml(tooltip)}" data-balance-tooltip="${escapeHtml(tooltip)}" role="img" aria-label="${escapeHtml(tooltip)}" style="--bar-width:100%;--bar-color:${color}">
       <span class="metric-track"><i class="metric-fill"></i></span>
       <span class="metric-value">${display}</span>
     </div>`;
@@ -1548,7 +1566,7 @@
     if (isFastDisplayMode()) {
       const age = Number(row?.orderbookAgeSec ?? row?.orderbook_age_sec);
       const ageText = Number.isFinite(age) ? ` / ${Math.round(age)}s` : '';
-      return `<span class="fast-metric-text" title="${escapeHtml(balance.tooltip)}">${escapeHtml(balance.value)}${escapeHtml(ageText)}</span>`;
+      return `<span class="fast-metric-text" data-tooltip="${escapeHtml(balance.tooltip)}">${escapeHtml(balance.value)}${escapeHtml(ageText)}</span>`;
     }
     return `<div class="balance-box" data-balance-tooltip="${escapeHtml(balance.tooltip)}" role="img" aria-label="${escapeHtml(balance.tooltip)}" style="--blue-width:${balance.blueWidth}%;--red-width:${balance.redWidth}%">
       <span class="balance-side balance-side-blue"></span>
@@ -1563,9 +1581,9 @@
     if (!strength) return '-';
     if (isFastDisplayMode()) {
       const value = row?.realtimeStrength ?? row?.realtime_strength ?? row?.sortRealtimeStrength ?? '-';
-      return `<span class="fast-metric-text" title="${escapeHtml(strength.tooltip)}">${escapeHtml(displayValue(value))}</span>`;
+      return `<span class="fast-metric-text" data-tooltip="${escapeHtml(strength.tooltip)}">${escapeHtml(displayValue(value))}</span>`;
     }
-    return `<div class="balance-box" title="${escapeHtml(strength.tooltip)}" role="img" aria-label="${escapeHtml(strength.tooltip)}" style="--blue-width:${strength.blueWidth}%;--red-width:${strength.redWidth}%">
+    return `<div class="balance-box" data-tooltip="${escapeHtml(strength.tooltip)}" role="img" aria-label="${escapeHtml(strength.tooltip)}" style="--blue-width:${strength.blueWidth}%;--red-width:${strength.redWidth}%">
       <span class="balance-side balance-side-blue"></span>
       <span class="balance-side balance-side-red"></span>
       <span class="balance-meeting"></span>
@@ -1578,9 +1596,9 @@
     if (!strength) return '-';
     if (isFastDisplayMode()) {
       const value = row?.strength5m ?? row?.strength_5m ?? row?.sessionStrength ?? row?.session_strength ?? '-';
-      return `<span class="fast-metric-text" title="${escapeHtml(strength.tooltip)}">${escapeHtml(displayValue(value))}</span>`;
+      return `<span class="fast-metric-text" data-tooltip="${escapeHtml(strength.tooltip)}">${escapeHtml(displayValue(value))}</span>`;
     }
-    return `<div class="balance-box" title="${escapeHtml(strength.tooltip)}" role="img" aria-label="${escapeHtml(strength.tooltip)}" style="--blue-width:${strength.blueWidth}%;--red-width:${strength.redWidth}%">
+    return `<div class="balance-box" data-tooltip="${escapeHtml(strength.tooltip)}" role="img" aria-label="${escapeHtml(strength.tooltip)}" style="--blue-width:${strength.blueWidth}%;--red-width:${strength.redWidth}%">
       <span class="balance-side balance-side-blue"></span>
       <span class="balance-side balance-side-red"></span>
       <span class="balance-meeting"></span>
@@ -1880,9 +1898,7 @@
       'execution_strength',
       'realtime_strength_snapshot',
       'realtimeStrengthSnapshot',
-      'strength_1m',
-      'minute_strength',
-      '1분강도'
+      'minute_strength'
     ]);
     const sessionStrengthValue = firstValue(row, [
       'strength_5m',
@@ -2120,7 +2136,7 @@
 
   function showBoardMessage(message) {
     top100State.rowByCode.clear();
-    board.innerHTML = `${top100PoolHeader}<tr><td colspan="7">${escapeHtml(message)}</td></tr>`;
+    board.innerHTML = `${top100PoolHeader}<tr><td colspan="${top100PoolColumns.length}">${escapeHtml(message)}</td></tr>`;
   }
 
   function setCell(cell, html, className = '', title = '', flashOnChange = false) {
@@ -2132,8 +2148,13 @@
     }
     if (cell.className !== className) cell.className = className;
     cell.removeAttribute('title');
-    if (title) cell.setAttribute('aria-label', title);
-    else cell.removeAttribute('aria-label');
+    if (title) {
+      cell.dataset.tooltip = title;
+      cell.setAttribute('aria-label', title);
+    } else {
+      delete cell.dataset.tooltip;
+      cell.removeAttribute('aria-label');
+    }
     if (changed && flashOnChange) flashRealtimeCell(cell);
   }
 
@@ -2159,8 +2180,11 @@
     if (cell.dataset.tooltip !== tooltip) cell.dataset.tooltip = tooltip;
     if (tooltip) {
       cell.setAttribute('aria-label', tooltip);
+      cell.firstElementChild?.setAttribute('data-tooltip', tooltip);
+      cell.firstElementChild?.setAttribute('aria-label', tooltip);
     } else {
       cell.removeAttribute('aria-label');
+      cell.firstElementChild?.removeAttribute('data-tooltip');
     }
     delete cell.dataset.tooltipHtml;
     delete cell.dataset.balanceTooltip;
@@ -2224,13 +2248,9 @@
     }, 220));
   }
 
-  /* JS: tooltip functions / singleton roots */
-  const balanceTooltip = StockBoardTooltip.ensureTooltipElement('balance-tooltip');
-  const ohlcTooltipElement = StockBoardTooltip.ensureTooltipElement('ohlc-tooltip');
-  let activeBalanceTooltipCell = null;
-  let lastBalanceTooltipEvent = null;
-  let activeOhlcTooltipCell = null;
-  let lastOhlcTooltipEvent = null;
+  /* JS: tooltip functions / singleton root */
+  const stockboardTooltip = StockBoardTooltip.ensureTooltipElement('stockboard-tooltip');
+  let activeTooltipSource = null;
 
   function stripNativeTitles(root = document) {
     if (!root?.querySelectorAll) return;
@@ -2268,147 +2288,55 @@
   });
   stripNativeTitles();
 
-  function balanceTooltipText(cell) {
-    return cell?.dataset?.tooltipHtml
-      || cell?.dataset?.tooltip
-      || '';
+  function tooltipSourceFromTarget(target) {
+    return target?.closest?.('[data-tooltip]') || null;
   }
 
-  function positionBalanceTooltip(event) {
-    StockBoardTooltip.positionTooltipElement(balanceTooltip, event);
-  }
-
-  function showBalanceTooltip(cell, event) {
-    const text = balanceTooltipText(cell);
+  function showDelegatedTooltip(source, event) {
+    const text = source?.dataset?.tooltip || '';
     if (!text) return;
-    if (activeBalanceTooltipCell === cell) {
-      lastBalanceTooltipEvent = event;
-      positionBalanceTooltip(event);
+    activeTooltipSource = source;
+    StockBoardTooltip.setTooltipContent(stockboardTooltip, text);
+    StockBoardTooltip.showTooltipElement(stockboardTooltip);
+    StockBoardTooltip.positionTooltipElement(stockboardTooltip, event);
+  }
+
+  function hideDelegatedTooltip(source = null) {
+    if (source && activeTooltipSource !== source) return;
+    activeTooltipSource = null;
+    StockBoardTooltip.hideTooltipElement(stockboardTooltip);
+  }
+
+  function refreshBalanceTooltip() {}
+  function refreshOhlcTooltip() {}
+
+  document.addEventListener('mouseenter', event => {
+    const source = tooltipSourceFromTarget(event.target);
+    if (source) showDelegatedTooltip(source, event);
+  }, true);
+  document.addEventListener('mousemove', event => {
+    const source = tooltipSourceFromTarget(event.target);
+    if (!source) {
+      hideDelegatedTooltip();
       return;
     }
-    activeBalanceTooltipCell = cell;
-    lastBalanceTooltipEvent = event;
-    StockBoardTooltip.setTooltipContent(balanceTooltip, text);
-    StockBoardTooltip.showTooltipElement(balanceTooltip);
-    positionBalanceTooltip(event);
-  }
-
-  function refreshBalanceTooltip(cell) {
-    if (activeBalanceTooltipCell !== cell) return;
-    if (currentBalanceTooltipCell() !== cell) {
-      hideBalanceTooltip(cell);
-      return;
-    }
-    positionBalanceTooltip(lastBalanceTooltipEvent);
-  }
-
-  function hideBalanceTooltip(cell) {
-    if (cell && activeBalanceTooltipCell !== cell) return;
-    activeBalanceTooltipCell = null;
-    lastBalanceTooltipEvent = null;
-    StockBoardTooltip.hideTooltipElement(balanceTooltip);
-  }
-
-  function ohlcTooltipText(cell) {
-    return cell?.dataset?.tooltipHtml
-      || cell?.dataset?.tooltip
-      || '';
-  }
-
-  function positionOhlcTooltip(event) {
-    StockBoardTooltip.positionTooltipElement(ohlcTooltipElement, event);
-  }
-
-  function showOhlcTooltip(cell, event) {
-    const text = ohlcTooltipText(cell);
-    if (!text) return;
-    if (activeOhlcTooltipCell === cell) {
-      lastOhlcTooltipEvent = event;
-      positionOhlcTooltip(event);
-      return;
-    }
-    activeOhlcTooltipCell = cell;
-    lastOhlcTooltipEvent = event;
-    StockBoardTooltip.setTooltipContent(ohlcTooltipElement, text);
-    StockBoardTooltip.showTooltipElement(ohlcTooltipElement);
-    positionOhlcTooltip(event);
-  }
-
-  function hideOhlcTooltip(cell) {
-    if (cell && activeOhlcTooltipCell !== cell) return;
-    activeOhlcTooltipCell = null;
-    lastOhlcTooltipEvent = null;
-    StockBoardTooltip.hideTooltipElement(ohlcTooltipElement);
-  }
-
-  function ohlcTooltipCellFromTarget(target) {
-    const directCell = target?.closest?.('td.ohlc-cell[data-tooltip]');
-    if (directCell) return directCell;
-    const source = target?.closest?.('[data-tooltip]');
-    return source?.closest('td.ohlc-cell') || null;
-  }
-
-  function currentOhlcTooltipCell() {
-    if (!lastOhlcTooltipEvent) return null;
-    const hovered = document.elementFromPoint(lastOhlcTooltipEvent.clientX, lastOhlcTooltipEvent.clientY);
-    return ohlcTooltipCellFromTarget(hovered);
-  }
-
-  function refreshOhlcTooltip(cell) {
-    if (activeOhlcTooltipCell !== cell) return;
-    if (currentOhlcTooltipCell() !== cell) {
-      hideOhlcTooltip(cell);
-      return;
-    }
-    positionOhlcTooltip(lastOhlcTooltipEvent);
-  }
-
-  function balanceTooltipCellFromTarget(target) {
-    const directCell = target?.closest?.('td.balance-cell[data-tooltip]');
-    if (directCell) return directCell;
-    const source = target?.closest?.('[data-tooltip]');
-    return source?.closest('td.balance-cell') || null;
-  }
-
-  function currentBalanceTooltipCell() {
-    if (!lastBalanceTooltipEvent) return null;
-    const hovered = document.elementFromPoint(lastBalanceTooltipEvent.clientX, lastBalanceTooltipEvent.clientY);
-    return balanceTooltipCellFromTarget(hovered);
-  }
-
-  function updateBalanceTooltipFromMouse(event) {
-    const cell = balanceTooltipCellFromTarget(event.target);
-    if (!cell) {
-      hideBalanceTooltip();
-      return;
-    }
-    showBalanceTooltip(cell, event);
-  }
-
-  function updateOhlcTooltipFromMouse(event) {
-    const cell = ohlcTooltipCellFromTarget(event.target);
-    if (!cell) {
-      hideOhlcTooltip();
-      return;
-    }
-    showOhlcTooltip(cell, event);
-  }
-
-  document.addEventListener('mousemove', updateBalanceTooltipFromMouse);
-  document.addEventListener('mousemove', updateOhlcTooltipFromMouse);
+    showDelegatedTooltip(source, event);
+  });
+  document.addEventListener('mouseleave', event => {
+    const source = tooltipSourceFromTarget(event.target);
+    if (source?.contains?.(event.relatedTarget)) return;
+    if (source) hideDelegatedTooltip(source);
+  }, true);
   document.addEventListener('click', () => {
-    hideBalanceTooltip();
-    hideOhlcTooltip();
+    hideDelegatedTooltip();
   });
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape') {
-      hideBalanceTooltip();
-      hideOhlcTooltip();
+      hideDelegatedTooltip();
     }
   });
   document.addEventListener('scroll', () => {
-    hideBalanceTooltip();
-    hideOhlcTooltip();
+    hideDelegatedTooltip();
     handleCloseMetricsScrollTrigger();
   }, true);
   safeAddEventListener(document, 'wheel', handleCloseMetricsWheelTrigger, {
@@ -2419,10 +2347,11 @@
   function updateBoardRow(tableRow, row, flashRealtime = false) {
     const grade = row.grade === '-' ? '-' : `<span class="grade ${row.gradeClass}">${escapeHtml(row.grade)}</span>`;
     const cells = tableRow.cells;
+    const stockTitle = normalizeCode(row.code) || '';
     setCell(cells[0], escapeHtml(row.rank), 'rank-cell', row.rankCellTooltip);
     setCell(cells[1], escapeHtml(row.previousRank), classNames('rank-cell', row.rankMovementClass), row.rankTooltip);
     setCell(cells[2], grade, '', row.candidateGradeTooltip || '');
-    setCell(cells[3], escapeHtml(row.name), 'stock-name', `종목코드: ${row.code}`);
+    setCell(cells[3], escapeHtml(row.name), 'stock-name', stockTitle);
     setCell(cells[4], escapeHtml(row.price), 'number-cell', '', flashRealtime);
     setCell(cells[5], escapeHtml(row.changeRate), classNames('number-cell', row.changeClass), '', flashRealtime);
     setCell(cells[6], escapeHtml(row.amount), 'number-cell');
@@ -2448,15 +2377,7 @@
   }
 
   function updateTop100PoolRow(tableRow, row, flashRealtime = false) {
-    const grade = row.grade === '-' ? '-' : `<span class="grade ${row.gradeClass}">${escapeHtml(row.grade)}</span>`;
-    const cells = tableRow.cells;
-    setCell(cells[0], escapeHtml(row.rank), 'rank-cell', row.rankCellTooltip);
-    setCell(cells[1], escapeHtml(row.previousRank), classNames('rank-cell', row.rankMovementClass), row.rankTooltip);
-    setCell(cells[2], grade, '', row.candidateGradeTooltip || '');
-    setCell(cells[3], escapeHtml(row.name), 'stock-name', `종목코드: ${row.code}`);
-    setCell(cells[4], escapeHtml(row.price), 'number-cell', '', flashRealtime);
-    setCell(cells[5], escapeHtml(row.changeRate), classNames('number-cell', row.changeClass), '', flashRealtime);
-    setCell(cells[6], escapeHtml(row.amount), 'number-cell');
+    updateBoardRow(tableRow, row, flashRealtime);
   }
 
   function createTop100PoolRow(row) {
@@ -2810,6 +2731,67 @@
     row.realtimeSequence = firstValue(patch, ['sequence']);
   }
 
+  function applyPriceLightPatchToTop100PoolRow(tableRow, row, patch) {
+    if (!tableRow) return;
+    const patchPriceSource = firstValue(patch, ['price_source', 'priceSource']);
+    const patchDisplayPrice = firstValue(patch, ['display_price', 'displayPrice']);
+    const patchDisplayChangeRate = firstValue(patch, [
+      'display_change_rate',
+      'displayChangeRate'
+    ]);
+    const patchHasUsableDisplay = patchPriceSource !== 'unavailable'
+      || patchDisplayPrice !== null
+      || patchDisplayChangeRate !== null;
+    const price = firstValue(patch, [
+      'display_price',
+      'displayPrice',
+      'price',
+      'realtime_price'
+    ]);
+    const changeRate = firstValue(patch, [
+      'display_change_rate',
+      'displayChangeRate',
+      'change_rate',
+      'realtime_change_rate'
+    ]);
+    if (patchHasUsableDisplay && price !== null) {
+      const displayPrice = formatInteger(price);
+      if (row) {
+        row.price = displayPrice;
+        row.displayPrice = patchDisplayPrice ?? row.displayPrice;
+        row.display_price = row.displayPrice;
+        row.priceSource = patchPriceSource ?? row.priceSource;
+        row.price_source = row.priceSource;
+        row.sortPrice = sortableNumber(price);
+      }
+      setCell(tableRow.cells[4], escapeHtml(displayPrice), 'number-cell', '', true);
+    }
+    if (patchHasUsableDisplay && changeRate !== null) {
+      const displayChangeRate = formatPercent(changeRate);
+      const changeClass = toneClass(null, changeRate);
+      if (row) {
+        row.changeRate = displayChangeRate;
+        row.displayChangeRate = patchDisplayChangeRate ?? row.displayChangeRate;
+        row.display_change_rate = row.displayChangeRate;
+        row.changeRateNumber = Number(String(changeRate ?? '').replace(/[%+,]/g, '').trim());
+        row.changeClass = changeClass;
+      }
+      setCell(tableRow.cells[5], escapeHtml(displayChangeRate), classNames('number-cell', changeClass), '', true);
+    }
+    if (!row) return;
+    const realtimeAccTradeValueEokCandidate = firstValue(patch, [
+      'realtime_acc_trade_value_eok_candidate',
+      'realtimeAccTradeValueEokCandidate'
+    ]);
+    if (realtimeAccTradeValueEokCandidate !== null) {
+      row.realtimeAccTradeValueEokCandidate = realtimeAccTradeValueEokCandidate;
+      row.realtime_acc_trade_value_eok_candidate = realtimeAccTradeValueEokCandidate;
+      row.sortAmount = sortableNumber(realtimeAccTradeValueEokCandidate);
+      row.amount = formatInteger(realtimeAccTradeValueEokCandidate);
+      setCell(tableRow.cells[6], escapeHtml(row.amount), 'number-cell', '', true);
+    }
+  }
+
   function preserveRealtimeFields(nextRow, previousRow) {
     if (!nextRow || !previousRow) return nextRow;
     [
@@ -2826,80 +2808,10 @@
       'changeClass',
       'amount',
       'sortAmount',
-      'bidVolume',
-      'askVolume',
-      'bidPct',
-      'askPct',
-      'bid_volume_snapshot',
-      'ask_volume_snapshot',
-      'orderbookAgeSec',
-      'orderbook_age_sec',
-      'orderbookSource',
-      'orderbook_source',
-      'orderbookSnapshotAt',
-      'orderbook_snapshot_at',
-      'orderbookStaleSec',
-      'orderbook_stale_sec',
-      'orderbookStatus',
-      'orderbook_status',
-      'orderbookError',
-      'orderbook_error',
-      'orderbookStatusDetail',
-      'orderbook_status_detail',
-      'bid_ask_ratio',
-      'sortBidAskRatio',
-      'balanceForce',
-      'realtimeStrengthSnapshot',
-      'realtime_strength_snapshot',
-      'minuteForce',
-      'sessionStrength',
-      'sortSessionStrength',
-      'session_strength',
-      'strength5m',
-      'strength_5m',
-      'strength20m',
-      'strength_20m',
-      'strength60m',
-      'strength_60m',
-      'strengthSnapshotAt',
-      'strength_snapshot_at',
-      'strengthSource',
-      'strength_source',
-      'strengthStaleSec',
-      'strength_stale_sec',
-      'strengthStatus',
-      'strength_status',
-      'sessionBuyQtyLive',
-      'session_buy_qty_live',
-      'sessionSellQtyLive',
-      'session_sell_qty_live',
-      'sessionStrengthSource',
-      'session_strength_source',
-      'fiveMinuteStrengthTooltip',
-      'fiveMinuteStrengthBuyDelta',
-      'fiveMinuteStrengthSellDelta',
-      'sessionForce',
-      'bestBidPrice',
-      'bestAskPrice',
-      'realtimeStrength',
-      'sortRealtimeStrength',
-      'realtime_strength',
       'realtimeAccVolume',
       'realtimeAccTradeValue',
       'realtimeAccTradeValueEokCandidate',
       'realtime_acc_trade_value_eok_candidate',
-      'realtime_ohlc',
-      'realtimeOhlc',
-      'realtime_ohlc_source',
-      'display_ohlc',
-      'displayOhlc',
-      'display_ohlc_source',
-      'regular_close_price',
-      'regular_close_change_rate',
-      'regular_close_ohlc',
-      'regular_close_snapshot_at',
-      'regular_close_snapshot_source',
-      'regular_close_snapshot_status',
       'realtimeReceivedAt',
       'realtimeSequence'
     ].forEach(key => {
@@ -3013,29 +2925,54 @@
 
   board.addEventListener('click', handleBoardSortHeaderClick);
 
-  function updateGradeDistribution(rows) {
-    const gradeCounts = { a: 0, b: 0, c: 0, d: 0, f: 0 };
-    rows.forEach(row => {
-      if (Object.hasOwn(gradeCounts, row.gradeClass)) gradeCounts[row.gradeClass] += 1;
-    });
+  function gradeDistributionKey(row) {
+    const rawGrade = String(row?.grade ?? '').trim();
+    const upperGrade = rawGrade.toUpperCase();
+    if (!rawGrade || rawGrade === '-') return '기타';
+    if (upperGrade.startsWith('DIAMOND')) return 'DIAMOND';
+    if (upperGrade.startsWith('GOLD')) return 'GOLD';
+    if (upperGrade.startsWith('SILVER')) return 'SILVER';
+    if (upperGrade.startsWith('BRONZE')) return 'BRONZE';
+    const letter = upperGrade.charAt(0);
+    if (['S', 'A', 'B', 'C', 'D', 'F'].includes(letter)) return letter;
+    return '기타';
+  }
 
-    const gradeTotal = Object.values(gradeCounts).reduce((sum, count) => sum + count, 0);
-    const colors = { a: '#d71920', b: '#f08a24', c: '#f4c430', d: '#1266d6', f: '#7f8c8d' };
-    let boundary = 0;
-    const segments = Object.entries(gradeCounts).map(([grade, count]) => {
-      const start = boundary;
-      boundary += gradeTotal ? count / gradeTotal * 100 : 0;
-      return `${colors[grade]} ${start}% ${boundary}%`;
+  function updateGradeDistribution(rows) {
+    if (!gradeDistributionChart) return;
+    const colors = {
+      DIAMOND: '#7C3AED',
+      GOLD: '#D97706',
+      SILVER: '#64748B',
+      BRONZE: '#A16207',
+      S: '#B91C1C',
+      A: '#D71920',
+      B: '#F08A24',
+      C: '#F4C430',
+      D: '#1266D6',
+      F: '#7F8C8D',
+      기타: '#CBD5E1'
+    };
+    const order = ['DIAMOND', 'GOLD', 'SILVER', 'BRONZE', 'S', 'A', 'B', 'C', 'D', 'F', '기타'];
+    const counts = new Map(order.map(label => [label, 0]));
+    rows.forEach(row => {
+      const label = gradeDistributionKey(row);
+      counts.set(label, (counts.get(label) || 0) + 1);
     });
-    gradeDistributionChart.style.background = gradeTotal
-      ? `conic-gradient(${segments.join(',')})`
-      : '#e3e8ec';
-    const tooltip = [
-      '거래대금 상위 등급분포',
-      ...Object.entries(gradeCounts).map(([grade, count]) => `${grade.toUpperCase()}: ${count}`)
-    ].join('\n');
+    const total = rows.length;
+    const segments = order
+      .map(label => ({ label, count: counts.get(label) || 0, color: colors[label] }))
+      .filter(segment => segment.count > 0);
+    gradeDistributionChart.style.background = conicGradientFromSegments(segments, total);
+    const tooltipRows = segments.length
+      ? segments.map(segment => {
+        const ratio = total ? (segment.count / total * 100).toFixed(1) : '0.0';
+        return `${segment.label}: ${segment.count.toLocaleString('en-US')}개 (${ratio}%)`;
+      })
+      : ['표시 종목 없음'];
+    const tooltip = ['등급분포', `기준: 현재 Top100 Pool ${total.toLocaleString('en-US')}개`, ...tooltipRows].join('\n');
+    gradeDistributionChart.dataset.tooltip = tooltip;
     gradeDistributionChart.setAttribute('aria-label', tooltip);
-    gradeDistributionLegend.innerHTML = '';
   }
 
   /* JS: board render orchestration */
@@ -3048,9 +2985,9 @@
       top100PoolHeader = buildBoardHeader(top100PoolColumns);
     }
     rankingRowCount.textContent = `${rows.length}개`;
-    updateGradeDistribution(rows);
     const displayRows = sortBoardRows(rows);
     top100State.renderedRows = displayRows;
+    updateGradeDistribution(displayRows);
     top100State.diagnostics.renderOhlc = rows.filter(hasDisplayOhlc).length;
     top100State.candleDomain = candleDomain(rows);
     renderCandidateBoard(rows);
@@ -3275,6 +3212,7 @@
         return { received: rows.length, displayed: normalizedRows.length, missing: 0 };
       }
       top100State.renderedRows = normalizedRows;
+      updateGradeDistribution(top100State.renderedRows);
       top100State.diagnostics.renderOhlc = normalizedRows.filter(hasOhlc).length;
       top100State.candleDomain = candleDomain(normalizedRows);
 
@@ -3395,8 +3333,140 @@
 
   window.setInterval(refreshTop100, TOP100_REFRESH_MS);
 
+  let hotLaneStatusLoading = false;
   let hotRealtimePatchLoading = false;
   let top100PoolRealtimePatchLoading = false;
+
+  function nestedLaneValue(source, path) {
+    return path.split('.').reduce((current, key) => (
+      current && typeof current === 'object' ? current[key] : undefined
+    ), source);
+  }
+
+  function normalizeLaneMode(value) {
+    const mode = String(value ?? '').trim().toLowerCase();
+    return mode || 'unknown';
+  }
+
+  function laneSpeedViewByInterval(intervalMs) {
+    const value = Number(intervalMs);
+    if (!Number.isFinite(value) || value <= 0) {
+      return { label: '확인중', className: 'lane-speed-waiting' };
+    }
+    if (value <= 1000) return { label: '고속', className: 'lane-speed-fast' };
+    if (value <= 5000) return { label: '중속', className: 'lane-speed-medium' };
+    return { label: '저속', className: 'lane-speed-slow' };
+  }
+
+  function hotLaneSpeedView(mode, intervalMs = HOT_REALTIME_PATCH_REFRESH_MS) {
+    switch (normalizeLaneMode(mode)) {
+      case 'fast':
+        return { label: '고속', className: 'lane-speed-fast' };
+      case 'normal':
+        return laneSpeedViewByInterval(intervalMs);
+      case 'recovery':
+      case 'medium':
+        return { label: '중속', className: 'lane-speed-medium' };
+      case 'degraded':
+      case 'slow':
+        return { label: '저속', className: 'lane-speed-slow' };
+      case 'protect':
+        return { label: '보호', className: 'lane-speed-protect' };
+      default:
+        return { label: '확인중', className: 'lane-speed-waiting' };
+    }
+  }
+
+  function top100LaneSpeedView(mode, intervalMs = TOP100_POOL_REALTIME_PATCH_REFRESH_MS) {
+    switch (normalizeLaneMode(mode)) {
+      case 'fast':
+      case 'normal':
+        return laneSpeedViewByInterval(intervalMs);
+      case 'recovery':
+        return { label: '중속', className: 'lane-speed-medium' };
+      case 'degraded':
+      case 'slow':
+        return { label: '저속', className: 'lane-speed-slow' };
+      case 'skipped':
+      case 'backoff':
+        return { label: '대기', className: 'lane-speed-waiting' };
+      case 'protect':
+        return { label: '보호', className: 'lane-speed-protect' };
+      default:
+        return { label: '확인중', className: 'lane-speed-waiting' };
+    }
+  }
+
+  function candidateLaneSpeedView(mode) {
+    switch (normalizeLaneMode(mode)) {
+      case 'skipped':
+      case 'backoff':
+        return { label: '대기', className: 'lane-speed-waiting' };
+      case 'protect':
+        return { label: '저속', className: 'lane-speed-slow' };
+      default:
+        return null;
+    }
+  }
+
+  function setLaneSpeedBadge(element, labelPrefix, view, tooltip) {
+    if (!element) return;
+    if (!view) {
+      element.className = 'lane-speed-badge lane-speed-hidden';
+      element.textContent = '';
+      delete element.dataset.tooltip;
+      element.removeAttribute('aria-label');
+      return;
+    }
+    element.className = `lane-speed-badge ${view.className}`;
+    element.textContent = `${labelPrefix} ${view.label}`;
+    element.dataset.tooltip = tooltip;
+    element.setAttribute('aria-label', tooltip);
+  }
+
+  function applyHotLaneStatus(payload) {
+    const adaptiveMode = nestedLaneValue(payload, 'adaptive_speed.mode');
+    const priceLightMode = nestedLaneValue(payload, 'price_light_lane.adaptive_mode');
+    const rankingMode = nestedLaneValue(payload, 'candidate_safe_ranking_lane.adaptive_mode');
+    setLaneSpeedBadge(
+      hotLaneSpeedBadge,
+      'HOT5',
+      hotLaneSpeedView(adaptiveMode, HOT_REALTIME_PATCH_REFRESH_MS),
+      `HOT5+S1 속도\n기준 호출주기=${HOT_REALTIME_PATCH_REFRESH_MS}ms\nadaptive_speed.mode=${adaptiveMode || '-'}`
+    );
+    setLaneSpeedBadge(
+      top100LaneSpeedBadge,
+      'Top100',
+      top100LaneSpeedView(priceLightMode, TOP100_POOL_REALTIME_PATCH_REFRESH_MS),
+      `Top100 속도\n기준 호출주기=${TOP100_POOL_REALTIME_PATCH_REFRESH_MS}ms\nprice_light_lane.adaptive_mode=${priceLightMode || '-'}`
+    );
+    setLaneSpeedBadge(
+      candidateLaneSpeedBadge,
+      '후보',
+      candidateLaneSpeedView(rankingMode),
+      `후보계산 속도\ncandidate_safe_ranking_lane.adaptive_mode=${rankingMode || '-'}`
+    );
+  }
+
+  async function loadHotLaneStatus() {
+    if (hotLaneStatusLoading) return null;
+    hotLaneStatusLoading = true;
+    try {
+      const response = await fetch('/api/hot_lane_status', { cache: 'no-store' });
+      if (!response.ok) throw new Error(`HOT lane status failed: ${response.status}`);
+      const payload = await response.json();
+      applyHotLaneStatus(payload);
+      return payload;
+    } catch (error) {
+      console.warn(error);
+      setLaneSpeedBadge(hotLaneSpeedBadge, 'HOT5', hotLaneSpeedView('unknown'), 'HOT5+S1 속도 상태 수신 대기');
+      setLaneSpeedBadge(top100LaneSpeedBadge, 'Top100', top100LaneSpeedView('unknown'), 'Top100 속도 상태 수신 대기');
+      setLaneSpeedBadge(candidateLaneSpeedBadge, '후보', null, '후보계산 속도 상태 수신 대기');
+      return null;
+    } finally {
+      hotLaneStatusLoading = false;
+    }
+  }
 
   async function notifyHotSelectedCode(code) {
     const selectedCode = normalizeCode(code);
@@ -3435,7 +3505,7 @@
       if (!code) return;
       const tableRow = findRenderedTableRow(code);
       const row = renderedRowByCode.get(code);
-      if (tableRow) applyRealtimePatchToRow(tableRow, row, patch);
+      if (tableRow) applyPriceLightPatchToTop100PoolRow(tableRow, row, patch);
     });
   }
 
@@ -3583,7 +3653,7 @@
           `table_dom_change_rate=${domChangeRate || '-'}`,
           `dom_equals_direct=${matched}`
         ].join('\n');
-        return `<span class="direct-api-debug-item ${statusClass}" title="${escapeHtml(titleText)}">${escapeHtml(itemText)}</span>`;
+        return `<span class="direct-api-debug-item ${statusClass}" data-tooltip="${escapeHtml(titleText)}">${escapeHtml(itemText)}</span>`;
       });
       directApiDebugPanel.innerHTML = [
         '<span class="direct-api-debug-title">Direct API</span>',
@@ -3625,6 +3695,8 @@
   }
 
   startDirectApiDebugPanel();
+  loadHotLaneStatus();
+  window.setInterval(loadHotLaneStatus, HOT_LANE_STATUS_REFRESH_MS);
   window.setInterval(loadHotRealtimePatch, HOT_REALTIME_PATCH_REFRESH_MS);
   window.setInterval(loadTop100PoolRealtimePatch, TOP100_POOL_REALTIME_PATCH_REFRESH_MS);
 </script>
@@ -3636,15 +3708,39 @@
   const ACTIVE_NAME_CLASS = 'active-stock-name';
   const SELECTABLE_NAME_CLASS = 'stock-selectable-name';
   const STATUS_CLASS = 'stock-link-status';
+  const ACTIVE_STOCK_STORAGE_KEY = 'stockboard.activeStockCode.v1';
   const STOCK_NAME_KEYS = ['stockName', 'stock_name', 'name'];
   const STOCK_CODE_KEYS = ['stockCode', 'stock_code', 'code'];
-  let activeStockCode = null;
+  let activeStockCode = loadActiveStockCode();
   let statusTimer = null;
   let mutationApplyQueued = false;
 
   function normalizeStockCode(value) {
     const text = String(value || '').trim();
-    return STOCK_CODE_PATTERN.test(text) ? text : null;
+    return STOCK_CODE_PATTERN.test(text) ? text.slice(0, 6) : null;
+  }
+
+  function loadActiveStockCode() {
+    try {
+      const code = normalizeStockCode(localStorage.getItem(ACTIVE_STOCK_STORAGE_KEY));
+      if (code) return code;
+      localStorage.removeItem(ACTIVE_STOCK_STORAGE_KEY);
+    } catch (error) {
+      console.warn('Active stock code could not be loaded.', error);
+    }
+    return null;
+  }
+
+  function saveActiveStockCode(stockCode) {
+    try {
+      if (stockCode) {
+        localStorage.setItem(ACTIVE_STOCK_STORAGE_KEY, stockCode);
+      } else {
+        localStorage.removeItem(ACTIVE_STOCK_STORAGE_KEY);
+      }
+    } catch (error) {
+      console.warn('Active stock code could not be saved.', error);
+    }
   }
 
   function getStatusElement() {
@@ -3764,7 +3860,10 @@
       if (!options.silentMissing) {
       showStockLinkStatus(`${activeStockCode} 선택 종목이 현재 목록에서 사라짐`);
       }
-      if (!options.keepActiveOnMissing) activeStockCode = null;
+      if (!options.keepActiveOnMissing) {
+        activeStockCode = null;
+        saveActiveStockCode(null);
+      }
       return false;
     }
     matchedRows.forEach((row) => {
@@ -3801,6 +3900,7 @@
       return;
     }
     activeStockCode = normalizedCode;
+    saveActiveStockCode(activeStockCode);
     applyActiveStockClass({ silentMissing: true });
     document.dispatchEvent(new CustomEvent('stockboard:active-stock-change', {
       detail: { stockCode: activeStockCode }
@@ -3881,6 +3981,12 @@
   };
 
   markSelectableNames();
+  if (activeStockCode) {
+    document.dispatchEvent(new CustomEvent('stockboard:active-stock-change', {
+      detail: { stockCode: activeStockCode }
+    }));
+    queueApplyActiveStockClass();
+  }
 })();
 </script>
 </body>
