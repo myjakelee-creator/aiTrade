@@ -1499,6 +1499,11 @@ class KiwoomOpenApiRealtimeProvider:
         )
         self._stale_trade_drop_count = 0
         self._stale_trade_suspect_count = 0
+        self._older_trade_drop_count = 0
+        self._latest_only_enabled = True
+        self._latest_only_dropped_count = 0
+        self._trade_event_received_count = 0
+        self._trade_event_applied_count = 0
         self._last_stale_trade_lag_sec = None
         self._last_stale_trade_suspect_lag_sec = None
         self._last_trade_lag_sec = None
@@ -2988,15 +2993,11 @@ class KiwoomOpenApiRealtimeProvider:
             last_accepted_seconds = self._last_accepted_trade_time_by_code.get(
                 normalized_code
             )
-            should_drop = (
+            older_than_last_accepted = (
                 trade_time_seconds is not None
                 and last_accepted_seconds is not None
                 and trade_time_seconds < last_accepted_seconds
             )
-            if not should_drop:
-                self._stale_trade_suspect_count += 1
-                self._last_stale_trade_suspect_lag_sec = lag_sec
-                return None
         registered_code = received_code if received_code in registered_codes else None
         sample = {
             "stock_code": normalized_code,
@@ -3011,11 +3012,21 @@ class KiwoomOpenApiRealtimeProvider:
             "real_type": real_type,
             "trade_time_raw": trade_time_raw,
             "stale_trade_dropped": True,
-            "stale_trade_drop_reason": "older_than_last_accepted_and_lagged",
+            "stale_trade_drop_reason": (
+                "older_than_last_accepted_and_lagged"
+                if older_than_last_accepted
+                else "lag_exceeds_drop_stale_trade_seconds"
+            ),
             "trade_lag_sec": lag_sec,
         }
         with self._lock:
             self._stale_trade_drop_count += 1
+            self._latest_only_dropped_count += 1
+            if older_than_last_accepted:
+                self._older_trade_drop_count += 1
+            else:
+                self._stale_trade_suspect_count += 1
+                self._last_stale_trade_suspect_lag_sec = lag_sec
             self._last_stale_trade_lag_sec = lag_sec
         return sample
 
@@ -3596,6 +3607,17 @@ class KiwoomOpenApiRealtimeProvider:
                 if (item.get("next_retry_at_monotonic") or 0) > now
                 or orderbook_ready is not True
             ]
+            store_latest_only = {}
+            if self.store is not None and hasattr(
+                self.store, "latest_only_diagnostics"
+            ):
+                try:
+                    store_latest_only = self.store.latest_only_diagnostics()
+                except Exception:
+                    store_latest_only = {}
+            store_guard_drop_count = store_latest_only.get(
+                "store_update_guard_drop_count", 0
+            )
             return {
                 "available": self._check_availability(),
                 "running": self._running,
@@ -3714,9 +3736,14 @@ class KiwoomOpenApiRealtimeProvider:
                 "orderbook_probe_last_raw_sample": list(
                     self._orderbook_probe_last_raw_sample
                 ),
+                "latest_only_enabled": self._latest_only_enabled,
+                "trade_event_received_count": self._trade_event_received_count,
+                "trade_event_applied_count": self._trade_event_applied_count,
                 "stale_trade_drop_seconds": self._stale_trade_drop_seconds,
                 "stale_trade_drop_count": self._stale_trade_drop_count,
                 "stale_trade_suspect_count": self._stale_trade_suspect_count,
+                "older_trade_drop_count": self._older_trade_drop_count
+                + int(store_latest_only.get("older_trade_drop_count") or 0),
                 "last_stale_trade_lag_sec": self._last_stale_trade_lag_sec,
                 "last_stale_trade_suspect_lag_sec": (
                     self._last_stale_trade_suspect_lag_sec
@@ -3724,6 +3751,13 @@ class KiwoomOpenApiRealtimeProvider:
                 "last_trade_lag_sec": self._last_trade_lag_sec,
                 "max_trade_lag_sec": self._max_trade_lag_sec,
                 "avg_trade_lag_sec_recent": avg_trade_lag,
+                "latest_only_dropped_count": (
+                    self._latest_only_dropped_count
+                    + int(
+                        store_latest_only.get("latest_only_dropped_count") or 0
+                    )
+                ),
+                "store_update_guard_drop_count": store_guard_drop_count,
                 "latest_trade_lag_by_code_sample": dict(
                     list(self._latest_trade_lag_by_code.items())[:20]
                 ),
@@ -3939,6 +3973,8 @@ class KiwoomOpenApiRealtimeProvider:
                 parse_error = f"{type(error).__name__}: {error}"
         with self._lock:
             self._realdata_received_count += 1
+            if real_type == self._REALREG_REAL_TYPE:
+                self._trade_event_received_count += 1
             self._realdata_last_received_at = received_at
             self._realdata_last_code = normalized_code
             self._realdata_last_real_type = real_type
@@ -4152,6 +4188,11 @@ class KiwoomOpenApiRealtimeProvider:
             "raw": dict(sample),
         }
         try:
+            guard_drop_count_before = None
+            if hasattr(self.store, "latest_only_diagnostics"):
+                guard_drop_count_before = self.store.latest_only_diagnostics().get(
+                    "store_update_guard_drop_count"
+                )
             self.store.update_trade(
                 stock_code,
                 price=tick["price"],
@@ -4171,9 +4212,21 @@ class KiwoomOpenApiRealtimeProvider:
                 trade_lag_sec=tick["trade_lag_sec"],
                 fid20_trade_lag_sec=tick["fid20_trade_lag_sec"],
                 stale_trade_suspect=tick["stale_trade_suspect"],
+                received_at=tick["received_at"],
             )
+            guard_dropped = False
+            if guard_drop_count_before is not None and hasattr(
+                self.store, "latest_only_diagnostics"
+            ):
+                guard_drop_count_after = self.store.latest_only_diagnostics().get(
+                    "store_update_guard_drop_count"
+                )
+                guard_dropped = guard_drop_count_after != guard_drop_count_before
+            if not guard_dropped:
+                with self._lock:
+                    self._trade_event_applied_count += 1
             trade_time_seconds = self._trade_time_seconds(tick["trade_time"])
-            if trade_time_seconds is not None:
+            if not guard_dropped and trade_time_seconds is not None:
                 with self._lock:
                     previous_trade_time_seconds = (
                         self._last_accepted_trade_time_by_code.get(stock_code)

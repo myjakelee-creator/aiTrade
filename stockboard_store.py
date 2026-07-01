@@ -184,6 +184,10 @@ class RealtimeStore:
         self._orderbook_event_limit = orderbook_event_limit
         self._sequence = 0
         self._updated_at = None
+        self._latest_only_enabled = True
+        self._store_update_guard_drop_count = 0
+        self._older_trade_drop_count = 0
+        self._latest_only_dropped_count = 0
         self._close_metrics_persist_path = Path(close_metrics_persist_path)
         self._close_metrics_persist_error = None
         self._load_persistent_close_metrics()
@@ -341,9 +345,10 @@ class RealtimeStore:
             self._quotes[stock_code] = quote
         return quote
 
-    def _apply_update(self, stock_code, values):
+    def _apply_update(self, stock_code, values, timestamp_text=None):
         timestamp = time.time()
-        timestamp_text = self._timestamp_text(timestamp)
+        if timestamp_text is None:
+            timestamp_text = self._timestamp_text(timestamp)
         self._sequence += 1
         self._updated_at = timestamp_text
         self._last_seen[stock_code] = timestamp
@@ -358,6 +363,56 @@ class RealtimeStore:
             }
         )
         return quote, timestamp_text, self._sequence
+
+    @staticmethod
+    def _timestamp_value(timestamp_text):
+        if not timestamp_text:
+            return None
+        try:
+            timestamp = datetime.fromisoformat(
+                str(timestamp_text).replace("Z", "+00:00")
+            )
+            return timestamp.timestamp()
+        except (TypeError, ValueError):
+            return None
+
+    def _is_older_trade_update(
+        self,
+        quote,
+        *,
+        incoming_received_at=None,
+        incoming_sequence=None,
+    ):
+        if incoming_sequence is not None:
+            try:
+                incoming_sequence = int(incoming_sequence)
+                current_sequence = int(
+                    quote.get("price_sequence")
+                    or quote.get("trade_sequence")
+                    or 0
+                )
+            except (TypeError, ValueError):
+                incoming_sequence = None
+                current_sequence = 0
+            if incoming_sequence is not None and current_sequence > 0:
+                return incoming_sequence < current_sequence
+
+        incoming_timestamp = self._timestamp_value(incoming_received_at)
+        if incoming_timestamp is None:
+            return False
+        current_timestamps = [
+            self._timestamp_value(quote.get("price_received_at")),
+            self._timestamp_value(quote.get("trade_received_at")),
+        ]
+        current_timestamps = [
+            value for value in current_timestamps if value is not None
+        ]
+        return bool(current_timestamps and incoming_timestamp < max(current_timestamps))
+
+    def _record_trade_guard_drop(self):
+        self._store_update_guard_drop_count += 1
+        self._older_trade_drop_count += 1
+        self._latest_only_dropped_count += 1
 
     @staticmethod
     def _event(stock_code, values, timestamp_text, sequence):
@@ -641,6 +696,8 @@ class RealtimeStore:
         trade_lag_sec=None,
         fid20_trade_lag_sec=None,
         stale_trade_suspect=None,
+        received_at=None,
+        incoming_sequence=None,
     ):
         code = self._normalized_code(stock_code)
         values = {
@@ -670,6 +727,7 @@ class RealtimeStore:
             "strength_source": strength_source,
             "strength_stale_sec": strength_stale_sec,
         }
+        timestamp_text = received_at or None
         if price_first:
             first_values = {
                 key: values.get(key)
@@ -693,13 +751,27 @@ class RealtimeStore:
                 )
             }
             with self._lock:
-                self._ensure_quote(code)
+                quote = self._ensure_quote(code)
+                if self._is_older_trade_update(
+                    quote,
+                    incoming_received_at=timestamp_text,
+                    incoming_sequence=incoming_sequence,
+                ):
+                    self._record_trade_guard_drop()
+                    return deepcopy(quote)
                 quote, timestamp_text, sequence = self._apply_update(
-                    code, first_values
+                    code, first_values, timestamp_text=timestamp_text
                 )
                 self._mark_price_lane(quote, timestamp_text, sequence)
         with self._lock:
             quote = self._ensure_quote(code)
+            if self._is_older_trade_update(
+                quote,
+                incoming_received_at=timestamp_text,
+                incoming_sequence=incoming_sequence,
+            ):
+                self._record_trade_guard_drop()
+                return deepcopy(quote)
             realtime_ohlc = self._realtime_ohlc(code, price)
             if realtime_ohlc is not None:
                 values.update(
@@ -742,7 +814,9 @@ class RealtimeStore:
                     trade_qty=trade_qty,
                 )
             )
-            quote, timestamp_text, sequence = self._apply_update(code, values)
+            quote, timestamp_text, sequence = self._apply_update(
+                code, values, timestamp_text=timestamp_text
+            )
             self._mark_price_lane(quote, timestamp_text, sequence)
             events = self._trade_events.setdefault(
                 code, deque(maxlen=self._trade_event_limit)
@@ -756,6 +830,17 @@ class RealtimeStore:
             event["trade_sequence"] = sequence
             events.append(event)
             return deepcopy(quote)
+
+    def latest_only_diagnostics(self):
+        with self._lock:
+            return {
+                "latest_only_enabled": self._latest_only_enabled,
+                "older_trade_drop_count": self._older_trade_drop_count,
+                "latest_only_dropped_count": self._latest_only_dropped_count,
+                "store_update_guard_drop_count": (
+                    self._store_update_guard_drop_count
+                ),
+            }
 
     def update_orderbook(
         self,
@@ -1222,6 +1307,9 @@ class RealtimeStore:
             self._base_ohlc.clear()
             self._sequence = 0
             self._updated_at = None
+            self._store_update_guard_drop_count = 0
+            self._older_trade_drop_count = 0
+            self._latest_only_dropped_count = 0
 
 
 def _load_tradable_stock_codes():
