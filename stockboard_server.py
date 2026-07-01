@@ -621,6 +621,15 @@ def _parse_codes_query(query):
     ]
 
 
+def _query_flag_enabled(query, *names):
+    enabled_values = {"1", "true", "yes", "on", "debug"}
+    for name in names:
+        for value in query.get(name, []):
+            if str(value).strip().lower() in enabled_values:
+                return True
+    return False
+
+
 def _parse_hot_code_query(query):
     codes = []
     for key in ("selected", "selected_codes", "hot_codes", "codes", "code"):
@@ -676,10 +685,10 @@ def _price_light_codes(rows, limit=PRICE_LIGHT_TOP_LIMIT):
     return codes
 
 
-def _overlay_close_metrics(row, snapshot):
+def _overlay_close_metrics(row, snapshot, include_debug=False):
     if not isinstance(snapshot, dict):
         return
-    for field in (
+    fields = [
         "bid_pct",
         "ask_pct",
         "bid_volume_snapshot",
@@ -693,7 +702,6 @@ def _overlay_close_metrics(row, snapshot):
         "orderbook_requested_at",
         "orderbook_completed_at",
         "orderbook_tr_repeat_count",
-        "orderbook_raw_sample",
         "orderbook_rqname",
         "orderbook_trcode",
         "orderbook_screen_no",
@@ -707,7 +715,21 @@ def _overlay_close_metrics(row, snapshot):
         "strength_status",
         "strength_error",
         "strength_status_detail",
-    ):
+    ]
+    if include_debug:
+        fields.extend(
+            [
+                "orderbook_raw_sample",
+                "strength_raw_sample",
+                "strength_requested_at",
+                "strength_completed_at",
+                "strength_tr_repeat_count",
+                "strength_rqname",
+                "strength_trcode",
+                "strength_screen_no",
+            ]
+        )
+    for field in fields:
         if field in snapshot:
             row[field] = snapshot.get(field)
     if row.get("orderbook_source") is None:
@@ -833,7 +855,7 @@ def _overlay_quote_latest(row, quote):
         row["orderbook_status"] = quote.get("orderbook_status") or "ok"
 
 
-def _top100_with_realtime(rows, realtime_store):
+def _top100_with_realtime(rows, realtime_store, include_debug=False):
     response_rows = [deepcopy(row) for row in rows]
     codes = [row.get("stock_code") for row in response_rows]
     try:
@@ -852,7 +874,11 @@ def _top100_with_realtime(rows, realtime_store):
         stock_code = row.get("stock_code")
         row["rest_price"] = row.get("price")
         row["rest_change_rate"] = row.get("change_rate")
-        _overlay_close_metrics(row, close_metrics.get(stock_code))
+        _overlay_close_metrics(
+            row,
+            close_metrics.get(stock_code),
+            include_debug=include_debug,
+        )
         _overlay_quote_latest(row, quotes.get(stock_code))
         if _market_clock_phase() != "regular":
             try:
@@ -1221,7 +1247,186 @@ def _realtime_patch_payload(
     }
 
 
-def _realtime_snapshot_payload(snapshot):
+REALTIME_SLIM_QUOTE_FIELDS = frozenset(
+    {
+        "stock_code",
+        "stock_name",
+        "price",
+        "change_rate",
+        "trade_price",
+        "trade_qty",
+        "trade_side",
+        "trade_time",
+        "fid20_trade_time",
+        "trade_lag_sec",
+        "fid20_trade_lag_sec",
+        "stale_trade_suspect",
+        "execution_strength",
+        "cumulative_volume",
+        "cumulative_value",
+        "price_received_at",
+        "price_updated_at",
+        "price_sequence",
+        "trade_received_at",
+        "trade_updated_at",
+        "trade_sequence",
+        "received_code",
+        "normalized_code",
+        "registered_code",
+        "original_registered_code",
+        "realtime_source_code",
+        "source_code",
+        "received_at",
+        "updated_at",
+        "sequence",
+        "best_bid",
+        "best_ask",
+        "bid_volume",
+        "ask_volume",
+        "total_bid_qty",
+        "total_ask_qty",
+        "bid_ask_ratio",
+        "orderbook_received_at",
+        "orderbook_updated_at",
+        "orderbook_sequence",
+        "orderbook_source",
+        "orderbook_status",
+        "orderbook_error",
+        "orderbook_status_detail",
+        "orderbook_snapshot_at",
+        "orderbook_stale_sec",
+        "realtime_strength_snapshot",
+        "session_buy_qty_live",
+        "session_sell_qty_live",
+        "session_strength",
+        "session_strength_source",
+        "one_min_strength",
+        "one_min_buy_qty",
+        "one_min_sell_qty",
+        "big_hand_buy_count_1eok",
+        "big_hand_sell_count_1eok",
+        "big_hand_net_buy_count_1eok",
+        "big_hand_buy_sum_eok",
+        "big_hand_sell_sum_eok",
+        "big_hand_net_sum_eok",
+        "strength_5m",
+        "strength_20m",
+        "strength_60m",
+        "strength_snapshot_at",
+        "strength_source",
+        "strength_stale_sec",
+        "strength_status",
+        "realtime_ohlc",
+        "realtime_ohlc_source",
+        "regular_close_price",
+        "regular_close_change_rate",
+        "regular_close_ohlc",
+        "regular_close_snapshot_at",
+        "regular_close_snapshot_source",
+        "regular_close_snapshot_status",
+        "latest_only_enabled",
+        "latest_only_dropped_count",
+        "latest_only_dropped_at",
+        "latest_only_dropped_reason",
+    }
+)
+
+REALTIME_SLIM_CLOSE_METRIC_FIELDS = frozenset(
+    {
+        "stock_code",
+        "bid_volume_snapshot",
+        "ask_volume_snapshot",
+        "bid_pct",
+        "ask_pct",
+        "bid_ask_ratio_snapshot",
+        "orderbook_source",
+        "orderbook_snapshot_at",
+        "orderbook_status",
+        "orderbook_error",
+        "orderbook_status_detail",
+        "orderbook_stale_sec",
+        "realtime_strength_snapshot",
+        "strength_5m",
+        "strength_20m",
+        "strength_60m",
+        "strength_source",
+        "strength_snapshot_at",
+        "strength_status",
+        "strength_error",
+        "strength_status_detail",
+        "strength_stale_sec",
+        "updated_at",
+    }
+)
+
+
+def _slim_close_metrics(metrics):
+    if not isinstance(metrics, dict):
+        return {}
+    return {
+        code: {
+            field: deepcopy(value)
+            for field, value in snapshot.items()
+            if field in REALTIME_SLIM_CLOSE_METRIC_FIELDS
+        }
+        for code, snapshot in metrics.items()
+        if isinstance(snapshot, dict)
+    }
+
+
+def _slim_realtime_quote(stock_code, quote):
+    if not isinstance(quote, dict):
+        return {}
+    slim = {
+        field: deepcopy(value)
+        for field, value in quote.items()
+        if field in REALTIME_SLIM_QUOTE_FIELDS
+    }
+    slim["stock_code"] = slim.get("stock_code") or stock_code
+    price = _realtime_abs_number(slim.get("price"))
+    change_rate = _realtime_number(slim.get("change_rate"))
+    trade_value_diagnostics = _realtime_acc_trade_value_diagnostics(
+        slim.get("cumulative_value")
+    )
+    slim["price"] = price
+    slim["change_rate"] = change_rate
+    slim["realtime_price"] = price
+    slim["realtime_change_rate"] = change_rate
+    slim["trade_value_eok"] = trade_value_diagnostics["eok_candidate"]
+    slim["cumulative_value_eok"] = trade_value_diagnostics["eok_candidate"]
+    slim["realtime_acc_trade_value"] = _realtime_number(
+        slim.get("cumulative_value")
+    )
+    slim["realtime_acc_trade_value_eok_candidate"] = (
+        trade_value_diagnostics["eok_candidate"]
+    )
+    slim["realtime_strength"] = _realtime_number(
+        slim.get("execution_strength")
+    )
+    if slim.get("fid20_trade_time") is None:
+        slim["fid20_trade_time"] = slim.get("trade_time")
+    if slim.get("fid20_trade_lag_sec") is None:
+        slim["fid20_trade_lag_sec"] = slim.get("trade_lag_sec")
+    if slim.get("price_received_at") is None:
+        slim["price_received_at"] = (
+            slim.get("trade_received_at") or slim.get("received_at")
+        )
+    if slim.get("trade_received_at") is None:
+        slim["trade_received_at"] = (
+            slim.get("price_received_at") or slim.get("received_at")
+        )
+    best_bid = _realtime_abs_number(slim.get("best_bid"))
+    best_ask = _realtime_abs_number(slim.get("best_ask"))
+    slim["best_bid"] = best_bid
+    slim["best_ask"] = best_ask
+    slim["best_bid_price"] = best_bid
+    slim["best_ask_price"] = best_ask
+    _apply_freshness_fields(slim)
+    _apply_display_price_fields(slim)
+    return slim
+
+
+def _realtime_snapshot_payload(snapshot, include_debug=False):
     payload = deepcopy(snapshot)
     for quote in payload.get("quotes", {}).values():
         if not isinstance(quote, dict):
@@ -1231,7 +1436,20 @@ def _realtime_snapshot_payload(snapshot):
         if quote.get("fid20_trade_lag_sec") is None:
             quote["fid20_trade_lag_sec"] = quote.get("trade_lag_sec")
         _apply_freshness_fields(quote)
-    return payload
+    if include_debug:
+        payload["payload_mode"] = "debug"
+        return payload
+    return {
+        "sequence": payload.get("sequence"),
+        "updated_at": payload.get("updated_at"),
+        "payload_mode": "slim",
+        "quotes": {
+            stock_code: _slim_realtime_quote(stock_code, quote)
+            for stock_code, quote in payload.get("quotes", {}).items()
+            if isinstance(quote, dict)
+        },
+        "close_metrics": _slim_close_metrics(payload.get("close_metrics", {})),
+    }
 
 
 def _empty_foreign_investor_net_data(query_date, error=None):
@@ -1835,6 +2053,7 @@ def make_handler(
                 self.wfile.write(body)
                 return
             if request_path == "/api/realtime":
+                include_debug = _query_flag_enabled(query, "debug", "include_debug")
                 if "codes" in query:
                     codes = [
                         code.strip()
@@ -1843,8 +2062,14 @@ def make_handler(
                         if code.strip()
                     ]
                     try:
-                        response_payload = _realtime_snapshot_payload(
+                        snapshot = (
                             realtime_store.snapshot_many(codes)
+                            if include_debug
+                            else realtime_store.snapshot_latest_many(codes)
+                        )
+                        response_payload = _realtime_snapshot_payload(
+                            snapshot,
+                            include_debug=include_debug,
                         )
                     except ValueError as error:
                         body = json.dumps({"error": str(error)}).encode("utf-8")
@@ -1856,8 +2081,14 @@ def make_handler(
                         self.wfile.write(body)
                         return
                 else:
-                    response_payload = _realtime_snapshot_payload(
+                    snapshot = (
                         realtime_store.snapshot()
+                        if include_debug
+                        else realtime_store.snapshot_latest()
+                    )
+                    response_payload = _realtime_snapshot_payload(
+                        snapshot,
+                        include_debug=include_debug,
                     )
                 body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
@@ -2339,6 +2570,7 @@ def make_handler(
                 self.wfile.write(body)
                 return
             if request_path == "/api/top100":
+                include_debug = _query_flag_enabled(query, "debug", "include_debug")
                 ohlc_count = sum(row.get("ohlc") is not None for row in rows)
                 rows_id = id(rows)
                 print(
@@ -2366,7 +2598,11 @@ def make_handler(
                     self.wfile.write(body)
                     return
                 response_rows = enrich_candidate_fields(
-                    _top100_with_realtime(rows, realtime_store)
+                    _top100_with_realtime(
+                        rows,
+                        realtime_store,
+                        include_debug=include_debug,
+                    )
                 )
                 body = json.dumps(response_rows, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)

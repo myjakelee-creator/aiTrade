@@ -1122,6 +1122,10 @@ class RealtimeStore:
         with self._lock:
             return self._snapshot_for_codes(tuple(self._quotes))
 
+    def snapshot_latest(self):
+        with self._lock:
+            return self._latest_snapshot_for_codes(tuple(self._quotes))
+
     def snapshot_many(self, stock_codes):
         codes = tuple(dict.fromkeys(self._normalized_code(code) for code in stock_codes))
         with self._lock:
