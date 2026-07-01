@@ -172,7 +172,6 @@ class RealtimeStore:
         "strength_requested_at",
         "strength_completed_at",
         "strength_tr_repeat_count",
-        "strength_raw_sample",
         "strength_rqname",
         "strength_trcode",
         "strength_screen_no",
@@ -195,7 +194,6 @@ class RealtimeStore:
         "orderbook_requested_at",
         "orderbook_completed_at",
         "orderbook_tr_repeat_count",
-        "orderbook_raw_sample",
         "orderbook_rqname",
         "orderbook_trcode",
         "orderbook_screen_no",
@@ -279,6 +277,16 @@ class RealtimeStore:
     def _has_persistent_value(value):
         return value is not None and value != ""
 
+    @staticmethod
+    def _normalize_trading_date(value):
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        digits = "".join(ch for ch in text[:10] if ch.isdigit())
+        if len(digits) == 8:
+            return digits
+        return ""
+
     def _persistent_timestamp(self):
         return datetime.now(timezone.utc).isoformat()
 
@@ -311,12 +319,14 @@ class RealtimeStore:
             self._close_metrics_persist_error = "load failed: invalid snapshots"
             return
         restored_at = self._persistent_timestamp()
-        today = self._kst_now().date().isoformat()
+        today = self._kst_now().date().strftime("%Y%m%d")
         restored = {}
         for raw_code, snapshot in snapshots.items():
             if not isinstance(snapshot, dict):
                 continue
-            trading_date = str(snapshot.get("trading_date") or "")[:10]
+            trading_date = self._normalize_trading_date(
+                snapshot.get("trading_date")
+            )
             if trading_date and trading_date != today:
                 continue
             try:
@@ -410,6 +420,8 @@ class RealtimeStore:
             and persistent_snapshot.get("large_trade_source") != "opt10055_day"
         ):
             return
+        persistent_snapshot.pop("orderbook_raw_sample", None)
+        persistent_snapshot.pop("strength_raw_sample", None)
         persistent_snapshot["stock_code"] = code
         persistent_snapshot["close_metrics_persistent"] = True
         persistent_snapshot["close_metrics_persisted_at"] = persisted_at
@@ -1155,9 +1167,13 @@ class RealtimeStore:
         bid_ask_ratio = metrics.get("bid_ask_ratio_snapshot")
         if bid_ask_ratio is None:
             bid_ask_ratio = self._snapshot_ratio(bid_volume, ask_volume)
+        trading_date = (
+            self._normalize_trading_date(metrics.get("trading_date"))
+            or self._normalize_trading_date(timestamp_text)
+        )
         values = {
             "stock_code": code,
-            "trading_date": metrics.get("trading_date") or timestamp_text[:10],
+            "trading_date": trading_date,
             "bid_volume_snapshot": bid_volume,
             "ask_volume_snapshot": ask_volume,
             "bid_pct": bid_pct,

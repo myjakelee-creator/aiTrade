@@ -36,6 +36,16 @@ def _env_int(name, default=0):
         return default
 
 
+def _normalize_trading_date(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    digits = "".join(ch for ch in text[:10] if ch.isdigit())
+    if len(digits) == 8:
+        return digits
+    return ""
+
+
 def _load_dotenv():
     supported_keys = {"KIWOOM_APP_KEY", "KIWOOM_SECRET_KEY"}
     candidates = (Path(r"C:\aiTrade\.env"), Path(__file__).resolve().parent / ".env")
@@ -2135,10 +2145,18 @@ class KiwoomOpenApiRealtimeProvider:
         with self._lock:
             return self._strength_probe_ready_state_locked()[0]
 
-    def _strength_probe_deferred_result(self, code, requested_at=None, reason=None):
+    def _strength_probe_deferred_result(
+        self,
+        code,
+        requested_at=None,
+        reason=None,
+        trading_date=None,
+    ):
         snapshot_at = datetime.now().isoformat(timespec="seconds")
         return {
             "stock_code": code,
+            "trading_date": _normalize_trading_date(trading_date)
+            or _normalize_trading_date(snapshot_at),
             "strength_source": "opt10046_probe",
             "strength_status": "deferred",
             "strength_error": reason or "provider_not_ready",
@@ -2146,19 +2164,32 @@ class KiwoomOpenApiRealtimeProvider:
             "strength_snapshot_at": snapshot_at,
         }
 
-    def enqueue_strength_probe(self, code, priority="active", force=False):
+    def enqueue_strength_probe(
+        self,
+        code,
+        priority="active",
+        force=False,
+        trading_date=None,
+    ):
         normalized_code = _stock_code(code)
         if normalized_code is None:
             raise ValueError(f"invalid stock code: {code!r}")
         requested_at = datetime.now().isoformat(timespec="seconds")
+        trading_date = _normalize_trading_date(trading_date)
         with self._lock:
             cached = self._strength_probe_cache.get(normalized_code)
-            snapshot_date = str(cached.get("strength_snapshot_at", ""))[:10] if cached else ""
+            snapshot_date = (
+                _normalize_trading_date(cached.get("trading_date"))
+                or _normalize_trading_date(cached.get("strength_snapshot_at"))
+                if cached
+                else ""
+            )
             if (
                 not force
                 and cached
                 and cached.get("strength_status") == "ok"
-                and snapshot_date == requested_at[:10]
+                and snapshot_date
+                == (trading_date or _normalize_trading_date(requested_at))
             ):
                 response = {
                     "ok": True,
@@ -2199,6 +2230,7 @@ class KiwoomOpenApiRealtimeProvider:
             item = {
                 "stock_code": normalized_code,
                 "requested_at": requested_at,
+                "trading_date": trading_date,
                 "priority": priority,
                 "next_retry_at_monotonic": (
                     now + self._strength_probe_not_ready_retry_sec
@@ -2232,6 +2264,8 @@ class KiwoomOpenApiRealtimeProvider:
                     "strength_source": "opt10046_probe",
                     "strength_status": status,
                     "strength_error": error,
+                    "trading_date": trading_date
+                    or _normalize_trading_date(requested_at),
                     "strength_requested_at": requested_at,
                     "strength_snapshot_at": requested_at,
                 },
@@ -2383,6 +2417,7 @@ class KiwoomOpenApiRealtimeProvider:
                     code,
                     requested_at=requested_at,
                     reason=not_ready_reason,
+                    trading_date=item.get("trading_date"),
                 )
                 self._strength_probe_not_ready_reason = not_ready_reason
                 self._strength_probe_last_error = not_ready_reason
@@ -2410,6 +2445,7 @@ class KiwoomOpenApiRealtimeProvider:
             code,
             "opt10046 probe timeout",
             requested_at=requested_at,
+            trading_date=inflight.get("trading_date"),
         )
 
     def _request_strength_tr_probe_on_qt(self, item):
@@ -2417,6 +2453,7 @@ class KiwoomOpenApiRealtimeProvider:
         requested_at = item.get("requested_at") or datetime.now().isoformat(
             timespec="seconds"
         )
+        trading_date = _normalize_trading_date(item.get("trading_date"))
         with self._lock:
             ready, not_ready_reason = self._strength_probe_ready_state_locked()
             if not ready:
@@ -2429,6 +2466,7 @@ class KiwoomOpenApiRealtimeProvider:
                     normalized_code,
                     requested_at=requested_at,
                     reason=not_ready_reason,
+                    trading_date=trading_date,
                 )
                 self._strength_probe_not_ready_reason = not_ready_reason
                 self._strength_probe_last_error = not_ready_reason
@@ -2446,6 +2484,7 @@ class KiwoomOpenApiRealtimeProvider:
                 normalized_code,
                 "control_unavailable",
                 requested_at=requested_at,
+                trading_date=trading_date,
             )
             return
         # opt10046 code suffix is unconfirmed locally. Probe uses six digits first;
@@ -2468,6 +2507,7 @@ class KiwoomOpenApiRealtimeProvider:
                 normalized_code,
                 str(error),
                 requested_at=requested_at,
+                trading_date=trading_date,
             )
             return
         if result not in (None, 0, "0"):
@@ -2475,11 +2515,13 @@ class KiwoomOpenApiRealtimeProvider:
                 normalized_code,
                 f"CommRqData returned {result!r}",
                 requested_at=requested_at,
+                trading_date=trading_date,
             )
             return
         requested = datetime.now().isoformat(timespec="seconds")
         inflight = {
             "stock_code": normalized_code,
+            "trading_date": trading_date or _normalize_trading_date(requested),
             "requested_at": requested_at,
             "comm_requested_at": requested,
             "rqname": self._STRENGTH_PROBE_RQNAME,
@@ -2489,6 +2531,7 @@ class KiwoomOpenApiRealtimeProvider:
         }
         response = {
             "stock_code": normalized_code,
+            "trading_date": trading_date or _normalize_trading_date(requested),
             "strength_source": "opt10046_probe",
             "strength_status": "requested",
             "strength_requested_at": requested_at,
@@ -2503,10 +2546,18 @@ class KiwoomOpenApiRealtimeProvider:
             self._strength_probe_inflight = inflight
             self._strength_probe_last_result = dict(response)
 
-    def _strength_probe_error(self, code, message, requested_at=None):
+    def _strength_probe_error(
+        self,
+        code,
+        message,
+        requested_at=None,
+        trading_date=None,
+    ):
         completed_at = datetime.now().isoformat(timespec="seconds")
         result = {
             "stock_code": code,
+            "trading_date": _normalize_trading_date(trading_date)
+            or _normalize_trading_date(completed_at),
             "strength_source": "opt10046_probe",
             "strength_status": "error",
             "strength_error": str(message)[:160],
@@ -2699,6 +2750,7 @@ class KiwoomOpenApiRealtimeProvider:
         wait_timeout_sec=12.0,
         threshold_krw=LARGE_TRADE_THRESHOLD_KRW,
         apply=False,
+        trading_date=None,
     ):
         normalized_codes = []
         for code in codes or []:
@@ -2716,6 +2768,7 @@ class KiwoomOpenApiRealtimeProvider:
         limit = min(max(1, limit), 100)
         threshold_krw = self._normalize_large_trade_threshold_krw(threshold_krw)
         requested_at = datetime.now().isoformat(timespec="seconds")
+        trading_date = _normalize_trading_date(trading_date)
         enqueue_results = []
         for code in normalized_codes:
             enqueue_results.append(
@@ -2726,6 +2779,7 @@ class KiwoomOpenApiRealtimeProvider:
                     threshold_krw=threshold_krw,
                     apply=apply,
                     requested_at=requested_at,
+                    trading_date=trading_date,
                 )
             )
         deadline = time.monotonic() + max(0.0, float(wait_timeout_sec or 0))
@@ -2765,6 +2819,7 @@ class KiwoomOpenApiRealtimeProvider:
                         threshold_krw=threshold_krw,
                         requested_at=requested_at,
                         reason="probe_result_wait_timeout",
+                        trading_date=trading_date,
                     )
         return {
             "ok": True,
@@ -2782,6 +2837,7 @@ class KiwoomOpenApiRealtimeProvider:
             ],
             "payload_mode": "debug_probe",
             "requested_at": requested_at,
+            "trading_date": trading_date or _normalize_trading_date(requested_at),
             "enqueue_results": enqueue_results,
         }
 
@@ -2801,6 +2857,7 @@ class KiwoomOpenApiRealtimeProvider:
         threshold_krw=LARGE_TRADE_THRESHOLD_KRW,
         apply=False,
         requested_at=None,
+        trading_date=None,
     ):
         normalized_code = _stock_code(code)
         if normalized_code is None:
@@ -2811,6 +2868,7 @@ class KiwoomOpenApiRealtimeProvider:
         limit = min(max(1, int(limit or 30)), 100)
         threshold_krw = self._normalize_large_trade_threshold_krw(threshold_krw)
         requested_at = requested_at or datetime.now().isoformat(timespec="seconds")
+        trading_date = _normalize_trading_date(trading_date)
         key = (normalized_code, day, limit, threshold_krw)
         with self._lock:
             now = time.monotonic()
@@ -2838,6 +2896,7 @@ class KiwoomOpenApiRealtimeProvider:
                 "apply": bool(apply),
                 "key": key,
                 "requested_at": requested_at,
+                "trading_date": trading_date,
                 "next_retry_at_monotonic": (
                     now + self._opt10055_probe_not_ready_retry_sec
                     if not ready
@@ -2860,6 +2919,7 @@ class KiwoomOpenApiRealtimeProvider:
                 else "opt10055 probe deferred until provider ready"
             ),
             "requested_at": requested_at,
+            "trading_date": trading_date or _normalize_trading_date(requested_at),
         }
         with self._lock:
             self._opt10055_probe_last_result = dict(response)
@@ -2873,11 +2933,14 @@ class KiwoomOpenApiRealtimeProvider:
         threshold_krw=LARGE_TRADE_THRESHOLD_KRW,
         requested_at=None,
         reason=None,
+        trading_date=None,
     ):
         snapshot_at = datetime.now().isoformat(timespec="seconds")
         threshold_krw = self._normalize_large_trade_threshold_krw(threshold_krw)
         return {
             "stock_code": code,
+            "trading_date": _normalize_trading_date(trading_date)
+            or _normalize_trading_date(snapshot_at),
             "day": str(day),
             "limit": int(limit),
             "large_trade_threshold_krw": threshold_krw,
@@ -2919,6 +2982,7 @@ class KiwoomOpenApiRealtimeProvider:
                     threshold_krw=item.get("threshold_krw"),
                     requested_at=item.get("requested_at"),
                     reason=not_ready_reason,
+                    trading_date=item.get("trading_date"),
                 )
                 self._opt10055_probe_not_ready_reason = not_ready_reason
                 self._opt10055_probe_last_error = not_ready_reason
@@ -2947,6 +3011,7 @@ class KiwoomOpenApiRealtimeProvider:
             threshold_krw=inflight.get("threshold_krw"),
             requested_at=inflight.get("requested_at"),
             status="timeout",
+            trading_date=inflight.get("trading_date"),
         )
 
     def _request_opt10055_probe_on_qt(self, item):
@@ -2954,6 +3019,7 @@ class KiwoomOpenApiRealtimeProvider:
         requested_at = item.get("requested_at") or datetime.now().isoformat(
             timespec="seconds"
         )
+        trading_date = _normalize_trading_date(item.get("trading_date"))
         day = item.get("day") or "1"
         limit = item.get("limit") or 30
         threshold_krw = self._normalize_large_trade_threshold_krw(
@@ -2974,6 +3040,7 @@ class KiwoomOpenApiRealtimeProvider:
                     threshold_krw=threshold_krw,
                     requested_at=requested_at,
                     reason=not_ready_reason,
+                    trading_date=trading_date,
                 )
                 self._opt10055_probe_not_ready_reason = not_ready_reason
                 self._opt10055_probe_last_error = not_ready_reason
@@ -2990,6 +3057,7 @@ class KiwoomOpenApiRealtimeProvider:
                 limit=limit,
                 threshold_krw=threshold_krw,
                 requested_at=requested_at,
+                trading_date=trading_date,
             )
             return
         try:
@@ -3018,6 +3086,7 @@ class KiwoomOpenApiRealtimeProvider:
                 limit=limit,
                 threshold_krw=threshold_krw,
                 requested_at=requested_at,
+                trading_date=trading_date,
             )
             return
         if result not in (None, 0, "0"):
@@ -3028,6 +3097,7 @@ class KiwoomOpenApiRealtimeProvider:
                 limit=limit,
                 threshold_krw=threshold_krw,
                 requested_at=requested_at,
+                trading_date=trading_date,
             )
             return
         requested = datetime.now().isoformat(timespec="seconds")
@@ -3039,6 +3109,7 @@ class KiwoomOpenApiRealtimeProvider:
             "apply": bool(item.get("apply")),
             "key": item["key"],
             "requested_at": requested_at,
+            "trading_date": trading_date,
             "comm_requested_at": requested,
             "rqname": self._OPT10055_PROBE_RQNAME,
             "trcode": self._OPT10055_PROBE_TRCODE,
@@ -3047,6 +3118,7 @@ class KiwoomOpenApiRealtimeProvider:
         }
         response = {
             "stock_code": normalized_code,
+            "trading_date": trading_date or _normalize_trading_date(requested),
             "day": str(day),
             "limit": int(limit),
             "large_trade_threshold_krw": threshold_krw,
@@ -3073,11 +3145,14 @@ class KiwoomOpenApiRealtimeProvider:
         threshold_krw=LARGE_TRADE_THRESHOLD_KRW,
         requested_at=None,
         status="error",
+        trading_date=None,
     ):
         completed_at = datetime.now().isoformat(timespec="seconds")
         threshold_krw = self._normalize_large_trade_threshold_krw(threshold_krw)
         result = {
             "stock_code": code,
+            "trading_date": _normalize_trading_date(trading_date)
+            or _normalize_trading_date(completed_at),
             "day": str(day),
             "limit": int(limit or 30),
             "large_trade_threshold_krw": threshold_krw,
@@ -3138,8 +3213,14 @@ class KiwoomOpenApiRealtimeProvider:
             return
         code = inflight.get("stock_code")
         requested_at = inflight.get("requested_at")
+        trading_date = _normalize_trading_date(inflight.get("trading_date"))
         if control is None or code is None:
-            self._strength_probe_error(code or "", "control_unavailable_on_receive")
+            self._strength_probe_error(
+                code or "",
+                "control_unavailable_on_receive",
+                requested_at=requested_at,
+                trading_date=trading_date,
+            )
             return
         repeat_count = 0
         try:
@@ -3172,7 +3253,7 @@ class KiwoomOpenApiRealtimeProvider:
         has_any_value = any(value is not None for value in values.values())
         result = {
             "stock_code": code,
-            "trading_date": snapshot_at[:10],
+            "trading_date": trading_date or _normalize_trading_date(snapshot_at),
             "realtime_strength_snapshot": values.get(self._STRENGTH_PROBE_FIELDS[0]),
             "strength_5m": values.get(self._STRENGTH_PROBE_FIELDS[1]),
             "strength_20m": values.get(self._STRENGTH_PROBE_FIELDS[2]),
@@ -3303,6 +3384,7 @@ class KiwoomOpenApiRealtimeProvider:
         )
         apply_result = bool(inflight.get("apply"))
         requested_at = inflight.get("requested_at")
+        trading_date = _normalize_trading_date(inflight.get("trading_date"))
         if control is None or code is None:
             self._opt10055_probe_error(
                 code or "",
@@ -3311,6 +3393,7 @@ class KiwoomOpenApiRealtimeProvider:
                 limit=limit,
                 threshold_krw=threshold_krw,
                 requested_at=requested_at,
+                trading_date=trading_date,
             )
             return
         repeat_count = 0
@@ -3355,6 +3438,7 @@ class KiwoomOpenApiRealtimeProvider:
             applied_metrics = self._opt10055_summary_to_store_metrics(
                 summary,
                 snapshot_at,
+                trading_date=trading_date,
             )
             if self.store is not None:
                 try:
@@ -3365,6 +3449,7 @@ class KiwoomOpenApiRealtimeProvider:
                 apply_error = "store_unavailable"
         result = {
             "stock_code": code,
+            "trading_date": trading_date or _normalize_trading_date(snapshot_at),
             "day": str(day),
             "limit": limit,
             "large_trade_threshold_krw": threshold_krw,
@@ -3557,7 +3642,12 @@ class KiwoomOpenApiRealtimeProvider:
             "kiwoom_large_trade_basis_hint": hint,
         }
 
-    def _opt10055_summary_to_store_metrics(self, summary, snapshot_at):
+    def _opt10055_summary_to_store_metrics(
+        self,
+        summary,
+        snapshot_at,
+        trading_date=None,
+    ):
         buy_count = summary.get("large_trade_buy_count") or 0
         sell_count = summary.get("large_trade_sell_count") or 0
         net_count = summary.get("large_trade_net_count") or 0
@@ -3565,7 +3655,8 @@ class KiwoomOpenApiRealtimeProvider:
         sell_sum = summary.get("large_trade_sell_sum_eok") or 0
         net_sum = summary.get("large_trade_net_sum_eok") or 0
         return {
-            "trading_date": snapshot_at[:10],
+            "trading_date": _normalize_trading_date(trading_date)
+            or _normalize_trading_date(snapshot_at),
             "large_trade_source": "opt10055_day",
             "large_trade_threshold_krw": summary.get(
                 "large_trade_threshold_krw"

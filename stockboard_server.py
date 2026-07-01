@@ -671,7 +671,44 @@ def _query_flag_enabled(query, *names):
 
 
 def _trading_date_text(now=None):
-    return (now or datetime.now(KST)).date().isoformat()
+    return (now or datetime.now(KST)).date().strftime("%Y%m%d")
+
+
+def _normalize_trading_date(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    digits = "".join(ch for ch in text[:10] if ch.isdigit())
+    if len(digits) == 8:
+        return digits
+    return ""
+
+
+def _row_trading_date(row):
+    if not isinstance(row, dict):
+        return ""
+    ohlc = row.get("ohlc")
+    if isinstance(ohlc, dict):
+        trading_date = _normalize_trading_date(ohlc.get("trading_date"))
+        if trading_date:
+            return trading_date
+    for field_name in ("trading_date", "market_date", "data_date"):
+        trading_date = _normalize_trading_date(row.get(field_name))
+        if trading_date:
+            return trading_date
+    return ""
+
+
+def _resolve_aftermarket_trading_date(query, source_rows):
+    for value in query.get("trading_date", []):
+        trading_date = _normalize_trading_date(value)
+        if trading_date:
+            return trading_date
+    for row in source_rows or []:
+        trading_date = _row_trading_date(row)
+        if trading_date:
+            return trading_date
+    return _trading_date_text()
 
 
 def _snapshot_date_text(snapshot, *field_names):
@@ -679,8 +716,9 @@ def _snapshot_date_text(snapshot, *field_names):
         return ""
     for field_name in ("trading_date",) + tuple(field_names):
         value = snapshot.get(field_name)
-        if value:
-            return str(value)[:10]
+        trading_date = _normalize_trading_date(value)
+        if trading_date:
+            return trading_date
     return ""
 
 
@@ -1680,10 +1718,13 @@ def make_handler(
         "last_code": None,
         "last_metric": None,
         "last_error": None,
+        "last_detail": None,
         "saved_count": 0,
         "skipped_cached_count": 0,
         "strength_completed_count": 0,
         "large_trade_completed_count": 0,
+        "strength_failed_count": 0,
+        "large_trade_failed_count": 0,
     }
 
     def aftermarket_backfill_status():
@@ -1778,6 +1819,8 @@ def make_handler(
         strength_completed = 0
         large_trade_completed = 0
         failed_codes = set()
+        strength_failed_codes = set()
+        large_trade_failed_codes = set()
         saved_codes = set()
         skipped_cached_count = 0
         try:
@@ -1822,6 +1865,7 @@ def make_handler(
                                 code,
                                 priority="aftermarket_metrics_backfill",
                                 force=force,
+                                trading_date=trading_date,
                             )
                             snapshot = wait_aftermarket_metric_snapshot(
                                 code,
@@ -1838,15 +1882,18 @@ def make_handler(
                                 saved_codes.add(code)
                             else:
                                 failed_codes.add(code)
+                                strength_failed_codes.add(code)
+                                detail = snapshot.get("strength_status_detail")
                                 update_aftermarket_backfill_state(
                                     last_error=(
                                         snapshot.get("strength_error")
-                                        or snapshot.get("strength_status_detail")
                                         or "strength wait timeout"
-                                    )
+                                    ),
+                                    last_detail=detail,
                                 )
                         except Exception as error:
                             failed_codes.add(code)
+                            strength_failed_codes.add(code)
                             update_aftermarket_backfill_state(last_error=str(error))
                         time.sleep(0.15)
                 if "large_trade" in metrics and realtime_provider is not None:
@@ -1877,6 +1924,7 @@ def make_handler(
                                 wait_timeout_sec=18.0,
                                 threshold_krw=50_000_000,
                                 apply=True,
+                                trading_date=trading_date,
                             )
                             results = response.get("results", {})
                         else:
@@ -1885,6 +1933,7 @@ def make_handler(
                         results = {}
                         for code in large_trade_request_codes:
                             failed_codes.add(code)
+                            large_trade_failed_codes.add(code)
                         update_aftermarket_backfill_state(last_error=str(error))
                     for code in large_trade_request_codes:
                         if aftermarket_backfill_cancel.is_set():
@@ -1909,12 +1958,15 @@ def make_handler(
                             saved_codes.add(code)
                         else:
                             failed_codes.add(code)
+                            large_trade_failed_codes.add(code)
+                            detail = result.get("opt10055_status_detail")
                             update_aftermarket_backfill_state(
                                 last_error=(
                                     result.get("opt10055_error")
                                     or result.get("apply_error")
                                     or "large_trade wait timeout"
-                                )
+                                ),
+                                last_detail=detail,
                             )
                         time.sleep(0.15)
                 completed_codes = 0
@@ -1942,6 +1994,8 @@ def make_handler(
                     skipped_cached_count=skipped_cached_count,
                     strength_completed_count=strength_completed,
                     large_trade_completed_count=large_trade_completed,
+                    strength_failed_count=len(strength_failed_codes),
+                    large_trade_failed_count=len(large_trade_failed_codes),
                 )
             update_aftermarket_backfill_state(
                 running=False,
@@ -1954,6 +2008,8 @@ def make_handler(
                 skipped_cached_count=skipped_cached_count,
                 strength_completed_count=strength_completed,
                 large_trade_completed_count=large_trade_completed,
+                strength_failed_count=len(strength_failed_codes),
+                large_trade_failed_count=len(large_trade_failed_codes),
             )
         finally:
             update_aftermarket_backfill_state(running=False)
@@ -1981,7 +2037,7 @@ def make_handler(
             batch_size = 5
         batch_size = min(max(1, batch_size), 5)
         force = _query_flag_enabled(query, "force")
-        trading_date = _trading_date_text()
+        trading_date = _resolve_aftermarket_trading_date(query, rows)
         if _is_regular_trading_session() and not force:
             update_aftermarket_backfill_state(
                 running=False,
@@ -1992,6 +2048,10 @@ def make_handler(
                 metrics=metrics,
                 batch_size=batch_size,
                 last_error="regular session backfill requires force=1",
+                last_detail=None,
+                failed_codes=0,
+                strength_failed_count=0,
+                large_trade_failed_count=0,
             )
             return aftermarket_backfill_status()
         with aftermarket_backfill_lock:
@@ -2018,10 +2078,13 @@ def make_handler(
                     "last_code": None,
                     "last_metric": None,
                     "last_error": None if realtime_provider is not None else "realtime provider unavailable",
+                    "last_detail": None,
                     "saved_count": 0,
                     "skipped_cached_count": 0,
                     "strength_completed_count": 0,
                     "large_trade_completed_count": 0,
+                    "strength_failed_count": 0,
+                    "large_trade_failed_count": 0,
                 }
             )
             if realtime_provider is None:
@@ -2043,11 +2106,22 @@ def make_handler(
             return deepcopy(aftermarket_backfill_state)
 
     def cancel_aftermarket_backfill():
-        aftermarket_backfill_cancel.set()
-        update_aftermarket_backfill_state(
-            status="cancel_requested",
-            completed_at=None,
-        )
+        with aftermarket_backfill_lock:
+            if not aftermarket_backfill_state.get("running"):
+                total_codes = int(aftermarket_backfill_state.get("total_codes") or 0)
+                completed_codes = int(
+                    aftermarket_backfill_state.get("completed_codes") or 0
+                )
+                if total_codes > 0 and completed_codes >= total_codes:
+                    aftermarket_backfill_state["status"] = "completed"
+                if aftermarket_backfill_state.get("status") == "completed":
+                    aftermarket_backfill_state["completed_at"] = (
+                        aftermarket_backfill_state.get("completed_at")
+                        or datetime.now(KST).isoformat(timespec="seconds")
+                    )
+                return aftermarket_backfill_status()
+            aftermarket_backfill_cancel.set()
+        update_aftermarket_backfill_state(status="cancel_requested")
         return aftermarket_backfill_status()
 
     def selected_hot_snapshot():
