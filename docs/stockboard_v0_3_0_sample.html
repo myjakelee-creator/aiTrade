@@ -56,6 +56,10 @@
   </table>
   <aside class="market-distribution" aria-label="시장 종목 구성">
     <div class="market-distribution-item">
+      <div class="market-distribution-chart" id="market-kospi-subject-chart" role="img" aria-label="주체별 수급 데이터 없음" title="주체별 수급 데이터 없음"></div>
+      <div class="market-distribution-label">주체별</div>
+    </div>
+    <div class="market-distribution-item">
       <div class="market-distribution-chart" id="market-kospi-distribution-chart" role="img" aria-label="코스피 종목 구성 대기"></div>
       <div class="market-distribution-label">코스피</div>
     </div>
@@ -211,6 +215,7 @@
     kospi: document.getElementById('market-kospi-distribution-chart'),
     kosdaq: document.getElementById('market-kosdaq-distribution-chart')
   };
+  const marketKospiSubjectChart = document.getElementById('market-kospi-subject-chart');
   const gradeDistributionChart = document.getElementById('grade-distribution-chart');
   const usMarketImpactValue = document.getElementById('us-market-impact-value');
   // Temporary UI-only fallback until a real US market impact value is supplied.
@@ -382,14 +387,27 @@
     chart.setAttribute('aria-label', tooltip);
   }
 
-  function conicGradientFromSegments(segments, total) {
+  function conicGradientFromSegments(segments, total, options = {}) {
     if (!total) return '#e3e8ec';
+    const separatorColor = options.separatorColor || '';
+    const separatorWidth = Math.max(0, Number(options.separatorWidthPercent ?? 0));
     let boundary = 0;
-    return `conic-gradient(${segments.map(segment => {
+    const parts = [];
+    segments.forEach(segment => {
       const start = boundary;
       boundary += segment.count / total * 100;
-      return `${segment.color} ${start}% ${boundary}%`;
-    }).join(',')})`;
+      if (separatorColor && separatorWidth > 0 && segments.length > 1) {
+        const edge = Math.min(separatorWidth, Math.max(0, (boundary - start) / 2));
+        const innerStart = start + edge;
+        const innerEnd = boundary - edge;
+        parts.push(`${separatorColor} ${start}% ${innerStart}%`);
+        if (innerEnd > innerStart) parts.push(`${segment.color} ${innerStart}% ${innerEnd}%`);
+        parts.push(`${separatorColor} ${innerEnd}% ${boundary}%`);
+        return;
+      }
+      parts.push(`${segment.color} ${start}% ${boundary}%`);
+    });
+    return `conic-gradient(${parts.join(',')})`;
   }
 
   function renderMarketFlow(cell, value, integer = false) {
@@ -404,6 +422,41 @@
     })}`;
     if (displayValue > 0) cell.classList.add('plus');
     if (displayValue < 0) cell.classList.add('minus');
+  }
+
+  function marketSubjectFlowValue(value) {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  }
+
+  function renderKospiSubjectChart(market) {
+    if (!marketKospiSubjectChart) return;
+    const subjects = [
+      { label: '개인', value: marketSubjectFlowValue(market.individual_eok) },
+      { label: '외인', value: marketSubjectFlowValue(market.foreign_spot_eok) },
+      { label: '기관', value: marketSubjectFlowValue(market.institution_eok) }
+    ];
+    const segments = subjects
+      .map(subject => ({
+        ...subject,
+        count: Math.abs(subject.value ?? 0),
+        color: (subject.value ?? 0) >= 0 ? '#D71920' : '#1266D6'
+      }))
+      .filter(subject => subject.count > 0);
+    const total = segments.reduce((sum, subject) => sum + subject.count, 0);
+    const tooltip = total
+      ? subjects.map(subject => {
+        const value = subject.value ?? 0;
+        const sign = value > 0 ? '+' : '';
+        return `${subject.label} ${sign}${value.toLocaleString('en-US', { maximumFractionDigits: 2 })}억`;
+      }).join('\n')
+      : '주체별 수급 데이터 없음';
+    marketKospiSubjectChart.style.background = conicGradientFromSegments(segments, total, {
+      separatorColor: '#263747',
+      separatorWidthPercent: 0.45
+    });
+    marketKospiSubjectChart.dataset.tooltip = tooltip;
+    marketKospiSubjectChart.title = tooltip;
+    marketKospiSubjectChart.setAttribute('aria-label', tooltip);
   }
 
   function renderMarketSupplyMarket(key, market) {
@@ -426,6 +479,7 @@
     renderMarketFlow(cells.program, market.program_market_eok, true);
     renderMarketFlow(cells.foreignFutures, market.foreign_futures_eok);
     renderMarketDistributionChart(key, market);
+    if (key === 'kospi') renderKospiSubjectChart(market);
   }
 
   function renderMarketSupply(data) {

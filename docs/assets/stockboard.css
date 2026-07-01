@@ -88,7 +88,7 @@
   .us td span{margin-left:8px}
   .us-impact-cell{max-width:none}
   .us-impact-value{display:inline-block;max-width:100%;margin-left:0!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
-  .market-distribution{display:flex;align-items:center;justify-content:center;gap:8px;flex:0 0 auto;min-width:calc((var(--grade-distribution-chart-size) * 3) + 68px);margin-left:6px;padding:var(--grade-distribution-padding-y) 8px;border:1px solid var(--line);background:#f8fbff}
+  .market-distribution{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex:0 0 auto;min-width:calc((var(--grade-distribution-chart-size) * 4) + 92px);margin-left:6px;padding:var(--grade-distribution-padding-y) 8px var(--grade-distribution-padding-y) 4px;border:1px solid var(--line);background:#f8fbff}
   .market-distribution-item{display:grid;grid-template-rows:auto min-content;justify-items:center;gap:2px;min-width:var(--grade-distribution-chart-size)}
   .market-distribution-chart{width:var(--grade-distribution-chart-size);height:var(--grade-distribution-chart-size);flex:0 0 var(--grade-distribution-chart-size);border-radius:50%;background:#e3e8ec;box-shadow:inset 0 0 0 1px #b7c1ca;position:relative}
   .market-distribution-chart::after{content:"";position:absolute;inset:var(--grade-distribution-hole-inset);border-radius:50%;background:#fff;box-shadow:0 0 0 1px #d4dbe1}
