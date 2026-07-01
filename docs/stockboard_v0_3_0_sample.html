@@ -78,19 +78,19 @@
   <!-- HTML: candidate board -->
   <div class="section sec-orange">▶ HOT5 유력 후보 5종목 <span class="lane-speed-badge lane-speed-waiting" id="hot-lane-speed-badge">HOT5 확인중</span> <span class="lane-speed-badge lane-speed-hidden" id="candidate-lane-speed-badge"></span></div>
   <table class="grid board enhanced-board" id="candidate-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>5분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손(억)</th><th>모멘텀</th></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손(억)</th><th>모멘텀</th></tr>
   </table>
 
   <!-- HTML: selected stock board -->
   <div class="section sec-orange">▶ Selected 1종목</div>
   <table class="grid board enhanced-board" id="selected-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>5분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손(억)</th><th>모멘텀</th></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손(억)</th><th>모멘텀</th></tr>
   </table>
 
   <!-- HTML: trading board -->
   <div class="section sec-blue">▶ Top100 Pool <span id="ranking-row-count">0개</span> <span class="lane-speed-badge lane-speed-waiting" id="top100-lane-speed-badge">Top100 확인중</span></div>
   <table class="grid board enhanced-board" id="trading-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>5분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손(억)</th><th>모멘텀</th></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손(억)</th><th>모멘텀</th></tr>
   </table>
 </div>
 <script src="assets/stockboard_format.js?v=5f_format_split_20260627"></script>
@@ -807,7 +807,7 @@
     { label: '일봉', defaultWidth: 86, minWidth: 70 },
     { label: '잔량비', defaultWidth: 56, minWidth: 48, sortKey: 'bidAskRatio', sortDefault: 'desc' },
     { label: '순간강도', defaultWidth: 56, minWidth: 48, sortKey: 'realtimeStrength', sortDefault: 'desc' },
-    { label: '5분강도', defaultWidth: 56, minWidth: 48, sortKey: 'sessionStrength', sortDefault: 'desc' },
+    { label: '1분강도', defaultWidth: 56, minWidth: 48, sortKey: 'sessionStrength', sortDefault: 'desc' },
     { label: '외합(억)', defaultWidth: 64, minWidth: 54, sortKey: 'foreign', sortDefault: 'desc' },
     { label: '프로(억)', defaultWidth: 64, minWidth: 54, sortKey: 'program', sortDefault: 'desc' },
     { label: '큰손(억)', defaultWidth: 56, minWidth: 48, sortKey: 'bigHand', sortDefault: 'desc' },
@@ -1272,6 +1272,25 @@
       force,
       sortValue: sortableNumber(value),
       tooltip
+    };
+  }
+
+  function oneMinuteStrengthColumnMetric(oneMinuteValue, fallbackFiveMinuteValue) {
+    const oneMinuteMetric = oneMinuteStrengthMetric(oneMinuteValue);
+    if (oneMinuteMetric) return {
+      ...oneMinuteMetric,
+      sourceLabel: '1분강도'
+    };
+    if (fallbackFiveMinuteValue === null || fallbackFiveMinuteValue === undefined || fallbackFiveMinuteValue === '') return null;
+    const tooltip = `1분강도 대체값: 5분강도\n5분강도: ${formatStrengthDisplay(fallbackFiveMinuteValue)}`;
+    const force = sessionStrengthView(fallbackFiveMinuteValue);
+    if (force) force.tooltip = tooltip;
+    return {
+      value: fallbackFiveMinuteValue,
+      force,
+      sortValue: sortableNumber(fallbackFiveMinuteValue),
+      tooltip,
+      sourceLabel: '1분강도 대체값: 5분강도'
     };
   }
 
@@ -1767,11 +1786,11 @@
   }
 
   function dailyStrengthMarkup(strength, row = null) {
-    const limitMarkup = priceLimitMetricMarkup(row, '원본 세션강도', row?.sessionStrength ?? row?.session_strength ?? row?.sortSessionStrength ?? strength?.value);
+    const limitMarkup = priceLimitMetricMarkup(row, '원본 1분강도', row?.sessionStrength ?? row?.session_strength ?? row?.sortSessionStrength ?? strength?.value);
     if (limitMarkup) return limitMarkup;
     if (!strength) return '-';
     if (isFastDisplayMode()) {
-      const value = row?.strength5m ?? row?.strength_5m ?? row?.sessionStrength ?? row?.session_strength ?? '-';
+      const value = row?.sessionStrength ?? row?.session_strength ?? row?.strength5m ?? row?.strength_5m ?? '-';
       return `<span class="fast-metric-text" data-tooltip="${escapeHtml(strength.tooltip)}">${escapeHtml(formatStrengthDisplay(value))}</span>`;
     }
     return `<div class="balance-box" data-tooltip="${escapeHtml(strength.tooltip)}" role="img" aria-label="${escapeHtml(strength.tooltip)}" style="--blue-width:${strength.blueWidth}%;--red-width:${strength.redWidth}%">
@@ -2169,8 +2188,13 @@
       sessionBuyQtyLive,
       sessionSellQtyLive
     );
-    const oneMinuteStrength = oneMinuteStrengthMetric(oneMinuteStrengthValue);
-    const fiveMinuteStrength = oneMinuteStrength || officialFiveMinuteStrength || browserFiveMinuteStrength;
+    const oneMinuteStrength = oneMinuteStrengthColumnMetric(oneMinuteStrengthValue, strength5mValue);
+    const fiveMinuteStrength = oneMinuteStrength || {
+      value: null,
+      force: null,
+      sortValue: null,
+      tooltip: '1분강도: -'
+    };
     const displayPriceValue = firstValue(row, ['display_price', 'displayPrice']);
     const priceValue = displayPriceValue ?? firstValue(row, ['price']);
     const displayChangeRateValue = firstValue(row, [
@@ -2270,7 +2294,7 @@
       session_strength: fiveMinuteStrength.value,
       oneMinStrength: oneMinuteStrengthValue,
       one_min_strength: oneMinuteStrengthValue,
-      strengthColumnLabel: oneMinuteStrength ? '1분강도' : '5분강도',
+      strengthColumnLabel: '1분강도',
       strength5m: strength5mValue,
       strength_5m: strength5mValue,
       strength20m: strength20mValue,
@@ -2795,11 +2819,17 @@
       || Object.hasOwn(patch, 'strength_5m')
       || Object.hasOwn(patch, 'strength5m')
     ) {
-      row.sessionStrength = sessionStrength;
-      row.session_strength = sessionStrength;
-      row.oneMinStrength = oneMinuteStrength ?? row.oneMinStrength;
+      const hasOneMinuteStrengthPatch = Object.hasOwn(patch, 'one_min_strength') || Object.hasOwn(patch, 'oneMinStrength');
+      const hasStrength5mPatch = Object.hasOwn(patch, 'strength_5m') || Object.hasOwn(patch, 'strength5m');
+      if (hasOneMinuteStrengthPatch) {
+        row.oneMinStrength = Object.hasOwn(patch, 'one_min_strength') ? patch.one_min_strength : patch.oneMinStrength;
+      } else if (oneMinuteStrength !== null) {
+        row.oneMinStrength = oneMinuteStrength;
+      }
       row.one_min_strength = row.oneMinStrength;
-      row.strength5m = firstValue(patch, ['strength_5m', 'strength5m']) ?? row.strength5m;
+      if (hasStrength5mPatch) {
+        row.strength5m = Object.hasOwn(patch, 'strength_5m') ? patch.strength_5m : patch.strength5m;
+      }
       row.strength_5m = row.strength5m;
       row.strength20m = firstValue(patch, ['strength_20m', 'strength20m']) ?? row.strength20m;
       row.strength_20m = row.strength20m;
@@ -2833,23 +2863,27 @@
         `status: ${displayValue(row.strengthStatus)}`
       ].join('\n')
     } : null;
-    const oneMinuteStrengthMetricValue = oneMinuteStrengthMetric(row.oneMinStrength);
     const browserFiveMinuteStrength = updateFiveMinuteStrengthSample(
       row.code,
       row.sessionBuyQtyLive,
       row.sessionSellQtyLive
     );
-    const fiveMinuteStrength = oneMinuteStrengthMetricValue || officialFiveMinuteStrength || browserFiveMinuteStrength;
+    const fiveMinuteStrength = oneMinuteStrengthColumnMetric(row.oneMinStrength, row.strength5m) || {
+      value: null,
+      force: null,
+      sortValue: null,
+      tooltip: '1분강도: -'
+    };
     row.sessionStrength = fiveMinuteStrength.value;
     row.session_strength = fiveMinuteStrength.value;
-    row.strengthColumnLabel = oneMinuteStrengthMetricValue ? '1분강도' : '5분강도';
+    row.strengthColumnLabel = '1분강도';
     row.sortSessionStrength = fiveMinuteStrength.sortValue;
     row.fiveMinuteStrengthTooltip = fiveMinuteStrength.tooltip;
     row.fiveMinuteStrengthBuyDelta = fiveMinuteStrength.buyDelta;
     row.fiveMinuteStrengthSellDelta = fiveMinuteStrength.sellDelta;
     row.sessionForce = fiveMinuteStrength.force;
     setVisualCell(tableRow.cells[10], fiveMinuteStrengthMetricView(row.sessionForce, row), 'balance-cell visual-cell');
-    if (oneMinuteStrengthMetricValue) setBoardColumnLabel(10, '1분강도');
+    setBoardColumnLabel(10, '1분강도');
     row.realtimeAccVolume = firstValue(patch, ['realtime_acc_volume']);
     row.realtimeAccTradeValue = firstValue(patch, ['realtime_acc_trade_value']);
     const realtimeAccTradeValueEokCandidate = firstValue(patch, [
@@ -3249,12 +3283,7 @@
   function renderBoard(rows) {
     syncCloseMetricsCompletion(rows);
     const foreignLabel = rows.find(row => row.foreignLabel)?.foreignLabel || '외합(억)';
-    const hasOneMinuteStrength = rows.some(row =>
-      row.oneMinStrength !== null
-      && row.oneMinStrength !== undefined
-      && row.oneMinStrength !== ''
-    );
-    setBoardColumnLabel(10, hasOneMinuteStrength ? '1분강도' : '5분강도');
+    setBoardColumnLabel(10, '1분강도');
     setBoardColumnLabel(11, foreignLabel);
     rankingRowCount.textContent = `${rows.length}개`;
     const displayRows = sortBoardRows(rows);
