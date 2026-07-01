@@ -1062,6 +1062,7 @@
   const CLOSE_METRICS_SCROLL_TRIGGER_PX = STOCKBOARD_CLOSE_METRICS.scrollDeltaTriggerPx;
   const CLOSE_METRICS_LAZY_REFRESH_DELAY_MS = STOCKBOARD_CLOSE_METRICS.refreshDelayMs;
   const CLOSE_METRICS_REQUESTED_RETRY_MS = 60 * 1000;
+  const AFTERMARKET_BACKFILL_STATUS_POLL_MS = 3000;
   const top100State = {
     rowByCode: new Map(),
     candidateRowByCode: new Map(),
@@ -1087,6 +1088,10 @@
     closeMetricsLazyRefreshTimer: null,
     closeMetricsLastScrollY: window.scrollY || 0,
     closeMetricsScrollDelta: 0,
+    aftermarketBackfillStartedDate: null,
+    aftermarketBackfillCompletedDate: null,
+    aftermarketBackfillPolling: false,
+    aftermarketBackfillPollTimer: null,
     diagnostics: {
       apiRows: 0,
       apiOhlc: 0,
@@ -3512,6 +3517,89 @@
     requestNextCloseMetricsBatch('wheel');
   }
 
+  function currentMarketSessionText() {
+    return String(marketSession?.textContent || '').trim();
+  }
+
+  function isRegularMarketSession() {
+    return currentMarketSessionText() === '\uc815\uaddc\uc7a5';
+  }
+
+  function browserLocalDateText() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  function scheduleAftermarketBackfillStatusPoll(delayMs = AFTERMARKET_BACKFILL_STATUS_POLL_MS) {
+    if (top100State.aftermarketBackfillPollTimer) return;
+    top100State.aftermarketBackfillPollTimer = window.setTimeout(async () => {
+      top100State.aftermarketBackfillPollTimer = null;
+      await pollAftermarketBackfillStatus();
+    }, delayMs);
+  }
+
+  async function pollAftermarketBackfillStatus() {
+    if (top100State.aftermarketBackfillPolling) return null;
+    top100State.aftermarketBackfillPolling = true;
+    try {
+      const response = await fetch('/api/aftermarket_metrics_backfill_status', { cache: 'no-store' });
+      if (!response.ok) throw new Error(`aftermarket backfill status failed: ${response.status}`);
+      const payload = await response.json();
+      console.debug('aftermarket_metrics_backfill status', payload);
+      if (payload?.trading_date && payload.status === 'completed') {
+        top100State.aftermarketBackfillCompletedDate = payload.trading_date;
+        refreshTop100();
+      }
+      if (payload?.running) scheduleAftermarketBackfillStatusPoll();
+      return payload;
+    } catch (error) {
+      console.warn(error);
+      return null;
+    } finally {
+      top100State.aftermarketBackfillPolling = false;
+    }
+  }
+
+  async function maybeStartAftermarketBackfill(trigger = 'top100-load') {
+    if (isRegularMarketSession()) return null;
+    if (!top100State.renderedRows.length) return null;
+    const today = browserLocalDateText();
+    if (top100State.aftermarketBackfillCompletedDate === today) return null;
+    if (top100State.aftermarketBackfillStartedDate === today) return pollAftermarketBackfillStatus();
+    try {
+      const statusResponse = await fetch('/api/aftermarket_metrics_backfill_status', { cache: 'no-store' });
+      if (statusResponse.ok) {
+        const status = await statusResponse.json();
+        if (status?.trading_date === today && status.status === 'completed') {
+          top100State.aftermarketBackfillCompletedDate = today;
+          return status;
+        }
+        if (status?.running) {
+          top100State.aftermarketBackfillStartedDate = today;
+          scheduleAftermarketBackfillStatusPoll();
+          return status;
+        }
+      }
+      const startUrl = '/api/aftermarket_metrics_backfill_start?scope=top100&limit=all&batch_size=5&metrics=strength,large_trade&force=0';
+      const response = await fetch(startUrl, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`aftermarket backfill start failed: ${response.status}`);
+      const payload = await response.json();
+      console.debug('aftermarket_metrics_backfill start', trigger, payload);
+      if (payload?.trading_date) top100State.aftermarketBackfillStartedDate = payload.trading_date;
+      if (payload?.status === 'completed') {
+        top100State.aftermarketBackfillCompletedDate = payload.trading_date || today;
+      }
+      if (payload?.running) scheduleAftermarketBackfillStatusPoll();
+      return payload;
+    } catch (error) {
+      console.warn(error);
+      return null;
+    }
+  }
+
   document.addEventListener('keydown', event => {
     if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return;
     const target = event.target;
@@ -3656,6 +3744,7 @@
       setStatusLamp('kiwoom', 'ok', 'Kiwoom TOP100 데이터 정상');
       markSuccessfulUpdate();
       loadHotRealtimePatch({ forceFull: true });
+      maybeStartAftermarketBackfill('initial-top100');
       return result;
     })
     .catch(error => {
@@ -3679,6 +3768,7 @@
       setStatusLamp('kiwoom', 'ok', 'Kiwoom TOP100 데이터 정상');
       markSuccessfulUpdate();
       loadHotRealtimePatch({ forceFull: true });
+      maybeStartAftermarketBackfill('top100-refresh');
       return result;
     } catch (error) {
       console.warn(error);

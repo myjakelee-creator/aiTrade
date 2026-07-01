@@ -3172,6 +3172,7 @@ class KiwoomOpenApiRealtimeProvider:
         has_any_value = any(value is not None for value in values.values())
         result = {
             "stock_code": code,
+            "trading_date": snapshot_at[:10],
             "realtime_strength_snapshot": values.get(self._STRENGTH_PROBE_FIELDS[0]),
             "strength_5m": values.get(self._STRENGTH_PROBE_FIELDS[1]),
             "strength_20m": values.get(self._STRENGTH_PROBE_FIELDS[2]),
@@ -3564,6 +3565,7 @@ class KiwoomOpenApiRealtimeProvider:
         sell_sum = summary.get("large_trade_sell_sum_eok") or 0
         net_sum = summary.get("large_trade_net_sum_eok") or 0
         return {
+            "trading_date": snapshot_at[:10],
             "large_trade_source": "opt10055_day",
             "large_trade_threshold_krw": summary.get(
                 "large_trade_threshold_krw"

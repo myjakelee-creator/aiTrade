@@ -8,7 +8,7 @@ from copy import deepcopy
 from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock, Thread
 from urllib.parse import parse_qs, urlparse
 
 from kiwoom_data_provider import (
@@ -319,6 +319,14 @@ def _market_clock_phase(now=None):
     if current < aftermarket_start:
         return "regular_close_lock"
     return "aftermarket"
+
+
+def _is_regular_trading_session(now=None):
+    current = now or datetime.now(KST)
+    if current.weekday() >= 5:
+        return False
+    minutes = current.hour * 60 + current.minute
+    return 9 * 60 <= minutes < 15 * 60 + 30
 
 
 def _has_value(value):
@@ -660,6 +668,20 @@ def _query_flag_enabled(query, *names):
             if str(value).strip().lower() in enabled_values:
                 return True
     return False
+
+
+def _trading_date_text(now=None):
+    return (now or datetime.now(KST)).date().isoformat()
+
+
+def _snapshot_date_text(snapshot, *field_names):
+    if not isinstance(snapshot, dict):
+        return ""
+    for field_name in ("trading_date",) + tuple(field_names):
+        value = snapshot.get(field_name)
+        if value:
+            return str(value)[:10]
+    return ""
 
 
 def _parse_hot_code_query(query):
@@ -1637,6 +1659,396 @@ def make_handler(
         "last_hot_api_latency_ms": None,
         "last_evaluated_at": None,
     }
+    aftermarket_backfill_lock = RLock()
+    aftermarket_backfill_cancel = Event()
+    aftermarket_backfill_thread = None
+    aftermarket_backfill_state = {
+        "running": False,
+        "status": "idle",
+        "started_at": None,
+        "completed_at": None,
+        "trading_date": _trading_date_text(),
+        "scope": None,
+        "metrics": [],
+        "total_codes": 0,
+        "completed_codes": 0,
+        "failed_codes": 0,
+        "current_batch": [],
+        "batch_size": 5,
+        "next_index": 0,
+        "progress_pct": 0.0,
+        "last_code": None,
+        "last_metric": None,
+        "last_error": None,
+        "saved_count": 0,
+        "skipped_cached_count": 0,
+        "strength_completed_count": 0,
+        "large_trade_completed_count": 0,
+    }
+
+    def aftermarket_backfill_status():
+        with aftermarket_backfill_lock:
+            payload = deepcopy(aftermarket_backfill_state)
+        total_codes = int(payload.get("total_codes") or 0)
+        next_index = int(payload.get("next_index") or 0)
+        completed_codes = int(payload.get("completed_codes") or 0)
+        if total_codes > 0:
+            payload["progress_pct"] = round(
+                min(100.0, max(completed_codes, next_index) / total_codes * 100),
+                2,
+            )
+        else:
+            payload["progress_pct"] = 0.0
+        return payload
+
+    def update_aftermarket_backfill_state(**updates):
+        with aftermarket_backfill_lock:
+            aftermarket_backfill_state.update(updates)
+            total_codes = int(aftermarket_backfill_state.get("total_codes") or 0)
+            next_index = int(aftermarket_backfill_state.get("next_index") or 0)
+            completed_codes = int(
+                aftermarket_backfill_state.get("completed_codes") or 0
+            )
+            aftermarket_backfill_state["progress_pct"] = (
+                round(
+                    min(100.0, max(completed_codes, next_index) / total_codes * 100),
+                    2,
+                )
+                if total_codes > 0
+                else 0.0
+            )
+
+    def aftermarket_backfill_codes(scope, limit):
+        selected_rows = rows if scope == "top100" else rows
+        codes = []
+        seen_codes = set()
+        for row in selected_rows:
+            if not isinstance(row, dict):
+                continue
+            stock_code = _stock_code(row.get("stock_code"))
+            if stock_code is None or stock_code in seen_codes:
+                continue
+            seen_codes.add(stock_code)
+            codes.append(stock_code)
+        if limit != "all":
+            try:
+                limit_count = int(limit)
+            except (TypeError, ValueError):
+                limit_count = len(codes)
+            if limit_count >= 0:
+                codes = codes[:limit_count]
+        return codes
+
+    def is_aftermarket_metric_cached(snapshot, metric, trading_date):
+        if not isinstance(snapshot, dict):
+            return False
+        if metric == "strength":
+            if snapshot.get("strength_source") != "opt10046":
+                return False
+            if snapshot.get("strength_status") not in {"ok", "no_data"}:
+                return False
+            snapshot_date = _snapshot_date_text(
+                snapshot,
+                "strength_snapshot_at",
+                "strength_completed_at",
+            )
+            return snapshot_date == trading_date
+        if metric == "large_trade":
+            if snapshot.get("large_trade_source") != "opt10055_day":
+                return False
+            if snapshot.get("large_trade_status") not in {"ok", "no_data"}:
+                return False
+            snapshot_date = _snapshot_date_text(
+                snapshot,
+                "large_trade_updated_at",
+            )
+            return snapshot_date == trading_date
+        return False
+
+    def wait_aftermarket_metric_snapshot(code, metric, trading_date, timeout_sec):
+        deadline = time.monotonic() + max(0.0, float(timeout_sec or 0))
+        while time.monotonic() <= deadline:
+            snapshot = realtime_store.close_metrics_snapshot([code]).get(code, {})
+            if is_aftermarket_metric_cached(snapshot, metric, trading_date):
+                return snapshot
+            time.sleep(0.1)
+        return realtime_store.close_metrics_snapshot([code]).get(code, {})
+
+    def run_aftermarket_backfill_job(codes, metrics, batch_size, trading_date, force):
+        strength_completed = 0
+        large_trade_completed = 0
+        failed_codes = set()
+        saved_codes = set()
+        skipped_cached_count = 0
+        try:
+            update_aftermarket_backfill_state(status="running")
+            for start_index in range(0, len(codes), batch_size):
+                if aftermarket_backfill_cancel.is_set():
+                    update_aftermarket_backfill_state(
+                        status="cancelled",
+                        completed_at=datetime.now(KST).isoformat(timespec="seconds"),
+                    )
+                    return
+                batch = codes[start_index : start_index + batch_size]
+                update_aftermarket_backfill_state(
+                    current_batch=batch,
+                    next_index=start_index,
+                )
+                if "strength" in metrics and realtime_provider is not None:
+                    for code in batch:
+                        if aftermarket_backfill_cancel.is_set():
+                            break
+                        update_aftermarket_backfill_state(
+                            last_code=code,
+                            last_metric="strength",
+                        )
+                        before = realtime_store.close_metrics_snapshot([code]).get(
+                            code,
+                            {},
+                        )
+                        if (
+                            not force
+                            and is_aftermarket_metric_cached(
+                                before,
+                                "strength",
+                                trading_date,
+                            )
+                        ):
+                            skipped_cached_count += 1
+                            strength_completed += 1
+                            continue
+                        try:
+                            realtime_provider.enqueue_strength_probe(
+                                code,
+                                priority="aftermarket_metrics_backfill",
+                                force=force,
+                            )
+                            snapshot = wait_aftermarket_metric_snapshot(
+                                code,
+                                "strength",
+                                trading_date,
+                                12.0,
+                            )
+                            if is_aftermarket_metric_cached(
+                                snapshot,
+                                "strength",
+                                trading_date,
+                            ):
+                                strength_completed += 1
+                                saved_codes.add(code)
+                            else:
+                                failed_codes.add(code)
+                                update_aftermarket_backfill_state(
+                                    last_error=(
+                                        snapshot.get("strength_error")
+                                        or snapshot.get("strength_status_detail")
+                                        or "strength wait timeout"
+                                    )
+                                )
+                        except Exception as error:
+                            failed_codes.add(code)
+                            update_aftermarket_backfill_state(last_error=str(error))
+                        time.sleep(0.15)
+                if "large_trade" in metrics and realtime_provider is not None:
+                    large_trade_request_codes = []
+                    for code in batch:
+                        before = realtime_store.close_metrics_snapshot([code]).get(
+                            code,
+                            {},
+                        )
+                        if (
+                            not force
+                            and is_aftermarket_metric_cached(
+                                before,
+                                "large_trade",
+                                trading_date,
+                            )
+                        ):
+                            skipped_cached_count += 1
+                            large_trade_completed += 1
+                            continue
+                        large_trade_request_codes.append(code)
+                    try:
+                        if large_trade_request_codes:
+                            response = realtime_provider.request_opt10055_probe(
+                                large_trade_request_codes,
+                                day="1",
+                                limit=100,
+                                wait_timeout_sec=18.0,
+                                threshold_krw=50_000_000,
+                                apply=True,
+                            )
+                            results = response.get("results", {})
+                        else:
+                            results = {}
+                    except Exception as error:
+                        results = {}
+                        for code in large_trade_request_codes:
+                            failed_codes.add(code)
+                        update_aftermarket_backfill_state(last_error=str(error))
+                    for code in large_trade_request_codes:
+                        if aftermarket_backfill_cancel.is_set():
+                            break
+                        update_aftermarket_backfill_state(
+                            last_code=code,
+                            last_metric="large_trade",
+                        )
+                        result = results.get(code, {}) if isinstance(results, dict) else {}
+                        snapshot = wait_aftermarket_metric_snapshot(
+                            code,
+                            "large_trade",
+                            trading_date,
+                            2.0,
+                        )
+                        if is_aftermarket_metric_cached(
+                            snapshot,
+                            "large_trade",
+                            trading_date,
+                        ):
+                            large_trade_completed += 1
+                            saved_codes.add(code)
+                        else:
+                            failed_codes.add(code)
+                            update_aftermarket_backfill_state(
+                                last_error=(
+                                    result.get("opt10055_error")
+                                    or result.get("apply_error")
+                                    or "large_trade wait timeout"
+                                )
+                            )
+                        time.sleep(0.15)
+                completed_codes = 0
+                snapshots = realtime_store.close_metrics_snapshot(batch)
+                for code in batch:
+                    snapshot = snapshots.get(code, {})
+                    metric_done = [
+                        is_aftermarket_metric_cached(
+                            snapshot,
+                            metric,
+                            trading_date,
+                        )
+                        for metric in metrics
+                    ]
+                    if metric_done and all(metric_done):
+                        completed_codes += 1
+                update_aftermarket_backfill_state(
+                    next_index=min(start_index + batch_size, len(codes)),
+                    completed_codes=(
+                        int(aftermarket_backfill_state.get("completed_codes") or 0)
+                        + completed_codes
+                    ),
+                    failed_codes=len(failed_codes),
+                    saved_count=len(saved_codes),
+                    skipped_cached_count=skipped_cached_count,
+                    strength_completed_count=strength_completed,
+                    large_trade_completed_count=large_trade_completed,
+                )
+            update_aftermarket_backfill_state(
+                running=False,
+                status="completed",
+                completed_at=datetime.now(KST).isoformat(timespec="seconds"),
+                current_batch=[],
+                next_index=len(codes),
+                failed_codes=len(failed_codes),
+                saved_count=len(saved_codes),
+                skipped_cached_count=skipped_cached_count,
+                strength_completed_count=strength_completed,
+                large_trade_completed_count=large_trade_completed,
+            )
+        finally:
+            update_aftermarket_backfill_state(running=False)
+
+    def start_aftermarket_backfill(query):
+        nonlocal aftermarket_backfill_thread
+        scope = str(query.get("scope", ["top100"])[0] or "top100").strip().lower()
+        if scope != "top100":
+            scope = "top100"
+        limit = str(query.get("limit", ["all"])[0] or "all").strip().lower()
+        requested_metrics = [
+            metric.strip().lower()
+            for value in query.get("metrics", ["strength,large_trade"])
+            for metric in str(value).split(",")
+            if metric.strip()
+        ]
+        metrics = [
+            metric
+            for metric in ("strength", "large_trade")
+            if metric in set(requested_metrics)
+        ] or ["strength", "large_trade"]
+        try:
+            batch_size = int(query.get("batch_size", ["5"])[0] or 5)
+        except (TypeError, ValueError):
+            batch_size = 5
+        batch_size = min(max(1, batch_size), 5)
+        force = _query_flag_enabled(query, "force")
+        trading_date = _trading_date_text()
+        if _is_regular_trading_session() and not force:
+            update_aftermarket_backfill_state(
+                running=False,
+                status="rejected_regular_session",
+                completed_at=datetime.now(KST).isoformat(timespec="seconds"),
+                trading_date=trading_date,
+                scope=scope,
+                metrics=metrics,
+                batch_size=batch_size,
+                last_error="regular session backfill requires force=1",
+            )
+            return aftermarket_backfill_status()
+        with aftermarket_backfill_lock:
+            if aftermarket_backfill_state.get("running"):
+                return deepcopy(aftermarket_backfill_state)
+            codes = aftermarket_backfill_codes(scope, limit)
+            aftermarket_backfill_cancel.clear()
+            aftermarket_backfill_state.update(
+                {
+                    "running": True,
+                    "status": "starting",
+                    "started_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "completed_at": None,
+                    "trading_date": trading_date,
+                    "scope": scope,
+                    "metrics": metrics,
+                    "total_codes": len(codes),
+                    "completed_codes": 0,
+                    "failed_codes": 0,
+                    "current_batch": [],
+                    "batch_size": batch_size,
+                    "next_index": 0,
+                    "progress_pct": 0.0,
+                    "last_code": None,
+                    "last_metric": None,
+                    "last_error": None if realtime_provider is not None else "realtime provider unavailable",
+                    "saved_count": 0,
+                    "skipped_cached_count": 0,
+                    "strength_completed_count": 0,
+                    "large_trade_completed_count": 0,
+                }
+            )
+            if realtime_provider is None:
+                aftermarket_backfill_state.update(
+                    {
+                        "running": False,
+                        "status": "error",
+                        "completed_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    }
+                )
+                return deepcopy(aftermarket_backfill_state)
+            aftermarket_backfill_thread = Thread(
+                target=run_aftermarket_backfill_job,
+                args=(codes, metrics, batch_size, trading_date, force),
+                name="aftermarket_metrics_backfill",
+                daemon=True,
+            )
+            aftermarket_backfill_thread.start()
+            return deepcopy(aftermarket_backfill_state)
+
+    def cancel_aftermarket_backfill():
+        aftermarket_backfill_cancel.set()
+        update_aftermarket_backfill_state(
+            status="cancel_requested",
+            completed_at=None,
+        )
+        return aftermarket_backfill_status()
 
     def selected_hot_snapshot():
         with selected_hot_lock:
@@ -2783,6 +3195,36 @@ def make_handler(
                             ),
                             "error": str(error),
                         }
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if request_path == "/api/aftermarket_metrics_backfill_start":
+                response_payload = start_aftermarket_backfill(query)
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if request_path == "/api/aftermarket_metrics_backfill_status":
+                response_payload = aftermarket_backfill_status()
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if request_path == "/api/aftermarket_metrics_backfill_cancel":
+                response_payload = cancel_aftermarket_backfill()
                 body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")

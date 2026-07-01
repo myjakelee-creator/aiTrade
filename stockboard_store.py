@@ -157,6 +157,7 @@ QUOTE_FIELDS = (
 class RealtimeStore:
     _STRENGTH_PERSIST_FIELDS = (
         "stock_code",
+        "trading_date",
         "updated_at",
         "realtime_strength_snapshot",
         "strength_5m",
@@ -178,6 +179,7 @@ class RealtimeStore:
     )
     _ORDERBOOK_PERSIST_FIELDS = (
         "stock_code",
+        "trading_date",
         "updated_at",
         "bid_volume_snapshot",
         "ask_volume_snapshot",
@@ -200,6 +202,7 @@ class RealtimeStore:
     )
     _LARGE_TRADE_PERSIST_FIELDS = (
         "stock_code",
+        "trading_date",
         "updated_at",
         "large_trade_source",
         "large_trade_threshold_krw",
@@ -308,9 +311,13 @@ class RealtimeStore:
             self._close_metrics_persist_error = "load failed: invalid snapshots"
             return
         restored_at = self._persistent_timestamp()
+        today = self._kst_now().date().isoformat()
         restored = {}
         for raw_code, snapshot in snapshots.items():
             if not isinstance(snapshot, dict):
+                continue
+            trading_date = str(snapshot.get("trading_date") or "")[:10]
+            if trading_date and trading_date != today:
                 continue
             try:
                 code = self._normalized_code(
@@ -324,6 +331,7 @@ class RealtimeStore:
                 if self._has_persistent_value(value)
             }
             restored_snapshot["stock_code"] = code
+            restored_snapshot["trading_date"] = trading_date or today
             restored_snapshot["close_metrics_persistent"] = True
             restored_snapshot["close_metrics_restored_at"] = restored_at
             if (
@@ -340,6 +348,13 @@ class RealtimeStore:
                 )
             ):
                 restored_snapshot["orderbook_status"] = "restored_persistent"
+            if (
+                restored_snapshot.get("large_trade_source") == "opt10055_day"
+                and not self._has_persistent_value(
+                    restored_snapshot.get("large_trade_status")
+                )
+            ):
+                restored_snapshot["large_trade_status"] = "restored_persistent"
             restored[code] = restored_snapshot
         self._close_metric_snapshots.update(restored)
         self._close_metrics_persistent_snapshots.update(deepcopy(restored))
@@ -1142,6 +1157,7 @@ class RealtimeStore:
             bid_ask_ratio = self._snapshot_ratio(bid_volume, ask_volume)
         values = {
             "stock_code": code,
+            "trading_date": metrics.get("trading_date") or timestamp_text[:10],
             "bid_volume_snapshot": bid_volume,
             "ask_volume_snapshot": ask_volume,
             "bid_pct": bid_pct,
