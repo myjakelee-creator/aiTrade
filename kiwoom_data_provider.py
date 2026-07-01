@@ -3618,7 +3618,17 @@ class KiwoomOpenApiRealtimeProvider:
             store_guard_drop_count = store_latest_only.get(
                 "store_update_guard_drop_count", 0
             )
-            return {
+            store_one_min_bucket = {}
+            if self.store is not None and hasattr(
+                self.store, "one_min_bucket_diagnostics"
+            ):
+                try:
+                    store_one_min_bucket = (
+                        self.store.one_min_bucket_diagnostics()
+                    )
+                except Exception:
+                    store_one_min_bucket = {}
+            status = {
                 "available": self._check_availability(),
                 "running": self._running,
                 "registered_count": len(self._registered_codes),
@@ -3899,6 +3909,8 @@ class KiwoomOpenApiRealtimeProvider:
                 "unregister_succeeded": self._unregister_succeeded,
                 "unregister_error": self._unregister_error,
             }
+            status.update(store_one_min_bucket)
+            return status
 
     def _on_receive_real_data(self, *args, **kwargs):
         received_at = datetime.now().isoformat(timespec="seconds")

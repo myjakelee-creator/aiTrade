@@ -17,6 +17,10 @@ CLOSE_METRICS_PERSIST_PATH = (
     RUNTIME_DIR / "stockboard_close_metrics_snapshots.json"
 )
 ONE_MIN_TRADE_WINDOW_SEC = 60
+ONE_MIN_TRADE_COMPARE_WINDOW_SEC = 60
+ONE_MIN_TRADE_BUCKET_RETENTION_SEC = (
+    ONE_MIN_TRADE_WINDOW_SEC + ONE_MIN_TRADE_COMPARE_WINDOW_SEC
+)
 BIG_HAND_THRESHOLD_KRW = 100_000_000
 
 QUOTE_FIELDS = (
@@ -74,12 +78,27 @@ QUOTE_FIELDS = (
     "one_min_strength",
     "one_min_buy_qty",
     "one_min_sell_qty",
+    "one_min_buy_value_eok",
+    "one_min_sell_value_eok",
+    "one_min_net_buy_value_eok",
+    "prev_one_min_net_buy_value_eok",
+    "one_min_net_buy_value_delta_eok",
+    "one_min_trade_value_eok",
+    "prev_one_min_trade_value_eok",
+    "one_min_trade_value_delta_eok",
+    "prev_one_min_strength",
+    "one_min_strength_delta",
+    "one_min_strength_growth_rate",
     "big_hand_buy_count_1eok",
     "big_hand_sell_count_1eok",
     "big_hand_net_buy_count_1eok",
     "big_hand_buy_sum_eok",
     "big_hand_sell_sum_eok",
     "big_hand_net_sum_eok",
+    "prev_big_hand_net_buy_count_1eok",
+    "big_hand_net_buy_count_delta_1eok",
+    "prev_big_hand_net_sum_eok",
+    "big_hand_net_sum_delta_eok",
     "strength_5m",
     "strength_20m",
     "strength_60m",
@@ -188,6 +207,10 @@ class RealtimeStore:
         self._store_update_guard_drop_count = 0
         self._older_trade_drop_count = 0
         self._latest_only_dropped_count = 0
+        self._one_min_bucket_enabled = True
+        self._one_min_bucket_pruned_count = 0
+        self._one_min_bucket_update_count = 0
+        self._one_min_bucket_last_update_at = None
         self._close_metrics_persist_path = Path(close_metrics_persist_path)
         self._close_metrics_persist_error = None
         self._load_persistent_close_metrics()
@@ -472,83 +495,150 @@ class RealtimeStore:
         except (TypeError, ValueError):
             return 0
 
+    @staticmethod
+    def _new_one_min_bucket():
+        return {
+            "buy_qty": 0,
+            "sell_qty": 0,
+            "buy_value_eok": 0,
+            "sell_value_eok": 0,
+            "big_buy_count": 0,
+            "big_sell_count": 0,
+            "big_buy_sum_eok": 0,
+            "big_sell_sum_eok": 0,
+        }
+
     @classmethod
-    def _one_min_trade_metrics(
+    def _sum_one_min_buckets(cls, buckets, start_sec, end_sec):
+        total = cls._new_one_min_bucket()
+        for bucket_sec, bucket in buckets.items():
+            if bucket_sec < start_sec or bucket_sec > end_sec:
+                continue
+            for key in total:
+                total[key] += bucket.get(key) or 0
+        return total
+
+    @classmethod
+    def _one_min_trade_metrics_from_bucket(
         cls,
         window_state,
         *,
-        now,
+        bucket_sec,
         trade_price=None,
         trade_qty=None,
+        include_trade=True,
     ):
-        events = window_state["events"]
-        cutoff = now - ONE_MIN_TRADE_WINDOW_SEC
-        while events and events[0]["timestamp"] < cutoff:
-            expired = events.popleft()
-            side = expired.get("side")
-            qty_abs = expired.get("qty_abs") or 0
-            amount_eok = expired.get("amount_eok") or 0
-            if side == "buy":
-                window_state["buy_qty"] -= qty_abs
-                if expired.get("is_big_hand"):
-                    window_state["big_buy_count"] -= 1
-                    window_state["big_buy_sum_eok"] -= amount_eok
-            elif side == "sell":
-                window_state["sell_qty"] -= qty_abs
-                if expired.get("is_big_hand"):
-                    window_state["big_sell_count"] -= 1
-                    window_state["big_sell_sum_eok"] -= amount_eok
+        buckets = window_state["buckets"]
+        prune_before = bucket_sec - ONE_MIN_TRADE_BUCKET_RETENTION_SEC + 1
+        expired_keys = [
+            key for key in tuple(buckets) if key < prune_before
+        ]
+        for key in expired_keys:
+            buckets.pop(key, None)
 
-        qty_number = cls._trade_qty_number(trade_qty)
-        price_number = cls._price_number(trade_price)
-        if qty_number:
-            side = "buy" if qty_number > 0 else "sell"
-            qty_abs = abs(qty_number)
-            amount_krw = None
-            amount_eok = None
-            is_big_hand = False
-            if price_number is not None:
-                amount_krw = price_number * qty_abs
-                amount_eok = amount_krw / BIG_HAND_THRESHOLD_KRW
-                is_big_hand = amount_krw >= BIG_HAND_THRESHOLD_KRW
-            events.append(
-                {
-                    "timestamp": now,
-                    "side": side,
-                    "qty_abs": qty_abs,
-                    "amount_eok": amount_eok,
-                    "is_big_hand": is_big_hand,
-                }
-            )
-            if side == "buy":
-                window_state["buy_qty"] += qty_abs
-                if is_big_hand:
-                    window_state["big_buy_count"] += 1
-                    window_state["big_buy_sum_eok"] += amount_eok or 0
-            else:
-                window_state["sell_qty"] += qty_abs
-                if is_big_hand:
-                    window_state["big_sell_count"] += 1
-                    window_state["big_sell_sum_eok"] += amount_eok or 0
+        if include_trade:
+            qty_number = cls._trade_qty_number(trade_qty)
+            price_number = cls._price_number(trade_price)
+            if qty_number:
+                bucket = buckets.setdefault(bucket_sec, cls._new_one_min_bucket())
+                qty_abs = abs(qty_number)
+                amount_eok = 0
+                if price_number is not None:
+                    amount_eok = (price_number * qty_abs) / BIG_HAND_THRESHOLD_KRW
+                is_big_hand = amount_eok >= 1
+                if qty_number > 0:
+                    bucket["buy_qty"] += qty_abs
+                    bucket["buy_value_eok"] += amount_eok
+                    if is_big_hand:
+                        bucket["big_buy_count"] += 1
+                        bucket["big_buy_sum_eok"] += amount_eok
+                else:
+                    bucket["sell_qty"] += qty_abs
+                    bucket["sell_value_eok"] += amount_eok
+                    if is_big_hand:
+                        bucket["big_sell_count"] += 1
+                        bucket["big_sell_sum_eok"] += amount_eok
 
-        buy_qty = max(0, window_state["buy_qty"])
-        sell_qty = max(0, window_state["sell_qty"])
-        big_buy_count = max(0, window_state["big_buy_count"])
-        big_sell_count = max(0, window_state["big_sell_count"])
-        big_buy_sum_eok = max(0, window_state["big_buy_sum_eok"])
-        big_sell_sum_eok = max(0, window_state["big_sell_sum_eok"])
+        recent = cls._sum_one_min_buckets(
+            buckets,
+            bucket_sec - ONE_MIN_TRADE_WINDOW_SEC + 1,
+            bucket_sec,
+        )
+        previous = cls._sum_one_min_buckets(
+            buckets,
+            bucket_sec
+            - ONE_MIN_TRADE_WINDOW_SEC
+            - ONE_MIN_TRADE_COMPARE_WINDOW_SEC
+            + 1,
+            bucket_sec - ONE_MIN_TRADE_WINDOW_SEC,
+        )
+        current_strength = cls._session_strength(
+            recent["buy_qty"], recent["sell_qty"]
+        )
+        previous_strength = cls._session_strength(
+            previous["buy_qty"], previous["sell_qty"]
+        )
+        strength_delta = None
+        strength_growth_rate = None
+        if current_strength is not None and previous_strength is not None:
+            strength_delta = round(current_strength - previous_strength, 4)
+            if previous_strength:
+                strength_growth_rate = round(
+                    (strength_delta / previous_strength) * 100,
+                    4,
+                )
 
-        return {
-            "one_min_strength": cls._session_strength(buy_qty, sell_qty),
-            "one_min_buy_qty": buy_qty,
-            "one_min_sell_qty": sell_qty,
-            "big_hand_buy_count_1eok": big_buy_count,
-            "big_hand_sell_count_1eok": big_sell_count,
-            "big_hand_net_buy_count_1eok": big_buy_count - big_sell_count,
-            "big_hand_buy_sum_eok": round(big_buy_sum_eok, 4),
-            "big_hand_sell_sum_eok": round(big_sell_sum_eok, 4),
-            "big_hand_net_sum_eok": round(
-                big_buy_sum_eok - big_sell_sum_eok,
+        buy_value = recent["buy_value_eok"]
+        sell_value = recent["sell_value_eok"]
+        prev_buy_value = previous["buy_value_eok"]
+        prev_sell_value = previous["sell_value_eok"]
+        net_buy_value = buy_value - sell_value
+        prev_net_buy_value = prev_buy_value - prev_sell_value
+        trade_value = buy_value + sell_value
+        prev_trade_value = prev_buy_value + prev_sell_value
+        big_net_count = recent["big_buy_count"] - recent["big_sell_count"]
+        prev_big_net_count = (
+            previous["big_buy_count"] - previous["big_sell_count"]
+        )
+        big_net_sum = recent["big_buy_sum_eok"] - recent["big_sell_sum_eok"]
+        prev_big_net_sum = (
+            previous["big_buy_sum_eok"] - previous["big_sell_sum_eok"]
+        )
+
+        return len(expired_keys), {
+            "one_min_strength": current_strength,
+            "one_min_buy_qty": max(0, recent["buy_qty"]),
+            "one_min_sell_qty": max(0, recent["sell_qty"]),
+            "one_min_buy_value_eok": round(max(0, buy_value), 4),
+            "one_min_sell_value_eok": round(max(0, sell_value), 4),
+            "one_min_net_buy_value_eok": round(net_buy_value, 4),
+            "prev_one_min_net_buy_value_eok": round(prev_net_buy_value, 4),
+            "one_min_net_buy_value_delta_eok": round(
+                net_buy_value - prev_net_buy_value,
+                4,
+            ),
+            "one_min_trade_value_eok": round(trade_value, 4),
+            "prev_one_min_trade_value_eok": round(prev_trade_value, 4),
+            "one_min_trade_value_delta_eok": round(
+                trade_value - prev_trade_value,
+                4,
+            ),
+            "prev_one_min_strength": previous_strength,
+            "one_min_strength_delta": strength_delta,
+            "one_min_strength_growth_rate": strength_growth_rate,
+            "big_hand_buy_count_1eok": max(0, recent["big_buy_count"]),
+            "big_hand_sell_count_1eok": max(0, recent["big_sell_count"]),
+            "big_hand_net_buy_count_1eok": big_net_count,
+            "big_hand_buy_sum_eok": round(max(0, recent["big_buy_sum_eok"]), 4),
+            "big_hand_sell_sum_eok": round(max(0, recent["big_sell_sum_eok"]), 4),
+            "big_hand_net_sum_eok": round(big_net_sum, 4),
+            "prev_big_hand_net_buy_count_1eok": prev_big_net_count,
+            "big_hand_net_buy_count_delta_1eok": (
+                big_net_count - prev_big_net_count
+            ),
+            "prev_big_hand_net_sum_eok": round(prev_big_net_sum, 4),
+            "big_hand_net_sum_delta_eok": round(
+                big_net_sum - prev_big_net_sum,
                 4,
             ),
         }
@@ -556,13 +646,7 @@ class RealtimeStore:
     @staticmethod
     def _new_trade_window_state():
         return {
-            "events": deque(),
-            "buy_qty": 0,
-            "sell_qty": 0,
-            "big_buy_count": 0,
-            "big_sell_count": 0,
-            "big_buy_sum_eok": 0,
-            "big_sell_sum_eok": 0,
+            "buckets": {},
         }
 
     @staticmethod
@@ -796,6 +880,10 @@ class RealtimeStore:
             rolling_trade_price = trade_price
             if rolling_trade_price is None:
                 rolling_trade_price = price
+            bucket_timestamp = self._timestamp_value(timestamp_text)
+            if bucket_timestamp is None:
+                bucket_timestamp = time.time()
+            bucket_sec = int(bucket_timestamp)
             values.update(
                 {
                     "session_buy_qty_live": session_buy_qty_live,
@@ -806,14 +894,20 @@ class RealtimeStore:
                     "session_strength_source": "live_since_server_start",
                 }
             )
-            values.update(
-                self._one_min_trade_metrics(
+            bucket_pruned_count, bucket_metrics = (
+                self._one_min_trade_metrics_from_bucket(
                     trade_window,
-                    now=time.time(),
+                    bucket_sec=bucket_sec,
                     trade_price=rolling_trade_price,
                     trade_qty=trade_qty,
+                    include_trade=not bool(stale_trade_suspect),
                 )
             )
+            self._one_min_bucket_pruned_count += bucket_pruned_count
+            if not bool(stale_trade_suspect) and trade_qty_number:
+                self._one_min_bucket_update_count += 1
+                self._one_min_bucket_last_update_at = timestamp_text
+            values.update(bucket_metrics)
             quote, timestamp_text, sequence = self._apply_update(
                 code, values, timestamp_text=timestamp_text
             )
@@ -839,6 +933,28 @@ class RealtimeStore:
                 "latest_only_dropped_count": self._latest_only_dropped_count,
                 "store_update_guard_drop_count": (
                     self._store_update_guard_drop_count
+                ),
+            }
+
+    def one_min_bucket_diagnostics(self):
+        with self._lock:
+            total_bucket_count = 0
+            for window_state in self._trade_windows.values():
+                buckets = window_state.get("buckets")
+                if isinstance(buckets, dict):
+                    total_bucket_count += len(buckets)
+            return {
+                "one_min_bucket_enabled": self._one_min_bucket_enabled,
+                "one_min_bucket_code_count": len(self._trade_windows),
+                "one_min_bucket_total_bucket_count": total_bucket_count,
+                "one_min_bucket_pruned_count": self._one_min_bucket_pruned_count,
+                "one_min_bucket_update_count": self._one_min_bucket_update_count,
+                "one_min_bucket_last_update_at": (
+                    self._one_min_bucket_last_update_at
+                ),
+                "one_min_bucket_window_sec": ONE_MIN_TRADE_WINDOW_SEC,
+                "one_min_bucket_compare_window_sec": (
+                    ONE_MIN_TRADE_COMPARE_WINDOW_SEC
                 ),
             }
 
@@ -1314,6 +1430,9 @@ class RealtimeStore:
             self._store_update_guard_drop_count = 0
             self._older_trade_drop_count = 0
             self._latest_only_dropped_count = 0
+            self._one_min_bucket_pruned_count = 0
+            self._one_min_bucket_update_count = 0
+            self._one_min_bucket_last_update_at = None
 
 
 def _load_tradable_stock_codes():

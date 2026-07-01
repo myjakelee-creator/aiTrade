@@ -91,12 +91,27 @@ ROLLING_TRADE_API_FIELDS = (
     "one_min_strength",
     "one_min_buy_qty",
     "one_min_sell_qty",
+    "one_min_buy_value_eok",
+    "one_min_sell_value_eok",
+    "one_min_net_buy_value_eok",
+    "prev_one_min_net_buy_value_eok",
+    "one_min_net_buy_value_delta_eok",
+    "one_min_trade_value_eok",
+    "prev_one_min_trade_value_eok",
+    "one_min_trade_value_delta_eok",
+    "prev_one_min_strength",
+    "one_min_strength_delta",
+    "one_min_strength_growth_rate",
     "big_hand_buy_count_1eok",
     "big_hand_sell_count_1eok",
     "big_hand_net_buy_count_1eok",
     "big_hand_buy_sum_eok",
     "big_hand_sell_sum_eok",
     "big_hand_net_sum_eok",
+    "prev_big_hand_net_buy_count_1eok",
+    "big_hand_net_buy_count_delta_1eok",
+    "prev_big_hand_net_sum_eok",
+    "big_hand_net_sum_delta_eok",
 )
 
 
@@ -1221,6 +1236,8 @@ def _realtime_patch_payload(
             "received_at": quote.get("received_at"),
             "sequence": quote.get("sequence"),
         }
+        for field in ROLLING_TRADE_API_FIELDS:
+            patch[field] = _realtime_number(quote.get(field))
         _copy_regular_close_fields(patch, quote)
         _apply_freshness_fields(patch)
         _apply_display_price_fields(patch)
@@ -1303,12 +1320,27 @@ REALTIME_SLIM_QUOTE_FIELDS = frozenset(
         "one_min_strength",
         "one_min_buy_qty",
         "one_min_sell_qty",
+        "one_min_buy_value_eok",
+        "one_min_sell_value_eok",
+        "one_min_net_buy_value_eok",
+        "prev_one_min_net_buy_value_eok",
+        "one_min_net_buy_value_delta_eok",
+        "one_min_trade_value_eok",
+        "prev_one_min_trade_value_eok",
+        "one_min_trade_value_delta_eok",
+        "prev_one_min_strength",
+        "one_min_strength_delta",
+        "one_min_strength_growth_rate",
         "big_hand_buy_count_1eok",
         "big_hand_sell_count_1eok",
         "big_hand_net_buy_count_1eok",
         "big_hand_buy_sum_eok",
         "big_hand_sell_sum_eok",
         "big_hand_net_sum_eok",
+        "prev_big_hand_net_buy_count_1eok",
+        "big_hand_net_buy_count_delta_1eok",
+        "prev_big_hand_net_sum_eok",
+        "big_hand_net_sum_delta_eok",
         "strength_5m",
         "strength_20m",
         "strength_60m",
@@ -2400,6 +2432,15 @@ def make_handler(
                 response_payload["register_error"] = (
                     realtime_provider_register_error
                 )
+                if hasattr(realtime_store, "one_min_bucket_diagnostics"):
+                    try:
+                        response_payload.update(
+                            realtime_store.one_min_bucket_diagnostics()
+                        )
+                    except Exception as error:
+                        response_payload["one_min_bucket_diagnostics_error"] = (
+                            str(error)
+                        )
                 body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
