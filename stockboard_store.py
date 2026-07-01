@@ -21,7 +21,9 @@ ONE_MIN_TRADE_COMPARE_WINDOW_SEC = 60
 ONE_MIN_TRADE_BUCKET_RETENTION_SEC = (
     ONE_MIN_TRADE_WINDOW_SEC + ONE_MIN_TRADE_COMPARE_WINDOW_SEC
 )
-BIG_HAND_THRESHOLD_KRW = 100_000_000
+KRW_PER_EOK = 100_000_000
+LARGE_TRADE_THRESHOLD_KRW = 50_000_000
+LARGE_TRADE_THRESHOLD_EOK = LARGE_TRADE_THRESHOLD_KRW / KRW_PER_EOK
 
 QUOTE_FIELDS = (
     "price",
@@ -89,6 +91,23 @@ QUOTE_FIELDS = (
     "prev_one_min_strength",
     "one_min_strength_delta",
     "one_min_strength_growth_rate",
+    "large_trade_threshold_krw",
+    "large_trade_threshold_eok",
+    "large_trade_buy_count",
+    "large_trade_sell_count",
+    "large_trade_net_count",
+    "prev_large_trade_net_count",
+    "large_trade_net_count_delta",
+    "large_trade_buy_sum_eok",
+    "large_trade_sell_sum_eok",
+    "large_trade_net_sum_eok",
+    "prev_large_trade_net_sum_eok",
+    "large_trade_net_sum_delta_eok",
+    "large_trade_unknown_count",
+    "large_trade_unknown_sum_eok",
+    "large_trade_source",
+    "large_trade_updated_at",
+    "large_trade_status",
     "big_hand_buy_count_1eok",
     "big_hand_sell_count_1eok",
     "big_hand_net_buy_count_1eok",
@@ -178,6 +197,29 @@ class RealtimeStore:
         "orderbook_rqname",
         "orderbook_trcode",
         "orderbook_screen_no",
+    )
+    _LARGE_TRADE_PERSIST_FIELDS = (
+        "stock_code",
+        "updated_at",
+        "large_trade_source",
+        "large_trade_threshold_krw",
+        "large_trade_threshold_eok",
+        "large_trade_buy_count",
+        "large_trade_sell_count",
+        "large_trade_net_count",
+        "large_trade_buy_sum_eok",
+        "large_trade_sell_sum_eok",
+        "large_trade_net_sum_eok",
+        "large_trade_unknown_count",
+        "large_trade_unknown_sum_eok",
+        "large_trade_updated_at",
+        "large_trade_status",
+        "big_hand_buy_count_1eok",
+        "big_hand_sell_count_1eok",
+        "big_hand_net_buy_count_1eok",
+        "big_hand_buy_sum_eok",
+        "big_hand_sell_sum_eok",
+        "big_hand_net_sum_eok",
     )
 
     def __init__(
@@ -341,9 +383,16 @@ class RealtimeStore:
                 snapshot,
                 self._ORDERBOOK_PERSIST_FIELDS,
             )
+        if snapshot.get("large_trade_source") == "opt10055_day":
+            persistent_snapshot = self._merge_persistent_values(
+                persistent_snapshot,
+                snapshot,
+                self._LARGE_TRADE_PERSIST_FIELDS,
+            )
         if (
             persistent_snapshot.get("strength_source") != "opt10046"
             and persistent_snapshot.get("orderbook_source") != "opt10004"
+            and persistent_snapshot.get("large_trade_source") != "opt10055_day"
         ):
             return
         persistent_snapshot["stock_code"] = code
@@ -437,6 +486,16 @@ class RealtimeStore:
         self._older_trade_drop_count += 1
         self._latest_only_dropped_count += 1
 
+    def _has_fresh_realtime_large_trade(self, quote):
+        if not isinstance(quote, dict):
+            return False
+        if quote.get("large_trade_source") != "realtime_bucket":
+            return False
+        timestamp = self._timestamp_value(quote.get("large_trade_updated_at"))
+        if timestamp is None:
+            return False
+        return (time.time() - timestamp) <= ONE_MIN_TRADE_WINDOW_SEC
+
     @staticmethod
     def _event(stock_code, values, timestamp_text, sequence):
         event = {
@@ -502,10 +561,12 @@ class RealtimeStore:
             "sell_qty": 0,
             "buy_value_eok": 0,
             "sell_value_eok": 0,
-            "big_buy_count": 0,
-            "big_sell_count": 0,
-            "big_buy_sum_eok": 0,
-            "big_sell_sum_eok": 0,
+            "large_buy_count": 0,
+            "large_sell_count": 0,
+            "large_unknown_count": 0,
+            "large_buy_sum_eok": 0,
+            "large_sell_sum_eok": 0,
+            "large_unknown_sum_eok": 0,
         }
 
     @classmethod
@@ -542,22 +603,27 @@ class RealtimeStore:
             if qty_number:
                 bucket = buckets.setdefault(bucket_sec, cls._new_one_min_bucket())
                 qty_abs = abs(qty_number)
-                amount_eok = 0
+                trade_amount_krw = 0
+                trade_amount_eok = 0
                 if price_number is not None:
-                    amount_eok = (price_number * qty_abs) / BIG_HAND_THRESHOLD_KRW
-                is_big_hand = amount_eok >= 1
+                    trade_amount_krw = price_number * qty_abs
+                    trade_amount_eok = trade_amount_krw / KRW_PER_EOK
+                is_large_trade = trade_amount_krw >= LARGE_TRADE_THRESHOLD_KRW
                 if qty_number > 0:
                     bucket["buy_qty"] += qty_abs
-                    bucket["buy_value_eok"] += amount_eok
-                    if is_big_hand:
-                        bucket["big_buy_count"] += 1
-                        bucket["big_buy_sum_eok"] += amount_eok
-                else:
+                    bucket["buy_value_eok"] += trade_amount_eok
+                    if is_large_trade:
+                        bucket["large_buy_count"] += 1
+                        bucket["large_buy_sum_eok"] += trade_amount_eok
+                elif qty_number < 0:
                     bucket["sell_qty"] += qty_abs
-                    bucket["sell_value_eok"] += amount_eok
-                    if is_big_hand:
-                        bucket["big_sell_count"] += 1
-                        bucket["big_sell_sum_eok"] += amount_eok
+                    bucket["sell_value_eok"] += trade_amount_eok
+                    if is_large_trade:
+                        bucket["large_sell_count"] += 1
+                        bucket["large_sell_sum_eok"] += trade_amount_eok
+                elif is_large_trade:
+                    bucket["large_unknown_count"] += 1
+                    bucket["large_unknown_sum_eok"] += trade_amount_eok
 
         recent = cls._sum_one_min_buckets(
             buckets,
@@ -596,13 +662,15 @@ class RealtimeStore:
         prev_net_buy_value = prev_buy_value - prev_sell_value
         trade_value = buy_value + sell_value
         prev_trade_value = prev_buy_value + prev_sell_value
-        big_net_count = recent["big_buy_count"] - recent["big_sell_count"]
-        prev_big_net_count = (
-            previous["big_buy_count"] - previous["big_sell_count"]
+        large_net_count = recent["large_buy_count"] - recent["large_sell_count"]
+        prev_large_net_count = (
+            previous["large_buy_count"] - previous["large_sell_count"]
         )
-        big_net_sum = recent["big_buy_sum_eok"] - recent["big_sell_sum_eok"]
-        prev_big_net_sum = (
-            previous["big_buy_sum_eok"] - previous["big_sell_sum_eok"]
+        large_net_sum = (
+            recent["large_buy_sum_eok"] - recent["large_sell_sum_eok"]
+        )
+        prev_large_net_sum = (
+            previous["large_buy_sum_eok"] - previous["large_sell_sum_eok"]
         )
 
         return len(expired_keys), {
@@ -626,19 +694,52 @@ class RealtimeStore:
             "prev_one_min_strength": previous_strength,
             "one_min_strength_delta": strength_delta,
             "one_min_strength_growth_rate": strength_growth_rate,
-            "big_hand_buy_count_1eok": max(0, recent["big_buy_count"]),
-            "big_hand_sell_count_1eok": max(0, recent["big_sell_count"]),
-            "big_hand_net_buy_count_1eok": big_net_count,
-            "big_hand_buy_sum_eok": round(max(0, recent["big_buy_sum_eok"]), 4),
-            "big_hand_sell_sum_eok": round(max(0, recent["big_sell_sum_eok"]), 4),
-            "big_hand_net_sum_eok": round(big_net_sum, 4),
-            "prev_big_hand_net_buy_count_1eok": prev_big_net_count,
-            "big_hand_net_buy_count_delta_1eok": (
-                big_net_count - prev_big_net_count
+            "large_trade_threshold_krw": LARGE_TRADE_THRESHOLD_KRW,
+            "large_trade_threshold_eok": LARGE_TRADE_THRESHOLD_EOK,
+            "large_trade_buy_count": max(0, recent["large_buy_count"]),
+            "large_trade_sell_count": max(0, recent["large_sell_count"]),
+            "large_trade_net_count": large_net_count,
+            "prev_large_trade_net_count": prev_large_net_count,
+            "large_trade_net_count_delta": (
+                large_net_count - prev_large_net_count
             ),
-            "prev_big_hand_net_sum_eok": round(prev_big_net_sum, 4),
+            "large_trade_buy_sum_eok": round(
+                max(0, recent["large_buy_sum_eok"]), 4
+            ),
+            "large_trade_sell_sum_eok": round(
+                max(0, recent["large_sell_sum_eok"]), 4
+            ),
+            "large_trade_net_sum_eok": round(large_net_sum, 4),
+            "prev_large_trade_net_sum_eok": round(prev_large_net_sum, 4),
+            "large_trade_net_sum_delta_eok": round(
+                large_net_sum - prev_large_net_sum,
+                4,
+            ),
+            "large_trade_unknown_count": max(0, recent["large_unknown_count"]),
+            "large_trade_unknown_sum_eok": round(
+                max(0, recent["large_unknown_sum_eok"]), 4
+            ),
+            "large_trade_source": "realtime_bucket",
+            "large_trade_updated_at": cls._timestamp_text(bucket_sec),
+            "large_trade_status": "ok",
+            # Legacy alias: names say 1eok/big_hand, values now use 50m threshold.
+            "big_hand_buy_count_1eok": max(0, recent["large_buy_count"]),
+            "big_hand_sell_count_1eok": max(0, recent["large_sell_count"]),
+            "big_hand_net_buy_count_1eok": large_net_count,
+            "big_hand_buy_sum_eok": round(
+                max(0, recent["large_buy_sum_eok"]), 4
+            ),
+            "big_hand_sell_sum_eok": round(
+                max(0, recent["large_sell_sum_eok"]), 4
+            ),
+            "big_hand_net_sum_eok": round(large_net_sum, 4),
+            "prev_big_hand_net_buy_count_1eok": prev_large_net_count,
+            "big_hand_net_buy_count_delta_1eok": (
+                large_net_count - prev_large_net_count
+            ),
+            "prev_big_hand_net_sum_eok": round(prev_large_net_sum, 4),
             "big_hand_net_sum_delta_eok": round(
-                big_net_sum - prev_big_net_sum,
+                large_net_sum - prev_large_net_sum,
                 4,
             ),
         }
@@ -1082,6 +1183,43 @@ class RealtimeStore:
             "strength_rqname": metrics.get("strength_rqname"),
             "strength_trcode": metrics.get("strength_trcode"),
             "strength_screen_no": metrics.get("strength_screen_no"),
+            "large_trade_source": metrics.get("large_trade_source"),
+            "large_trade_threshold_krw": metrics.get(
+                "large_trade_threshold_krw"
+            ),
+            "large_trade_threshold_eok": metrics.get(
+                "large_trade_threshold_eok"
+            ),
+            "large_trade_buy_count": metrics.get("large_trade_buy_count"),
+            "large_trade_sell_count": metrics.get("large_trade_sell_count"),
+            "large_trade_net_count": metrics.get("large_trade_net_count"),
+            "large_trade_buy_sum_eok": metrics.get("large_trade_buy_sum_eok"),
+            "large_trade_sell_sum_eok": metrics.get(
+                "large_trade_sell_sum_eok"
+            ),
+            "large_trade_net_sum_eok": metrics.get("large_trade_net_sum_eok"),
+            "large_trade_unknown_count": metrics.get(
+                "large_trade_unknown_count"
+            ),
+            "large_trade_unknown_sum_eok": metrics.get(
+                "large_trade_unknown_sum_eok"
+            ),
+            "large_trade_updated_at": metrics.get(
+                "large_trade_updated_at"
+            ),
+            "large_trade_status": metrics.get("large_trade_status"),
+            "big_hand_buy_count_1eok": metrics.get(
+                "big_hand_buy_count_1eok"
+            ),
+            "big_hand_sell_count_1eok": metrics.get(
+                "big_hand_sell_count_1eok"
+            ),
+            "big_hand_net_buy_count_1eok": metrics.get(
+                "big_hand_net_buy_count_1eok"
+            ),
+            "big_hand_buy_sum_eok": metrics.get("big_hand_buy_sum_eok"),
+            "big_hand_sell_sum_eok": metrics.get("big_hand_sell_sum_eok"),
+            "big_hand_net_sum_eok": metrics.get("big_hand_net_sum_eok"),
             "status_detail": metrics.get("status_detail"),
             "updated_at": timestamp_text,
         }
@@ -1107,7 +1245,23 @@ class RealtimeStore:
             self._close_metric_snapshots[code] = merged
             self._persist_close_metrics_snapshot(code, merged)
             quote = self._ensure_quote(code)
-            quote.update({key: value for key, value in merged.items() if value is not None})
+            quote_values = {
+                key: value for key, value in merged.items() if value is not None
+            }
+            if (
+                merged.get("large_trade_source") == "opt10055_day"
+                and self._has_fresh_realtime_large_trade(quote)
+            ):
+                large_fields = {
+                    field
+                    for field in QUOTE_FIELDS
+                    if field.startswith("large_trade_")
+                    or field.startswith("big_hand_")
+                    or field.startswith("prev_big_hand_")
+                }
+                for field in large_fields:
+                    quote_values.pop(field, None)
+            quote.update(quote_values)
             return deepcopy(merged)
 
     def ensure_regular_close_snapshot(self, stock_code, snapshot):

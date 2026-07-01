@@ -78,19 +78,19 @@
   <!-- HTML: candidate board -->
   <div class="section sec-orange">▶ HOT5 유력 후보 5종목 <span class="lane-speed-badge lane-speed-waiting" id="hot-lane-speed-badge">HOT5 확인중</span> <span class="lane-speed-badge lane-speed-hidden" id="candidate-lane-speed-badge"></span></div>
   <table class="grid board enhanced-board" id="candidate-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손(억)</th><th>모멘텀</th></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>대량체결</th><th>모멘텀</th></tr>
   </table>
 
   <!-- HTML: selected stock board -->
   <div class="section sec-orange">▶ Selected 1종목</div>
   <table class="grid board enhanced-board" id="selected-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손(억)</th><th>모멘텀</th></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>대량체결</th><th>모멘텀</th></tr>
   </table>
 
   <!-- HTML: trading board -->
   <div class="section sec-blue">▶ Top100 Pool <span id="ranking-row-count">0개</span> <span class="lane-speed-badge lane-speed-waiting" id="top100-lane-speed-badge">Top100 확인중</span></div>
   <table class="grid board enhanced-board" id="trading-board">
-    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>큰손(억)</th><th>모멘텀</th></tr>
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>대량체결</th><th>모멘텀</th></tr>
   </table>
 </div>
 <script src="assets/stockboard_format.js?v=5f_format_split_20260627"></script>
@@ -810,7 +810,7 @@
     { label: '1분강도', defaultWidth: 56, minWidth: 48, sortKey: 'sessionStrength', sortDefault: 'desc' },
     { label: '외합(억)', defaultWidth: 64, minWidth: 54, sortKey: 'foreign', sortDefault: 'desc' },
     { label: '프로(억)', defaultWidth: 64, minWidth: 54, sortKey: 'program', sortDefault: 'desc' },
-    { label: '큰손(억)', defaultWidth: 56, minWidth: 48, sortKey: 'bigHand', sortDefault: 'desc' },
+    { label: '대량체결', defaultWidth: 56, minWidth: 48, sortKey: 'bigHand', sortDefault: 'desc' },
     { label: '모멘텀', defaultWidth: 90, minWidth: 70, sortKey: 'note', sortDefault: 'asc' }
   ];
   const top100PoolColumnIndexes = boardColumns.map((column, index) => index);
@@ -1295,6 +1295,7 @@
   }
 
   const BIG_HAND_BUY_EOK_KEYS = [
+    'large_trade_buy_sum_eok',
     'big_hand_buy_sum_eok',
     'big_hand_buy_eok',
     'bigHandBuyEok',
@@ -1302,6 +1303,7 @@
     'bigHandBuyAmount1eok'
   ];
   const BIG_HAND_SELL_EOK_KEYS = [
+    'large_trade_sell_sum_eok',
     'big_hand_sell_sum_eok',
     'big_hand_sell_eok',
     'bigHandSellEok',
@@ -1309,6 +1311,7 @@
     'bigHandSellAmount1eok'
   ];
   const BIG_HAND_NET_EOK_KEYS = [
+    'large_trade_net_sum_eok',
     'big_hand_net_sum_eok',
     'big_hand_net_buy_eok',
     'bigHandNetBuyEok',
@@ -1323,43 +1326,52 @@
 
   function bigHandView(row) {
     const netCount = firstValue(row, [
+      'large_trade_net_count',
       'big_hand_net_buy_count_1eok',
       'bigHandNetBuyCount1eok'
     ]);
     const buyCount = firstValue(row, [
+      'large_trade_buy_count',
       'big_hand_buy_count_1eok',
       'bigHandBuyCount1eok'
     ]);
     const sellCount = firstValue(row, [
+      'large_trade_sell_count',
       'big_hand_sell_count_1eok',
       'bigHandSellCount1eok'
     ]);
+    const unknownCount = firstValue(row, ['large_trade_unknown_count']);
+    const thresholdKrw = firstValue(row, ['large_trade_threshold_krw']);
+    const source = firstValue(row, ['large_trade_source']);
     const buyEok = firstValue(row, BIG_HAND_BUY_EOK_KEYS);
     const sellEok = firstValue(row, BIG_HAND_SELL_EOK_KEYS);
     const netEok = firstValue(row, BIG_HAND_NET_EOK_KEYS);
     const netCountNumber = numericValue(netCount);
-    const netEokNumber = numericValue(netEok);
-    if (netCountNumber === null && netEokNumber === null) {
+    if (netCountNumber === null) {
       return {
         display: '-',
         className: '',
         sortValue: null,
-        tooltip: ['큰손(억): -', '큰손 순매수 우위'].join('\n')
+        tooltip: ['대량체결: -', '기준: 체결건당 5천만원 이상'].join('\n')
       };
     }
+    const thresholdText = numericValue(thresholdKrw) === 50000000
+      ? '체결건당 5천만원 이상'
+      : `체결건당 ${formatUnsignedEok(numericValue(thresholdKrw) / 100000000)} 이상`;
     const tooltip = [
-      `매수 ${formatSignedCount(buyCount).replace(/^[+-]/, '')} / 매도 ${formatSignedCount(sellCount).replace(/^[+-]/, '')} / 순매수 ${formatSignedCount(netCount)}`,
-      `매수 ${formatUnsignedEok(buyEok)} / 매도 ${formatUnsignedEok(sellEok)} / 순매수 ${formatSignedEok(netEok)}`
-    ].join('\n');
-    const toneNumber = netCountNumber ?? netEokNumber;
+      `대량체결 기준: ${thresholdText}`,
+      `매수 ${formatSignedCount(buyCount).replace(/^[+-]/, '')} / 매도 ${formatSignedCount(sellCount).replace(/^[+-]/, '')} / 순 ${formatSignedCount(netCount)}`,
+      `매수금액 ${formatUnsignedEok(buyEok)} / 매도금액 ${formatUnsignedEok(sellEok)} / 순 ${formatSignedEok(netEok)}`,
+      unknownCount ? `방향불명 ${formatSignedCount(unknownCount).replace(/^[+-]/, '')}` : null,
+      source ? `source: ${source}` : null
+    ].filter(Boolean).join('\n');
     return {
       display: formatSignedCount(netCount),
-      className: toneNumber > 0 ? 'plus' : toneNumber < 0 ? 'minus' : 'flow-zero',
-      sortValue: netCountNumber ?? netEokNumber,
+      className: netCountNumber > 0 ? 'plus' : netCountNumber < 0 ? 'minus' : 'flow-zero',
+      sortValue: netCountNumber,
       tooltip
     };
   }
-
   function toneClass(tone, value) {
     if (tone === 'plus' || tone === 'up' || tone === 'positive') return 'plus';
     if (tone === 'minus' || tone === 'down' || tone === 'negative') return 'minus';
@@ -2332,6 +2344,18 @@
       sortProgram: sortableNumber(programValue),
       programClass: program.className,
       programTooltip: program.tooltip,
+      large_trade_threshold_krw: firstValue(row, ['large_trade_threshold_krw']),
+      large_trade_threshold_eok: firstValue(row, ['large_trade_threshold_eok']),
+      large_trade_net_count: firstValue(row, ['large_trade_net_count']),
+      large_trade_buy_count: firstValue(row, ['large_trade_buy_count']),
+      large_trade_sell_count: firstValue(row, ['large_trade_sell_count']),
+      large_trade_unknown_count: firstValue(row, ['large_trade_unknown_count']),
+      large_trade_buy_sum_eok: firstValue(row, ['large_trade_buy_sum_eok']),
+      large_trade_sell_sum_eok: firstValue(row, ['large_trade_sell_sum_eok']),
+      large_trade_net_sum_eok: firstValue(row, ['large_trade_net_sum_eok']),
+      large_trade_unknown_sum_eok: firstValue(row, ['large_trade_unknown_sum_eok']),
+      large_trade_source: firstValue(row, ['large_trade_source']),
+      large_trade_updated_at: firstValue(row, ['large_trade_updated_at']),
       big_hand_net_buy_count_1eok: firstValue(row, [
         'big_hand_net_buy_count_1eok',
         'bigHandNetBuyCount1eok'
@@ -2975,6 +2999,18 @@
     row.bestBidPrice = firstValue(patch, ['best_bid_price']);
     row.bestAskPrice = firstValue(patch, ['best_ask_price']);
     const bigHandPatchKeys = [
+      'large_trade_threshold_krw',
+      'large_trade_threshold_eok',
+      'large_trade_net_count',
+      'large_trade_buy_count',
+      'large_trade_sell_count',
+      'large_trade_unknown_count',
+      'large_trade_buy_sum_eok',
+      'large_trade_sell_sum_eok',
+      'large_trade_net_sum_eok',
+      'large_trade_unknown_sum_eok',
+      'large_trade_source',
+      'large_trade_updated_at',
       'big_hand_net_buy_count_1eok',
       'bigHandNetBuyCount1eok',
       'big_hand_buy_count_1eok',
@@ -2987,6 +3023,18 @@
     ];
     if (bigHandPatchKeys.some(key => Object.hasOwn(patch, key))) {
       Object.assign(row, {
+        large_trade_threshold_krw: firstValue(patch, ['large_trade_threshold_krw']) ?? row.large_trade_threshold_krw,
+        large_trade_threshold_eok: firstValue(patch, ['large_trade_threshold_eok']) ?? row.large_trade_threshold_eok,
+        large_trade_net_count: firstValue(patch, ['large_trade_net_count']) ?? row.large_trade_net_count,
+        large_trade_buy_count: firstValue(patch, ['large_trade_buy_count']) ?? row.large_trade_buy_count,
+        large_trade_sell_count: firstValue(patch, ['large_trade_sell_count']) ?? row.large_trade_sell_count,
+        large_trade_unknown_count: firstValue(patch, ['large_trade_unknown_count']) ?? row.large_trade_unknown_count,
+        large_trade_buy_sum_eok: firstValue(patch, ['large_trade_buy_sum_eok']) ?? row.large_trade_buy_sum_eok,
+        large_trade_sell_sum_eok: firstValue(patch, ['large_trade_sell_sum_eok']) ?? row.large_trade_sell_sum_eok,
+        large_trade_net_sum_eok: firstValue(patch, ['large_trade_net_sum_eok']) ?? row.large_trade_net_sum_eok,
+        large_trade_unknown_sum_eok: firstValue(patch, ['large_trade_unknown_sum_eok']) ?? row.large_trade_unknown_sum_eok,
+        large_trade_source: firstValue(patch, ['large_trade_source']) ?? row.large_trade_source,
+        large_trade_updated_at: firstValue(patch, ['large_trade_updated_at']) ?? row.large_trade_updated_at,
         big_hand_net_buy_count_1eok: firstValue(patch, [
           'big_hand_net_buy_count_1eok',
           'bigHandNetBuyCount1eok'
@@ -3106,6 +3154,18 @@
       'sortSessionStrength',
       'fiveMinuteStrengthTooltip',
       'sessionForce',
+      'large_trade_threshold_krw',
+      'large_trade_threshold_eok',
+      'large_trade_net_count',
+      'large_trade_buy_count',
+      'large_trade_sell_count',
+      'large_trade_unknown_count',
+      'large_trade_buy_sum_eok',
+      'large_trade_sell_sum_eok',
+      'large_trade_net_sum_eok',
+      'large_trade_unknown_sum_eok',
+      'large_trade_source',
+      'large_trade_updated_at',
       'big_hand_net_buy_count_1eok',
       'big_hand_buy_count_1eok',
       'big_hand_sell_count_1eok',

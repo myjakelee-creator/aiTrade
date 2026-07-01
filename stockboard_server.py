@@ -102,6 +102,23 @@ ROLLING_TRADE_API_FIELDS = (
     "prev_one_min_strength",
     "one_min_strength_delta",
     "one_min_strength_growth_rate",
+    "large_trade_threshold_krw",
+    "large_trade_threshold_eok",
+    "large_trade_buy_count",
+    "large_trade_sell_count",
+    "large_trade_net_count",
+    "prev_large_trade_net_count",
+    "large_trade_net_count_delta",
+    "large_trade_buy_sum_eok",
+    "large_trade_sell_sum_eok",
+    "large_trade_net_sum_eok",
+    "prev_large_trade_net_sum_eok",
+    "large_trade_net_sum_delta_eok",
+    "large_trade_unknown_count",
+    "large_trade_unknown_sum_eok",
+    "large_trade_source",
+    "large_trade_updated_at",
+    "large_trade_status",
     "big_hand_buy_count_1eok",
     "big_hand_sell_count_1eok",
     "big_hand_net_buy_count_1eok",
@@ -730,6 +747,25 @@ def _overlay_close_metrics(row, snapshot, include_debug=False):
         "strength_status",
         "strength_error",
         "strength_status_detail",
+        "large_trade_threshold_krw",
+        "large_trade_threshold_eok",
+        "large_trade_buy_count",
+        "large_trade_sell_count",
+        "large_trade_net_count",
+        "large_trade_buy_sum_eok",
+        "large_trade_sell_sum_eok",
+        "large_trade_net_sum_eok",
+        "large_trade_unknown_count",
+        "large_trade_unknown_sum_eok",
+        "large_trade_source",
+        "large_trade_updated_at",
+        "large_trade_status",
+        "big_hand_buy_count_1eok",
+        "big_hand_sell_count_1eok",
+        "big_hand_net_buy_count_1eok",
+        "big_hand_buy_sum_eok",
+        "big_hand_sell_sum_eok",
+        "big_hand_net_sum_eok",
     ]
     if include_debug:
         fields.extend(
@@ -795,7 +831,12 @@ def _overlay_quote_latest(row, quote):
     )
     row["session_strength_source"] = quote.get("session_strength_source")
     for field in ROLLING_TRADE_API_FIELDS:
-        row[field] = _realtime_number(quote.get(field))
+        value = quote.get(field)
+        row[field] = (
+            _realtime_number(value)
+            if field not in {"large_trade_source", "large_trade_updated_at", "large_trade_status"}
+            else value
+        )
     for field in (
         "strength_5m",
         "strength_20m",
@@ -1237,7 +1278,16 @@ def _realtime_patch_payload(
             "sequence": quote.get("sequence"),
         }
         for field in ROLLING_TRADE_API_FIELDS:
-            patch[field] = _realtime_number(quote.get(field))
+            value = quote.get(field)
+            patch[field] = (
+                value
+                if field in {
+                    "large_trade_source",
+                    "large_trade_updated_at",
+                    "large_trade_status",
+                }
+                else _realtime_number(value)
+            )
         _copy_regular_close_fields(patch, quote)
         _apply_freshness_fields(patch)
         _apply_display_price_fields(patch)
@@ -1331,6 +1381,23 @@ REALTIME_SLIM_QUOTE_FIELDS = frozenset(
         "prev_one_min_strength",
         "one_min_strength_delta",
         "one_min_strength_growth_rate",
+        "large_trade_threshold_krw",
+        "large_trade_threshold_eok",
+        "large_trade_buy_count",
+        "large_trade_sell_count",
+        "large_trade_net_count",
+        "prev_large_trade_net_count",
+        "large_trade_net_count_delta",
+        "large_trade_buy_sum_eok",
+        "large_trade_sell_sum_eok",
+        "large_trade_net_sum_eok",
+        "prev_large_trade_net_sum_eok",
+        "large_trade_net_sum_delta_eok",
+        "large_trade_unknown_count",
+        "large_trade_unknown_sum_eok",
+        "large_trade_source",
+        "large_trade_updated_at",
+        "large_trade_status",
         "big_hand_buy_count_1eok",
         "big_hand_sell_count_1eok",
         "big_hand_net_buy_count_1eok",
@@ -1387,6 +1454,25 @@ REALTIME_SLIM_CLOSE_METRIC_FIELDS = frozenset(
         "strength_error",
         "strength_status_detail",
         "strength_stale_sec",
+        "large_trade_threshold_krw",
+        "large_trade_threshold_eok",
+        "large_trade_buy_count",
+        "large_trade_sell_count",
+        "large_trade_net_count",
+        "large_trade_buy_sum_eok",
+        "large_trade_sell_sum_eok",
+        "large_trade_net_sum_eok",
+        "large_trade_unknown_count",
+        "large_trade_unknown_sum_eok",
+        "large_trade_source",
+        "large_trade_updated_at",
+        "large_trade_status",
+        "big_hand_buy_count_1eok",
+        "big_hand_sell_count_1eok",
+        "big_hand_net_buy_count_1eok",
+        "big_hand_buy_sum_eok",
+        "big_hand_sell_sum_eok",
+        "big_hand_net_sum_eok",
         "updated_at",
     }
 )
@@ -2443,6 +2529,144 @@ def make_handler(
                         )
                 body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if request_path == "/api/opt10055_probe":
+                raw_codes = _parse_codes_query(query)
+                day = str(query.get("day", ["1"])[0] or "1").strip()
+                threshold_krw_raw = query.get("threshold_krw", [None])[0]
+                threshold_eok_raw = query.get("threshold_eok", [None])[0]
+                try:
+                    threshold_krw = (
+                        int(float(threshold_krw_raw))
+                        if threshold_krw_raw not in (None, "")
+                        else None
+                    )
+                except (TypeError, ValueError):
+                    threshold_krw = None
+                if threshold_krw is None:
+                    try:
+                        threshold_krw = (
+                            int(float(threshold_eok_raw) * 100_000_000)
+                            if threshold_eok_raw not in (None, "")
+                            else 50_000_000
+                        )
+                    except (TypeError, ValueError):
+                        threshold_krw = 50_000_000
+                threshold_krw = max(1, threshold_krw)
+                apply_probe = _query_flag_enabled(query, "apply")
+                try:
+                    limit = int(query.get("limit", ["30"])[0] or 30)
+                except (TypeError, ValueError):
+                    limit = 30
+                limit = min(max(1, limit), 100)
+                normalized_codes = []
+                invalid_codes = []
+                for code in raw_codes:
+                    stock_code = _stock_code(code)
+                    if stock_code is None:
+                        invalid_codes.append(code)
+                    else:
+                        normalized_codes.append(stock_code)
+                normalized_codes = list(dict.fromkeys(normalized_codes))
+                status_code = 200
+                if not raw_codes:
+                    status_code = 400
+                    response_payload = {
+                        "ok": False,
+                        "tr_code": "OPT10055",
+                        "day": day if day in {"1", "2"} else "1",
+                        "requested_codes": [],
+                        "results": {},
+                        "notes": ["codes query is required"],
+                        "payload_mode": "debug_probe",
+                        "error": "codes_required",
+                    }
+                elif len(raw_codes) > 5 or len(normalized_codes) > 5:
+                    status_code = 400
+                    response_payload = {
+                        "ok": False,
+                        "tr_code": "OPT10055",
+                        "day": day if day in {"1", "2"} else "1",
+                        "requested_codes": normalized_codes[:5],
+                        "results": {},
+                        "notes": ["codes are capped at 5 for this debug probe"],
+                        "payload_mode": "debug_probe",
+                        "error": "too_many_codes",
+                    }
+                elif invalid_codes:
+                    status_code = 400
+                    response_payload = {
+                        "ok": False,
+                        "tr_code": "OPT10055",
+                        "day": day if day in {"1", "2"} else "1",
+                        "requested_codes": normalized_codes,
+                        "results": {},
+                        "notes": ["all codes must normalize to 6-digit stock codes"],
+                        "payload_mode": "debug_probe",
+                        "error": "invalid_codes",
+                        "invalid_codes": invalid_codes,
+                    }
+                elif day not in {"1", "2"}:
+                    status_code = 400
+                    response_payload = {
+                        "ok": False,
+                        "tr_code": "OPT10055",
+                        "day": "1",
+                        "requested_codes": normalized_codes,
+                        "results": {},
+                        "notes": ["day must be 1 for today or 2 for previous day"],
+                        "payload_mode": "debug_probe",
+                        "error": "invalid_day",
+                    }
+                elif realtime_provider is None:
+                    response_payload = {
+                        "ok": False,
+                        "tr_code": "OPT10055",
+                        "day": day,
+                        "requested_codes": normalized_codes,
+                        "results": {},
+                        "notes": ["realtime provider unavailable"],
+                        "payload_mode": "debug_probe",
+                        "available": False,
+                        "error": "realtime provider unavailable",
+                    }
+                else:
+                    try:
+                        response_payload = realtime_provider.request_opt10055_probe(
+                            normalized_codes,
+                            day=day,
+                            limit=limit,
+                            threshold_krw=threshold_krw,
+                            apply=apply_probe,
+                        )
+                        response_payload["available"] = True
+                    except Exception as error:
+                        status_code = 500
+                        response_payload = {
+                            "ok": False,
+                            "tr_code": "OPT10055",
+                            "day": day,
+                            "requested_codes": normalized_codes,
+                            "results": {},
+                            "notes": ["opt10055 debug probe failed"],
+                            "payload_mode": "debug_probe",
+                            "available": False,
+                            "error": str(error),
+                        }
+                response_payload.setdefault(
+                    "large_trade_threshold_krw", threshold_krw
+                )
+                response_payload.setdefault(
+                    "large_trade_threshold_eok", threshold_krw / 100_000_000
+                )
+                response_payload.setdefault("apply", apply_probe)
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(status_code)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Cache-Control", "no-store")

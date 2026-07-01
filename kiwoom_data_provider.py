@@ -62,6 +62,9 @@ _load_dotenv()
 
 
 API_BASE_URL = os.getenv("KIWOOM_API_BASE_URL", "https://api.kiwoom.com").rstrip("/")
+KRW_PER_EOK = 100_000_000
+LARGE_TRADE_THRESHOLD_KRW = 50_000_000
+LARGE_TRADE_THRESHOLD_EOK = LARGE_TRADE_THRESHOLD_KRW / KRW_PER_EOK
 
 
 class KiwoomAPIError(RuntimeError):
@@ -1179,6 +1182,19 @@ class KiwoomOpenApiRealtimeProvider:
     _ORDERBOOK_PROBE_SCREEN = "9021"
     _ORDERBOOK_PROBE_RQNAME = "stockboard_opt10004_probe"
     _ORDERBOOK_PROBE_TRCODE = "opt10004"
+    _OPT10055_PROBE_SCREEN = "9022"
+    _OPT10055_PROBE_RQNAME = "stockboard_opt10055_probe"
+    _OPT10055_PROBE_TRCODE = "OPT10055"
+    _OPT10055_PROBE_FIELDS = (
+        "\uccb4\uacb0\uc2dc\uac04",
+        "\uccb4\uacb0\uac00",
+        "\uc804\uc77c\ub300\ube44\uae30\ud638",
+        "\uc804\uc77c\ub300\ube44",
+        "\ub4f1\ub77d\ub960",
+        "\uccb4\uacb0\ub7c9",
+        "\ub204\uc801\uac70\ub798\ub7c9",
+        "\ub204\uc801\uac70\ub798\ub300\uae08",
+    )
     _ORDERBOOK_PROBE_TOTAL_ASK_FIELDS = (
         "\ucd1d\ub9e4\ub3c4\uc794\ub7c9",
         "\ub9e4\ub3c4\ud638\uac00\ucd1d\uc794\ub7c9",
@@ -1494,6 +1510,18 @@ class KiwoomOpenApiRealtimeProvider:
         self._orderbook_probe_timeout_sec = 10.0
         self._orderbook_probe_not_ready_retry_sec = 5.0
         self._orderbook_probe_not_ready_reason = "not_checked"
+        self._opt10055_probe_pending = deque()
+        self._opt10055_probe_pending_keys = set()
+        self._opt10055_probe_inflight = None
+        self._opt10055_probe_cache = {}
+        self._opt10055_probe_last_request_at = 0.0
+        self._opt10055_probe_last_result = None
+        self._opt10055_probe_last_error = None
+        self._opt10055_probe_last_raw_sample = []
+        self._opt10055_probe_min_interval_sec = 1.0
+        self._opt10055_probe_timeout_sec = 10.0
+        self._opt10055_probe_not_ready_retry_sec = 5.0
+        self._opt10055_probe_not_ready_reason = "not_checked"
         self._stale_trade_drop_seconds = max(
             0, _env_int("STOCKBOARD_DROP_STALE_TRADE_SECONDS", 0)
         )
@@ -1650,6 +1678,7 @@ class KiwoomOpenApiRealtimeProvider:
                     self._process_orderbook_rotation()
                     self._process_strength_probe_queue()
                     self._process_orderbook_probe_queue()
+                    self._process_opt10055_probe_queue()
                     self._process_close_metrics_queue()
                     pump_time = datetime.now().isoformat(timespec="seconds")
                     with self._lock:
@@ -2659,6 +2688,416 @@ class KiwoomOpenApiRealtimeProvider:
             self.store.update_close_metrics(code, result)
         return result
 
+    def _opt10055_probe_ready_state_locked(self):
+        return self._strength_probe_ready_state_locked()
+
+    def request_opt10055_probe(
+        self,
+        codes,
+        day="1",
+        limit=30,
+        wait_timeout_sec=12.0,
+        threshold_krw=LARGE_TRADE_THRESHOLD_KRW,
+        apply=False,
+    ):
+        normalized_codes = []
+        for code in codes or []:
+            normalized_code = _stock_code(code)
+            if normalized_code is not None:
+                normalized_codes.append(normalized_code)
+        normalized_codes = list(dict.fromkeys(normalized_codes))[:5]
+        day = str(day or "1").strip()
+        if day not in {"1", "2"}:
+            day = "1"
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 30
+        limit = min(max(1, limit), 100)
+        threshold_krw = self._normalize_large_trade_threshold_krw(threshold_krw)
+        requested_at = datetime.now().isoformat(timespec="seconds")
+        enqueue_results = []
+        for code in normalized_codes:
+            enqueue_results.append(
+                self.enqueue_opt10055_probe(
+                    code,
+                    day=day,
+                    limit=limit,
+                    threshold_krw=threshold_krw,
+                    apply=apply,
+                    requested_at=requested_at,
+                )
+            )
+        deadline = time.monotonic() + max(0.0, float(wait_timeout_sec or 0))
+        while normalized_codes and time.monotonic() < deadline:
+            with self._lock:
+                complete_count = sum(
+                    1
+                    for code in normalized_codes
+                    if self._opt10055_probe_cache.get(
+                        (code, day, limit, threshold_krw), {}
+                    ).get("opt10055_completed_at")
+                    and str(
+                        self._opt10055_probe_cache[
+                            (code, day, limit, threshold_krw)
+                        ].get(
+                            "opt10055_requested_at", ""
+                        )
+                    )
+                    >= requested_at
+                )
+            if complete_count >= len(normalized_codes):
+                break
+            time.sleep(0.05)
+        results = {}
+        with self._lock:
+            for code in normalized_codes:
+                cached = self._opt10055_probe_cache.get(
+                    (code, day, limit, threshold_krw)
+                )
+                if cached:
+                    results[code] = dict(cached)
+                else:
+                    results[code] = self._opt10055_probe_deferred_result(
+                        code,
+                        day=day,
+                        limit=limit,
+                        threshold_krw=threshold_krw,
+                        requested_at=requested_at,
+                        reason="probe_result_wait_timeout",
+                    )
+        return {
+            "ok": True,
+            "tr_code": self._OPT10055_PROBE_TRCODE,
+            "day": day,
+            "large_trade_threshold_krw": threshold_krw,
+            "large_trade_threshold_eok": threshold_krw / KRW_PER_EOK,
+            "apply": bool(apply),
+            "requested_codes": normalized_codes,
+            "results": results,
+            "notes": [
+                "debug probe only; TR runs only when this endpoint is called",
+                "codes capped at 5 and limit capped at 100",
+                "side uses the raw trade quantity sign; unsigned or zero rows are unknown",
+            ],
+            "payload_mode": "debug_probe",
+            "requested_at": requested_at,
+            "enqueue_results": enqueue_results,
+        }
+
+    @staticmethod
+    def _normalize_large_trade_threshold_krw(value):
+        try:
+            threshold = int(float(value))
+        except (TypeError, ValueError):
+            threshold = LARGE_TRADE_THRESHOLD_KRW
+        return max(1, threshold)
+
+    def enqueue_opt10055_probe(
+        self,
+        code,
+        day="1",
+        limit=30,
+        threshold_krw=LARGE_TRADE_THRESHOLD_KRW,
+        apply=False,
+        requested_at=None,
+    ):
+        normalized_code = _stock_code(code)
+        if normalized_code is None:
+            raise ValueError(f"invalid stock code: {code!r}")
+        day = str(day or "1").strip()
+        if day not in {"1", "2"}:
+            raise ValueError(f"invalid OPT10055 day: {day!r}")
+        limit = min(max(1, int(limit or 30)), 100)
+        threshold_krw = self._normalize_large_trade_threshold_krw(threshold_krw)
+        requested_at = requested_at or datetime.now().isoformat(timespec="seconds")
+        key = (normalized_code, day, limit, threshold_krw)
+        with self._lock:
+            now = time.monotonic()
+            ready, not_ready_reason = self._opt10055_probe_ready_state_locked()
+            if (
+                key in self._opt10055_probe_pending_keys
+                or (
+                    self._opt10055_probe_inflight
+                    and self._opt10055_probe_inflight.get("key") == key
+                )
+            ):
+                response = {
+                    "ok": True,
+                    "accepted": [normalized_code],
+                    "status": "pending",
+                    "message": "opt10055 probe already pending",
+                }
+                self._opt10055_probe_last_result = dict(response)
+                return response
+            item = {
+                "stock_code": normalized_code,
+                "day": day,
+                "limit": limit,
+                "threshold_krw": threshold_krw,
+                "apply": bool(apply),
+                "key": key,
+                "requested_at": requested_at,
+                "next_retry_at_monotonic": (
+                    now + self._opt10055_probe_not_ready_retry_sec
+                    if not ready
+                    else now
+                ),
+            }
+            self._opt10055_probe_pending.append(item)
+            self._opt10055_probe_pending_keys.add(key)
+            self._opt10055_probe_cache.pop(key, None)
+            status = "pending" if ready else "deferred"
+            error = None if ready else not_ready_reason
+            self._opt10055_probe_not_ready_reason = error or "ready"
+        response = {
+            "ok": True,
+            "accepted": [normalized_code],
+            "status": status,
+            "message": (
+                "opt10055 probe queued"
+                if status == "pending"
+                else "opt10055 probe deferred until provider ready"
+            ),
+            "requested_at": requested_at,
+        }
+        with self._lock:
+            self._opt10055_probe_last_result = dict(response)
+        return response
+
+    def _opt10055_probe_deferred_result(
+        self,
+        code,
+        day="1",
+        limit=30,
+        threshold_krw=LARGE_TRADE_THRESHOLD_KRW,
+        requested_at=None,
+        reason=None,
+    ):
+        snapshot_at = datetime.now().isoformat(timespec="seconds")
+        threshold_krw = self._normalize_large_trade_threshold_krw(threshold_krw)
+        return {
+            "stock_code": code,
+            "day": str(day),
+            "limit": int(limit),
+            "large_trade_threshold_krw": threshold_krw,
+            "large_trade_threshold_eok": threshold_krw / KRW_PER_EOK,
+            "opt10055_source": "opt10055_probe",
+            "opt10055_status": "deferred",
+            "opt10055_error": reason or "provider_not_ready",
+            "opt10055_requested_at": requested_at,
+            "opt10055_snapshot_at": snapshot_at,
+            "rows": [],
+            "summary": self._opt10055_summary([], threshold_krw=threshold_krw),
+        }
+
+    def _process_opt10055_probe_queue(self):
+        with self._lock:
+            self._expire_opt10055_probe_inflight_locked()
+            if self._opt10055_probe_inflight is not None:
+                return
+            if not self._opt10055_probe_pending:
+                return
+            now = time.monotonic()
+            if now - self._opt10055_probe_last_request_at < (
+                self._opt10055_probe_min_interval_sec
+            ):
+                return
+            ready, not_ready_reason = self._opt10055_probe_ready_state_locked()
+            if not ready:
+                item = self._opt10055_probe_pending[0]
+                retry_at = item.get("next_retry_at_monotonic") or 0
+                if now < retry_at:
+                    return
+                item["next_retry_at_monotonic"] = (
+                    now + self._opt10055_probe_not_ready_retry_sec
+                )
+                result = self._opt10055_probe_deferred_result(
+                    item.get("stock_code"),
+                    day=item.get("day"),
+                    limit=item.get("limit"),
+                    threshold_krw=item.get("threshold_krw"),
+                    requested_at=item.get("requested_at"),
+                    reason=not_ready_reason,
+                )
+                self._opt10055_probe_not_ready_reason = not_ready_reason
+                self._opt10055_probe_last_error = not_ready_reason
+                self._opt10055_probe_last_result = dict(result)
+                self._opt10055_probe_cache[item["key"]] = dict(result)
+                return
+            item = self._opt10055_probe_pending.popleft()
+            self._opt10055_probe_pending_keys.discard(item["key"])
+        self._request_opt10055_probe_on_qt(item)
+
+    def _expire_opt10055_probe_inflight_locked(self):
+        inflight = self._opt10055_probe_inflight
+        if not inflight:
+            return
+        started_at = inflight.get("started_at_monotonic")
+        if started_at is None:
+            return
+        if time.monotonic() - started_at < self._opt10055_probe_timeout_sec:
+            return
+        self._opt10055_probe_inflight = None
+        self._opt10055_probe_error(
+            inflight.get("stock_code"),
+            "opt10055 probe timeout",
+            day=inflight.get("day"),
+            limit=inflight.get("limit"),
+            threshold_krw=inflight.get("threshold_krw"),
+            requested_at=inflight.get("requested_at"),
+            status="timeout",
+        )
+
+    def _request_opt10055_probe_on_qt(self, item):
+        normalized_code = item["stock_code"]
+        requested_at = item.get("requested_at") or datetime.now().isoformat(
+            timespec="seconds"
+        )
+        day = item.get("day") or "1"
+        limit = item.get("limit") or 30
+        threshold_krw = self._normalize_large_trade_threshold_krw(
+            item.get("threshold_krw")
+        )
+        with self._lock:
+            ready, not_ready_reason = self._opt10055_probe_ready_state_locked()
+            if not ready:
+                item["next_retry_at_monotonic"] = (
+                    time.monotonic() + self._opt10055_probe_not_ready_retry_sec
+                )
+                self._opt10055_probe_pending.appendleft(item)
+                self._opt10055_probe_pending_keys.add(item["key"])
+                result = self._opt10055_probe_deferred_result(
+                    normalized_code,
+                    day=day,
+                    limit=limit,
+                    threshold_krw=threshold_krw,
+                    requested_at=requested_at,
+                    reason=not_ready_reason,
+                )
+                self._opt10055_probe_not_ready_reason = not_ready_reason
+                self._opt10055_probe_last_error = not_ready_reason
+                self._opt10055_probe_last_result = dict(result)
+                self._opt10055_probe_cache[item["key"]] = dict(result)
+                return
+            control = self._control
+            self._opt10055_probe_last_request_at = time.monotonic()
+        if control is None:
+            self._opt10055_probe_error(
+                normalized_code,
+                "control_unavailable",
+                day=day,
+                limit=limit,
+                threshold_krw=threshold_krw,
+                requested_at=requested_at,
+            )
+            return
+        try:
+            control.dynamicCall(
+                "SetInputValue(QString, QString)",
+                "\uc885\ubaa9\ucf54\ub4dc",
+                normalized_code,
+            )
+            control.dynamicCall(
+                "SetInputValue(QString, QString)",
+                "\ub2f9\uc77c\uc804\uc77c",
+                str(day),
+            )
+            result = control.dynamicCall(
+                "CommRqData(QString, QString, int, QString)",
+                self._OPT10055_PROBE_RQNAME,
+                self._OPT10055_PROBE_TRCODE,
+                0,
+                self._OPT10055_PROBE_SCREEN,
+            )
+        except Exception as error:
+            self._opt10055_probe_error(
+                normalized_code,
+                str(error),
+                day=day,
+                limit=limit,
+                threshold_krw=threshold_krw,
+                requested_at=requested_at,
+            )
+            return
+        if result not in (None, 0, "0"):
+            self._opt10055_probe_error(
+                normalized_code,
+                f"CommRqData returned {result!r}",
+                day=day,
+                limit=limit,
+                threshold_krw=threshold_krw,
+                requested_at=requested_at,
+            )
+            return
+        requested = datetime.now().isoformat(timespec="seconds")
+        inflight = {
+            "stock_code": normalized_code,
+            "day": str(day),
+            "limit": int(limit),
+            "threshold_krw": threshold_krw,
+            "apply": bool(item.get("apply")),
+            "key": item["key"],
+            "requested_at": requested_at,
+            "comm_requested_at": requested,
+            "rqname": self._OPT10055_PROBE_RQNAME,
+            "trcode": self._OPT10055_PROBE_TRCODE,
+            "screen_no": self._OPT10055_PROBE_SCREEN,
+            "started_at_monotonic": time.monotonic(),
+        }
+        response = {
+            "stock_code": normalized_code,
+            "day": str(day),
+            "limit": int(limit),
+            "large_trade_threshold_krw": threshold_krw,
+            "large_trade_threshold_eok": threshold_krw / KRW_PER_EOK,
+            "apply": bool(item.get("apply")),
+            "opt10055_source": "opt10055_probe",
+            "opt10055_status": "requested",
+            "opt10055_requested_at": requested_at,
+            "opt10055_snapshot_at": requested,
+            "opt10055_rqname": self._OPT10055_PROBE_RQNAME,
+            "opt10055_trcode": self._OPT10055_PROBE_TRCODE,
+            "opt10055_screen_no": self._OPT10055_PROBE_SCREEN,
+        }
+        with self._lock:
+            self._opt10055_probe_inflight = inflight
+            self._opt10055_probe_last_result = dict(response)
+
+    def _opt10055_probe_error(
+        self,
+        code,
+        message,
+        day="1",
+        limit=30,
+        threshold_krw=LARGE_TRADE_THRESHOLD_KRW,
+        requested_at=None,
+        status="error",
+    ):
+        completed_at = datetime.now().isoformat(timespec="seconds")
+        threshold_krw = self._normalize_large_trade_threshold_krw(threshold_krw)
+        result = {
+            "stock_code": code,
+            "day": str(day),
+            "limit": int(limit or 30),
+            "large_trade_threshold_krw": threshold_krw,
+            "large_trade_threshold_eok": threshold_krw / KRW_PER_EOK,
+            "opt10055_source": "opt10055_probe",
+            "opt10055_status": status,
+            "opt10055_error": str(message)[:160],
+            "opt10055_requested_at": requested_at,
+            "opt10055_completed_at": completed_at,
+            "opt10055_snapshot_at": completed_at,
+            "rows": [],
+            "summary": self._opt10055_summary([], threshold_krw=threshold_krw),
+        }
+        self._opt10055_probe_last_error = result["opt10055_error"]
+        self._opt10055_probe_last_result = dict(result)
+        self._opt10055_probe_cache[
+            (code, str(day), int(limit or 30), threshold_krw)
+        ] = dict(result)
+        return result
+
     def _on_receive_tr_data(self, *args):
         try:
             self._handle_receive_tr_data(*args)
@@ -2675,6 +3114,14 @@ class KiwoomOpenApiRealtimeProvider:
         record_name = str(args[3]) if len(args) > 3 else ""
         if rq_name == self._ORDERBOOK_PROBE_RQNAME:
             self._handle_orderbook_tr_data(
+                screen_no,
+                rq_name,
+                tr_code,
+                record_name,
+            )
+            return
+        if rq_name == self._OPT10055_PROBE_RQNAME:
+            self._handle_opt10055_tr_data(
                 screen_no,
                 rq_name,
                 tr_code,
@@ -2839,6 +3286,312 @@ class KiwoomOpenApiRealtimeProvider:
             self._orderbook_probe_last_raw_sample = raw_sample[:10]
             self._orderbook_probe_last_result = dict(result)
             self._orderbook_probe_last_error = result.get("orderbook_error")
+
+    def _handle_opt10055_tr_data(self, screen_no, rq_name, tr_code, record_name):
+        with self._lock:
+            inflight = self._opt10055_probe_inflight
+            if inflight is None or rq_name != inflight.get("rqname"):
+                return
+            self._opt10055_probe_inflight = None
+            control = self._control
+        code = inflight.get("stock_code")
+        day = inflight.get("day") or "1"
+        limit = int(inflight.get("limit") or 30)
+        threshold_krw = self._normalize_large_trade_threshold_krw(
+            inflight.get("threshold_krw")
+        )
+        apply_result = bool(inflight.get("apply"))
+        requested_at = inflight.get("requested_at")
+        if control is None or code is None:
+            self._opt10055_probe_error(
+                code or "",
+                "control_unavailable_on_receive",
+                day=day,
+                limit=limit,
+                threshold_krw=threshold_krw,
+                requested_at=requested_at,
+            )
+            return
+        repeat_count = 0
+        try:
+            repeat_count = control.dynamicCall(
+                "GetRepeatCnt(QString, QString)",
+                tr_code,
+                rq_name,
+            )
+        except Exception:
+            repeat_count = 0
+        try:
+            repeat_count = int(repeat_count or 0)
+        except (TypeError, ValueError):
+            repeat_count = 0
+        rows = []
+        raw_sample = []
+        for row_index in range(min(max(0, repeat_count), limit)):
+            raw_values = {}
+            for field_name in self._OPT10055_PROBE_FIELDS:
+                raw_value = control.dynamicCall(
+                    "GetCommData(QString, QString, int, QString)",
+                    tr_code,
+                    rq_name,
+                    row_index,
+                    field_name,
+                )
+                text = "" if raw_value is None else str(raw_value).strip()
+                raw_values[field_name] = text
+            parsed = self._parse_opt10055_row(
+                raw_values,
+                threshold_krw=threshold_krw,
+            )
+            rows.append(parsed)
+            if len(raw_sample) < 5:
+                raw_sample.append(dict(raw_values))
+        snapshot_at = datetime.now().isoformat(timespec="seconds")
+        summary = self._opt10055_summary(rows, threshold_krw=threshold_krw)
+        applied_metrics = None
+        apply_error = None
+        if apply_result:
+            applied_metrics = self._opt10055_summary_to_store_metrics(
+                summary,
+                snapshot_at,
+            )
+            if self.store is not None:
+                try:
+                    self.store.update_close_metrics(code, applied_metrics)
+                except Exception as error:
+                    apply_error = str(error)
+            else:
+                apply_error = "store_unavailable"
+        result = {
+            "stock_code": code,
+            "day": str(day),
+            "limit": limit,
+            "large_trade_threshold_krw": threshold_krw,
+            "large_trade_threshold_eok": threshold_krw / KRW_PER_EOK,
+            "apply": apply_result,
+            "apply_error": apply_error,
+            "applied_metrics": applied_metrics,
+            "opt10055_source": "opt10055_probe",
+            "opt10055_status": "ok" if repeat_count > 0 else "no_data",
+            "opt10055_error": None if repeat_count > 0 else "empty opt10055 rows",
+            "opt10055_snapshot_at": snapshot_at,
+            "opt10055_completed_at": snapshot_at,
+            "opt10055_requested_at": requested_at,
+            "opt10055_tr_repeat_count": repeat_count,
+            "opt10055_returned_sample_count": len(rows),
+            "opt10055_raw_sample": raw_sample,
+            "opt10055_rqname": rq_name,
+            "opt10055_trcode": tr_code,
+            "opt10055_screen_no": screen_no,
+            "opt10055_status_detail": (
+                f"screen={screen_no}, tr={tr_code}, record={record_name}, "
+                f"repeat_count={repeat_count}"
+            ),
+            "rows": rows,
+            "summary": summary,
+        }
+        with self._lock:
+            self._opt10055_probe_cache[(code, str(day), limit, threshold_krw)] = dict(result)
+            self._opt10055_probe_last_raw_sample = raw_sample
+            self._opt10055_probe_last_result = dict(result)
+            self._opt10055_probe_last_error = result.get("opt10055_error")
+
+    def _parse_opt10055_row(
+        self,
+        raw_values,
+        threshold_krw=LARGE_TRADE_THRESHOLD_KRW,
+    ):
+        threshold_krw = self._normalize_large_trade_threshold_krw(threshold_krw)
+        price_raw = raw_values.get("\uccb4\uacb0\uac00")
+        trade_qty_raw = raw_values.get("\uccb4\uacb0\ub7c9")
+        price = normalize_kiwoom_price(price_raw)
+        trade_qty = self._realdata_number(trade_qty_raw)
+        trade_qty_abs = abs(trade_qty) if trade_qty is not None else None
+        trade_amount_krw = (
+            int(price * trade_qty_abs)
+            if price is not None and trade_qty_abs is not None
+            else None
+        )
+        trade_amount_eok = (
+            round(trade_amount_krw / KRW_PER_EOK, 6)
+            if trade_amount_krw is not None
+            else None
+        )
+        raw_text = "" if trade_qty_raw is None else str(trade_qty_raw).strip()
+        has_sign = raw_text.startswith(("+", "-"))
+        if has_sign and trade_qty and trade_qty > 0:
+            side = "buy"
+        elif has_sign and trade_qty and trade_qty < 0:
+            side = "sell"
+        else:
+            side = "unknown"
+        row = {
+            field_name: raw_values.get(field_name, "")
+            for field_name in self._OPT10055_PROBE_FIELDS
+        }
+        row.update(
+            {
+                "price": price,
+                "trade_qty_raw": trade_qty_raw,
+                "trade_qty": trade_qty,
+                "trade_qty_abs": trade_qty_abs,
+                "trade_amount_krw": trade_amount_krw,
+                "trade_amount_eok": trade_amount_eok,
+                "large_trade_threshold_krw": threshold_krw,
+                "large_trade_threshold_eok": threshold_krw / KRW_PER_EOK,
+                "is_large_trade": (
+                    trade_amount_krw is not None
+                    and trade_amount_krw >= threshold_krw
+                ),
+                "side": side,
+                "is_big_1eok": (
+                    trade_amount_krw is not None
+                    and trade_amount_krw >= KRW_PER_EOK
+                ),
+            }
+        )
+        return row
+
+    def _opt10055_summary(self, rows, threshold_krw=LARGE_TRADE_THRESHOLD_KRW):
+        rows = rows or []
+        threshold_krw = self._normalize_large_trade_threshold_krw(threshold_krw)
+        signed_rows = [
+            row
+            for row in rows
+            if str(row.get("trade_qty_raw") or "").strip().startswith(("+", "-"))
+            and row.get("trade_qty") not in (None, 0)
+        ]
+        unsigned_rows = [row for row in rows if row not in signed_rows]
+        large_rows = [
+            row for row in rows if bool(row.get("is_large_trade"))
+        ]
+        signed_large_rows = [
+            row for row in large_rows if row in signed_rows
+        ]
+        unsigned_large_rows = [
+            row for row in large_rows if row not in signed_rows
+        ]
+        buy_large_rows = [
+            row for row in signed_large_rows if row.get("side") == "buy"
+        ]
+        sell_large_rows = [
+            row for row in signed_large_rows if row.get("side") == "sell"
+        ]
+        unknown_large_rows = [
+            row for row in large_rows if row.get("side") == "unknown"
+        ]
+        under_threshold_rows = [
+            row
+            for row in rows
+            if row.get("trade_amount_krw") is not None
+            and row.get("trade_amount_krw") < threshold_krw
+        ]
+        buy_amount = sum(
+            row.get("trade_amount_eok") or 0 for row in buy_large_rows
+        )
+        sell_amount = sum(
+            row.get("trade_amount_eok") or 0 for row in sell_large_rows
+        )
+        unknown_amount = sum(
+            row.get("trade_amount_eok") or 0 for row in unknown_large_rows
+        )
+        signed_amounts = [
+            row.get("trade_amount_eok")
+            for row in signed_rows
+            if row.get("trade_amount_eok") is not None
+        ]
+        unknown_amounts = [
+            row.get("trade_amount_eok")
+            for row in unsigned_rows
+            if row.get("trade_amount_eok") is not None
+        ]
+        if not rows:
+            hint = "no_rows"
+        elif signed_large_rows:
+            hint = "signed_rows_usable_for_net_count"
+        elif unsigned_large_rows:
+            hint = "unsigned_large_rows_exist"
+        elif len(under_threshold_rows) >= max(1, len(rows) // 2):
+            hint = "kiwoom_rows_are_not_50m_based"
+        else:
+            hint = "kiwoom_rows_are_not_50m_based"
+        return {
+            "row_count": len(rows),
+            "returned_sample_count": len(rows),
+            "signed_qty_count": len(signed_rows),
+            "unsigned_qty_count": len(rows) - len(signed_rows),
+            "large_trade_count": len(large_rows),
+            "signed_large_trade_count": len(signed_large_rows),
+            "unsigned_large_trade_count": len(unsigned_large_rows),
+            "large_trade_buy_count": len(buy_large_rows),
+            "large_trade_sell_count": len(sell_large_rows),
+            "large_trade_net_count": (
+                len(buy_large_rows) - len(sell_large_rows)
+            ),
+            "large_trade_buy_sum_eok": round(buy_amount, 6),
+            "large_trade_sell_sum_eok": round(sell_amount, 6),
+            "large_trade_net_sum_eok": round(buy_amount - sell_amount, 6),
+            "unknown_large_trade_count": len(unknown_large_rows),
+            "unknown_large_trade_sum_eok": round(unknown_amount, 6),
+            "max_signed_trade_amount_eok": (
+                max(signed_amounts) if signed_amounts else None
+            ),
+            "max_unknown_trade_amount_eok": (
+                max(unknown_amounts) if unknown_amounts else None
+            ),
+            "large_trade_threshold_krw": threshold_krw,
+            "large_trade_threshold_eok": threshold_krw / KRW_PER_EOK,
+            "buy_count_1eok": len(
+                [
+                    row for row in buy_large_rows
+                    if row.get("is_big_1eok")
+                ]
+            ),
+            "sell_count_1eok": len(
+                [
+                    row for row in sell_large_rows
+                    if row.get("is_big_1eok")
+                ]
+            ),
+            "kiwoom_large_trade_basis_hint": hint,
+        }
+
+    def _opt10055_summary_to_store_metrics(self, summary, snapshot_at):
+        buy_count = summary.get("large_trade_buy_count") or 0
+        sell_count = summary.get("large_trade_sell_count") or 0
+        net_count = summary.get("large_trade_net_count") or 0
+        buy_sum = summary.get("large_trade_buy_sum_eok") or 0
+        sell_sum = summary.get("large_trade_sell_sum_eok") or 0
+        net_sum = summary.get("large_trade_net_sum_eok") or 0
+        return {
+            "large_trade_source": "opt10055_day",
+            "large_trade_threshold_krw": summary.get(
+                "large_trade_threshold_krw"
+            ),
+            "large_trade_threshold_eok": summary.get(
+                "large_trade_threshold_eok"
+            ),
+            "large_trade_buy_count": buy_count,
+            "large_trade_sell_count": sell_count,
+            "large_trade_net_count": net_count,
+            "large_trade_buy_sum_eok": buy_sum,
+            "large_trade_sell_sum_eok": sell_sum,
+            "large_trade_net_sum_eok": net_sum,
+            "large_trade_unknown_count": summary.get(
+                "unknown_large_trade_count"
+            ) or 0,
+            "large_trade_unknown_sum_eok": summary.get(
+                "unknown_large_trade_sum_eok"
+            ) or 0,
+            "large_trade_updated_at": snapshot_at,
+            "large_trade_status": "ok",
+            "big_hand_buy_count_1eok": buy_count,
+            "big_hand_sell_count_1eok": sell_count,
+            "big_hand_net_buy_count_1eok": net_count,
+            "big_hand_buy_sum_eok": buy_sum,
+            "big_hand_sell_sum_eok": sell_sum,
+            "big_hand_net_sum_eok": net_sum,
+        }
 
     def _normalize_orderbook_probe_values(self, values):
         ask_volume = self._first_probe_number(
