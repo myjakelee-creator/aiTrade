@@ -196,19 +196,29 @@
   </div>
 
   <!-- HTML: candidate board -->
-  <div class="section sec-orange">Top5 유력 후보 <span class="lane-speed-badge lane-speed-waiting" id="hot-lane-speed-badge">HOT5 확인중</span> <span class="lane-actual-speed" id="hot-actual-speed">실제 -</span> <span class="lane-speed-badge lane-speed-hidden" id="candidate-lane-speed-badge"></span></div>
+  <div class="section sec-orange">Top5 유력 후보 <span id="top5-row-count">0종목</span> <span class="lane-speed-badge lane-speed-waiting" id="hot-lane-speed-badge">HOT5 확인중</span> <span class="lane-actual-speed" id="hot-actual-speed">실제 -</span> <span class="lane-speed-badge lane-speed-hidden" id="candidate-lane-speed-badge"></span></div>
   <table class="grid board enhanced-board" id="candidate-board">
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>대량체결</th><th>모멘텀</th></tr>
   </table>
 
   <!-- HTML: selected stock board -->
-  <div class="section sec-orange">▶ Selected 1종목</div>
+  <div class="section sec-orange">▶ Selected 1종목 <span id="selected-row-count">0종목</span></div>
   <table class="grid board enhanced-board" id="selected-board">
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>대량체결</th><th>모멘텀</th></tr>
   </table>
 
+  <div class="section sec-blue">Top20 집중 관찰 <span id="top20-row-count">0종목</span></div>
+  <table class="grid board enhanced-board" id="top20-board">
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>대량체결</th><th>모멘텀</th></tr>
+  </table>
+
+  <div class="section sec-blue">Top50 후보 <span id="top50-row-count">0종목</span></div>
+  <table class="grid board enhanced-board" id="top50-board">
+    <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>대량체결</th><th>모멘텀</th></tr>
+  </table>
+
   <!-- HTML: trading board -->
-  <div class="section sec-blue">Top300 Pool <span id="ranking-row-count">0개</span> <span class="lane-speed-badge lane-speed-waiting" id="top100-lane-speed-badge">Top300 확인중</span> <span class="lane-actual-speed" id="top100-actual-speed">실제 -</span></div>
+  <div class="section sec-blue">Top300 Pool <span id="ranking-row-count">0종목</span> <span class="lane-speed-badge lane-speed-waiting" id="top100-lane-speed-badge">Top300 확인중</span> <span class="lane-actual-speed" id="top100-actual-speed">실제 -</span></div>
   <table class="grid board enhanced-board" id="trading-board">
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>대량체결</th><th>모멘텀</th></tr>
   </table>
@@ -307,13 +317,19 @@
   const board = document.getElementById('trading-board');
   const candidateBoard = document.getElementById('candidate-board');
   const selectedBoard = document.getElementById('selected-board');
+  const top20Board = document.getElementById('top20-board');
+  const top50Board = document.getElementById('top50-board');
   const densityToggle = document.getElementById('density-toggle');
   const displayModeToggle = document.getElementById('display-mode-toggle');
   const nextScrollButton = document.getElementById('next-scroll');
   const debugToggle = document.getElementById('debug-toggle');
   const widthReset = document.getElementById('width-reset');
   const candidateModelSelector = document.getElementById('candidate-model-selector');
+  const top5RowCount = document.getElementById('top5-row-count');
+  const selectedRowCount = document.getElementById('selected-row-count');
   const rankingRowCount = document.getElementById('ranking-row-count');
+  const top20RowCount = document.getElementById('top20-row-count');
+  const top50RowCount = document.getElementById('top50-row-count');
   const hotLaneSpeedBadge = document.getElementById('hot-lane-speed-badge');
   const hotActualSpeed = document.getElementById('hot-actual-speed');
   const top100LaneSpeedBadge = document.getElementById('top100-lane-speed-badge');
@@ -1229,7 +1245,7 @@
     boardColumns[index].label = label;
     boardHeader = buildBoardHeader();
     top100PoolHeader = buildBoardHeader(top100PoolColumns);
-    [board, candidateBoard, selectedBoard].forEach(table => {
+    allBoardTables().forEach(table => {
       const labelElement = table?.querySelector?.(`th:nth-child(${index + 1}) .column-label`);
       if (labelElement?.firstChild) labelElement.firstChild.nodeValue = label;
     });
@@ -1240,6 +1256,16 @@
   board.innerHTML = `${top100PoolHeader}<tr><td colspan="${top100PoolColumns.length}">거래 가능 종목 마스터를 불러오는 중입니다.</td></tr>`;
   candidateBoard.innerHTML = boardHeader;
   selectedBoard.innerHTML = `${boardHeader}<tr><td colspan="15">선택된 종목이 없습니다.</td></tr>`;
+  top20Board.innerHTML = top100PoolHeader;
+  top50Board.innerHTML = top100PoolHeader;
+
+  function poolBoardTables() {
+    return [top20Board, top50Board, board];
+  }
+
+  function allBoardTables() {
+    return [candidateBoard, selectedBoard, top20Board, top50Board, board];
+  }
 
   function applyColumnWidths() {
     const totalWidth = boardColumnWidths.reduce((total, width) => total + width, 0);
@@ -1253,9 +1279,13 @@
       table.style.width = `${totalWidth}px`;
     });
     top100PoolColumnIndexes.forEach((columnIndex, poolIndex) => {
-      board.style.setProperty(`--trading-column-${poolIndex}-width`, `${boardColumnWidths[columnIndex]}px`);
+      poolBoardTables().forEach(table => {
+        table.style.setProperty(`--trading-column-${poolIndex}-width`, `${boardColumnWidths[columnIndex]}px`);
+      });
     });
-    board.style.width = `${poolWidth}px`;
+    poolBoardTables().forEach(table => {
+      table.style.width = `${poolWidth}px`;
+    });
     marketOverview.style.width = `${totalWidth}px`;
   }
 
@@ -1322,7 +1352,7 @@
     event.stopPropagation();
   }
 
-  [board, candidateBoard, selectedBoard].forEach(table => {
+  allBoardTables().forEach(table => {
     table.addEventListener('pointerdown', startColumnResize);
     table.addEventListener('dblclick', restoreColumnWidth);
   });
@@ -1347,8 +1377,10 @@
     });
     const poolIndex = top100PoolColumnIndexes.indexOf(columnIndex);
     if (poolIndex >= 0) {
-      board.style.setProperty(`--trading-column-${poolIndex}-width`, `${width}px`);
-      board.style.width = `${poolWidth}px`;
+      poolBoardTables().forEach(table => {
+        table.style.setProperty(`--trading-column-${poolIndex}-width`, `${width}px`);
+        table.style.width = `${poolWidth}px`;
+      });
     }
     marketOverview.style.width = `${totalWidth}px`;
   });
@@ -1377,10 +1409,16 @@
   const AFTERMARKET_BACKFILL_STATUS_POLL_MS = 3000;
   const top100State = {
     rowByCode: new Map(),
+    top20RowByCode: new Map(),
+    top50RowByCode: new Map(),
+    top300RowByCode: new Map(),
     candidateRowByCode: new Map(),
     apiError: null,
     renderedRows: [],
     candidateRows: [],
+    top20Rows: [],
+    top50Rows: [],
+    top300Rows: [],
     selectedRow: null,
     selectedStockCode: null,
     fiveMinuteStrengthSamples: new Map(),
@@ -2340,6 +2378,67 @@
       .map(item => item.row);
   }
 
+  function normalizedPoolStage(value) {
+    const stage = String(value || '').trim().toLowerCase();
+    return ['top5', 'top20', 'top50', 'top300'].includes(stage) ? stage : '';
+  }
+
+  function sectionRankNumber(row) {
+    return sortableNumber(row.poolRank)
+      ?? sortableNumber(row.funnelRank)
+      ?? sortableNumber(row.sortRank)
+      ?? sortableNumber(row.rank);
+  }
+
+  function fallbackPoolStage(row) {
+    const rank = sortableNumber(row.sortRank) ?? sortableNumber(row.rank);
+    if (rank === null) return 'top300';
+    if (rank >= 1 && rank <= 5) return 'top5';
+    if (rank >= 6 && rank <= 20) return 'top20';
+    if (rank >= 21 && rank <= 50) return 'top50';
+    return 'top300';
+  }
+
+  function selectFunnelSections(rows) {
+    const stageOrder = ['top5', 'top20', 'top50', 'top300'];
+    const sections = Object.fromEntries(stageOrder.map(stage => [stage, []]));
+    const seenCodes = new Set();
+    const indexedRows = rows.map((row, index) => ({
+      row,
+      index,
+      stage: normalizedPoolStage(row.poolStage)
+    }));
+    stageOrder.forEach(stage => {
+      indexedRows
+        .filter(item => item.stage === stage)
+        .sort((left, right) => {
+          const rankDifference = (sectionRankNumber(left.row) ?? Infinity)
+            - (sectionRankNumber(right.row) ?? Infinity);
+          return rankDifference || left.index - right.index;
+        })
+        .forEach(item => {
+          if (!item.row.code || seenCodes.has(item.row.code)) return;
+          seenCodes.add(item.row.code);
+          sections[stage].push(item.row);
+        });
+    });
+    stageOrder.forEach(stage => {
+      indexedRows
+        .filter(item => (!item.stage || sections[stage].length === 0) && fallbackPoolStage(item.row) === stage)
+        .sort((left, right) => {
+          const rankDifference = (sectionRankNumber(left.row) ?? Infinity)
+            - (sectionRankNumber(right.row) ?? Infinity);
+          return rankDifference || left.index - right.index;
+        })
+        .forEach(item => {
+          if (!item.row.code || seenCodes.has(item.row.code)) return;
+          seenCodes.add(item.row.code);
+          sections[stage].push(item.row);
+        });
+    });
+    return sections;
+  }
+
   function cumulativeStrengthVolume(value) {
     if (value === null || value === undefined || value === '') return null;
     const number = Number(String(value).replace(/,/g, ''));
@@ -2764,6 +2863,17 @@
 
   function showBoardMessage(message) {
     top100State.rowByCode.clear();
+    top100State.top20RowByCode.clear();
+    top100State.top50RowByCode.clear();
+    top100State.top300RowByCode.clear();
+    top100State.top20Rows = [];
+    top100State.top50Rows = [];
+    top100State.top300Rows = [];
+    top20Board.innerHTML = top100PoolHeader;
+    top50Board.innerHTML = top100PoolHeader;
+    top20RowCount.textContent = '0종목';
+    top50RowCount.textContent = '0종목';
+    rankingRowCount.textContent = '0종목';
     board.innerHTML = `${top100PoolHeader}<tr><td colspan="${top100PoolColumns.length}">${escapeHtml(message)}</td></tr>`;
   }
 
@@ -3026,10 +3136,12 @@
     selectedBoard.innerHTML = boardHeader;
     if (!row) {
       selectedBoard.tBodies[0].innerHTML = '<tr><td colspan="15">선택된 종목이 없습니다.</td></tr>';
+      selectedRowCount.textContent = '0종목';
       return;
     }
     const tableRow = createBoardRow(row);
     selectedBoard.tBodies[0].appendChild(tableRow);
+    selectedRowCount.textContent = '1종목';
   }
 
   function findRowForSelectedCode(code) {
@@ -3046,6 +3158,8 @@
 
   function findRenderedTableRow(code) {
     return top100State.rowByCode.get(code)
+      || top20Board.querySelector(`tr[data-stock-code="${code}"]`)
+      || top50Board.querySelector(`tr[data-stock-code="${code}"]`)
       || board.querySelector(`tr[data-stock-code="${code}"]`);
   }
 
@@ -3568,11 +3682,12 @@
     return nextRow;
   }
 
-  function renderCandidateBoard(rows) {
-    const candidates = selectCandidateRows(rows);
+  function renderCandidateBoard(rows, sections = null) {
+    const candidates = sections?.top5 || selectCandidateRows(rows);
     top100State.candidateRows = candidates;
     top100State.candidateRowByCode.clear();
     candidateBoard.innerHTML = boardHeader;
+    top5RowCount.textContent = `${candidates.length}종목`;
     candidates.forEach(row => {
       const tableRow = document.createElement('tr');
       tableRow.dataset.stockCode = row.code;
@@ -3582,6 +3697,30 @@
       candidateBoard.tBodies[0].appendChild(tableRow);
       top100State.candidateRowByCode.set(row.code, tableRow);
     });
+  }
+
+  function renderPoolSection(table, rows, rowMap) {
+    rowMap.clear();
+    table.innerHTML = top100PoolHeader;
+    rows.forEach(row => {
+      const tableRow = createTop100PoolRow(row);
+      table.tBodies[0].appendChild(tableRow);
+      rowMap.set(row.code, tableRow);
+      top100State.rowByCode.set(row.code, tableRow);
+    });
+  }
+
+  function renderPoolSections(sections) {
+    top100State.top20Rows = sections.top20;
+    top100State.top50Rows = sections.top50;
+    top100State.top300Rows = sections.top300;
+    top20RowCount.textContent = `${sections.top20.length}종목`;
+    top50RowCount.textContent = `${sections.top50.length}종목`;
+    rankingRowCount.textContent = `${sections.top300.length}종목`;
+    top100State.rowByCode.clear();
+    renderPoolSection(top20Board, sections.top20, top100State.top20RowByCode);
+    renderPoolSection(top50Board, sections.top50, top100State.top50RowByCode);
+    renderPoolSection(board, sections.top300, top100State.top300RowByCode);
   }
 
   function updateCandidateCandleCells() {
@@ -3595,7 +3734,7 @@
   }
 
   function renderedOhlcCount() {
-    return document.querySelectorAll('#candidate-board .ohlc-chart,#selected-board .ohlc-chart').length;
+    return document.querySelectorAll('#candidate-board .ohlc-chart,#selected-board .ohlc-chart,#top20-board .ohlc-chart,#top50-board .ohlc-chart,#trading-board .ohlc-chart').length;
   }
 
   function updateVisibleCandleCells() {
@@ -3627,12 +3766,14 @@
 
   function handleCandleCellClick(event) {
     const cell = event.target?.closest?.('td.ohlc-cell');
-    if (!cell || !cell.closest('#candidate-board,#selected-board,#trading-board')) return;
+    if (!cell || !cell.closest('#candidate-board,#selected-board,#top20-board,#top50-board,#trading-board')) return;
     toggleCandleMode();
   }
 
   candidateBoard.addEventListener('click', handleCandleCellClick);
   selectedBoard.addEventListener('click', handleCandleCellClick);
+  top20Board.addEventListener('click', handleCandleCellClick);
+  top50Board.addEventListener('click', handleCandleCellClick);
   board.addEventListener('click', handleCandleCellClick);
 
   function updateBoardSortIndicators() {
@@ -3723,13 +3864,13 @@
     const foreignLabel = rows.find(row => row.foreignLabel)?.foreignLabel || '외합(억)';
     setBoardColumnLabel(10, '1분강도');
     setBoardColumnLabel(11, foreignLabel);
-    rankingRowCount.textContent = `${rows.length}개`;
     const displayRows = sortBoardRows(rows);
     top100State.renderedRows = displayRows;
     updateGradeDistribution(displayRows);
     top100State.diagnostics.renderOhlc = rows.filter(hasDisplayOhlc).length;
     top100State.candleDomain = candleDomain(rows);
-    renderCandidateBoard(rows);
+    const sections = selectFunnelSections(displayRows);
+    renderCandidateBoard(rows, sections);
     syncSelectedBoard();
     if (!rows.length) {
       showBoardMessage('표시할 거래대금 순위 종목이 없습니다.');
@@ -3740,13 +3881,7 @@
       return;
     }
 
-    top100State.rowByCode.clear();
-    board.innerHTML = top100PoolHeader;
-    displayRows.forEach(row => {
-      const tableRow = createTop100PoolRow(row);
-      board.tBodies[0].appendChild(tableRow);
-      top100State.rowByCode.set(row.code, tableRow);
-    });
+    renderPoolSections(sections);
     updateBoardSortIndicators();
     top100State.diagnostics.domOhlc = renderedOhlcCount();
     top100State.diagnostics.renderedOhlc = top100State.diagnostics.domOhlc;
@@ -4055,43 +4190,8 @@
       syncCloseMetricsCompletion(normalizedRows);
       top100State.diagnostics.normalizedRows = normalizedRows.length;
       top100State.diagnostics.normalizedOhlc = normalizedRows.filter(hasOhlc).length;
-      if (top100State.boardSort.key) {
-        renderBoard(normalizedRows);
-        return { received: rows.length, displayed: normalizedRows.length, missing: 0 };
-      }
-      top100State.renderedRows = normalizedRows;
-      updateGradeDistribution(top100State.renderedRows);
-      top100State.diagnostics.renderOhlc = normalizedRows.filter(hasOhlc).length;
-      top100State.candleDomain = candleDomain(normalizedRows);
-
-      let updatedCount = 0;
-      let missingCount = 0;
-      normalizedRows.forEach(row => {
-        const tableRow = top100State.rowByCode.get(row.code);
-        if (!tableRow) {
-          missingCount += 1;
-          return;
-        }
-        tableRow.dataset.hasOhlc = hasOhlc(row) ? 'true' : 'false';
-        updateTop100PoolRow(tableRow, row, true);
-        updatedCount += 1;
-      });
-
-      const rowByCode = new Map(normalizedRows.map(row => [row.code, row]));
-      top100State.candidateRows = top100State.candidateRows.map(row => rowByCode.get(row.code) || row);
-      top100State.candidateRows.forEach(row => {
-        const tableRow = top100State.candidateRowByCode.get(row.code);
-        if (!tableRow) return;
-        tableRow.dataset.hasOhlc = hasOhlc(row) ? 'true' : 'false';
-        updateBoardRow(tableRow, row, true);
-      });
-      syncSelectedBoard(top100State.selectedStockCode);
-
-      top100State.diagnostics.domOhlc = renderedOhlcCount();
-      top100State.diagnostics.renderedOhlc = top100State.diagnostics.domOhlc;
-      updateDataDiagnostics();
-      if (missingCount) console.warn(`TOP100 refresh skipped ${missingCount} missing rows`);
-      return { received: rows.length, displayed: updatedCount, missing: missingCount };
+      renderBoard(normalizedRows);
+      return { received: rows.length, displayed: normalizedRows.length, missing: 0 };
     },
     clear() {
       Object.keys(top100State.diagnostics).forEach(key => {
@@ -4452,7 +4552,7 @@
 
   function readTableDomPriceForCode(code) {
     try {
-      const tableRow = document.querySelector(`#candidate-board tr[data-stock-code="${code}"], #trading-board tr[data-stock-code="${code}"]`);
+      const tableRow = document.querySelector(`#candidate-board tr[data-stock-code="${code}"], #top20-board tr[data-stock-code="${code}"], #top50-board tr[data-stock-code="${code}"], #trading-board tr[data-stock-code="${code}"]`);
       return tableRow?.cells?.[4]?.textContent?.trim() || '';
     } catch (error) {
       console.warn(error);
@@ -4473,7 +4573,7 @@
 
   function readTableDomChangeRateForCode(code) {
     try {
-      const tableRow = document.querySelector(`#candidate-board tr[data-stock-code="${code}"], #trading-board tr[data-stock-code="${code}"]`);
+      const tableRow = document.querySelector(`#candidate-board tr[data-stock-code="${code}"], #top20-board tr[data-stock-code="${code}"], #top50-board tr[data-stock-code="${code}"], #trading-board tr[data-stock-code="${code}"]`);
       return tableRow?.cells?.[5]?.textContent?.trim() || '';
     } catch (error) {
       console.warn(error);
@@ -4700,10 +4800,12 @@
   }
 
   function getMainTableRows() {
-    const tradingBoard = document.getElementById('trading-board');
-    if (!tradingBoard) return [];
+    const tradingBoards = ['top20-board', 'top50-board', 'trading-board']
+      .map(id => document.getElementById(id))
+      .filter(Boolean);
+    if (!tradingBoards.length) return [];
     const seenCodes = new Set();
-    return Array.from(tradingBoard.querySelectorAll('tr')).filter((row) => {
+    return tradingBoards.flatMap(table => Array.from(table.querySelectorAll('tr'))).filter((row) => {
       if (row.querySelector('th')) return false;
       if (row.offsetParent === null) return false;
       const code = findStockCodeFromElement(row);
