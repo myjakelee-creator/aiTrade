@@ -3,13 +3,15 @@ import os
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from collections import deque
 from copy import deepcopy
 from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Event, RLock, Thread
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from kiwoom_data_provider import (
     KiwoomOpenApiRealtimeProvider, fetch_foreign_investor_net_after_close,
@@ -48,6 +50,23 @@ PRICE_LIGHT_MAX_CONSECUTIVE_SKIPS = int(
 MARKET_SUPPLY_REFRESH_TTL_SEC = float(
     os.getenv("STOCKBOARD_MARKET_SUPPLY_REFRESH_TTL_SEC", "3.0")
 )
+US_MARKET_REFRESH_TTL_SEC = float(
+    os.getenv("STOCKBOARD_US_MARKET_REFRESH_TTL_SEC", "180.0")
+)
+US_MARKET_FETCH_TIMEOUT_SEC = float(
+    os.getenv("STOCKBOARD_US_MARKET_FETCH_TIMEOUT_SEC", "3.0")
+)
+US_MARKET_ITEMS = (
+    ("us_nq_futures", "나스닥선물", "NQ=F"),
+    ("us_qqq", "QQQ", "QQQ"),
+    ("us_smh", "SMH", "SMH"),
+    ("us_ibb", "IBB", "IBB"),
+    ("us_lit", "LIT", "LIT"),
+    ("us_botz", "BOTZ", "BOTZ"),
+)
+US_MARKET_COMPAT_ALIASES = {
+    "us_nasdaq": "us_nq_futures",
+}
 AFTERMARKET_BACKFILL_COMPLETED_STATUSES = {
     "completed",
     "cached_completed",
@@ -1737,6 +1756,188 @@ def _empty_foreign_investor_net_data(query_date, error=None):
     }
 
 
+def _us_market_freshness(age_sec):
+    if age_sec is None:
+        return "unknown"
+    if age_sec <= 90:
+        return "near-live-unverified"
+    if age_sec <= 900:
+        return "delayed"
+    return "stale"
+
+
+def _safe_us_market_item(key, label, symbol, error=None):
+    item = {
+        "key": key,
+        "label": label,
+        "symbol": symbol,
+        "price": 0,
+        "change_rate": 0,
+        "status": "unavailable" if error else "available",
+        "source": "yahoo_chart",
+        "age_sec": None,
+        "freshness": "unknown",
+    }
+    if error:
+        item["error"] = str(error)
+    return item
+
+
+def _us_market_placeholder_payload(errors=None):
+    error_list = list(errors or [])
+    return {
+        "available": False,
+        "status": "unavailable",
+        "source": "yahoo_chart",
+        "as_of": datetime.now(KST).isoformat(timespec="seconds"),
+        "items": [
+            _safe_us_market_item(key, label, symbol, "unavailable")
+            for key, label, symbol in US_MARKET_ITEMS
+        ],
+        "aliases": US_MARKET_COMPAT_ALIASES,
+        "impact": {
+            "key": "us_market_impact",
+            "label": "중립",
+            "status": "unavailable",
+        },
+        "errors": error_list,
+    }
+
+
+def _parse_float_or_none(value):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed != parsed:
+        return None
+    return parsed
+
+
+def _fetch_yahoo_chart_quote(symbol):
+    encoded_symbol = quote(symbol, safe="")
+    url = (
+        "https://query1.finance.yahoo.com/v8/finance/chart/"
+        f"{encoded_symbol}?range=1d&interval=1d"
+    )
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "StockBoard/1.0",
+            "Accept": "application/json",
+        },
+    )
+    with urllib.request.urlopen(
+        request, timeout=US_MARKET_FETCH_TIMEOUT_SEC
+    ) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    result = (payload.get("chart", {}).get("result") or [None])[0]
+    if not result:
+        error = payload.get("chart", {}).get("error") or "empty chart result"
+        raise ValueError(f"{symbol}: {error}")
+    meta = result.get("meta") or {}
+    price = _parse_float_or_none(meta.get("regularMarketPrice"))
+    previous_close = _parse_float_or_none(meta.get("chartPreviousClose"))
+    if price is None:
+        quote_series = ((result.get("indicators") or {}).get("quote") or [{}])[0]
+        closes = quote_series.get("close") or []
+        price = next(
+            (
+                parsed
+                for parsed in (_parse_float_or_none(value) for value in reversed(closes))
+                if parsed is not None
+            ),
+            None,
+        )
+    if price is None:
+        raise ValueError(f"{symbol}: missing price")
+    change_rate = 0.0
+    if previous_close not in (None, 0):
+        change_rate = (price - previous_close) / previous_close * 100
+    regular_market_time = _parse_float_or_none(meta.get("regularMarketTime"))
+    as_of = None
+    if regular_market_time is not None:
+        as_of = datetime.fromtimestamp(regular_market_time, KST).isoformat(
+            timespec="seconds"
+        )
+    age_sec = _age_seconds(as_of)
+    return {
+        "price": round(price, 4),
+        "change_rate": round(change_rate, 4),
+        "as_of": as_of,
+        "age_sec": age_sec,
+        "freshness": _us_market_freshness(age_sec),
+    }
+
+
+def _us_market_impact_label(items):
+    by_key = {item.get("key"): item for item in items}
+    qqq = _parse_float_or_none(by_key.get("us_qqq", {}).get("change_rate"))
+    smh = _parse_float_or_none(by_key.get("us_smh", {}).get("change_rate"))
+    if smh is not None and qqq is not None:
+        if smh > 0 and qqq > 0:
+            return "반도체 우호"
+        if smh < 0 and qqq < 0:
+            return "미국장 부담"
+        if smh > 0 and qqq <= 0:
+            return "반도체 선별 우호"
+        if qqq > 0 and smh <= 0:
+            return "빅테크 우호"
+    return "중립"
+
+
+def fetch_us_market_payload():
+    items = []
+    errors = []
+    as_of_values = []
+    for key, label, symbol in US_MARKET_ITEMS:
+        try:
+            quote = _fetch_yahoo_chart_quote(symbol)
+            item = {
+                "key": key,
+                "label": label,
+                "symbol": symbol,
+                "price": quote["price"],
+                "change_rate": quote["change_rate"],
+                "status": "available",
+                "source": "yahoo_chart",
+                "age_sec": quote.get("age_sec"),
+                "freshness": quote.get("freshness", "unknown"),
+            }
+            if quote.get("as_of"):
+                item["as_of"] = quote["as_of"]
+                as_of_values.append(quote["as_of"])
+            items.append(item)
+        except (
+            OSError,
+            urllib.error.URLError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as error:
+            errors.append({"symbol": symbol, "error": str(error)})
+            items.append(_safe_us_market_item(key, label, symbol, error))
+    available_count = sum(1 for item in items if item.get("status") == "available")
+    if available_count == 0:
+        return _us_market_placeholder_payload(errors)
+    status = "available" if available_count == len(items) else "partial"
+    return {
+        "available": status == "available",
+        "status": status,
+        "source": "yahoo_chart",
+        "as_of": max(as_of_values) if as_of_values else datetime.now(KST).isoformat(
+            timespec="seconds"
+        ),
+        "items": items,
+        "aliases": US_MARKET_COMPAT_ALIASES,
+        "impact": {
+            "key": "us_market_impact",
+            "label": _us_market_impact_label(items),
+            "status": status,
+        },
+        "errors": errors,
+    }
+
+
 def make_handler(
     rows,
     filter_report_rows,
@@ -1758,6 +1959,9 @@ def make_handler(
     selected_hot_lock = RLock()
     market_supply_lock = RLock()
     market_supply_last_refreshed_at = 0.0
+    us_market_lock = RLock()
+    us_market_payload = None
+    us_market_last_refreshed_at = 0.0
     selected_hot_codes = set(
         _parse_hot_code_query(
             {"codes": [os.getenv("STOCKBOARD_HOT_SELECTED_CODES", "")]}
@@ -1826,6 +2030,35 @@ def make_handler(
                         stale[key]["error"] = status["error"]
                 return stale
             return market_supply
+
+    def refreshed_us_market(force=False):
+        nonlocal us_market_payload, us_market_last_refreshed_at
+        now = time.monotonic()
+        with us_market_lock:
+            if (
+                not force
+                and us_market_payload is not None
+                and us_market_last_refreshed_at
+                and now - us_market_last_refreshed_at < US_MARKET_REFRESH_TTL_SEC
+            ):
+                return us_market_payload
+            try:
+                us_market_payload = fetch_us_market_payload()
+                us_market_last_refreshed_at = now
+            except Exception as error:
+                stale = deepcopy(us_market_payload) if us_market_payload else None
+                if stale:
+                    stale["available"] = False
+                    stale["status"] = "stale"
+                    stale.setdefault("errors", []).append(
+                        {"symbol": None, "error": str(error)}
+                    )
+                    return stale
+                us_market_payload = _us_market_placeholder_payload(
+                    [{"symbol": None, "error": str(error)}]
+                )
+                us_market_last_refreshed_at = now
+            return us_market_payload
     aftermarket_backfill_lock = RLock()
     aftermarket_backfill_cancel = Event()
     aftermarket_backfill_thread = None
@@ -3584,6 +3817,17 @@ def make_handler(
                 response_payload = market_supply_response_payload(
                     refreshed_market_supply()
                 )
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if request_path == "/api/us_market":
+                force = _query_flag_enabled(query, "force", "refresh")
+                response_payload = refreshed_us_market(force=force)
                 body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")

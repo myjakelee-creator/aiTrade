@@ -191,12 +191,12 @@
   </div>
   <table class="grid us">
     <tr>
-      <td>나스닥 <span class="plus">+1.85%</span></td>
-      <td>QQQ <span class="plus">+1.72%</span></td>
-      <td>SMH <span class="plus">+2.25%</span></td>
-      <td>IBB <span class="plus">+0.55%</span></td>
-      <td>LIT <span class="minus">-1.25%</span></td>
-      <td>BOTZ <span class="plus">+0.82%</span></td>
+      <td id="us-market-us_nasdaq">나스닥선물 <span>-</span></td>
+      <td id="us-market-us_qqq">QQQ <span>-</span></td>
+      <td id="us-market-us_smh">SMH <span>-</span></td>
+      <td id="us-market-us_ibb">IBB <span>-</span></td>
+      <td id="us-market-us_lit">LIT <span>-</span></td>
+      <td id="us-market-us_botz">BOTZ <span>-</span></td>
       <td class="us-impact-cell"><span class="us-impact-value" id="us-market-impact-value">반도체 우호</span></td>
     </tr>
   </table>
@@ -399,8 +399,19 @@
   const marketKosdaqSubjectChart = document.getElementById('market-kosdaq-subject-chart');
   const gradeDistributionChart = document.getElementById('grade-distribution-chart');
   const usMarketImpactValue = document.getElementById('us-market-impact-value');
-  // Temporary UI-only fallback until a real US market impact value is supplied.
-  const usMarketImpactFallback = '반도체 우호';
+  const usMarketImpactFallback = '중립';
+  const usMarketCells = {
+    us_nq_futures: document.getElementById('us-market-us_nasdaq'),
+    us_qqq: document.getElementById('us-market-us_qqq'),
+    us_smh: document.getElementById('us-market-us_smh'),
+    us_ibb: document.getElementById('us-market-us_ibb'),
+    us_lit: document.getElementById('us-market-us_lit'),
+    us_botz: document.getElementById('us-market-us_botz')
+  };
+  const usMarketKeyFallbacks = {
+    us_nq_futures: ['us_nasdaq']
+  };
+  const US_MARKET_REFRESH_MS = 180000;
   const marketSupplyCells = Object.fromEntries(['kospi', 'kosdaq'].map(key => [key, {
     name: document.getElementById(`market-${key}-name`),
     index: document.getElementById(`market-${key}-index`),
@@ -4168,6 +4179,50 @@
     return impact;
   }
 
+  function renderUSMarket(data) {
+    const items = Array.isArray(data?.items) ? data.items : [];
+    const byKey = new Map(items.map(item => [item?.key, item]));
+    Object.entries(usMarketCells).forEach(([key, cell]) => {
+      if (!cell) return;
+      const item = byKey.get(key) || (usMarketKeyFallbacks[key] || []).map(fallbackKey => byKey.get(fallbackKey)).find(Boolean);
+      const label = item?.label || cell.textContent.trim().split(/\s+/)[0] || key;
+      const changeRate = numericValue(item?.change_rate);
+      const status = item?.status || 'unavailable';
+      const className = status === 'available' && changeRate !== null
+        ? changeRate > 0 ? 'plus' : changeRate < 0 ? 'minus' : ''
+        : '';
+      const text = status === 'available' && changeRate !== null
+        ? formatPercent(changeRate)
+        : '-';
+      cell.innerHTML = `${escapeHtml(label)} <span class="${className}">${escapeHtml(text)}</span>`;
+      const price = numericValue(item?.price);
+      const ageSec = numericValue(item?.age_sec);
+      const tooltipRows = [
+        `${label} ${price === null ? '-' : price.toLocaleString('en-US')} ${text}`,
+        `symbol: ${item?.symbol || '-'}`,
+        `source: ${item?.source || data?.source || 'yahoo_chart'}`,
+        `as_of: ${item?.as_of || data?.as_of || '-'}`,
+        `age_sec: ${ageSec === null ? '-' : ageSec}`,
+        `freshness: ${item?.freshness || 'unknown'}`,
+        'note: Yahoo is not guaranteed official realtime feed'
+      ];
+      cell.title = tooltipRows.join('\n');
+    });
+    updateUSMarketImpact(data?.impact?.label);
+    usMarketColumnResizeController?.refreshAutomaticWidths();
+  }
+
+  async function loadUSMarket() {
+    try {
+      const response = await fetch('/api/us_market', { cache: 'no-store' });
+      if (!response.ok) throw new Error(`US market load failed: ${response.status}`);
+      renderUSMarket(await response.json());
+    } catch (error) {
+      console.warn(error);
+      renderUSMarket(null);
+    }
+  }
+
   function findUSMarketImpact(rows) {
     for (const row of rows) {
       if (!row || typeof row !== 'object') continue;
@@ -4187,7 +4242,8 @@
       top100State.diagnostics.apiRows = rows.length;
       top100State.diagnostics.apiOhlc = rows.filter(hasOhlc).length;
       updateDataDiagnostics();
-      window.StockBoardUSImpact.update(findUSMarketImpact(rows));
+      const usImpact = findUSMarketImpact(rows);
+      if (usImpact !== null) window.StockBoardUSImpact.update(usImpact);
       return applyRankingRows(rows);
     },
     refresh(rows) {
@@ -4195,7 +4251,8 @@
       top100State.diagnostics.apiRows = rows.length;
       top100State.diagnostics.apiOhlc = rows.filter(hasOhlc).length;
       updateDataDiagnostics();
-      window.StockBoardUSImpact.update(findUSMarketImpact(rows));
+      const usImpact = findUSMarketImpact(rows);
+      if (usImpact !== null) window.StockBoardUSImpact.update(usImpact);
 
       const normalizedRows = rows.map(sourceRow => {
         if (!sourceRow || typeof sourceRow !== 'object') return null;
@@ -4246,6 +4303,9 @@
   }
 
   /* JS: boot / refresh loop */
+  loadUSMarket();
+  window.setInterval(loadUSMarket, US_MARKET_REFRESH_MS);
+
   loadMarketSupply();
   window.setInterval(loadMarketSupply, 5000);
 
