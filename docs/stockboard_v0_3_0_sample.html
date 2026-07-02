@@ -14,17 +14,22 @@
     background: #f8fbff;
   }
   .market-distribution {
-    --market-strip-chart-size: calc(var(--grade-distribution-chart-size) - 4px);
-    min-width: calc((var(--market-strip-chart-size) * 5) + 24px);
+    --market-strip-chart-size: calc(var(--grade-distribution-chart-size) - 8px);
+    --market-flow-chart-width: 78px;
+    min-width: calc((var(--market-flow-chart-width) * 2) + (var(--market-strip-chart-size) * 3) + 8px);
     justify-content: flex-start;
-    gap: 2px;
-    margin-left: 2px;
+    gap: 1px;
+    margin-left: 0;
     padding-left: 0;
     padding-right: 0;
   }
   .market-distribution-item {
     min-width: var(--market-strip-chart-size);
-    gap: 2px;
+    gap: 1px;
+  }
+  .market-distribution-item:nth-child(1),
+  .market-distribution-item:nth-child(2) {
+    min-width: var(--market-flow-chart-width);
   }
   .market-distribution-chart {
     width: var(--market-strip-chart-size);
@@ -32,6 +37,10 @@
     flex-basis: var(--market-strip-chart-size);
     margin-left: 0;
     margin-right: 0;
+  }
+  .market-distribution .subject-flow-chart {
+    width: var(--market-flow-chart-width);
+    flex-basis: var(--market-flow-chart-width);
   }
   .market-distribution .subject-flow-chart::after {
     display: none;
@@ -45,15 +54,15 @@
   }
   .subject-flow-row {
     display: grid;
-    grid-template-columns: 22px 1fr;
+    grid-template-columns: 22px minmax(40px, 1fr);
     align-items: center;
-    gap: 3px;
+    gap: 2px;
     min-width: 0;
   }
   .subject-flow-label {
     overflow: hidden;
     color: #263747;
-    font-size: 10px;
+    font-size: 8.5px;
     font-weight: 700;
     line-height: 1;
     text-overflow: ellipsis;
@@ -61,7 +70,7 @@
   }
   .subject-flow-track {
     position: relative;
-    height: 9px;
+    height: 10px;
     overflow: hidden;
     border-radius: 2px;
     background: #e3e8ec;
@@ -107,6 +116,7 @@
     <div><button type="button" class="debug-toggle" id="debug-toggle">진단</button></div>
     <div><button type="button" class="width-reset" id="width-reset">폭 초기화</button></div>
     <div><span class="market-open" id="market-session">장마감</span></div>
+    <div><label class="candidate-model-control" for="candidate-model-selector">선발기준 <select id="candidate-model-selector" aria-label="선발기준"><option value="TVRANK_A_V03_TEMP">거래대금 순위 중심</option><option value="OPENING_MOMO_V01" disabled>장초반 탄력 중심</option><option value="PROGRAM_FLOW_V01" disabled>프로그램 순매수 중심</option><option value="LARGE_TRADE_V01" disabled>대량체결 중심</option></select></label></div>
     <div class="focus-momentum"><span class="focus-name">삼성전기</span><span class="momentum">VWAP돌파 + 시가위 + 전고돌파</span></div>
   </div>
   <table class="grid us">
@@ -153,7 +163,7 @@
   </div>
 
   <!-- HTML: candidate board -->
-  <div class="section sec-orange">▶ HOT5 유력 후보 5종목 <span class="lane-speed-badge lane-speed-waiting" id="hot-lane-speed-badge">HOT5 확인중</span> <span class="lane-actual-speed" id="hot-actual-speed">실제 -</span> <span class="lane-speed-badge lane-speed-hidden" id="candidate-lane-speed-badge"></span></div>
+  <div class="section sec-orange">Top5 유력 후보 <span class="lane-speed-badge lane-speed-waiting" id="hot-lane-speed-badge">HOT5 확인중</span> <span class="lane-actual-speed" id="hot-actual-speed">실제 -</span> <span class="lane-speed-badge lane-speed-hidden" id="candidate-lane-speed-badge"></span></div>
   <table class="grid board enhanced-board" id="candidate-board">
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>대량체결</th><th>모멘텀</th></tr>
   </table>
@@ -165,7 +175,7 @@
   </table>
 
   <!-- HTML: trading board -->
-  <div class="section sec-blue">▶ Top100 Pool <span id="ranking-row-count">0개</span> <span class="lane-speed-badge lane-speed-waiting" id="top100-lane-speed-badge">Top100 확인중</span> <span class="lane-actual-speed" id="top100-actual-speed">실제 -</span></div>
+  <div class="section sec-blue">Top300 Pool <span id="ranking-row-count">0개</span> <span class="lane-speed-badge lane-speed-waiting" id="top100-lane-speed-badge">Top300 확인중</span> <span class="lane-actual-speed" id="top100-actual-speed">실제 -</span></div>
   <table class="grid board enhanced-board" id="trading-board">
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>대량체결</th><th>모멘텀</th></tr>
   </table>
@@ -269,6 +279,7 @@
   const nextScrollButton = document.getElementById('next-scroll');
   const debugToggle = document.getElementById('debug-toggle');
   const widthReset = document.getElementById('width-reset');
+  const candidateModelSelector = document.getElementById('candidate-model-selector');
   const rankingRowCount = document.getElementById('ranking-row-count');
   const hotLaneSpeedBadge = document.getElementById('hot-lane-speed-badge');
   const hotActualSpeed = document.getElementById('hot-actual-speed');
@@ -333,6 +344,8 @@
   const marketWidthStorageKey = STOCKBOARD_STORAGE_KEYS.marketSupplyColumnWidths;
   const candleModeStorageKey = STOCKBOARD_STORAGE_KEYS.candleMode;
   const debugPanelVisibleStorageKey = STOCKBOARD_STORAGE_KEYS.debugPanelVisible;
+  const candidateModelStorageKey = 'stockboard.candidateModelId.v1';
+  const defaultCandidateModelId = 'TVRANK_A_V03_TEMP';
   const candleModeToggleTitle = '클릭: 캔들모드 전환 / C: 전환';
   const candleModes = new Set(['full', 'proportional']);
   const displayDensityModes = ['normal', 'compact', 'ultra'];
@@ -555,7 +568,7 @@
       : `${marketName} 주체별 수급 데이터 없음`;
     const rows = subjects.map(subject => {
       const value = subject.value;
-      const width = maxAbs > 0 && value !== null ? Math.max(3, Math.abs(value) / maxAbs * 50) : 0;
+      const width = maxAbs > 0 && value !== null ? Math.max(3, Math.abs(value) / maxAbs * 44) : 0;
       const direction = value === null || value >= 0 ? 'positive' : 'negative';
       const color = value === null ? '#cbd5e1' : value >= 0 ? '#D71920' : '#1266D6';
       return `<div class="subject-flow-row">
@@ -580,10 +593,17 @@
     const changeRate = finiteMarketNumber(market.market_change_rate, `${key}.market_change_rate`);
     cells.name.textContent = String(market.market_name || '-');
     cells.index.textContent = finiteMarketNumber(market.market_index, `${key}.market_index`).toFixed(2);
+    cells.index.classList.remove('plus', 'minus');
     cells.change.textContent = `${changeRate > 0 ? '+' : ''}${changeRate.toFixed(2)}%`;
     cells.change.classList.remove('plus', 'minus');
-    if (changeRate > 0) cells.change.classList.add('plus');
-    if (changeRate < 0) cells.change.classList.add('minus');
+    if (changeRate > 0) {
+      cells.index.classList.add('plus');
+      cells.change.classList.add('plus');
+    }
+    if (changeRate < 0) {
+      cells.index.classList.add('minus');
+      cells.change.classList.add('minus');
+    }
     cells.advance.textContent = `${marketCount(market.advancers, `${key}.advancers`)}(↑${marketCount(market.upper_limit_count, `${key}.upper_limit_count`)})`;
     cells.decline.textContent = `${marketCount(market.decliners, `${key}.decliners`)}(↓${marketCount(market.lower_limit_count, `${key}.lower_limit_count`)})`;
     renderMarketFlow(cells.individual, market.individual_eok);
@@ -670,7 +690,7 @@
       : `${marketName} subject flow unavailable: ${marketUnavailableReason(market, ['investor_flow', 'program_market'])}`;
     const rows = subjects.map(subject => {
       const value = subject.value;
-      const width = maxAbs > 0 && value !== null ? Math.max(3, Math.abs(value) / maxAbs * 50) : 0;
+      const width = maxAbs > 0 && value !== null ? Math.max(3, Math.abs(value) / maxAbs * 44) : 0;
       const direction = value === null || value >= 0 ? 'positive' : 'negative';
       const color = value === null ? '#cbd5e1' : value >= 0 ? '#D71920' : '#1266D6';
       return `<div class="subject-flow-row">
@@ -695,6 +715,7 @@
     cells.name.textContent = String(market.market_name || '-');
     const indexReason = marketUnavailableReason(market, ['market_index']);
     const breadthReason = marketUnavailableReason(market, ['breadth']);
+    cells.index.classList.remove('plus', 'minus');
     if (isFiniteMarketNumber(market.market_index)) {
       cells.index.textContent = market.market_index.toFixed(2);
       cells.index.title = indexReason;
@@ -706,8 +727,14 @@
       const changeRate = market.market_change_rate;
       cells.change.textContent = `${changeRate > 0 ? '+' : ''}${changeRate.toFixed(2)}%`;
       cells.change.title = indexReason;
-      if (changeRate > 0) cells.change.classList.add('plus');
-      if (changeRate < 0) cells.change.classList.add('minus');
+      if (changeRate > 0) {
+        cells.index.classList.add('plus');
+        cells.change.classList.add('plus');
+      }
+      if (changeRate < 0) {
+        cells.index.classList.add('minus');
+        cells.change.classList.add('minus');
+      }
     } else {
       setUnavailableCell(cells.change, indexReason);
     }
@@ -1358,6 +1385,28 @@
   applyDisplayMode(top100State.displayMode);
   applyDebugPanelVisible(loadDebugPanelVisible());
   /* JS: controls / event binding */
+  function loadCandidateModelId() {
+    const savedModelId = readStoredValue(candidateModelStorageKey, defaultCandidateModelId);
+    return candidateModelSelector?.querySelector?.(`option[value="${savedModelId}"]:not(:disabled)`)
+      ? savedModelId
+      : defaultCandidateModelId;
+  }
+
+  function applyCandidateModelSelector() {
+    if (!candidateModelSelector) return;
+    candidateModelSelector.value = loadCandidateModelId();
+  }
+
+  applyCandidateModelSelector();
+  safeAddEventListener(candidateModelSelector, 'change', () => {
+    const selectedOption = candidateModelSelector.selectedOptions?.[0];
+    const modelId = selectedOption && !selectedOption.disabled
+      ? candidateModelSelector.value
+      : defaultCandidateModelId;
+    candidateModelSelector.value = modelId;
+    writeStoredValue(candidateModelStorageKey, modelId);
+  });
+
   safeAddEventListener(displayModeToggle, 'click', () => {
     const nextMode = top100State.displayMode === STOCKBOARD_DISPLAY_MODES.fast
       ? STOCKBOARD_DISPLAY_MODES.graphic
@@ -2333,12 +2382,15 @@
 
   function normalizeRankingRow(row) {
     const gradeValue = firstValue(row, ['grade', 'grade_score', '등급']);
+    const candidateGradeText = firstValue(row, ['candidate_grade_text']);
     const explicitGradeClass = normalizeGradeClass(firstValue(row, [
       'candidate_grade_class',
       'grade_class',
       'grade_tone'
     ]));
-    const displayGradeValue = firstValue(row, ['candidate_grade_text']) ?? gradeValue;
+    const gradeFallbackUsed = candidateGradeText === null && gradeValue !== null;
+    const displayGradeValue = candidateGradeText ?? gradeValue;
+    const displayGradeSource = candidateGradeText !== null ? 'candidate_grade_text' : 'legacy_grade';
     const inferredGradeClass = String(displayGradeValue ?? '').trim().charAt(0).toLowerCase();
     const gradeClass = displayGradeValue === null
       ? ''
@@ -2426,7 +2478,36 @@
     const priceLimitReason = firstValue(row, ['price_limit_reason', 'priceLimitReason']);
     const priceLimitSource = firstValue(row, ['price_limit_source', 'priceLimitSource']);
     const noteValue = displayValue(firstValue(row, ['momentum', 'momentum_text', '모멘텀']));
+    const candidateModelId = firstValue(row, ['candidate_model_id', 'candidateModelId']);
+    const candidateModelName = firstValue(row, ['candidate_model_name', 'candidateModelName']);
+    const poolStage = firstValue(row, ['pool_stage', 'poolStage']);
+    const poolRank = firstValue(row, ['pool_rank', 'poolRank']);
+    const funnelRank = firstValue(row, ['funnel_rank', 'funnelRank']);
+    const scorePercent = firstValue(row, ['score_percent', 'scorePercent', 'candidate_score']);
+    const scoreTotal = firstValue(row, ['score_total', 'scoreTotal', 'candidate_score_raw']);
+    const scoreTotalPoints = firstValue(row, ['score_total_points', 'scoreTotalPoints']);
+    const scorePossiblePoints = firstValue(row, ['score_possible_points', 'scorePossiblePoints', 'candidate_score_max']);
+    const scoreTop50 = firstValue(row, ['score_top50', 'scoreTop50']);
+    const scoreTop20 = firstValue(row, ['score_top20', 'scoreTop20']);
+    const scoreTop5 = firstValue(row, ['score_top5', 'scoreTop5']);
+    const scoreStatus = firstValue(row, ['score_status', 'scoreStatus']);
     const candidateGradeTooltip = [
+      `grade_source: ${displayGradeSource}`,
+      gradeFallbackUsed ? 'grade_fallback_used: true' : 'grade_fallback_used: false',
+      gradeFallbackUsed ? `legacy_grade: ${gradeValue}` : null,
+      candidateModelName ? `model: ${candidateModelName}` : null,
+      candidateModelId ? `model_id: ${candidateModelId}` : null,
+      poolStage ? `pool_stage: ${poolStage}` : null,
+      poolRank !== null ? `pool_rank: ${poolRank}` : null,
+      funnelRank !== null ? `funnel_rank: ${funnelRank}` : null,
+      scorePercent !== null ? `score_percent: ${scorePercent}` : null,
+      scoreTotal !== null ? `score_total: ${scoreTotal}` : null,
+      scoreTotalPoints !== null ? `score_total_points: ${scoreTotalPoints}` : null,
+      scorePossiblePoints !== null ? `score_possible_points: ${scorePossiblePoints}` : null,
+      scoreTop50 !== null ? `score_top50: ${scoreTop50}` : null,
+      scoreTop20 !== null ? `score_top20: ${scoreTop20}` : null,
+      scoreTop5 !== null ? `score_top5: ${scoreTop5}` : null,
+      scoreStatus ? `score_status: ${JSON.stringify(scoreStatus)}` : null,
       firstValue(row, ['candidate_reason']),
       firstValue(row, ['trend_reason']),
       firstValue(row, ['candidate_score']) !== null
@@ -2493,7 +2574,25 @@
       isCandidate: firstValue(row, ['is_candidate', 'candidate']),
       candidateScore: firstValue(row, ['candidate_score']),
       candidateRank: firstValue(row, ['candidate_rank']),
-      gradeScore: firstValue(row, ['grade_score']),
+      candidateModelId,
+      candidateModelName,
+      poolStage,
+      poolRank,
+      funnelRank,
+      scorePercent,
+      scoreTotal,
+      scoreTotalPoints,
+      scorePossiblePoints,
+      scoreTop50,
+      scoreTop20,
+      scoreTop5,
+      scoreBreakdown: firstValue(row, ['score_breakdown', 'scoreBreakdown']),
+      scoreSources: firstValue(row, ['score_sources', 'scoreSources']),
+      scoreStatus,
+      displayGradeSource,
+      gradeFallbackUsed,
+      legacyGrade: gradeValue,
+      gradeScore: scorePercent ?? firstValue(row, ['grade_score']),
       candidateGradeTooltip,
       ohlc: row.ohlc,
       display_ohlc: firstValue(row, ['display_ohlc', 'displayOhlc']),
@@ -2648,7 +2747,9 @@
       bigHandClass: bigHand.className,
       bigHandTooltip: bigHand.tooltip,
       candidateStatus,
-      note: candidateStatus ? `${candidateStatus} · ${noteValue}` : noteValue
+      note: [poolStage && poolRank !== null ? `${poolStage}#${poolRank}` : null, candidateStatus, noteValue]
+        .filter(Boolean)
+        .join(' · ')
     };
   }
 

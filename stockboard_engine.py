@@ -17,13 +17,21 @@ OUTPUT_KEYS = (
 )
 
 CANDIDATE_SCORE_MODEL = {
-    "version": "CANDIDATE_V0_1_RANK_GAP_OPEN",
+    "id": "TVRANK_A_V03_TEMP",
+    "name": "거래대금 순위 중심",
+    "version": "TVRANK_A_V03_TEMP",
     "items": [
-        {"key": "trade_value_rank", "max_score": 60},
-        {"key": "rank_gap", "max_score": 40},
+        {"key": "top50_trade_value_rank", "stage": "top50", "max_score": 30, "enabled": True},
+        {"key": "top50_rank_gap", "stage": "top50", "max_score": 30, "enabled": True},
+        {"key": "top50_foreign_sum", "stage": "top50", "max_score": 0, "enabled": False},
+        {"key": "top50_program_net", "stage": "top50", "max_score": 40, "enabled": True},
+        {"key": "top20_trade_value_ratio", "stage": "top20", "max_score": 50, "enabled": True},
+        {"key": "top20_large_trade_net_count", "stage": "top20", "max_score": 0, "enabled": False, "diagnostic_only": True},
+        {"key": "top5_one_min_strength_growth", "stage": "top5", "max_score": 30, "enabled": True},
+        {"key": "top5_realtime_strength_rank", "stage": "top5", "max_score": 20, "enabled": True},
+        {"key": "top5_one_min_net_buy_value_growth", "stage": "top5", "max_score": 50, "enabled": True},
     ],
 }
-
 
 def prepare_display_rows(top100_rows, tradable_codes, program_net_by_code):
     filtered_rows = [row for row in top100_rows if row["stock_code"] in tradable_codes]
@@ -107,6 +115,79 @@ def _item_max_score(key, model=None):
     return 0
 
 
+def _enabled_model_items(model=None):
+    model = model or CANDIDATE_SCORE_MODEL
+    enabled_items = []
+    for item in model.get("items", []):
+        max_score = _number_or_none(item.get("max_score")) or 0
+        if item.get("enabled", True) and max_score > 0:
+            next_item = dict(item)
+            next_item["max_score"] = max_score
+            enabled_items.append(next_item)
+    return enabled_items
+
+
+def _component_points(key, stage, max_score, score, source, reason=None):
+    if score is None:
+        points = 0
+        status = "missing"
+        reason = reason or "required_data_missing"
+    else:
+        points = round(_clamp(score, 0, max_score), 2)
+        status = "ok"
+        reason = reason or "data_available"
+    return {
+        "key": key,
+        "stage": stage,
+        "enabled": True,
+        "diagnostic_only": False,
+        "weight": max_score,
+        "earned_points": points,
+        "points": points,
+        "possible_points": max_score,
+        "source": source,
+        "status": status,
+        "coverage_status": status,
+        "reason": reason,
+    }
+
+
+def _disabled_component(key, stage, source, max_score=0, reason=None, diagnostic_only=False):
+    status = "diagnostic_only" if diagnostic_only else "disabled"
+    return {
+        "key": key,
+        "stage": stage,
+        "enabled": False,
+        "diagnostic_only": diagnostic_only,
+        "weight": max_score,
+        "earned_points": 0,
+        "points": 0,
+        "possible_points": 0,
+        "source": source,
+        "status": status,
+        "coverage_status": status,
+        "reason": reason or ("diagnostic_only_weight_0" if diagnostic_only else "disabled_by_model_policy"),
+    }
+
+
+def _sum_component_points(components, stage):
+    return round(
+        sum(item["points"] for item in components if item.get("stage") == stage),
+        2,
+    )
+
+
+def _sum_component_possible(components, stage):
+    return round(
+        sum(
+            item["possible_points"]
+            for item in components
+            if item.get("stage") == stage and item.get("enabled")
+        ),
+        2,
+    )
+
+
 def _current_rank(row):
     return _number_or_none(_first(row, "rank", "displayed_rank"))
 
@@ -138,16 +219,87 @@ def _rank_gap_score(rank_gap, max_score):
 
 def _candidate_grade(score):
     if score is None:
-        return ("F", "f")
-    if score >= 90:
+        return (None, "")
+    score = _clamp(score, 0, 100)
+    if score >= 91:
         return ("A", "a")
-    if score >= 80:
+    if score >= 81:
         return ("B", "b")
-    if score >= 60:
+    if score >= 71:
         return ("C", "c")
-    if score >= 40:
+    if score >= 61:
         return ("D", "d")
     return ("F", "f")
+
+
+def _grade_text(score):
+    grade, _grade_class = _candidate_grade(score)
+    if grade is None or score is None:
+        return "-"
+    return f"{grade}{int(round(_clamp(score, 0, 100)))}"
+
+
+def _rank_window_score(current_rank, max_rank, max_score):
+    if current_rank is None or max_score <= 0:
+        return None
+    if max_rank <= 1:
+        return max_score
+    score = (max_rank - current_rank + 1) / max_rank * max_score
+    return round(_clamp(score, 0, max_score), 2)
+
+
+def _positive_scaled_score(value, max_observed, max_score):
+    if value is None or max_score <= 0:
+        return None
+    if max_observed is None or max_observed <= 0:
+        return 0
+    return round(_clamp(value, 0, max_observed) / max_observed * max_score, 2)
+
+
+def _ranked_metric_score(value, values, max_score, reverse=True):
+    if value is None or max_score <= 0:
+        return None
+    ranked_values = sorted(
+        {item for item in values if item is not None},
+        reverse=reverse,
+    )
+    if not ranked_values:
+        return None
+    try:
+        rank_index = ranked_values.index(value)
+    except ValueError:
+        return None
+    if len(ranked_values) == 1:
+        return max_score
+    score = (len(ranked_values) - rank_index) / len(ranked_values) * max_score
+    return round(_clamp(score, 0, max_score), 2)
+
+
+def _trade_value_ratio(row):
+    current = _number_or_none(_first(row, "trade_value_eok"))
+    previous = _number_or_none(
+        _first(
+            row,
+            "prev_trade_value_eok",
+            "previous_trade_value_eok",
+            "yesterday_trade_value_eok",
+        )
+    )
+    if current is None or previous in (None, 0):
+        return None
+    return current / previous
+
+
+def _pool_stage(funnel_rank):
+    if funnel_rank is None:
+        return "top300"
+    if funnel_rank <= 5:
+        return "top5"
+    if funnel_rank <= 20:
+        return "top20"
+    if funnel_rank <= 50:
+        return "top50"
+    return "top300"
 
 
 def _trend_status(row):
@@ -255,38 +407,193 @@ def _candidate_text(row, current_rank, rank_gap, trend_ok):
 def enrich_candidate_fields(rows, model=None):
     model = model or CANDIDATE_SCORE_MODEL
     enrich_limit_state_fields(rows)
-    score_max = _candidate_score_max(model)
-    rank_max = _item_max_score("trade_value_rank", model)
-    rank_gap_max = _item_max_score("rank_gap", model)
     enriched_rows = []
+    model_items = model.get("items", [])
+    metric_rows = []
 
     for row in rows:
         current_rank = _current_rank(row)
         rank_gap = _rank_gap(row, current_rank)
-        rank_score = _rank_score(current_rank, rank_max)
-        rank_gap_score = _rank_gap_score(rank_gap, rank_gap_max)
-        item_scores = {
-            "trade_value_rank": rank_score,
-            "rank_gap": rank_gap_score,
+        metrics = {
+            "current_rank": current_rank,
+            "rank_gap": rank_gap,
+            "trade_value_ratio": _trade_value_ratio(row),
+            "program_net": _number_or_none(_first(row, "program_net")),
+            "foreign_sum": _number_or_none(
+                _first(row, "foreign_sum", "foreign_display_value")
+            ),
+            "large_trade_net_count": _number_or_none(
+                _first(row, "large_trade_net_count")
+            ),
+            "one_min_strength_growth": _number_or_none(
+                _first(row, "one_min_strength_growth_rate", "one_min_strength_delta")
+            ),
+            "realtime_strength": _number_or_none(
+                _first(row, "realtime_strength", "execution_strength")
+            ),
+            "one_min_net_buy_value_growth": _number_or_none(
+                _first(
+                    row,
+                    "one_min_net_buy_value_delta_eok",
+                    "one_min_net_buy_value_eok",
+                )
+            ),
         }
-        available_scores = [
-            score for score in item_scores.values() if score is not None
-        ]
-        raw_score = sum(available_scores)
-        score = (raw_score / score_max * 100) if score_max else None
-        if score is not None:
-            score = round(score, 2)
+        metric_rows.append((row, metrics))
+
+    max_program_net = max(
+        [metrics["program_net"] for _row, metrics in metric_rows if metrics["program_net"] is not None and metrics["program_net"] > 0],
+        default=None,
+    )
+    max_trade_value_ratio = max(
+        [metrics["trade_value_ratio"] for _row, metrics in metric_rows if metrics["trade_value_ratio"] is not None and metrics["trade_value_ratio"] > 0],
+        default=None,
+    )
+    max_one_min_strength_growth = max(
+        [metrics["one_min_strength_growth"] for _row, metrics in metric_rows if metrics["one_min_strength_growth"] is not None and metrics["one_min_strength_growth"] > 0],
+        default=None,
+    )
+    realtime_strength_values = [
+        metrics["realtime_strength"]
+        for _row, metrics in metric_rows
+        if metrics["realtime_strength"] is not None
+    ]
+    max_one_min_net_buy_value_growth = max(
+        [metrics["one_min_net_buy_value_growth"] for _row, metrics in metric_rows if metrics["one_min_net_buy_value_growth"] is not None and metrics["one_min_net_buy_value_growth"] > 0],
+        default=None,
+    )
+
+    for row, metrics in metric_rows:
+        legacy_grade = _first(row, "grade", "legacy_grade")
+        current_rank = metrics["current_rank"]
+        rank_gap = metrics["rank_gap"]
+        score_sources = {
+            "top300": "api_top100_trade_value_pool",
+            "top50_trade_value_rank": "rank/displayed_rank",
+            "top50_rank_gap": "rank_diff_or_prev_rank",
+            "top50_foreign_sum": "foreign_sum_diagnostic_only_weight_0",
+            "top50_program_net": "program_net",
+            "top20_trade_value_ratio": "trade_value_eok_vs_prev_trade_value_eok",
+            "top20_large_trade_net_count": "large_trade_net_count_diagnostic_only_weight_0",
+            "large_trade_net_sum_eok": "tooltip_diagnostic_only",
+            "top5_one_min_strength_growth": "one_min_strength_growth_rate_or_delta",
+            "top5_realtime_strength_rank": "realtime_strength",
+            "top5_one_min_net_buy_value_growth": "one_min_net_buy_value_delta_eok",
+        }
+        score_reasons = {
+            "top50_trade_value_rank": "rank based score from current displayed rank",
+            "top50_rank_gap": "designed for previous rank snapshot or TR based rank comparison",
+            "top50_foreign_sum": "foreign sum remains diagnostic until regular-session validation",
+            "top50_program_net": "program net contributes only when program_net data is present",
+            "top20_trade_value_ratio": "pending when previous-day trade value is unavailable",
+            "top20_large_trade_net_count": "large trade collection quality not verified; threshold remains 50000000 KRW per fill",
+            "top5_one_min_strength_growth": "pending when one-minute strength growth data is unavailable",
+            "top5_realtime_strength_rank": "pending when realtime strength data is unavailable",
+            "top5_one_min_net_buy_value_growth": "pending when one-minute net-buy value growth data is unavailable",
+        }
+        score_lookup = {
+            "top50_trade_value_rank": _rank_window_score(current_rank, 300, 30),
+            "top50_rank_gap": _rank_gap_score(rank_gap, 30),
+            "top50_foreign_sum": None,
+            "top50_program_net": _positive_scaled_score(
+                metrics["program_net"], max_program_net, 40
+            ),
+            "top20_trade_value_ratio": _positive_scaled_score(
+                metrics["trade_value_ratio"], max_trade_value_ratio, 50
+            ),
+            "top20_large_trade_net_count": None,
+            "top5_one_min_strength_growth": _positive_scaled_score(
+                metrics["one_min_strength_growth"], max_one_min_strength_growth, 30
+            ),
+            "top5_realtime_strength_rank": _ranked_metric_score(
+                metrics["realtime_strength"], realtime_strength_values, 20
+            ),
+            "top5_one_min_net_buy_value_growth": _positive_scaled_score(
+                metrics["one_min_net_buy_value_growth"],
+                max_one_min_net_buy_value_growth,
+                50,
+            ),
+        }
+        score_components = []
+        for item in model_items:
+            key = item.get("key")
+            stage = item.get("stage")
+            max_score = _number_or_none(item.get("max_score")) or 0
+            if not item.get("enabled", True) or max_score <= 0:
+                score_components.append(
+                    _disabled_component(
+                        key,
+                        stage,
+                        score_sources.get(key),
+                        max_score=max_score,
+                        reason=score_reasons.get(key),
+                        diagnostic_only=bool(item.get("diagnostic_only") or max_score == 0),
+                    )
+                )
+                continue
+            score_components.append(
+                _component_points(
+                    key,
+                    stage,
+                    max_score,
+                    score_lookup.get(key),
+                    score_sources.get(key),
+                    reason=score_reasons.get(key),
+                )
+            )
+        score_top50 = _sum_component_points(score_components, "top50")
+        score_top20 = _sum_component_points(score_components, "top20")
+        score_top5 = _sum_component_points(score_components, "top5")
+        possible_top50 = _sum_component_possible(score_components, "top50")
+        possible_top20 = _sum_component_possible(score_components, "top20")
+        possible_top5 = _sum_component_possible(score_components, "top5")
+        score_total_points = round(
+            sum(item["points"] for item in score_components), 2
+        )
+        score_possible_points = round(
+            sum(
+                item["possible_points"]
+                for item in score_components
+                if item.get("enabled")
+            ),
+            2,
+        )
+        score = (
+            int(round(score_total_points / score_possible_points * 100))
+            if score_possible_points > 0
+            else None
+        )
         grade, grade_class = _candidate_grade(score)
+        grade_text = _grade_text(score)
         trend_ok, trend_reason = _trend_status(row)
         status = _candidate_status(score, trend_ok)
         momentum, reason = _candidate_text(row, current_rank, rank_gap, trend_ok)
+        component_statuses = {
+            item["key"]: item["status"] for item in score_components
+        }
+        score_status = (
+            "partial"
+            if any(item["status"] == "missing" for item in score_components)
+            else "ok"
+        )
 
-        row["candidate_score_raw"] = round(raw_score, 2)
-        row["candidate_score_max"] = score_max
+        row["candidate_score_raw"] = score_total_points
+        row["candidate_score_max"] = score_possible_points
         row["candidate_score"] = score
+        row["score_top50"] = score_top50
+        row["score_top20"] = score_top20
+        row["score_top5"] = score_top5
+        row["score_total"] = score_total_points
+        row["score_total_points"] = score_total_points
+        row["score_possible_points"] = score_possible_points
+        row["score_percent"] = score
+        row["grade_letter"] = grade
+        row["legacy_grade"] = legacy_grade
         row["candidate_grade"] = grade
-        row["candidate_grade_text"] = f"{grade}{int(round(score or 0))}"
+        row["candidate_grade_text"] = grade_text
         row["candidate_grade_class"] = grade_class
+        row["display_grade_source"] = "candidate_grade_text"
+        row["grade_fallback_used"] = False
         row["candidate_reason"] = reason
         row["candidate_reason_tokens"] = [
             token.strip() for token in reason.split("+") if token.strip()
@@ -295,24 +602,143 @@ def enrich_candidate_fields(rows, model=None):
         row["trend_reason"] = trend_reason
         row["momentum"] = momentum
         row["candidate_status"] = status
+        row["candidate_model_id"] = model.get("id") or model.get("version")
+        row["candidate_model_name"] = model.get("name")
         row["candidate_score_version"] = model.get("version")
+        enabled_components = [
+            item
+            for item in score_components
+            if item.get("enabled") and not item.get("diagnostic_only")
+        ]
         row["candidate_score_coverage"] = (
-            round(len(available_scores) / len(model.get("items", [])), 2)
-            if model.get("items")
+            round(
+                len(
+                    [
+                        item
+                        for item in enabled_components
+                        if item.get("status") != "missing"
+                    ]
+                )
+                / len(enabled_components),
+                2,
+            )
+            if enabled_components
             else None
         )
-        row["candidate_score_items"] = item_scores
+        row["candidate_score_items"] = {
+            "top50": {
+                item["key"]: item["points"]
+                for item in score_components
+                if item.get("stage") == "top50"
+            },
+            "top20": {
+                item["key"]: item["points"]
+                for item in score_components
+                if item.get("stage") == "top20"
+            },
+            "top5": {
+                item["key"]: item["points"]
+                for item in score_components
+                if item.get("stage") == "top5"
+            },
+        }
+        row["score_breakdown"] = {
+            "top50": {
+                "score": score_top50,
+                "possible_points": possible_top50,
+                "items": [
+                    item for item in score_components if item.get("stage") == "top50"
+                ],
+            },
+            "top20": {
+                "score": score_top20,
+                "possible_points": possible_top20,
+                "items": [
+                    item for item in score_components if item.get("stage") == "top20"
+                ],
+            },
+            "top5": {
+                "score": score_top5,
+                "possible_points": possible_top5,
+                "items": [
+                    item for item in score_components if item.get("stage") == "top5"
+                ],
+            },
+            "total": {
+                "score": score_total_points,
+                "possible_points": score_possible_points,
+                "percent": score,
+                "formula": "round(score_total_points / score_possible_points * 100)",
+            },
+            "component_status": component_statuses,
+        }
+        row["score_breakdown"]["diagnostics"] = {
+            "foreign_sum": {
+                "value": metrics["foreign_sum"],
+                "source": score_sources["top50_foreign_sum"],
+                "status": component_statuses.get("top50_foreign_sum"),
+                "reason": score_reasons["top50_foreign_sum"],
+                "scoring_weight": 0,
+            },
+            "large_trade": {
+                "large_trade_net_count": metrics["large_trade_net_count"],
+                "large_trade_net_sum_eok": _number_or_none(_first(row, "large_trade_net_sum_eok")),
+                "threshold_krw": _number_or_none(_first(row, "large_trade_threshold_krw")) or 50000000,
+                "source": score_sources["top20_large_trade_net_count"],
+                "status": component_statuses.get("top20_large_trade_net_count"),
+                "reason": score_reasons["top20_large_trade_net_count"],
+                "scoring_weight": 0,
+            },
+        }
+        row["score_sources"] = score_sources
+        row["score_status"] = score_status
         row["is_candidate"] = False
         row["candidate_rank"] = None
+        row["pool_stage"] = None
+        row["pool_rank"] = None
+        row["funnel_rank"] = None
         enriched_rows.append(row)
 
-    candidate_rows = sorted(
+    top50_rows = sorted(
         enriched_rows,
         key=lambda row: (
-            -(_number_or_none(row.get("candidate_score")) or -1),
+            -(_number_or_none(row.get("score_top50")) or -1),
+            _current_rank(row) or float("inf"),
+        ),
+    )[:50]
+    top20_rows = sorted(
+        top50_rows,
+        key=lambda row: (
+            -(_number_or_none(row.get("score_top20")) or -1),
+            -(_number_or_none(row.get("score_top50")) or -1),
+            _current_rank(row) or float("inf"),
+        ),
+    )[:20]
+    candidate_rows = sorted(
+        top20_rows,
+        key=lambda row: (
+            -(_number_or_none(row.get("score_top5")) or -1),
+            -(_number_or_none(row.get("score_total")) or -1),
             _current_rank(row) or float("inf"),
         ),
     )[:5]
+    ranked_rows = candidate_rows + [
+        row for row in top20_rows if row not in candidate_rows
+    ] + [
+        row for row in top50_rows if row not in top20_rows
+    ] + [
+        item for item in sorted(
+            enriched_rows,
+            key=lambda item: _current_rank(item) or float("inf"),
+        )
+        if item not in top50_rows
+    ]
+
+    for funnel_rank, row in enumerate(ranked_rows, start=1):
+        row["funnel_rank"] = funnel_rank
+        row["pool_rank"] = funnel_rank
+        row["pool_stage"] = _pool_stage(funnel_rank)
+
     for candidate_rank, row in enumerate(candidate_rows, start=1):
         row["is_candidate"] = True
         row["candidate_rank"] = candidate_rank
