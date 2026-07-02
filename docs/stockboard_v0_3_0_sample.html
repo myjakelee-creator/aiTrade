@@ -8,6 +8,39 @@
 <title>StockBoard v0.3.6 Prev Close Proportional</title>
 <link rel="stylesheet" href="assets/stockboard.css?v=5b_css_split_20260627" />
 <style>
+  .topbar {
+    grid-template-columns: repeat(10, max-content) minmax(0, 1fr);
+    justify-content: flex-start;
+    column-gap: 0;
+    font-size: var(--board-font-size);
+  }
+  .topbar > div {
+    padding-left: 4px;
+    padding-right: 4px;
+    justify-content: flex-start;
+  }
+  .topbar > div:first-child {
+    padding-right: 1px;
+  }
+  .topbar > div:nth-child(2) {
+    padding-left: 0;
+    padding-right: 2px;
+  }
+  .topbar > div:nth-child(3) {
+    padding-left: 3px;
+  }
+  .topbar button,
+  .candidate-model-control,
+  .candidate-model-control select,
+  .momentum {
+    font-size: var(--board-font-size);
+  }
+  .lamp {
+    margin-left: 3px;
+  }
+  .combined-lamp {
+    margin-left: 0;
+  }
   .market-distribution .subject-flow-chart {
     border-radius: 3px;
     padding: 3px;
@@ -960,6 +993,7 @@
       { defaultWidth: 54, minWidth: 42 },
       { defaultWidth: 58, minWidth: 48 },
       { defaultWidth: 76, minWidth: 58 },
+      { defaultWidth: 62, minWidth: 48 },
       { defaultWidth: 298, minWidth: 180 }
     ];
     const cells = () => Array.from(topbar.children);
@@ -970,6 +1004,7 @@
       getHandleCells: cells,
       applyWidths(widths) {
         topbar.style.gridTemplateColumns = [
+          'max-content',
           'max-content',
           'max-content',
           'max-content',
@@ -2491,35 +2526,9 @@
     const scoreTop20 = firstValue(row, ['score_top20', 'scoreTop20']);
     const scoreTop5 = firstValue(row, ['score_top5', 'scoreTop5']);
     const scoreStatus = firstValue(row, ['score_status', 'scoreStatus']);
-    const candidateGradeTooltip = [
-      `grade_source: ${displayGradeSource}`,
-      gradeFallbackUsed ? 'grade_fallback_used: true' : 'grade_fallback_used: false',
-      gradeFallbackUsed ? `legacy_grade: ${gradeValue}` : null,
-      candidateModelName ? `model: ${candidateModelName}` : null,
-      candidateModelId ? `model_id: ${candidateModelId}` : null,
-      poolStage ? `pool_stage: ${poolStage}` : null,
-      poolRank !== null ? `pool_rank: ${poolRank}` : null,
-      funnelRank !== null ? `funnel_rank: ${funnelRank}` : null,
-      scorePercent !== null ? `score_percent: ${scorePercent}` : null,
-      scoreTotal !== null ? `score_total: ${scoreTotal}` : null,
-      scoreTotalPoints !== null ? `score_total_points: ${scoreTotalPoints}` : null,
-      scorePossiblePoints !== null ? `score_possible_points: ${scorePossiblePoints}` : null,
-      scoreTop50 !== null ? `score_top50: ${scoreTop50}` : null,
-      scoreTop20 !== null ? `score_top20: ${scoreTop20}` : null,
-      scoreTop5 !== null ? `score_top5: ${scoreTop5}` : null,
-      scoreStatus ? `score_status: ${JSON.stringify(scoreStatus)}` : null,
-      firstValue(row, ['candidate_reason']),
-      firstValue(row, ['trend_reason']),
-      firstValue(row, ['candidate_score']) !== null
-        ? `score: ${firstValue(row, ['candidate_score'])}` : null,
-      firstValue(row, ['candidate_score_raw']) !== null
-        ? `raw: ${firstValue(row, ['candidate_score_raw'])}` : null,
-      firstValue(row, ['candidate_score_max']) !== null
-        ? `max: ${firstValue(row, ['candidate_score_max'])}` : null,
-      firstValue(row, ['candidate_score_version']),
-      firstValue(row, ['candidate_score_coverage']) !== null
-        ? `coverage: ${firstValue(row, ['candidate_score_coverage'])}` : null
-    ].filter(Boolean).join('\n');
+    const candidateGradeTooltip = displayGradeValue === null
+      ? ''
+      : displayValue(displayGradeValue);
     const normalizedCode = normalizeCode(firstValue(row, ['stock_code', '종목코드', 'code']));
     const officialFiveMinuteStrength = (
       firstValue(row, ['strength_source', 'strengthSource']) === 'opt10046'
