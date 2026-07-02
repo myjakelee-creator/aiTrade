@@ -14,6 +14,43 @@
     column-gap: 0;
     font-size: var(--board-font-size);
   }
+  .grid.board.enhanced-board {
+    table-layout: fixed;
+  }
+  #top20-board,
+  #top50-board {
+    min-width: 0;
+    table-layout: fixed;
+  }
+  #top20-board th,
+  #top50-board th {
+    position: relative;
+    overflow: visible;
+  }
+  #top20-board .column-label,
+  #top50-board .column-label {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #top20-board .column-resizer,
+  #top50-board .column-resizer {
+    position: absolute;
+    top: 0;
+    right: -4px;
+    width: 8px;
+    height: 100%;
+    z-index: 5;
+    cursor: col-resize;
+    touch-action: none;
+    user-select: none;
+  }
+  #top20-board .metric,
+  #top50-board .metric,
+  #top20-board .note,
+  #top50-board .note {
+    min-width: 0;
+  }
   .topbar > div {
     padding-left: 4px;
     padding-right: 4px;
@@ -207,12 +244,12 @@
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>대량체결</th><th>모멘텀</th></tr>
   </table>
 
-  <div class="section sec-blue">Top20 집중 관찰 <span id="top20-row-count">0종목</span></div>
+  <div class="section sec-blue">Top20 집중 관찰 <span id="top20-row-count">0종목</span> <span class="lane-speed-badge lane-speed-waiting" id="top20-lane-speed-badge">Top20 확인중</span> <span class="lane-actual-speed" id="top20-actual-speed">실제 -</span></div>
   <table class="grid board enhanced-board" id="top20-board">
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>대량체결</th><th>모멘텀</th></tr>
   </table>
 
-  <div class="section sec-blue">Top50 후보 <span id="top50-row-count">0종목</span></div>
+  <div class="section sec-blue">Top50 후보 <span id="top50-row-count">0종목</span> <span class="lane-speed-badge lane-speed-waiting" id="top50-lane-speed-badge">Top50 확인중</span> <span class="lane-actual-speed" id="top50-actual-speed">실제 -</span></div>
   <table class="grid board enhanced-board" id="top50-board">
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>대량체결</th><th>모멘텀</th></tr>
   </table>
@@ -332,6 +369,10 @@
   const top50RowCount = document.getElementById('top50-row-count');
   const hotLaneSpeedBadge = document.getElementById('hot-lane-speed-badge');
   const hotActualSpeed = document.getElementById('hot-actual-speed');
+  const top20LaneSpeedBadge = document.getElementById('top20-lane-speed-badge');
+  const top20ActualSpeed = document.getElementById('top20-actual-speed');
+  const top50LaneSpeedBadge = document.getElementById('top50-lane-speed-badge');
+  const top50ActualSpeed = document.getElementById('top50-actual-speed');
   const top100LaneSpeedBadge = document.getElementById('top100-lane-speed-badge');
   const top100ActualSpeed = document.getElementById('top100-actual-speed');
   const candidateLaneSpeedBadge = document.getElementById('candidate-lane-speed-badge');
@@ -1141,8 +1182,7 @@
     { label: '대량체결', defaultWidth: 56, minWidth: 48, sortKey: 'bigHand', sortDefault: 'desc' },
     { label: '모멘텀', defaultWidth: 90, minWidth: 70, sortKey: 'note', sortDefault: 'asc' }
   ];
-  const top100PoolColumnIndexes = boardColumns.map((column, index) => index);
-  const top100PoolColumns = top100PoolColumnIndexes.map(index => boardColumns[index]);
+  const boardColumnCount = boardColumns.length;
   const boardSortDefaults = Object.fromEntries(
     boardColumns
       .filter(column => column.sortKey)
@@ -1244,7 +1284,7 @@
     if (!boardColumns[index] || boardColumns[index].label === label) return false;
     boardColumns[index].label = label;
     boardHeader = buildBoardHeader();
-    top100PoolHeader = buildBoardHeader(top100PoolColumns);
+    top100PoolHeader = boardHeader;
     allBoardTables().forEach(table => {
       const labelElement = table?.querySelector?.(`th:nth-child(${index + 1}) .column-label`);
       if (labelElement?.firstChild) labelElement.firstChild.nodeValue = label;
@@ -1252,10 +1292,10 @@
     return true;
   }
   let boardHeader = buildBoardHeader();
-  let top100PoolHeader = buildBoardHeader(top100PoolColumns);
-  board.innerHTML = `${top100PoolHeader}<tr><td colspan="${top100PoolColumns.length}">거래 가능 종목 마스터를 불러오는 중입니다.</td></tr>`;
+  let top100PoolHeader = boardHeader;
+  board.innerHTML = `${top100PoolHeader}<tr><td colspan="${boardColumnCount}">거래 가능 종목 마스터를 불러오는 중입니다.</td></tr>`;
   candidateBoard.innerHTML = boardHeader;
-  selectedBoard.innerHTML = `${boardHeader}<tr><td colspan="15">선택된 종목이 없습니다.</td></tr>`;
+  selectedBoard.innerHTML = `${boardHeader}<tr><td colspan="${boardColumnCount}">선택된 종목이 없습니다.</td></tr>`;
   top20Board.innerHTML = top100PoolHeader;
   top50Board.innerHTML = top100PoolHeader;
 
@@ -1269,22 +1309,11 @@
 
   function applyColumnWidths() {
     const totalWidth = boardColumnWidths.reduce((total, width) => total + width, 0);
-    const poolWidth = top100PoolColumnIndexes.reduce((total, columnIndex) =>
-      total + (boardColumnWidths[columnIndex] || 0), 0
-    );
-    [candidateBoard, selectedBoard].forEach(table => {
+    allBoardTables().forEach(table => {
       boardColumnWidths.forEach((width, index) => {
         table.style.setProperty(`--trading-column-${index}-width`, `${width}px`);
       });
       table.style.width = `${totalWidth}px`;
-    });
-    top100PoolColumnIndexes.forEach((columnIndex, poolIndex) => {
-      poolBoardTables().forEach(table => {
-        table.style.setProperty(`--trading-column-${poolIndex}-width`, `${boardColumnWidths[columnIndex]}px`);
-      });
-    });
-    poolBoardTables().forEach(table => {
-      table.style.width = `${poolWidth}px`;
     });
     marketOverview.style.width = `${totalWidth}px`;
   }
@@ -1368,20 +1397,10 @@
     boardColumnManualWidths[columnIndex] = width;
     boardColumnWidths[columnIndex] = width;
     const totalWidth = boardColumnWidths.reduce((total, value) => total + value, 0);
-    const poolWidth = top100PoolColumnIndexes.reduce((total, value) =>
-      total + (boardColumnWidths[value] || 0), 0
-    );
-    [candidateBoard, selectedBoard].forEach(table => {
+    allBoardTables().forEach(table => {
       table.style.setProperty(`--trading-column-${columnIndex}-width`, `${width}px`);
       table.style.width = `${totalWidth}px`;
     });
-    const poolIndex = top100PoolColumnIndexes.indexOf(columnIndex);
-    if (poolIndex >= 0) {
-      poolBoardTables().forEach(table => {
-        table.style.setProperty(`--trading-column-${poolIndex}-width`, `${width}px`);
-        table.style.width = `${poolWidth}px`;
-      });
-    }
     marketOverview.style.width = `${totalWidth}px`;
   });
 
@@ -2384,9 +2403,7 @@
   }
 
   function sectionRankNumber(row) {
-    return sortableNumber(row.poolRank)
-      ?? sortableNumber(row.funnelRank)
-      ?? sortableNumber(row.sortRank)
+    return sortableNumber(row.sortRank)
       ?? sortableNumber(row.rank);
   }
 
@@ -2874,7 +2891,7 @@
     top20RowCount.textContent = '0종목';
     top50RowCount.textContent = '0종목';
     rankingRowCount.textContent = '0종목';
-    board.innerHTML = `${top100PoolHeader}<tr><td colspan="${top100PoolColumns.length}">${escapeHtml(message)}</td></tr>`;
+    board.innerHTML = `${top100PoolHeader}<tr><td colspan="${boardColumnCount}">${escapeHtml(message)}</td></tr>`;
   }
 
   function setCell(cell, html, className = '', title = '', flashOnChange = false) {
@@ -3109,7 +3126,7 @@
     const tableRow = document.createElement('tr');
     tableRow.dataset.stockCode = row.code;
     tableRow.dataset.hasOhlc = hasDisplayOhlc(row) ? 'true' : 'false';
-    for (let index = 0; index < 15; index += 1) tableRow.insertCell();
+    for (let index = 0; index < boardColumnCount; index += 1) tableRow.insertCell();
     updateBoardRow(tableRow, row);
     return tableRow;
   }
@@ -3122,7 +3139,7 @@
     const tableRow = document.createElement('tr');
     tableRow.dataset.stockCode = row.code;
     tableRow.dataset.hasOhlc = hasDisplayOhlc(row) ? 'true' : 'false';
-    for (let index = 0; index < top100PoolColumns.length; index += 1) tableRow.insertCell();
+    for (let index = 0; index < boardColumnCount; index += 1) tableRow.insertCell();
     updateTop100PoolRow(tableRow, row);
     return tableRow;
   }
@@ -3135,7 +3152,7 @@
     top100State.selectedRow = row || null;
     selectedBoard.innerHTML = boardHeader;
     if (!row) {
-      selectedBoard.tBodies[0].innerHTML = '<tr><td colspan="15">선택된 종목이 없습니다.</td></tr>';
+      selectedBoard.tBodies[0].innerHTML = `<tr><td colspan="${boardColumnCount}">선택된 종목이 없습니다.</td></tr>`;
       selectedRowCount.textContent = '0종목';
       return;
     }
@@ -3692,7 +3709,7 @@
       const tableRow = document.createElement('tr');
       tableRow.dataset.stockCode = row.code;
       tableRow.dataset.hasOhlc = hasDisplayOhlc(row) ? 'true' : 'false';
-      for (let cellIndex = 0; cellIndex < 15; cellIndex += 1) tableRow.insertCell();
+      for (let cellIndex = 0; cellIndex < boardColumnCount; cellIndex += 1) tableRow.insertCell();
       updateCandidateRow(tableRow, row);
       candidateBoard.tBodies[0].appendChild(tableRow);
       top100State.candidateRowByCode.set(row.code, tableRow);
@@ -4354,12 +4371,18 @@
   function setTop100ActualSpeed(elapsedMs) {
     const value = Number(elapsedMs);
     top100State.top100ApiElapsedMs = Number.isFinite(value) && value >= 0 ? value : null;
-    if (!top100ActualSpeed) return;
     const label = top100State.top100ApiElapsedMs === null
       ? '실제 -'
       : `실제 ${(top100State.top100ApiElapsedMs / 1000).toFixed(2)}초`;
-    top100ActualSpeed.textContent = label;
-    top100ActualSpeed.setAttribute('aria-label', `Top100 최신 API 응답 시간 ${label}`);
+    [
+      [top20ActualSpeed, 'Top20'],
+      [top50ActualSpeed, 'Top50'],
+      [top100ActualSpeed, 'Top100']
+    ].forEach(([element, sectionLabel]) => {
+      if (!element) return;
+      element.textContent = label;
+      element.setAttribute('aria-label', `${sectionLabel} 최신 API 응답 시간 ${label}`);
+    });
   }
 
   function setHotActualSpeed(elapsedMs) {
@@ -4400,6 +4423,16 @@
     element.setAttribute('aria-label', tooltip);
   }
 
+  function setTop100PoolLaneSpeedBadges(view, tooltipDetail) {
+    [
+      [top20LaneSpeedBadge, 'Top20'],
+      [top50LaneSpeedBadge, 'Top50'],
+      [top100LaneSpeedBadge, 'Top100']
+    ].forEach(([element, labelPrefix]) => {
+      setLaneSpeedBadge(element, labelPrefix, view, `${labelPrefix} 속도\n${tooltipDetail}`);
+    });
+  }
+
   function applyHotLaneStatus(payload) {
     const adaptiveMode = nestedLaneValue(payload, 'adaptive_speed.mode');
     const priceLightMode = nestedLaneValue(payload, 'price_light_lane.adaptive_mode');
@@ -4410,11 +4443,9 @@
       hotLaneSpeedView(adaptiveMode, HOT_REALTIME_PATCH_REFRESH_MS),
       `HOT5+S1 속도\n기준 호출주기=${HOT_REALTIME_PATCH_REFRESH_MS}ms\nadaptive_speed.mode=${adaptiveMode || '-'}`
     );
-    setLaneSpeedBadge(
-      top100LaneSpeedBadge,
-      'Top100',
+    setTop100PoolLaneSpeedBadges(
       top100LaneSpeedView(priceLightMode, TOP100_POOL_REALTIME_PATCH_REFRESH_MS),
-      `Top100 속도\n기준 호출주기=${TOP100_POOL_REALTIME_PATCH_REFRESH_MS}ms\nprice_light_lane.adaptive_mode=${priceLightMode || '-'}`
+      `기준 호출주기=${TOP100_POOL_REALTIME_PATCH_REFRESH_MS}ms\nprice_light_lane.adaptive_mode=${priceLightMode || '-'}`
     );
     setLaneSpeedBadge(
       candidateLaneSpeedBadge,
@@ -4436,7 +4467,7 @@
     } catch (error) {
       console.warn(error);
       setLaneSpeedBadge(hotLaneSpeedBadge, 'HOT5', hotLaneSpeedView('unknown'), 'HOT5+S1 속도 상태 수신 대기');
-      setLaneSpeedBadge(top100LaneSpeedBadge, 'Top100', top100LaneSpeedView('unknown'), 'Top100 속도 상태 수신 대기');
+      setTop100PoolLaneSpeedBadges(top100LaneSpeedView('unknown'), '상태 수신 대기');
       setLaneSpeedBadge(candidateLaneSpeedBadge, '후보', null, '후보계산 속도 상태 수신 대기');
       return null;
     } finally {
