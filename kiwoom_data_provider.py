@@ -856,6 +856,14 @@ def _empty_market_supply_entry(market_name):
         "available": False,
         "status": "unavailable",
         "error": None,
+        "market_index_source": None,
+        "market_index_status": "unavailable",
+        "breadth_source": None,
+        "breadth_status": "unavailable",
+        "investor_flow_source": None,
+        "investor_flow_status": "unavailable",
+        "program_market_source": None,
+        "program_market_status": "unavailable",
     }
 
 
@@ -906,10 +914,16 @@ def fetch_market_supply(access_token, query_date):
                     "lower_limit_count": _required_market_count(
                         response, "lst", market_name
                     ),
+                    "market_index_source": "ka20001",
+                    "market_index_status": "available",
+                    "breadth_source": "ka20001",
+                    "breadth_status": "available",
                 }
             )
         except (KiwoomAPIError, RuntimeError, ValueError) as error:
             entry["error"] = str(error)
+            entry["market_index_status"] = "unavailable"
+            entry["breadth_status"] = "unavailable"
             errors.append({"market": market_name, "api": "ka20001", "error": str(error)})
             print(
                 f"warning: ka20001 {market_name} market supply unavailable: {error}",
@@ -981,15 +995,29 @@ def fetch_market_supply(access_token, query_date):
                 market_supply[key].update(
                     {
                         **values,
-                        "available": True,
-                        "status": "available",
-                        "error": None,
+                        "investor_flow_source": "ka10051",
+                        "investor_flow_status": "available",
+                        "program_market_source": "ka90005",
+                        "program_market_status": "available",
                         "flow_date": base_date,
                     }
                 )
+                entry = market_supply[key]
+                index_ok = entry.get("market_index_status") == "available"
+                breadth_ok = entry.get("breadth_status") == "available"
+                flow_ok = entry.get("investor_flow_status") == "available"
+                program_ok = entry.get("program_market_status") == "available"
+                entry["available"] = index_ok and breadth_ok and flow_ok and program_ok
+                entry["status"] = "available" if entry["available"] else "partial"
             market_supply["_status"] = {
-                "available": True,
-                "status": "available",
+                "available": all(
+                    market_supply[key].get("available") for key, *_ in markets
+                ),
+                "status": (
+                    "available"
+                    if all(market_supply[key].get("available") for key, *_ in markets)
+                    else "partial"
+                ),
                 "error": None,
                 "query_date": query_date,
                 "flow_date": base_date,
@@ -1016,7 +1044,7 @@ def fetch_market_supply(access_token, query_date):
     return market_supply
 
 
-def fetch_ohlc(access_token, rows, query_date, sleep_seconds):
+def fetch_ohlc(access_token, rows, query_date, sleep_seconds, sequential=False):
     """Attach actual ka10086 OHLC data to every displayed row."""
     raw_samples = []
     converted_samples = []
@@ -1084,7 +1112,7 @@ def fetch_ohlc(access_token, rows, query_date, sleep_seconds):
         return response, failure_reason, rate_limited
 
     pending_requests = []
-    worker_count = min(4, len(target_rows)) or 1
+    worker_count = 1 if sequential else (min(4, len(target_rows)) or 1)
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         for position, row in enumerate(target_rows, start=1):
             row["ohlc"] = None

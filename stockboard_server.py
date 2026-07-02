@@ -45,6 +45,14 @@ PRICE_LIGHT_MIN_INTERVAL_SEC = float(
 PRICE_LIGHT_MAX_CONSECUTIVE_SKIPS = int(
     os.getenv("STOCKBOARD_PRICE_LIGHT_MAX_CONSECUTIVE_SKIPS", "3")
 )
+MARKET_SUPPLY_REFRESH_TTL_SEC = float(
+    os.getenv("STOCKBOARD_MARKET_SUPPLY_REFRESH_TTL_SEC", "3.0")
+)
+AFTERMARKET_BACKFILL_COMPLETED_STATUSES = {
+    "completed",
+    "cached_completed",
+    "restored_completed",
+}
 CANDIDATE_SAFE_PRICE_MAX_AGE_SEC = float(
     os.getenv("STOCKBOARD_CANDIDATE_SAFE_PRICE_MAX_AGE_SEC", "5.0")
 )
@@ -337,6 +345,67 @@ def _is_ohlc(value):
     return isinstance(value, dict) and not isinstance(value, list)
 
 
+def _ohlc_trading_date(value):
+    if not _is_ohlc(value):
+        return ""
+    return _normalize_trading_date(value.get("trading_date"))
+
+
+def _same_trading_date(left, right):
+    left_date = _ohlc_trading_date(left)
+    right_date = _ohlc_trading_date(right)
+    return bool(left_date and right_date and left_date == right_date)
+
+
+def _preferred_realtime_ohlc(realtime_ohlc, base_ohlc):
+    if not _is_ohlc(realtime_ohlc):
+        return None
+    if _is_ohlc(base_ohlc) and not _same_trading_date(realtime_ohlc, base_ohlc):
+        return None
+    return realtime_ohlc
+
+
+def _orderbook_share_from_volumes(bid_volume, ask_volume):
+    bid_number = _realtime_number(bid_volume)
+    ask_number = _realtime_number(ask_volume)
+    if bid_number is None or ask_number is None:
+        return None, None
+    total = bid_number + ask_number
+    if bid_number < 0 or ask_number < 0 or total <= 0:
+        return None, None
+    bid_pct = round((bid_number / total) * 100)
+    return bid_pct, 100 - bid_pct
+
+
+def _normalize_orderbook_share_fields(row):
+    bid_volume = row.get("bid_volume")
+    if bid_volume is None:
+        bid_volume = row.get("bid_volume_snapshot")
+    ask_volume = row.get("ask_volume")
+    if ask_volume is None:
+        ask_volume = row.get("ask_volume_snapshot")
+    bid_pct, ask_pct = _orderbook_share_from_volumes(bid_volume, ask_volume)
+    if bid_pct is None or ask_pct is None:
+        return
+    existing_bid_pct = _realtime_number(row.get("bid_pct"))
+    existing_ask_pct = _realtime_number(row.get("ask_pct"))
+    if (
+        existing_bid_pct is not None
+        and existing_ask_pct is not None
+        and (
+            abs(existing_bid_pct - bid_pct) > 1
+            or abs(existing_ask_pct - ask_pct) > 1
+        )
+    ):
+        row["orderbook_share_diagnostic"] = (
+            "pct corrected from raw bid/ask volume "
+            f"provided={existing_bid_pct:g}/{existing_ask_pct:g} "
+            f"derived={bid_pct}/{ask_pct}"
+        )
+    row["bid_pct"] = bid_pct
+    row["ask_pct"] = ask_pct
+
+
 def _is_al_source(value):
     return str(value or "").upper().endswith("_AL")
 
@@ -562,10 +631,10 @@ def _apply_display_price_fields(row, now=None):
     regular_ohlc = row.get("regular_close_ohlc")
     realtime_price = row.get("realtime_price")
     realtime_change_rate = row.get("realtime_change_rate")
-    realtime_ohlc = row.get("realtime_ohlc")
     base_price = row.get("price")
     base_change_rate = row.get("change_rate")
     base_ohlc = row.get("ohlc")
+    realtime_ohlc = _preferred_realtime_ohlc(row.get("realtime_ohlc"), base_ohlc)
 
     if phase == "regular_close_lock" and _has_value(regular_price):
         row["display_price"] = regular_price
@@ -579,11 +648,16 @@ def _apply_display_price_fields(row, now=None):
         if _has_value(realtime_price) and _is_realtime_fresh(row):
             row["display_price"] = realtime_price
             row["display_change_rate"] = realtime_change_rate
-            row["display_ohlc"] = deepcopy(realtime_ohlc) if _is_ohlc(realtime_ohlc) else None
+            if _is_ohlc(realtime_ohlc):
+                row["display_ohlc"] = deepcopy(realtime_ohlc)
+                row["display_ohlc_source"] = "realtime_ohlc"
+            elif _is_ohlc(base_ohlc):
+                row["display_ohlc"] = deepcopy(base_ohlc)
+                row["display_ohlc_source"] = "base_ohlc_aftermarket_realtime"
+            else:
+                row["display_ohlc"] = None
+                row["display_ohlc_source"] = "unavailable"
             row["price_source"] = "aftermarket_realtime"
-            row["display_ohlc_source"] = (
-                "realtime_ohlc" if _is_ohlc(realtime_ohlc) else "unavailable"
-            )
             return row
         if _has_value(regular_price):
             row["display_price"] = regular_price
@@ -596,11 +670,16 @@ def _apply_display_price_fields(row, now=None):
     if _has_value(realtime_price):
         row["display_price"] = realtime_price
         row["display_change_rate"] = realtime_change_rate
-        row["display_ohlc"] = deepcopy(realtime_ohlc) if _is_ohlc(realtime_ohlc) else None
+        if _is_ohlc(realtime_ohlc):
+            row["display_ohlc"] = deepcopy(realtime_ohlc)
+            row["display_ohlc_source"] = "realtime_ohlc"
+        elif _is_ohlc(base_ohlc):
+            row["display_ohlc"] = deepcopy(base_ohlc)
+            row["display_ohlc_source"] = "base_ohlc_realtime_price"
+        else:
+            row["display_ohlc"] = None
+            row["display_ohlc_source"] = "unavailable"
         row["price_source"] = "realtime"
-        row["display_ohlc_source"] = (
-            "realtime_ohlc" if _is_ohlc(realtime_ohlc) else "unavailable"
-        )
     elif _has_value(base_price):
         row["display_price"] = base_price
         row["display_change_rate"] = base_change_rate
@@ -789,11 +868,12 @@ def _overlay_close_metrics(row, snapshot, include_debug=False):
         "orderbook_snapshot_at",
         "orderbook_stale_sec",
         "orderbook_status",
-        "orderbook_error",
-        "orderbook_status_detail",
-        "orderbook_requested_at",
-        "orderbook_completed_at",
-        "orderbook_tr_repeat_count",
+            "orderbook_error",
+            "orderbook_status_detail",
+            "orderbook_share_diagnostic",
+            "orderbook_requested_at",
+            "orderbook_completed_at",
+            "orderbook_tr_repeat_count",
         "orderbook_rqname",
         "orderbook_trcode",
         "orderbook_screen_no",
@@ -855,6 +935,7 @@ def _overlay_close_metrics(row, snapshot, include_debug=False):
         row["realtime_strength_snapshot"] = snapshot.get(
             "realtime_strength_snapshot"
         )
+    _normalize_orderbook_share_fields(row)
 
 
 def _overlay_quote_latest(row, quote):
@@ -969,6 +1050,7 @@ def _overlay_quote_latest(row, quote):
         or row.get("ask_volume") is not None
     ):
         row["orderbook_status"] = quote.get("orderbook_status") or "ok"
+    _normalize_orderbook_share_fields(row)
 
 
 def _top100_with_realtime(rows, realtime_store, include_debug=False):
@@ -1351,6 +1433,7 @@ def _realtime_patch_payload(
         _copy_regular_close_fields(patch, quote)
         _apply_freshness_fields(patch)
         _apply_display_price_fields(patch)
+        _normalize_orderbook_share_fields(patch)
         _sanitize_realtime_display_patch(patch)
         patches.append(patch)
         try:
@@ -1500,10 +1583,11 @@ REALTIME_SLIM_CLOSE_METRIC_FIELDS = frozenset(
         "bid_ask_ratio_snapshot",
         "orderbook_source",
         "orderbook_snapshot_at",
-        "orderbook_status",
-        "orderbook_error",
-        "orderbook_status_detail",
-        "orderbook_stale_sec",
+            "orderbook_status",
+            "orderbook_error",
+            "orderbook_status_detail",
+            "orderbook_share_diagnostic",
+            "orderbook_stale_sec",
         "realtime_strength_snapshot",
         "strength_5m",
         "strength_20m",
@@ -1659,6 +1743,7 @@ def make_handler(
     expected_row_count,
     expected_ohlc_count,
     expected_rows_id,
+    access_token,
     market_supply,
     realtime_store,
     realtime_provider,
@@ -1671,6 +1756,8 @@ def make_handler(
     realtime_provider_register_error,
 ):
     selected_hot_lock = RLock()
+    market_supply_lock = RLock()
+    market_supply_last_refreshed_at = 0.0
     selected_hot_codes = set(
         _parse_hot_code_query(
             {"codes": [os.getenv("STOCKBOARD_HOT_SELECTED_CODES", "")]}
@@ -1697,6 +1784,48 @@ def make_handler(
         "last_hot_api_latency_ms": None,
         "last_evaluated_at": None,
     }
+
+    def current_query_date():
+        return datetime.now(KST).strftime("%Y%m%d")
+
+    def market_supply_response_payload(current_market_supply):
+        market_supply_status = current_market_supply.get("_status", {})
+        return {
+            "market_session": _market_session(),
+            "available": market_supply_status.get("available", False),
+            "status": market_supply_status.get("status", "unavailable"),
+            "error": market_supply_status.get("error"),
+            "flow_date": market_supply_status.get("flow_date"),
+            "kospi": current_market_supply["kospi"],
+            "kosdaq": current_market_supply["kosdaq"],
+        }
+
+    def refreshed_market_supply(force=False):
+        nonlocal market_supply, market_supply_last_refreshed_at
+        now = time.monotonic()
+        with market_supply_lock:
+            if (
+                not force
+                and market_supply_last_refreshed_at
+                and now - market_supply_last_refreshed_at < MARKET_SUPPLY_REFRESH_TTL_SEC
+            ):
+                return market_supply
+            try:
+                market_supply = fetch_market_supply(access_token, current_query_date())
+                market_supply_last_refreshed_at = now
+            except Exception as error:
+                stale = deepcopy(market_supply)
+                status = stale.setdefault("_status", {})
+                status["available"] = False
+                status["status"] = "stale_error"
+                status["error"] = f"market supply refresh failed: {error}"
+                for key in ("kospi", "kosdaq"):
+                    if key in stale and isinstance(stale[key], dict):
+                        stale[key]["available"] = False
+                        stale[key]["status"] = "stale_error"
+                        stale[key]["error"] = status["error"]
+                return stale
+            return market_supply
     aftermarket_backfill_lock = RLock()
     aftermarket_backfill_cancel = Event()
     aftermarket_backfill_thread = None
@@ -1728,6 +1857,7 @@ def make_handler(
     }
 
     def aftermarket_backfill_status():
+        restore_aftermarket_backfill_completion()
         with aftermarket_backfill_lock:
             payload = deepcopy(aftermarket_backfill_state)
         total_codes = int(payload.get("total_codes") or 0)
@@ -1786,7 +1916,11 @@ def make_handler(
         if metric == "strength":
             if snapshot.get("strength_source") != "opt10046":
                 return False
-            if snapshot.get("strength_status") not in {"ok", "no_data"}:
+            if snapshot.get("strength_status") not in {
+                "ok",
+                "no_data",
+                "restored_persistent",
+            }:
                 return False
             snapshot_date = _snapshot_date_text(
                 snapshot,
@@ -1797,7 +1931,11 @@ def make_handler(
         if metric == "large_trade":
             if snapshot.get("large_trade_source") != "opt10055_day":
                 return False
-            if snapshot.get("large_trade_status") not in {"ok", "no_data"}:
+            if snapshot.get("large_trade_status") not in {
+                "ok",
+                "no_data",
+                "restored_persistent",
+            }:
                 return False
             snapshot_date = _snapshot_date_text(
                 snapshot,
@@ -1805,6 +1943,109 @@ def make_handler(
             )
             return snapshot_date == trading_date
         return False
+
+    def aftermarket_backfill_cache_summary(codes, metrics, trading_date):
+        snapshots = realtime_store.close_metrics_snapshot(codes)
+        strength_completed = 0
+        large_trade_completed = 0
+        restored_count = 0
+        completed_codes = 0
+        for code in codes:
+            snapshot = snapshots.get(code, {})
+            if not isinstance(snapshot, dict):
+                metric_done = []
+            else:
+                if snapshot.get("close_metrics_restored_at"):
+                    restored_count += 1
+                metric_done = [
+                    is_aftermarket_metric_cached(snapshot, metric, trading_date)
+                    for metric in metrics
+                ]
+                if "strength" in metrics and is_aftermarket_metric_cached(
+                    snapshot,
+                    "strength",
+                    trading_date,
+                ):
+                    strength_completed += 1
+                if "large_trade" in metrics and is_aftermarket_metric_cached(
+                    snapshot,
+                    "large_trade",
+                    trading_date,
+                ):
+                    large_trade_completed += 1
+            if metric_done and all(metric_done):
+                completed_codes += 1
+        return {
+            "total_codes": len(codes),
+            "completed_codes": completed_codes,
+            "strength_completed_count": strength_completed,
+            "large_trade_completed_count": large_trade_completed,
+            "restored_count": restored_count,
+            "complete": bool(codes) and completed_codes >= len(codes),
+        }
+
+    def apply_aftermarket_backfill_completed_state(
+        status,
+        codes,
+        metrics,
+        trading_date,
+        scope,
+        batch_size,
+        summary=None,
+    ):
+        summary = summary or aftermarket_backfill_cache_summary(
+            codes,
+            metrics,
+            trading_date,
+        )
+        now_text = datetime.now(KST).isoformat(timespec="seconds")
+        update_aftermarket_backfill_state(
+            running=False,
+            status=status,
+            completed_at=aftermarket_backfill_state.get("completed_at") or now_text,
+            trading_date=trading_date,
+            scope=scope,
+            metrics=metrics,
+            total_codes=summary["total_codes"],
+            completed_codes=summary["completed_codes"],
+            failed_codes=0,
+            current_batch=[],
+            batch_size=batch_size,
+            next_index=summary["total_codes"],
+            saved_count=0,
+            skipped_cached_count=sum(
+                summary[key]
+                for key in ("strength_completed_count", "large_trade_completed_count")
+            ),
+            strength_completed_count=summary["strength_completed_count"],
+            large_trade_completed_count=summary["large_trade_completed_count"],
+            strength_failed_count=0,
+            large_trade_failed_count=0,
+        )
+        return aftermarket_backfill_status()
+
+    def restore_aftermarket_backfill_completion():
+        with aftermarket_backfill_lock:
+            if aftermarket_backfill_state.get("running"):
+                return
+            if aftermarket_backfill_state.get("status") in AFTERMARKET_BACKFILL_COMPLETED_STATUSES:
+                return
+        trading_date = _resolve_aftermarket_trading_date({}, rows)
+        codes = aftermarket_backfill_codes("top100", "all")
+        metrics = ["strength", "large_trade"]
+        summary = aftermarket_backfill_cache_summary(codes, metrics, trading_date)
+        if not summary["complete"]:
+            return
+        status = "restored_completed" if summary["restored_count"] else "cached_completed"
+        apply_aftermarket_backfill_completed_state(
+            status,
+            codes,
+            metrics,
+            trading_date,
+            "top100",
+            5,
+            summary,
+        )
 
     def wait_aftermarket_metric_snapshot(code, metric, trading_date, timeout_sec):
         deadline = time.monotonic() + max(0.0, float(timeout_sec or 0))
@@ -2038,16 +2279,49 @@ def make_handler(
         batch_size = min(max(1, batch_size), 5)
         force = _query_flag_enabled(query, "force")
         trading_date = _resolve_aftermarket_trading_date(query, rows)
+        codes = aftermarket_backfill_codes(scope, limit)
+        if not force:
+            with aftermarket_backfill_lock:
+                current_status = aftermarket_backfill_state.get("status")
+                current_date = aftermarket_backfill_state.get("trading_date")
+                current_total = int(aftermarket_backfill_state.get("total_codes") or 0)
+                if (
+                    current_status in AFTERMARKET_BACKFILL_COMPLETED_STATUSES
+                    and current_date == trading_date
+                    and current_total == len(codes)
+                    and current_total > 0
+                ):
+                    return deepcopy(aftermarket_backfill_state)
+            summary = aftermarket_backfill_cache_summary(codes, metrics, trading_date)
+            if summary["complete"]:
+                status = (
+                    "restored_completed"
+                    if summary["restored_count"]
+                    else "cached_completed"
+                )
+                return apply_aftermarket_backfill_completed_state(
+                    status,
+                    codes,
+                    metrics,
+                    trading_date,
+                    scope,
+                    batch_size,
+                    summary,
+                )
         if _is_regular_trading_session() and not force:
             update_aftermarket_backfill_state(
                 running=False,
-                status="rejected_regular_session",
+                status="blocked_regular_session",
                 completed_at=datetime.now(KST).isoformat(timespec="seconds"),
                 trading_date=trading_date,
                 scope=scope,
                 metrics=metrics,
+                total_codes=len(codes),
+                completed_codes=0,
+                current_batch=[],
+                next_index=0,
                 batch_size=batch_size,
-                last_error="regular session backfill requires force=1",
+                last_error="regular session auto backfill blocked",
                 last_detail=None,
                 failed_codes=0,
                 strength_failed_count=0,
@@ -2057,7 +2331,6 @@ def make_handler(
         with aftermarket_backfill_lock:
             if aftermarket_backfill_state.get("running"):
                 return deepcopy(aftermarket_backfill_state)
-            codes = aftermarket_backfill_codes(scope, limit)
             aftermarket_backfill_cancel.clear()
             aftermarket_backfill_state.update(
                 {
@@ -3308,16 +3581,9 @@ def make_handler(
                 self.wfile.write(body)
                 return
             if request_path == "/api/market_supply":
-                market_supply_status = market_supply.get("_status", {})
-                response_payload = {
-                    "market_session": _market_session(),
-                    "available": market_supply_status.get("available", True),
-                    "status": market_supply_status.get("status", "available"),
-                    "error": market_supply_status.get("error"),
-                    "flow_date": market_supply_status.get("flow_date"),
-                    "kospi": market_supply["kospi"],
-                    "kosdaq": market_supply["kosdaq"],
-                }
+                response_payload = market_supply_response_payload(
+                    refreshed_market_supply()
+                )
                 body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -3493,6 +3759,7 @@ def main():
         filtered_rows,
         query_date,
         request_sleep_sec,
+        sequential=True,
     )
     top100_count = len(filtered_rows)
     response_ohlc_count = sum(row.get("ohlc") is not None for row in filtered_rows)
@@ -3600,6 +3867,7 @@ def main():
             expected_row_count=len(filtered_rows),
             expected_ohlc_count=response_ohlc_count,
             expected_rows_id=id(filtered_rows),
+            access_token=access_token,
             market_supply=market_supply,
             realtime_store=realtime_store,
             realtime_provider=realtime_provider,
@@ -3737,6 +4005,7 @@ def main():
     )
     print(f"ka10086 query date: {query_date}")
     print("ka10086 OHLC limit: all")
+    print("ka10086 OHLC restore mode: startup/reconnect one-shot sequential")
     print(f"ka10086 request sleep sec: {request_sleep_sec}")
     print(f"ka10086 target count: {ohlc_data['target_count']}")
     print(f"ka10086 OHLC joined count: {ohlc_data['joined_count']}")

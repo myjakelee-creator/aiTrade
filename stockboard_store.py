@@ -801,6 +801,33 @@ class RealtimeStore:
         bid_pct = round((bid_number / total) * 100)
         return bid_pct, 100 - bid_pct
 
+    @classmethod
+    def _orderbook_share_diagnostic(cls, bid_volume, ask_volume, bid_pct, ask_pct):
+        derived_bid_pct, derived_ask_pct = cls._bid_ask_pct(bid_volume, ask_volume)
+        if derived_bid_pct is None or derived_ask_pct is None:
+            return None, None, None
+        diagnostic = None
+        try:
+            provided_bid_pct = float(bid_pct) if bid_pct is not None else None
+            provided_ask_pct = float(ask_pct) if ask_pct is not None else None
+        except (TypeError, ValueError):
+            provided_bid_pct = None
+            provided_ask_pct = None
+        if (
+            provided_bid_pct is not None
+            and provided_ask_pct is not None
+            and (
+                abs(provided_bid_pct - derived_bid_pct) > 1
+                or abs(provided_ask_pct - derived_ask_pct) > 1
+            )
+        ):
+            diagnostic = (
+                "provided pct inconsistent with bid/ask volume; "
+                f"provided={provided_bid_pct:g}/{provided_ask_pct:g}, "
+                f"derived={derived_bid_pct}/{derived_ask_pct}"
+            )
+        return derived_bid_pct, derived_ask_pct, diagnostic
+
     @staticmethod
     def _price_number(value):
         try:
@@ -1160,13 +1187,21 @@ class RealtimeStore:
         timestamp_text = self._timestamp_text(timestamp)
         bid_volume = metrics.get("bid_volume_snapshot")
         ask_volume = metrics.get("ask_volume_snapshot")
-        bid_pct = metrics.get("bid_pct")
-        ask_pct = metrics.get("ask_pct")
+        raw_bid_pct = metrics.get("bid_pct")
+        raw_ask_pct = metrics.get("ask_pct")
+        bid_pct, ask_pct, orderbook_share_diagnostic = (
+            self._orderbook_share_diagnostic(
+                bid_volume,
+                ask_volume,
+                raw_bid_pct,
+                raw_ask_pct,
+            )
+        )
         if bid_pct is None or ask_pct is None:
-            bid_pct, ask_pct = self._bid_ask_pct(bid_volume, ask_volume)
-        bid_ask_ratio = metrics.get("bid_ask_ratio_snapshot")
+            bid_pct, ask_pct = raw_bid_pct, raw_ask_pct
+        bid_ask_ratio = self._snapshot_ratio(bid_volume, ask_volume)
         if bid_ask_ratio is None:
-            bid_ask_ratio = self._snapshot_ratio(bid_volume, ask_volume)
+            bid_ask_ratio = metrics.get("bid_ask_ratio_snapshot")
         trading_date = (
             self._normalize_trading_date(metrics.get("trading_date"))
             or self._normalize_trading_date(timestamp_text)
@@ -1187,7 +1222,7 @@ class RealtimeStore:
             "orderbook_error": metrics.get("orderbook_error"),
             "orderbook_status_detail": metrics.get(
                 "orderbook_status_detail"
-            ),
+            ) or orderbook_share_diagnostic,
             "orderbook_requested_at": metrics.get("orderbook_requested_at"),
             "orderbook_completed_at": metrics.get("orderbook_completed_at"),
             "orderbook_tr_repeat_count": metrics.get("orderbook_tr_repeat_count"),
