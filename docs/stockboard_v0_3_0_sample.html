@@ -161,6 +161,24 @@
   .subject-flow-fill.negative {
     right: 50%;
   }
+  @keyframes stockboardRealtimeFlashAll {
+    0% {
+      outline: 2px solid #f59e0b;
+      box-shadow: inset 0 0 0 9999px rgba(255, 236, 153, 0.76);
+    }
+    100% {
+      outline: 0 solid transparent;
+      box-shadow: none;
+    }
+  }
+
+  #candidate-board td.realtime-flash,
+  #selected-board td.realtime-flash,
+  #top20-board td.realtime-flash,
+  #top50-board td.realtime-flash,
+  #trading-board td.realtime-flash {
+    animation: stockboardRealtimeFlashAll 0.48s ease-out;
+  }
 </style>
 </head>
 <body>
@@ -196,6 +214,7 @@
     <tr>
       <td id="us-market-us_nasdaq">나스닥선물 <span>-</span></td>
       <td id="us-market-us_qqq">QQQ <span>-</span></td>
+      <td id="us-market-us_soxl">SOXL <span>-</span></td>
       <td id="us-market-us_smh">SMH <span>-</span></td>
       <td id="us-market-us_ibb">IBB <span>-</span></td>
       <td id="us-market-us_lit">LIT <span>-</span></td>
@@ -242,17 +261,17 @@
   </table>
 
   <!-- HTML: selected stock board -->
-  <div class="section sec-orange">▶ Selected 1종목 <span id="selected-row-count">0종목</span></div>
+  <div class="section sec-orange">S1 선택 종목 <span id="selected-row-count">0종목</span></div>
   <table class="grid board enhanced-board" id="selected-board">
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>대량체결</th><th>모멘텀</th></tr>
   </table>
 
-  <div class="section sec-blue">Top20 집중 관찰 <span id="top20-row-count">0종목</span> <span class="lane-speed-badge lane-speed-waiting" id="top20-lane-speed-badge">Top20 확인중</span> <span class="lane-actual-speed" id="top20-actual-speed">실제 -</span></div>
+  <div class="section sec-blue">Top15 집중 관찰 <span id="top20-row-count">0종목</span> <span class="lane-speed-badge lane-speed-waiting" id="top20-lane-speed-badge">Top15 확인중</span> <span class="lane-actual-speed" id="top20-actual-speed">실제 -</span></div>
   <table class="grid board enhanced-board" id="top20-board">
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>대량체결</th><th>모멘텀</th></tr>
   </table>
 
-  <div class="section sec-blue">Top50 후보 <span id="top50-row-count">0종목</span> <span class="lane-speed-badge lane-speed-waiting" id="top50-lane-speed-badge">Top50 확인중</span> <span class="lane-actual-speed" id="top50-actual-speed">실제 -</span></div>
+  <div class="section sec-blue">Top30 후보 <span id="top50-row-count">0종목</span> <span class="lane-speed-badge lane-speed-waiting" id="top50-lane-speed-badge">Top30 확인중</span> <span class="lane-actual-speed" id="top50-actual-speed">실제 -</span></div>
   <table class="grid board enhanced-board" id="top50-board">
     <tr><th>순위</th><th>전일</th><th>등급</th><th>종목명</th><th>현재가</th><th>등락률</th><th>금액(억)</th><th>일봉</th><th>잔량비</th><th>순간강도</th><th>1분강도</th><th>외합(억)</th><th>프로(억)</th><th>대량체결</th><th>모멘텀</th></tr>
   </table>
@@ -408,6 +427,7 @@
   const usMarketCells = {
     us_nq_futures: document.getElementById('us-market-us_nasdaq'),
     us_qqq: document.getElementById('us-market-us_qqq'),
+    us_soxl: document.getElementById('us-market-us_soxl'),
     us_smh: document.getElementById('us-market-us_smh'),
     us_ibb: document.getElementById('us-market-us_ibb'),
     us_lit: document.getElementById('us-market-us_lit'),
@@ -1432,6 +1452,7 @@
   /* JS: constants / state */
   const TOP100_REFRESH_MS = 0; // Issue17: disable slow automatic full-board refresh during live trading.
   const HOT_REALTIME_PATCH_REFRESH_MS = 500;
+  const TOP50_MID_REALTIME_PATCH_REFRESH_MS = 2000;
   const TOP100_POOL_REALTIME_PATCH_REFRESH_MS = 5000;
   const HOT_LANE_STATUS_REFRESH_MS = 2000;
   const RANK_MODE_SEQUENCE = ['auto', 'previous', 'today'];
@@ -1464,6 +1485,7 @@
     selectedStockCode: null,
     fiveMinuteStrengthSamples: new Map(),
     lastHotRealtimePatchSequence: null,
+    lastTop50RealtimePatchSequence: null,
     lastTop100RealtimePatchSequence: null,
     boardSort: loadBoardSortState(),
     displayDensity: currentDisplayDensity,
@@ -1487,6 +1509,8 @@
     rankMeta: null,
     top100ApiElapsedMs: null,
     hotRealtimePatchElapsedMs: null,
+    top50RealtimePatchElapsedMs: null,
+    top100PoolRealtimePatchElapsedMs: null,
     diagnostics: {
       apiRows: 0,
       apiOhlc: 0,
@@ -1506,8 +1530,14 @@
     return RANK_MODE_SEQUENCE.includes(savedMode) ? savedMode : 'auto';
   }
 
-  function rankModeFetchUrl() {
-    return `/api/top100?rank_mode=${encodeURIComponent(top100State.rankMode)}`;
+  function rankModeFetchUrl(options = {}) {
+    const params = new URLSearchParams();
+    params.set('rank_mode', top100State.rankMode);
+    if (options.force) {
+      params.set('force', '1');
+      params.set('ts', String(Date.now()));
+    }
+    return `/api/top100?${params.toString()}`;
   }
 
   function rankTooltip(meta = {}) {
@@ -2996,7 +3026,10 @@
     if (!cell) return;
     const html = view?.html ?? '';
     const tooltip = view?.tooltip || '';
-    setCell(cell, html, className, '');
+    const htmlChanged = cell.dataset.renderedHtml !== html;
+    const background = view?.background || '';
+    const backgroundChanged = cell.dataset.visualBackground !== background;
+    setCell(cell, html, className, '', true);
     cell.removeAttribute('title');
     cell.querySelectorAll('[title],[data-tooltip],[data-tooltip-html],[data-balance-tooltip],[data-ohlc-tooltip]').forEach(element => {
       element.removeAttribute('title');
@@ -3005,10 +3038,10 @@
       element.removeAttribute('data-balance-tooltip');
       element.removeAttribute('data-ohlc-tooltip');
     });
-    const background = view?.background || '';
-    if (cell.dataset.visualBackground !== background) {
+    if (backgroundChanged) {
       cell.style.background = background;
       cell.dataset.visualBackground = background;
+      if (!htmlChanged) flashRealtimeCell(cell);
     }
     if (cell.dataset.tooltip !== tooltip) cell.dataset.tooltip = tooltip;
     if (tooltip) {
@@ -3078,7 +3111,88 @@
     cell.dataset.flashTimer = String(window.setTimeout(() => {
       cell.classList.remove('realtime-flash');
       delete cell.dataset.flashTimer;
-    }, 220));
+    }, 480));
+  }
+
+  function patchSignatureValue(patch, keys) {
+    const values = keys
+      .map(key => firstValue(patch, [key]))
+      .filter(value => value !== null && value !== undefined && value !== '');
+    if (!values.length) return null;
+    try {
+      return JSON.stringify(values);
+    } catch (error) {
+      return String(values.join('|'));
+    }
+  }
+
+  function flashCellWhenPatchValueChanges(cell, patch, keys, datasetKey) {
+    if (!cell || !patch) return;
+    const signature = patchSignatureValue(patch, keys);
+    if (signature === null) return;
+    if (cell.dataset[datasetKey] === signature) return;
+    cell.dataset[datasetKey] = signature;
+    flashRealtimeCell(cell);
+  }
+
+  function flashRealtimePatchCells(tableRow, patch) {
+    if (!tableRow || !patch) return;
+
+    flashCellWhenPatchValueChanges(
+      tableRow.cells[4],
+      patch,
+      ['display_price', 'displayPrice', 'realtime_price', 'price', 'price_sequence'],
+      'flashPriceSig'
+    );
+
+    flashCellWhenPatchValueChanges(
+      tableRow.cells[5],
+      patch,
+      ['display_change_rate', 'displayChangeRate', 'realtime_change_rate', 'change_rate', 'price_sequence'],
+      'flashRateSig'
+    );
+
+    flashCellWhenPatchValueChanges(
+      tableRow.cells[6],
+      patch,
+      ['realtime_acc_trade_value_eok_candidate', 'realtimeAccTradeValueEokCandidate', 'trade_value_eok', 'cumulative_value_eok'],
+      'flashAmountSig'
+    );
+
+    flashCellWhenPatchValueChanges(
+      tableRow.cells[7],
+      patch,
+      ['display_ohlc', 'displayOhlc', 'realtime_ohlc', 'realtimeOhlc'],
+      'flashOhlcSig'
+    );
+
+    flashCellWhenPatchValueChanges(
+      tableRow.cells[8],
+      patch,
+      ['bid_ask_ratio', 'bid_ask_ratio_snapshot', 'bid_pct', 'ask_pct', 'bid_volume', 'ask_volume', 'orderbook_sequence'],
+      'flashBalanceSig'
+    );
+
+    flashCellWhenPatchValueChanges(
+      tableRow.cells[9],
+      patch,
+      ['realtime_strength', 'realtimeStrength', 'execution_strength', 'realtime_strength_snapshot', 'realtimeStrengthSnapshot'],
+      'flashInstantStrengthSig'
+    );
+
+    flashCellWhenPatchValueChanges(
+      tableRow.cells[10],
+      patch,
+      ['one_min_strength', 'oneMinStrength', 'strength_5m', 'strength5m', 'session_strength', 'sessionStrength', 'session_buy_qty_live', 'session_sell_qty_live'],
+      'flashOneMinuteStrengthSig'
+    );
+
+    flashCellWhenPatchValueChanges(
+      tableRow.cells[13],
+      patch,
+      ['large_trade_net_count', 'large_trade_net_sum_eok', 'big_hand_net_buy_count_1eok', 'big_hand_net_sum_eok'],
+      'flashBigHandSig'
+    );
   }
 
   /* JS: tooltip functions / singleton root */
@@ -3312,9 +3426,14 @@
     return Array.from(new Set([
       ...top100State.candidateRows.map(row => row.code),
       top100State.selectedStockCode,
-      ...top100State.top20Rows.map(row => row.code),
-      ...top100State.top50Rows.map(row => row.code)
+      ...top100State.top20Rows.map(row => row.code)
     ].filter(Boolean)));
+  }
+
+  function currentTop50RealtimeCodes() {
+    return Array.from(new Set(
+      top100State.top50Rows.map(row => row.code).filter(Boolean)
+    ));
   }
 
   function buildHotRealtimePatchUrl(options = {}) {
@@ -3343,6 +3462,26 @@
     return useDelta
       ? `/api/realtime_patch?since_sequence=${encodeURIComponent(top100State.lastTop100RealtimePatchSequence)}`
       : '/api/realtime_patch';
+  }
+
+  function buildTop50MidRealtimePatchUrl(options = {}) {
+    const params = new URLSearchParams();
+    const top50Codes = Array.from(new Set(
+      currentTop50RealtimeCodes().map(normalizeCode).filter(Boolean)
+    ));
+    if (top50Codes.length) params.set('codes', top50Codes.join(','));
+
+    const useDelta = REALTIME_PATCH_DELTA_ENABLED
+      && options.allowDelta === true
+      && !options.forceFull
+      && top100State.lastTop50RealtimePatchSequence !== null;
+
+    if (useDelta) {
+      params.set('since_sequence', String(top100State.lastTop50RealtimePatchSequence));
+    }
+
+    const query = params.toString();
+    return query ? `/api/realtime_patch?${query}` : '/api/realtime_patch';
   }
 
   window.StockBoardSelected = Object.freeze({
@@ -4455,7 +4594,7 @@
     top100RefreshLoading = true;
     try {
       const fetchStartedAt = performance.now();
-      const response = await fetch(rankModeFetchUrl(), { cache: 'no-store' });
+      const response = await fetch(rankModeFetchUrl(options), { cache: 'no-store' });
       setTop100ActualSpeed(performance.now() - fetchStartedAt);
       if (!response.ok) throw new Error(`TOP100 refresh failed: ${response.status}`);
       setStatusLamp('api', 'ok', 'API 서버 응답 정상');
@@ -4485,6 +4624,7 @@
 
   let hotLaneStatusLoading = false;
   let hotRealtimePatchLoading = false;
+  let top50MidRealtimePatchLoading = false;
   let top100PoolRealtimePatchLoading = false;
 
   function nestedLaneValue(source, path) {
@@ -4547,32 +4687,80 @@
     }
   }
 
+  function actualSpeedLabel(elapsedMs) {
+    const value = Number(elapsedMs);
+    return Number.isFinite(value) && value >= 0
+      ? `실제 ${(value / 1000).toFixed(2)}초`
+      : '실제 -';
+  }
+
+  function actualLaneSpeedView(elapsedMs, fallbackView = null) {
+    const value = Number(elapsedMs);
+    if (Number.isFinite(value) && value >= 0) return laneSpeedViewByInterval(value);
+    return fallbackView || { label: '확인중', className: 'lane-speed-waiting' };
+  }
+
+  function actualLaneTooltip(sectionLabel, elapsedMs, targetIntervalMs, detail = '') {
+    return [
+      `${sectionLabel} 속도`,
+      `${actualSpeedLabel(elapsedMs)}`,
+      `기준 호출주기=${targetIntervalMs}ms`,
+      detail
+    ].filter(Boolean).join('\n');
+  }
+
+  function setActualSpeedElement(element, sectionLabel, elapsedMs) {
+    if (!element) return;
+    const label = actualSpeedLabel(elapsedMs);
+    element.textContent = label;
+    element.setAttribute('aria-label', `${sectionLabel} 최신 patch 응답 시간 ${label}`);
+  }
+
+  function setActualLaneSpeedBadge(element, labelPrefix, elapsedMs, targetIntervalMs, fallbackView, detail = '') {
+    setLaneSpeedBadge(
+      element,
+      labelPrefix,
+      actualLaneSpeedView(elapsedMs, fallbackView),
+      actualLaneTooltip(labelPrefix, elapsedMs, targetIntervalMs, detail)
+    );
+  }
+
   function setTop100ActualSpeed(elapsedMs) {
     const value = Number(elapsedMs);
-    top100State.top100ApiElapsedMs = Number.isFinite(value) && value >= 0 ? value : null;
-    const label = top100State.top100ApiElapsedMs === null
-      ? '실제 -'
-      : `실제 ${(top100State.top100ApiElapsedMs / 1000).toFixed(2)}초`;
-    [
-      [top20ActualSpeed, 'Top20'],
-      [top50ActualSpeed, 'Top50'],
-      [top100ActualSpeed, 'Top100']
-    ].forEach(([element, sectionLabel]) => {
-      if (!element) return;
-      element.textContent = label;
-      element.setAttribute('aria-label', `${sectionLabel} 최신 API 응답 시간 ${label}`);
-    });
+    top100State.top100PoolRealtimePatchElapsedMs = Number.isFinite(value) && value >= 0 ? value : null;
+    top100State.top100ApiElapsedMs = top100State.top100PoolRealtimePatchElapsedMs;
+
+    setActualSpeedElement(top100ActualSpeed, 'Top300', top100State.top100PoolRealtimePatchElapsedMs);
+    setActualLaneSpeedBadge(
+      top100LaneSpeedBadge,
+      'Top300',
+      top100State.top100PoolRealtimePatchElapsedMs,
+      TOP100_POOL_REALTIME_PATCH_REFRESH_MS,
+      top100LaneSpeedView('normal', TOP100_POOL_REALTIME_PATCH_REFRESH_MS),
+      'POOL lane'
+    );
+  }
+
+  function setTop50ActualSpeed(elapsedMs) {
+    const value = Number(elapsedMs);
+    top100State.top50RealtimePatchElapsedMs = Number.isFinite(value) && value >= 0 ? value : null;
+
+    setActualSpeedElement(top50ActualSpeed, 'Top30', top100State.top50RealtimePatchElapsedMs);
+    setActualLaneSpeedBadge(
+      top50LaneSpeedBadge,
+      'Top30',
+      top100State.top50RealtimePatchElapsedMs,
+      TOP50_MID_REALTIME_PATCH_REFRESH_MS,
+      top100LaneSpeedView('normal', TOP50_MID_REALTIME_PATCH_REFRESH_MS),
+      'MID lane'
+    );
   }
 
   function setHotActualSpeed(elapsedMs) {
     const value = Number(elapsedMs);
     top100State.hotRealtimePatchElapsedMs = Number.isFinite(value) && value >= 0 ? value : null;
-    if (!hotActualSpeed) return;
-    const label = top100State.hotRealtimePatchElapsedMs === null
-      ? '실제 -'
-      : `실제 ${(top100State.hotRealtimePatchElapsedMs / 1000).toFixed(2)}초`;
-    hotActualSpeed.textContent = label;
-    hotActualSpeed.setAttribute('aria-label', `HOT5 최신 realtime_patch 응답 시간 ${label}`);
+    setActualSpeedElement(hotActualSpeed, 'Top5+S1', top100State.hotRealtimePatchElapsedMs);
+    setActualSpeedElement(top20ActualSpeed, 'Top15', top100State.hotRealtimePatchElapsedMs);
   }
 
   function candidateLaneSpeedView(mode) {
@@ -4602,14 +4790,31 @@
     element.setAttribute('aria-label', tooltip);
   }
 
-  function setTop100PoolLaneSpeedBadges(view, tooltipDetail) {
-    [
-      [top20LaneSpeedBadge, 'Top20'],
-      [top50LaneSpeedBadge, 'Top50'],
-      [top100LaneSpeedBadge, 'Top100']
-    ].forEach(([element, labelPrefix]) => {
-      setLaneSpeedBadge(element, labelPrefix, view, `${labelPrefix} 속도\n${tooltipDetail}`);
-    });
+  function setTop100PoolLaneSpeedBadges(priceLightMode, tooltipDetail) {
+    setLaneSpeedBadge(
+      top20LaneSpeedBadge,
+      'Top15',
+      hotLaneSpeedView('normal', HOT_REALTIME_PATCH_REFRESH_MS),
+      `Top15 속도\n기준 호출주기=${HOT_REALTIME_PATCH_REFRESH_MS}ms\nHOT lane 공유`
+    );
+
+    setActualLaneSpeedBadge(
+      top50LaneSpeedBadge,
+      'Top30',
+      top100State.top50RealtimePatchElapsedMs,
+      TOP50_MID_REALTIME_PATCH_REFRESH_MS,
+      top100LaneSpeedView(priceLightMode, TOP50_MID_REALTIME_PATCH_REFRESH_MS),
+      `MID lane\n${tooltipDetail}`
+    );
+
+    setActualLaneSpeedBadge(
+      top100LaneSpeedBadge,
+      'Top300',
+      top100State.top100PoolRealtimePatchElapsedMs,
+      TOP100_POOL_REALTIME_PATCH_REFRESH_MS,
+      top100LaneSpeedView(priceLightMode, TOP100_POOL_REALTIME_PATCH_REFRESH_MS),
+      `POOL lane\n${tooltipDetail}`
+    );
   }
 
   function applyHotLaneStatus(payload) {
@@ -4623,8 +4828,8 @@
       `HOT5+S1 속도\n기준 호출주기=${HOT_REALTIME_PATCH_REFRESH_MS}ms\nadaptive_speed.mode=${adaptiveMode || '-'}`
     );
     setTop100PoolLaneSpeedBadges(
-      top100LaneSpeedView(priceLightMode, TOP100_POOL_REALTIME_PATCH_REFRESH_MS),
-      `기준 호출주기=${TOP100_POOL_REALTIME_PATCH_REFRESH_MS}ms\nprice_light_lane.adaptive_mode=${priceLightMode || '-'}`
+      priceLightMode,
+      `price_light_lane.adaptive_mode=${priceLightMode || '-'}`
     );
     setLaneSpeedBadge(
       candidateLaneSpeedBadge,
@@ -4646,7 +4851,7 @@
     } catch (error) {
       console.warn(error);
       setLaneSpeedBadge(hotLaneSpeedBadge, 'HOT5', hotLaneSpeedView('unknown'), 'HOT5+S1 속도 상태 수신 대기');
-      setTop100PoolLaneSpeedBadges(top100LaneSpeedView('unknown'), '상태 수신 대기');
+      setTop100PoolLaneSpeedBadges('unknown', '상태 수신 대기');
       setLaneSpeedBadge(candidateLaneSpeedBadge, '후보', null, '후보계산 속도 상태 수신 대기');
       return null;
     } finally {
@@ -4674,6 +4879,7 @@
       const row = findRealtimePatchRow(code);
       findVisibleTableRows(code).forEach(tableRow => {
         applyRealtimePatchToRow(tableRow, row, patch);
+        flashRealtimePatchCells(tableRow, patch);
       });
     });
   }
@@ -4685,6 +4891,7 @@
       const row = findRealtimePatchRow(code);
       findVisibleTableRows(code).forEach(tableRow => {
         applyPriceLightPatchToTop100PoolRow(tableRow, row, patch);
+        flashRealtimePatchCells(tableRow, patch);
       });
     });
   }
@@ -4714,11 +4921,38 @@
     }
   }
 
+  async function loadTop50MidRealtimePatch(options = {}) {
+    if (top50MidRealtimePatchLoading || currentTop50RealtimeCodes().length === 0) return null;
+    top50MidRealtimePatchLoading = true;
+    try {
+      const fetchStartedAt = performance.now();
+      const response = await fetch(buildTop50MidRealtimePatchUrl(options), { cache: 'no-store' });
+      setTop50ActualSpeed(performance.now() - fetchStartedAt);
+      if (!response.ok) throw new Error(`Top50 MID realtime patch failed: ${response.status}`);
+      const payload = await response.json();
+      const patches = Array.isArray(payload.rows) ? payload.rows : [];
+      if (Number.isFinite(Number(payload.sequence))) {
+        top100State.lastTop50RealtimePatchSequence = Number(payload.sequence);
+      }
+      if (!patches.length) return { received: 0, sequence: top100State.lastTop50RealtimePatchSequence };
+      applyTop100PoolRealtimePatch(patches);
+      return { received: patches.length };
+    } catch (error) {
+      console.warn(error);
+      setTop50ActualSpeed(null);
+      return null;
+    } finally {
+      top50MidRealtimePatchLoading = false;
+    }
+  }
+
   async function loadTop100PoolRealtimePatch(options = {}) {
     if (top100PoolRealtimePatchLoading || top100State.rowByCode.size === 0) return null;
     top100PoolRealtimePatchLoading = true;
     try {
+      const fetchStartedAt = performance.now();
       const response = await fetch(buildTop100PoolRealtimePatchUrl(options), { cache: 'no-store' });
+      setTop100ActualSpeed(performance.now() - fetchStartedAt);
       if (!response.ok) throw new Error(`Top100 pool realtime patch failed: ${response.status}`);
       const payload = await response.json();
       const patches = Array.isArray(payload.rows) ? payload.rows : [];
@@ -4880,6 +5114,7 @@
   loadHotLaneStatus();
   window.setInterval(loadHotLaneStatus, HOT_LANE_STATUS_REFRESH_MS);
   window.setInterval(loadHotRealtimePatch, HOT_REALTIME_PATCH_REFRESH_MS);
+  window.setInterval(loadTop50MidRealtimePatch, TOP50_MID_REALTIME_PATCH_REFRESH_MS);
   window.setInterval(loadTop100PoolRealtimePatch, TOP100_POOL_REALTIME_PATCH_REFRESH_MS);
 </script>
 <script>

@@ -63,6 +63,7 @@ RANK_MODES = {"auto", "previous", "today"}
 US_MARKET_ITEMS = (
     ("us_nq_futures", "나스닥선물", "NQ=F"),
     ("us_qqq", "QQQ", "QQQ"),
+    ("us_soxl", "SOXL", "SOXL"),
     ("us_smh", "SMH", "SMH"),
     ("us_ibb", "IBB", "IBB"),
     ("us_lit", "LIT", "LIT"),
@@ -2197,9 +2198,9 @@ def make_handler(
             "rank_fallback_reason": cache_entry.get("fallback_reason"),
         }
 
-    def rows_for_rank_mode(rank_mode):
+    def rows_for_rank_mode(rank_mode, force=False):
         requested_basis = _rank_basis_for_mode(rank_mode)
-        cache_entry = refresh_rank_cache(requested_basis)
+        cache_entry = refresh_rank_cache(requested_basis, force=force)
         return cache_entry.get("rows") or rows, rank_metadata(
             rank_mode, requested_basis, cache_entry
         )
@@ -4062,7 +4063,8 @@ def make_handler(
             if request_path == "/api/top100":
                 include_debug = _query_flag_enabled(query, "debug", "include_debug")
                 rank_mode = str(query.get("rank_mode", ["auto"])[0] or "auto")
-                response_source_rows, rank_meta = rows_for_rank_mode(rank_mode)
+                force_rank_refresh = str(query.get("force", ["0"])[0] or "0").strip().lower() in {"1", "true", "yes", "on"}
+                response_source_rows, rank_meta = rows_for_rank_mode(rank_mode, force=force_rank_refresh)
                 ohlc_count = sum(
                     row.get("ohlc") is not None for row in response_source_rows
                 )
