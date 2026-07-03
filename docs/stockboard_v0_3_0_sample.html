@@ -4168,6 +4168,7 @@
     top100State.diagnostics.domOhlc = renderedOhlcCount();
     top100State.diagnostics.renderedOhlc = top100State.diagnostics.domOhlc;
     updateDataDiagnostics();
+    window.setTimeout(() => requestNextCloseMetricsBatch('render-visible-groups'), 0);
   }
 
   function applyRankingRows(inputRows) {
@@ -4221,15 +4222,31 @@
 
   function collectNextCloseMetricCodes() {
     const codes = [];
+    const seenCodes = new Set();
     const rowByCode = new Map(top100State.renderedRows.map(row => [row.code, row]));
-    for (const tableRow of board.querySelectorAll('tbody tr[data-stock-code]')) {
-      const code = normalizeCode(tableRow.dataset.stockCode);
-      if (!code) continue;
-      const row = rowByCode.get(code);
-      if (!rowNeedsCloseMetrics(row)) continue;
-      codes.push(code);
-      if (codes.length >= CLOSE_METRICS_LAZY_BATCH_SIZE) break;
+    const sourceTables = [
+      candidateBoard,
+      selectedBoard,
+      top20Board,
+      top50Board,
+      board
+    ];
+
+    for (const table of sourceTables) {
+      const tableRows = table?.querySelectorAll?.('tbody tr[data-stock-code]') || [];
+      for (const tableRow of tableRows) {
+        const code = normalizeCode(tableRow.dataset.stockCode);
+        if (!code || seenCodes.has(code)) continue;
+        seenCodes.add(code);
+
+        const row = rowByCode.get(code);
+        if (!rowNeedsCloseMetrics(row)) continue;
+
+        codes.push(code);
+        if (codes.length >= CLOSE_METRICS_LAZY_BATCH_SIZE) return codes;
+      }
     }
+
     return codes;
   }
 
