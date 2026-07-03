@@ -3312,7 +3312,8 @@
     return Array.from(new Set([
       ...top100State.candidateRows.map(row => row.code),
       top100State.selectedStockCode,
-      ...top100State.top20Rows.map(row => row.code)
+      ...top100State.top20Rows.map(row => row.code),
+      ...top100State.top50Rows.map(row => row.code)
     ].filter(Boolean)));
   }
 
