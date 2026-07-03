@@ -136,8 +136,15 @@ def _top100_original_order_key(index_and_row):
     )
 
 
-def fetch_trade_value_top100(access_token):
+def fetch_trade_value_top100(access_token, rank_basis="today"):
     """Fetch up to three ka10032 pages and return at most 300 unique rows."""
+    rank_basis = str(rank_basis or "today").strip().lower()
+    if rank_basis == "previous":
+        raise NotImplementedError(
+            "ka10032 previous-day rank input is not verified in local docs/code"
+        )
+    if rank_basis not in {"today", "auto"}:
+        raise ValueError(f"unsupported rank_basis: {rank_basis}")
     page_counts = [0, 0, 0]
     collected_rows = []
     continuation = "N"
@@ -1825,6 +1832,12 @@ class KiwoomOpenApiRealtimeProvider:
             registered_code_to_normalized = dict(
                 self._registered_code_to_normalized
             )
+            current_register_codes = list(self._registered_code_order)
+            pending_register_codes = (
+                list(self._pending_register_codes)
+                if self._pending_register_codes
+                else []
+            )
         normalized_to_registered = {}
         for registered, normalized in registered_code_to_normalized.items():
             normalized_to_registered.setdefault(normalized, registered)
@@ -1836,6 +1849,26 @@ class KiwoomOpenApiRealtimeProvider:
             register_code = normalized_to_registered.get(normalized_code)
             priority_codes.append(register_code or f"{normalized_code}_AL")
         priority_codes = list(dict.fromkeys(priority_codes))
+        base_register_codes = pending_register_codes or current_register_codes
+        merged_register_codes = list(dict.fromkeys(priority_codes + base_register_codes))
+        limit = self._realtime_code_limit
+        limited_register_codes = (
+            merged_register_codes
+            if limit <= 0
+            else merged_register_codes[:limit]
+        )
+        code_map_sample = []
+        for register_code in limited_register_codes[:20]:
+            normalized_code = _stock_code(register_code)
+            if normalized_code is None:
+                continue
+            code_map_sample.append(
+                {
+                    "input_code": register_code,
+                    "normalized_code": normalized_code,
+                    "setrealreg_code": register_code,
+                }
+            )
         with self._lock:
             changed = priority_codes != self._hot_priority_codes
             self._hot_priority_codes = priority_codes
@@ -1845,6 +1878,31 @@ class KiwoomOpenApiRealtimeProvider:
                     datetime.now().isoformat(timespec="seconds")
                 )
                 self._orderbook_hot_refresh_error = None
+            if changed and priority_codes:
+                for register_code in priority_codes:
+                    normalized_code = _stock_code(register_code)
+                    if normalized_code is None:
+                        continue
+                    self._registered_code_to_normalized.setdefault(
+                        register_code, normalized_code
+                    )
+                    self._original_registered_codes.setdefault(
+                        normalized_code, register_code
+                    )
+                self._pending_register_codes = tuple(merged_register_codes)
+                self._register_input_codes_sample = [
+                    str(code) for code in merged_register_codes[:20]
+                ]
+                self._register_normalized_codes_sample = [
+                    _stock_code(code)
+                    for code in limited_register_codes[:20]
+                    if _stock_code(code) is not None
+                ]
+                self._setrealreg_codes_sample = list(limited_register_codes[:20])
+                self._register_code_map_sample = code_map_sample
+                self._realreg_requested = True
+                self._realreg_succeeded = False
+                self._realreg_error = None
         return priority_codes
 
     def _next_orderbook_rotate_batch(self):
@@ -3778,10 +3836,23 @@ class KiwoomOpenApiRealtimeProvider:
         return sum(numbers)
 
     def _limited_realtime_codes(self, codes):
+        input_codes = [
+            str(code).strip()
+            for code in (codes or [])
+            if str(code).strip()
+        ]
+        with self._lock:
+            priority_codes = list(self._hot_priority_codes)
+        priority_codes = [
+            str(code).strip()
+            for code in priority_codes
+            if str(code).strip()
+        ]
+        merged_codes = list(dict.fromkeys(priority_codes + input_codes))
         limit = self._realtime_code_limit
         if limit <= 0:
-            return list(codes)
-        return list(codes)[:limit]
+            return merged_codes
+        return merged_codes[:limit]
 
     @staticmethod
     def _trade_lag_seconds(trade_time_raw, now=None):

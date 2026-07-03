@@ -56,6 +56,10 @@ US_MARKET_REFRESH_TTL_SEC = float(
 US_MARKET_FETCH_TIMEOUT_SEC = float(
     os.getenv("STOCKBOARD_US_MARKET_FETCH_TIMEOUT_SEC", "3.0")
 )
+RANK_TODAY_REFRESH_TTL_SEC = float(
+    os.getenv("STOCKBOARD_RANK_TODAY_REFRESH_TTL_SEC", "30.0")
+)
+RANK_MODES = {"auto", "previous", "today"}
 US_MARKET_ITEMS = (
     ("us_nq_futures", "나스닥선물", "NQ=F"),
     ("us_qqq", "QQQ", "QQQ"),
@@ -346,6 +350,16 @@ def _market_clock_phase(now=None):
     if current < aftermarket_start:
         return "regular_close_lock"
     return "aftermarket"
+
+
+def _rank_basis_for_mode(rank_mode, now=None):
+    mode = str(rank_mode or "auto").strip().lower()
+    if mode not in RANK_MODES:
+        mode = "auto"
+    if mode == "auto":
+        current = now or datetime.now(KST)
+        return "previous" if current.hour < 9 else "today"
+    return mode
 
 
 def _is_regular_trading_session(now=None):
@@ -1945,6 +1959,12 @@ def make_handler(
     expected_ohlc_count,
     expected_rows_id,
     access_token,
+    tradable_codes,
+    program_net_by_code,
+    foreign_sum_by_code,
+    foreign_investor_net_by_code,
+    market_session,
+    request_sleep_sec,
     market_supply,
     realtime_store,
     realtime_provider,
@@ -1962,6 +1982,34 @@ def make_handler(
     us_market_lock = RLock()
     us_market_payload = None
     us_market_last_refreshed_at = 0.0
+    rank_cache_lock = RLock()
+    rank_cache = {
+        "today": {
+            "rows": rows,
+            "filter_report_rows": filter_report_rows,
+            "page_counts": [],
+            "source": "Kiwoom ka10032",
+            "source_date": datetime.now(KST).strftime("%Y%m%d"),
+            "status": "ok",
+            "updated_at": datetime.now(KST).isoformat(timespec="seconds"),
+            "fallback_reason": None,
+            "monotonic_updated_at": time.monotonic(),
+        },
+        "previous": {
+            "rows": None,
+            "filter_report_rows": [],
+            "page_counts": [],
+            "source": "Kiwoom ka10032",
+            "source_date": None,
+            "status": "previous_unverified",
+            "updated_at": None,
+            "fallback_reason": (
+                "ka10032 previous-day rank input is not verified in local docs/code"
+            ),
+            "monotonic_updated_at": 0.0,
+        },
+    }
+    current_rank_rows = rows
     selected_hot_codes = set(
         _parse_hot_code_query(
             {"codes": [os.getenv("STOCKBOARD_HOT_SELECTED_CODES", "")]}
@@ -2030,6 +2078,131 @@ def make_handler(
                         stale[key]["error"] = status["error"]
                 return stale
             return market_supply
+
+    def build_rank_rows(rank_basis):
+        raw_rows, page_counts = fetch_trade_value_top100(
+            access_token, rank_basis=rank_basis
+        )
+        display_rows = prepare_display_rows(
+            raw_rows, tradable_codes, program_net_by_code
+        )
+        report_rows = build_top100_filter_report(
+            raw_rows, display_rows, tradable_codes
+        )
+        for row in display_rows:
+            row["foreign_sum"] = foreign_sum_by_code.get(row["stock_code"])
+            row["foreign_investor_net"] = foreign_investor_net_by_code.get(
+                row["stock_code"]
+            )
+        _apply_foreign_display(display_rows, market_session)
+        fetch_ohlc(
+            access_token,
+            display_rows,
+            current_query_date(),
+            request_sleep_sec,
+            sequential=True,
+        )
+        return display_rows, report_rows, page_counts
+
+    def sync_rank_runtime(rows_for_basis):
+        nonlocal current_rank_rows
+        current_rank_rows = rows_for_basis
+        realtime_store.set_base_ohlc_many(rows_for_basis)
+        if realtime_provider is not None and hasattr(
+            realtime_provider, "set_hot_priority_codes"
+        ):
+            try:
+                realtime_provider.set_hot_priority_codes(
+                    _hot_lane_codes(rows_for_basis, selected_hot_snapshot())
+                )
+            except Exception as error:
+                print(
+                    f"warning: rank hot priority update skipped: {error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+    def refresh_rank_cache(rank_basis, force=False):
+        now = time.monotonic()
+        with rank_cache_lock:
+            cached = rank_cache.get(rank_basis)
+            cached_rows = cached.get("rows") if cached else None
+            source_date = cached.get("source_date") if cached else None
+            if cached_rows and not force:
+                cached.setdefault("status", cached.get("status") or "cached")
+                cached.setdefault("fallback_reason", cached.get("fallback_reason"))
+                return cached
+            if rank_basis == "previous":
+                if cached_rows and source_date == current_query_date() and not force:
+                    return cached
+            elif (
+                cached_rows
+                and not force
+                and now - float(cached.get("monotonic_updated_at") or 0.0)
+                < RANK_TODAY_REFRESH_TTL_SEC
+            ):
+                return cached
+        try:
+            new_rows, new_report_rows, page_counts = build_rank_rows(rank_basis)
+            if not new_rows:
+                raise RuntimeError(f"{rank_basis} rank fetch returned zero rows")
+            entry = {
+                "rows": new_rows,
+                "filter_report_rows": new_report_rows,
+                "page_counts": page_counts,
+                "source": "Kiwoom ka10032",
+                "source_date": current_query_date(),
+                "status": "ok",
+                "updated_at": datetime.now(KST).isoformat(timespec="seconds"),
+                "fallback_reason": None,
+                "monotonic_updated_at": now,
+            }
+            with rank_cache_lock:
+                rank_cache[rank_basis] = entry
+            sync_rank_runtime(new_rows)
+            return entry
+        except Exception as error:
+            with rank_cache_lock:
+                cached = rank_cache.get(rank_basis, {})
+                if cached.get("rows"):
+                    cached = dict(cached)
+                    cached["status"] = (
+                        "today_fetch_failed_using_cached"
+                        if rank_basis == "today"
+                        else "previous_fetch_failed_using_cached"
+                    )
+                    cached["fallback_reason"] = str(error)
+                    rank_cache[rank_basis] = cached
+                    return cached
+                fallback = dict(rank_cache.get("today") or {})
+                fallback["status"] = (
+                    "previous_unverified_using_today_fallback"
+                    if rank_basis == "previous"
+                    else "today_fetch_failed_using_previous"
+                )
+                fallback["fallback_reason"] = str(error)
+                fallback["fallback_basis"] = "today"
+                return fallback
+
+    def rank_metadata(rank_mode, requested_basis, cache_entry):
+        fallback_basis = cache_entry.get("fallback_basis")
+        effective_basis = fallback_basis or requested_basis
+        return {
+            "rank_mode_requested": rank_mode,
+            "rank_basis_effective": effective_basis,
+            "rank_source": cache_entry.get("source") or "Kiwoom ka10032",
+            "rank_source_date": cache_entry.get("source_date"),
+            "rank_status": cache_entry.get("status") or "unknown",
+            "rank_updated_at": cache_entry.get("updated_at"),
+            "rank_fallback_reason": cache_entry.get("fallback_reason"),
+        }
+
+    def rows_for_rank_mode(rank_mode):
+        requested_basis = _rank_basis_for_mode(rank_mode)
+        cache_entry = refresh_rank_cache(requested_basis)
+        return cache_entry.get("rows") or rows, rank_metadata(
+            rank_mode, requested_basis, cache_entry
+        )
 
     def refreshed_us_market(force=False):
         nonlocal us_market_payload, us_market_last_refreshed_at
@@ -2649,7 +2822,7 @@ def make_handler(
         ):
             try:
                 realtime_provider.set_hot_priority_codes(
-                    _hot_lane_codes(rows, selected)
+                    _hot_lane_codes(current_rank_rows, selected)
                 )
             except Exception as error:
                 print(
@@ -2663,7 +2836,7 @@ def make_handler(
         selected = selected_hot_snapshot()
         if query_selected:
             selected = list(dict.fromkeys(selected + list(query_selected)))
-        return _hot_lane_codes(rows, selected)
+        return _hot_lane_codes(current_rank_rows, selected)
 
     def record_hot_api_latency(latency_ms):
         try:
@@ -3837,20 +4010,46 @@ def make_handler(
                 self.wfile.write(body)
                 return
             if request_path == "/api/top100_filter_report":
+                _, current_rank_meta = rows_for_rank_mode(
+                    str(query.get("rank_mode", ["auto"])[0] or "auto")
+                )
+                current_filter_report_rows = rank_cache.get(
+                    current_rank_meta.get("rank_basis_effective"), {}
+                ).get("filter_report_rows") or filter_report_rows
                 dropped_count = sum(
-                    1 for row in filter_report_rows if not row["filter_passed"]
+                    1 for row in current_filter_report_rows if not row["filter_passed"]
                 )
                 response_payload = {
                     "source": "ka10032",
+                    "rank": current_rank_meta,
                     "request": {
                         "mrkt_tp": "000",
                         "mang_stk_incls": "0",
                         "stex_tp": "3",
                     },
-                    "raw_count": len(filter_report_rows),
-                    "displayed_count": len(filter_report_rows) - dropped_count,
+                    "raw_count": len(current_filter_report_rows),
+                    "displayed_count": (
+                        len(current_filter_report_rows) - dropped_count
+                    ),
                     "dropped_count": dropped_count,
-                    "rows": filter_report_rows,
+                    "rows": current_filter_report_rows,
+                }
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if request_path == "/api/rank_mode_status":
+                rank_mode = str(query.get("rank_mode", ["auto"])[0] or "auto")
+                response_rows, rank_meta = rows_for_rank_mode(rank_mode)
+                response_payload = {
+                    **rank_meta,
+                    "row_count": len(response_rows),
+                    "auto_rule": "auto before 09:00 KST -> previous; at/after 09:00 KST -> today",
+                    "server_kst": datetime.now(KST).isoformat(timespec="seconds"),
                 }
                 body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
@@ -3862,23 +4061,26 @@ def make_handler(
                 return
             if request_path == "/api/top100":
                 include_debug = _query_flag_enabled(query, "debug", "include_debug")
-                ohlc_count = sum(row.get("ohlc") is not None for row in rows)
-                rows_id = id(rows)
+                rank_mode = str(query.get("rank_mode", ["auto"])[0] or "auto")
+                response_source_rows, rank_meta = rows_for_rank_mode(rank_mode)
+                ohlc_count = sum(
+                    row.get("ohlc") is not None for row in response_source_rows
+                )
+                rows_id = id(response_source_rows)
                 print(
-                    f"/api/top100 response rows: {len(rows)}, "
+                    f"/api/top100 response rows: {len(response_source_rows)}, "
                     f"ohlc count: {ohlc_count}, rows_id: {rows_id}, "
+                    f"rank_mode: {rank_mode}, "
+                    f"rank_basis: {rank_meta['rank_basis_effective']}, "
                     f"pid: {os.getpid()}",
                     flush=True,
                 )
-                if (
-                    len(rows) != expected_row_count
-                    or ohlc_count != expected_ohlc_count
-                    or rows_id != expected_rows_id
-                ):
+                if len(response_source_rows) <= 0:
                     detail = {
                         "error": "top100 response invariant failed",
-                        "rows": len(rows),
+                        "rows": len(response_source_rows),
                         "ohlc": ohlc_count,
+                        **rank_meta,
                     }
                     body = json.dumps(detail).encode("utf-8")
                     self.send_response(500)
@@ -3890,11 +4092,13 @@ def make_handler(
                     return
                 response_rows = enrich_candidate_fields(
                     _top100_with_realtime(
-                        rows,
+                        response_source_rows,
                         realtime_store,
                         include_debug=include_debug,
                     )
                 )
+                for row in response_rows:
+                    row.update(rank_meta)
                 body = json.dumps(response_rows, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -4112,6 +4316,12 @@ def main():
             expected_ohlc_count=response_ohlc_count,
             expected_rows_id=id(filtered_rows),
             access_token=access_token,
+            tradable_codes=tradable_codes,
+            program_net_by_code=program_net_by_code,
+            foreign_sum_by_code=foreign_sum_by_code,
+            foreign_investor_net_by_code=foreign_investor_net_by_code,
+            market_session=market_session,
+            request_sleep_sec=request_sleep_sec,
             market_supply=market_supply,
             realtime_store=realtime_store,
             realtime_provider=realtime_provider,

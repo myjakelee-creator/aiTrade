@@ -69,8 +69,11 @@
   .topbar button,
   .candidate-model-control,
   .candidate-model-control select,
-  .momentum {
+  .rank-basis-toggle {
     font-size: var(--board-font-size);
+  }
+  .rank-basis-toggle {
+    white-space: nowrap;
   }
   .lamp {
     margin-left: 3px;
@@ -187,7 +190,7 @@
     <div><button type="button" class="width-reset" id="width-reset">폭 초기화</button></div>
     <div><span class="market-open" id="market-session">장마감</span></div>
     <div><label class="candidate-model-control" for="candidate-model-selector">선발기준 <select id="candidate-model-selector" aria-label="선발기준"><option value="TVRANK_A_V03_TEMP">거래대금 순위 중심</option><option value="OPENING_MOMO_V01" disabled>장초반 탄력 중심</option><option value="PROGRAM_FLOW_V01" disabled>프로그램 순매수 중심</option><option value="LARGE_TRADE_V01" disabled>대량체결 중심</option></select></label></div>
-    <div class="focus-momentum"><span class="focus-name">삼성전기</span><span class="momentum">VWAP돌파 + 시가위 + 전고돌파</span></div>
+    <div><button type="button" class="rank-basis-toggle" id="rank-basis-toggle" title="순위모드: 자동">순위: 자동</button></div>
   </div>
   <table class="grid us">
     <tr>
@@ -314,6 +317,7 @@
     usMarketColumnWidths: 'stockboard.usMarket.columnWidths.v2',
     marketSupplyColumnWidths: 'stockboard.marketSupply.columnWidths.v2',
     candleMode: 'stockboard.candleMode.v1',
+    rankMode: 'stockboard.rankMode.v1',
     debugPanelVisible: 'stockboard.debugPanelVisible'
   };
   const STOCKBOARD_DISPLAY_MODES = StockBoardState.DISPLAY_MODES || {
@@ -361,6 +365,7 @@
   const nextScrollButton = document.getElementById('next-scroll');
   const debugToggle = document.getElementById('debug-toggle');
   const widthReset = document.getElementById('width-reset');
+  const rankBasisToggle = document.getElementById('rank-basis-toggle');
   const candidateModelSelector = document.getElementById('candidate-model-selector');
   const top5RowCount = document.getElementById('top5-row-count');
   const selectedRowCount = document.getElementById('selected-row-count');
@@ -1425,10 +1430,16 @@
   window.addEventListener('pointerup', finishColumnResize);
   window.addEventListener('pointercancel', finishColumnResize);
   /* JS: constants / state */
-  const TOP100_REFRESH_MS = 30000;
+  const TOP100_REFRESH_MS = 0; // Issue17: disable slow automatic full-board refresh during live trading.
   const HOT_REALTIME_PATCH_REFRESH_MS = 500;
   const TOP100_POOL_REALTIME_PATCH_REFRESH_MS = 5000;
   const HOT_LANE_STATUS_REFRESH_MS = 2000;
+  const RANK_MODE_SEQUENCE = ['auto', 'previous', 'today'];
+  const RANK_MODE_LABELS = {
+    auto: '자동',
+    previous: '전일',
+    today: '당일'
+  };
   const REALTIME_PATCH_DELTA_ENABLED = true;
   const FIVE_MIN_STRENGTH_WINDOW_MS = 5 * 60 * 1000;
   const CLOSE_METRICS_LAZY_BATCH_SIZE = STOCKBOARD_CLOSE_METRICS.batchSize;
@@ -1472,6 +1483,8 @@
     aftermarketBackfillCompletedDate: null,
     aftermarketBackfillPolling: false,
     aftermarketBackfillPollTimer: null,
+    rankMode: loadRankMode(),
+    rankMeta: null,
     top100ApiElapsedMs: null,
     hotRealtimePatchElapsedMs: null,
     diagnostics: {
@@ -1488,6 +1501,60 @@
   applyDisplayMode(top100State.displayMode);
   applyDebugPanelVisible(loadDebugPanelVisible());
   /* JS: controls / event binding */
+  function loadRankMode() {
+    const savedMode = readStoredValue(STOCKBOARD_STORAGE_KEYS.rankMode, 'auto');
+    return RANK_MODE_SEQUENCE.includes(savedMode) ? savedMode : 'auto';
+  }
+
+  function rankModeFetchUrl() {
+    return `/api/top100?rank_mode=${encodeURIComponent(top100State.rankMode)}`;
+  }
+
+  function rankTooltip(meta = {}) {
+    return [
+      `순위모드: ${RANK_MODE_LABELS[top100State.rankMode] || '자동'}`,
+      `실제기준: ${meta.rank_basis_effective || '-'}`,
+      '전환규칙: 09:00 전 전일 / 09:00 이후 당일',
+      `원천: ${meta.rank_source || 'Kiwoom'}`,
+      `상태: ${meta.rank_status || '-'}`,
+      `갱신시각: ${meta.rank_updated_at || '-'}`,
+      `fallback: ${meta.rank_fallback_reason || '-'}`
+    ].join('\n');
+  }
+
+  function applyRankModeButton(meta = top100State.rankMeta) {
+    if (!rankBasisToggle) return;
+    const label = RANK_MODE_LABELS[top100State.rankMode] || '자동';
+    rankBasisToggle.textContent = `순위: ${label}`;
+    rankBasisToggle.title = rankTooltip(meta || {});
+  }
+
+  function updateRankMetaFromRows(rows) {
+    const firstRow = Array.isArray(rows) && rows.length ? rows[0] : null;
+    if (!firstRow || typeof firstRow !== 'object') return;
+    top100State.rankMeta = {
+      rank_mode_requested: firstRow.rank_mode_requested,
+      rank_basis_effective: firstRow.rank_basis_effective,
+      rank_source: firstRow.rank_source,
+      rank_source_date: firstRow.rank_source_date,
+      rank_status: firstRow.rank_status,
+      rank_updated_at: firstRow.rank_updated_at,
+      rank_fallback_reason: firstRow.rank_fallback_reason
+    };
+    applyRankModeButton(top100State.rankMeta);
+  }
+
+  applyRankModeButton();
+
+  safeAddEventListener(rankBasisToggle, 'click', () => {
+    const currentIndex = RANK_MODE_SEQUENCE.indexOf(top100State.rankMode);
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % RANK_MODE_SEQUENCE.length : 0;
+    top100State.rankMode = RANK_MODE_SEQUENCE[nextIndex];
+    writeStoredValue(STOCKBOARD_STORAGE_KEYS.rankMode, top100State.rankMode);
+    applyRankModeButton();
+    refreshTop100({ force: true });
+  });
+
   function loadCandidateModelId() {
     const savedModelId = readStoredValue(candidateModelStorageKey, defaultCandidateModelId);
     return candidateModelSelector?.querySelector?.(`option[value="${savedModelId}"]:not(:disabled)`)
@@ -3200,10 +3267,52 @@
     return selectedBoard.querySelector(`tr[data-stock-code="${code}"]`);
   }
 
+  function findVisibleTableRows(code) {
+    const normalizedCode = normalizeCode(code);
+    if (!normalizedCode) return [];
+    const rows = [];
+    const seen = new Set();
+
+    function addRow(tableRow) {
+      if (!tableRow || seen.has(tableRow)) return;
+      seen.add(tableRow);
+      rows.push(tableRow);
+    }
+
+    addRow(top100State.candidateRowByCode.get(normalizedCode));
+    addRow(findSelectedTableRow(normalizedCode));
+    addRow(top100State.top20RowByCode.get(normalizedCode));
+    addRow(top100State.top50RowByCode.get(normalizedCode));
+    addRow(top100State.top300RowByCode.get(normalizedCode));
+
+    [candidateBoard, selectedBoard, top20Board, top50Board, board].forEach(table => {
+      const matches = table?.querySelectorAll?.(`tr[data-stock-code="${normalizedCode}"]`);
+      if (!matches) return;
+      matches.forEach(addRow);
+    });
+
+    return rows;
+  }
+
+  function findRealtimePatchRow(code) {
+    const normalizedCode = normalizeCode(code);
+    if (!normalizedCode) return null;
+    if (top100State.selectedRow && top100State.selectedRow.code === normalizedCode) {
+      return top100State.selectedRow;
+    }
+    return top100State.candidateRows.find(row => row.code === normalizedCode)
+      || top100State.top20Rows.find(row => row.code === normalizedCode)
+      || top100State.top50Rows.find(row => row.code === normalizedCode)
+      || top100State.top300Rows.find(row => row.code === normalizedCode)
+      || top100State.renderedRows.find(row => row.code === normalizedCode)
+      || null;
+  }
+
   function currentHotRealtimeCodes() {
     return Array.from(new Set([
       ...top100State.candidateRows.map(row => row.code),
-      top100State.selectedStockCode
+      top100State.selectedStockCode,
+      ...top100State.top20Rows.map(row => row.code)
     ].filter(Boolean)));
   }
 
@@ -3211,7 +3320,12 @@
     const params = new URLSearchParams();
     const selectedCode = normalizeCode(options.selectedCode || top100State.selectedStockCode);
     if (selectedCode) params.set('selected', selectedCode);
+    const hotCodes = Array.from(new Set(
+      currentHotRealtimeCodes().map(normalizeCode).filter(Boolean)
+    ));
+    if (hotCodes.length) params.set('codes', hotCodes.join(','));
     const useDelta = REALTIME_PATCH_DELTA_ENABLED
+      && options.allowDelta === true
       && !options.forceFull
       && top100State.lastHotRealtimePatchSequence !== null;
     if (useDelta) {
@@ -4310,7 +4424,7 @@
   window.setInterval(loadMarketSupply, 5000);
 
   const initialTop100FetchStartedAt = performance.now();
-  fetch('/api/top100', { cache: 'no-store' })
+  fetch(rankModeFetchUrl(), { cache: 'no-store' })
     .then(response => {
       setTop100ActualSpeed(performance.now() - initialTop100FetchStartedAt);
       if (!response.ok) throw new Error(`TOP100 load failed: ${response.status}`);
@@ -4318,6 +4432,7 @@
       return response.json();
     })
     .then(rows => {
+      updateRankMetaFromRows(rows);
       const result = window.StockBoardTop100.update(rows);
       setStatusLamp('kiwoom', 'ok', 'Kiwoom TOP100 데이터 정상');
       markSuccessfulUpdate();
@@ -4334,16 +4449,17 @@
       showBoardMessage('키움 거래대금 순위 조회 결과를 불러오지 못했습니다.');
     });
   let top100RefreshLoading = false;
-  async function refreshTop100() {
-    if (top100RefreshLoading || top100State.rowByCode.size === 0) return null;
+  async function refreshTop100(options = {}) {
+    if (top100RefreshLoading || (!options.force && top100State.rowByCode.size === 0)) return null;
     top100RefreshLoading = true;
     try {
       const fetchStartedAt = performance.now();
-      const response = await fetch('/api/top100', { cache: 'no-store' });
+      const response = await fetch(rankModeFetchUrl(), { cache: 'no-store' });
       setTop100ActualSpeed(performance.now() - fetchStartedAt);
       if (!response.ok) throw new Error(`TOP100 refresh failed: ${response.status}`);
       setStatusLamp('api', 'ok', 'API 서버 응답 정상');
       const rows = await response.json();
+      updateRankMetaFromRows(rows);
       const result = window.StockBoardTop100.refresh(rows);
       setStatusLamp('kiwoom', 'ok', 'Kiwoom TOP100 데이터 정상');
       markSuccessfulUpdate();
@@ -4362,7 +4478,9 @@
     }
   }
 
-  window.setInterval(refreshTop100, TOP100_REFRESH_MS);
+  if (TOP100_REFRESH_MS > 0) {
+    window.setInterval(refreshTop100, TOP100_REFRESH_MS);
+  }
 
   let hotLaneStatusLoading = false;
   let hotRealtimePatchLoading = false;
@@ -4549,30 +4667,24 @@
   }
 
   function applyHotRealtimePatch(patches) {
-    const renderedRowByCode = new Map(top100State.renderedRows.map(row => [row.code, row]));
-    const candidateRowByCode = new Map(top100State.candidateRows.map(row => [row.code, row]));
     patches.forEach(patch => {
       const code = normalizeCode(firstValue(patch, ['stock_code', 'code']));
       if (!code) return;
-      const candidateTableRow = findCandidateTableRow(code);
-      const candidateRow = candidateRowByCode.get(code);
-      if (candidateTableRow) applyRealtimePatchToRow(candidateTableRow, candidateRow, patch);
-      if (code === top100State.selectedStockCode) {
-        const selectedTableRow = findSelectedTableRow(code);
-        const selectedRow = renderedRowByCode.get(code) || candidateRowByCode.get(code) || top100State.selectedRow;
-        if (selectedTableRow) applyRealtimePatchToRow(selectedTableRow, selectedRow, patch);
-      }
+      const row = findRealtimePatchRow(code);
+      findVisibleTableRows(code).forEach(tableRow => {
+        applyRealtimePatchToRow(tableRow, row, patch);
+      });
     });
   }
 
   function applyTop100PoolRealtimePatch(patches) {
-    const renderedRowByCode = new Map(top100State.renderedRows.map(row => [row.code, row]));
     patches.forEach(patch => {
       const code = normalizeCode(firstValue(patch, ['stock_code', 'code']));
       if (!code) return;
-      const tableRow = findRenderedTableRow(code);
-      const row = renderedRowByCode.get(code);
-      if (tableRow) applyPriceLightPatchToTop100PoolRow(tableRow, row, patch);
+      const row = findRealtimePatchRow(code);
+      findVisibleTableRows(code).forEach(tableRow => {
+        applyPriceLightPatchToTop100PoolRow(tableRow, row, patch);
+      });
     });
   }
 
