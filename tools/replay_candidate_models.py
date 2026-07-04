@@ -39,6 +39,15 @@ ETF_ETN_PREFIXES = (
     "SOL",
 )
 
+TRADABLE_MASTER_CANDIDATE_RELATIVE_PATHS = (
+    "data/tradable_stock_master.csv",
+    "tradable_stock_master.csv",
+    "data/master/tradable_stock_master.csv",
+    "data/stock_master/tradable_stock_master.csv",
+    "data/stock/tradable_stock_master.csv",
+    "configs/tradable_stock_master.csv",
+)
+
 
 def parse_number(value: Any) -> float | None:
     if value in (None, ""):
@@ -87,17 +96,76 @@ def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> 
         writer.writerows(rows)
 
 
+def _skip_master_search_path(path: Path) -> bool:
+    parts = {part.lower() for part in path.parts}
+    return bool(
+        ".git" in parts
+        or "runtime" in parts
+        or "patch_backups" in parts
+        or "__pycache__" in parts
+    )
+
+
+def _append_unique_path(paths: list[Path], seen: set[str], path: Path) -> None:
+    try:
+        resolved = path.resolve(strict=False)
+    except OSError:
+        resolved = path.absolute()
+    key = str(resolved).lower()
+    if key in seen:
+        return
+    seen.add(key)
+    paths.append(resolved)
+
+
+def tradable_master_candidate_paths(requested: Path | None) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[str] = set()
+
+    if requested is not None:
+        if requested.is_absolute():
+            _append_unique_path(paths, seen, requested)
+        else:
+            _append_unique_path(paths, seen, Path.cwd() / requested)
+            _append_unique_path(paths, seen, ROOT / requested)
+
+    for rel_path in TRADABLE_MASTER_CANDIDATE_RELATIVE_PATHS:
+        _append_unique_path(paths, seen, ROOT / rel_path)
+        _append_unique_path(paths, seen, Path.cwd() / rel_path)
+
+    try:
+        discovered = sorted(
+            ROOT.rglob("tradable_stock_master.csv"),
+            key=lambda item: (len(str(item)), str(item)),
+        )
+    except OSError:
+        discovered = []
+
+    for found in discovered:
+        if _skip_master_search_path(found):
+            continue
+        _append_unique_path(paths, seen, found)
+
+    return paths
+
+
+def resolve_tradable_master_path(requested: Path | None) -> Path | None:
+    for candidate in tradable_master_candidate_paths(requested):
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
 def load_tradable_codes(path: Path | None) -> tuple[set[str] | None, str | None]:
-    if path is None:
-        return None, None
-    if not path.exists():
+    resolved_path = resolve_tradable_master_path(path)
+    if resolved_path is None:
         return None, None
 
     last_error: Exception | None = None
     for encoding in ("utf-8-sig", "cp949", "utf-8"):
         try:
             codes: set[str] = set()
-            with path.open("r", encoding=encoding, newline="") as handle:
+            with resolved_path.open("r", encoding=encoding, newline="") as handle:
                 reader = csv.DictReader(handle)
                 for row in reader:
                     code = (
@@ -110,11 +178,14 @@ def load_tradable_codes(path: Path | None) -> tuple[set[str] | None, str | None]
                     clean = clean_code(code)
                     if clean:
                         codes.add(clean)
-            return codes, str(path)
+            if not codes:
+                raise RuntimeError(f"tradable master has no usable stock codes: {resolved_path}")
+            return codes, str(resolved_path)
         except Exception as exc:  # noqa: BLE001
             last_error = exc
 
-    raise RuntimeError(f"Failed to read tradable master: {path} / {last_error}")
+    raise RuntimeError(f"Failed to read tradable master: {resolved_path} / {last_error}")
+
 
 
 def is_builtin_excluded_name(stock_name: Any) -> tuple[bool, str | None]:
