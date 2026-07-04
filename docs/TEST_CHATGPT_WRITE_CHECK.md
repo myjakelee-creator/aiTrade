@@ -1,3 +1,0 @@
-# Test
-
-write check
