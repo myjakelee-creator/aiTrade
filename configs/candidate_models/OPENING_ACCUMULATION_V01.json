@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "OPENING_ACCUMULATION_V01",
+  "name": "조용한 매집 시작형",
+  "runtime_status": "design_ready_not_loaded_yet",
+  "purpose": "급등 후 추격보다 아직 덜 오른 상태에서 돈이 조용히 쌓이는 종목을 찾는다.",
+  "grade_policy": {
+    "mode": "pool_percentile_calibrated",
+    "bands": [
+      {"grade": "A", "percentile_top": 15},
+      {"grade": "B", "percentile_top": 35},
+      {"grade": "C", "percentile_top": 65},
+      {"grade": "D", "percentile_top": 85},
+      {"grade": "F", "percentile_top": 100}
+    ]
+  },
+  "orderbook_policy": {
+    "name": "quiet_sell_wall_absorption",
+    "principle": "매도잔량이 더 큰데 가격이 밀리지 않으면 조용한 흡수로 가점한다. 매수잔량 우위 자체는 가점하지 않는다.",
+    "favorable": ["ask_pct > bid_pct", "bid_ask_ratio < 1.0", "price >= vwap_or_open", "realtime_strength >= 100"]
+  },
+  "stages": {
+    "top50": [
+      {"key": "rank_gap", "weight": 35},
+      {"key": "trade_value_growth", "weight": 25},
+      {"key": "change_rate_0_to_7", "weight": 20},
+      {"key": "above_open", "weight": 20}
+    ],
+    "top20": [
+      {"key": "program_net", "weight": 25},
+      {"key": "foreign_display_value", "weight": 15},
+      {"key": "quiet_sell_wall_absorption", "weight": 20},
+      {"key": "session_strength", "weight": 20},
+      {"key": "trade_value_growth", "weight": 20}
+    ],
+    "top5": [
+      {"key": "one_min_net_buy_value_growth", "weight": 30},
+      {"key": "realtime_strength_hold_100", "weight": 20},
+      {"key": "not_overextended", "weight": 20},
+      {"key": "above_vwap", "weight": 30}
+    ]
+  },
+  "funnel": {
+    "top50": {"take": 50},
+    "top20": {"from": "top50", "take": 20},
+    "top5": {"from": "top20", "take": 5}
+  }
+}
