@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "PROGRAM_FLOW_V01",
+  "name": "프로그램 수급 동행형",
+  "runtime_status": "design_ready_not_loaded_yet",
+  "purpose": "프로그램 순매수와 실체결 매수 우위가 함께 붙는 대형주/중형주 후보를 선발한다.",
+  "grade_policy": {
+    "mode": "pool_percentile_calibrated",
+    "bands": [
+      {"grade": "A", "percentile_top": 15},
+      {"grade": "B", "percentile_top": 35},
+      {"grade": "C", "percentile_top": 65},
+      {"grade": "D", "percentile_top": 85},
+      {"grade": "F", "percentile_top": 100}
+    ]
+  },
+  "orderbook_policy": {
+    "name": "program_sell_wall_absorption",
+    "principle": "프로그램 매수가 들어오는 상황에서 매도잔량이 두껍고 가격이 VWAP 위에 있으면 흡수로 가점한다.",
+    "favorable": ["program_net > 0", "ask_pct > bid_pct", "price >= vwap", "realtime_strength >= 100"]
+  },
+  "stages": {
+    "top50": [
+      {"key": "trade_value_rank", "weight": 20},
+      {"key": "rank_gap", "weight": 20},
+      {"key": "program_net", "weight": 40},
+      {"key": "safe_change_rate_band", "weight": 20}
+    ],
+    "top20": [
+      {"key": "program_net_growth", "weight": 35},
+      {"key": "foreign_display_value", "weight": 15},
+      {"key": "above_vwap", "weight": 20},
+      {"key": "realtime_strength_hold_100", "weight": 20},
+      {"key": "program_sell_wall_absorption", "weight": 10}
+    ],
+    "top5": [
+      {"key": "program_plus_strength", "weight": 35},
+      {"key": "above_vwap_or_open", "weight": 30},
+      {"key": "rank_gap_continuation", "weight": 20},
+      {"key": "overheat_penalty", "weight": -15}
+    ]
+  },
+  "funnel": {
+    "top50": {"take": 50},
+    "top20": {"from": "top50", "take": 20},
+    "top5": {"from": "top20", "take": 5}
+  }
+}
