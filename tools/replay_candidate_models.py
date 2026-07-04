@@ -3,8 +3,9 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from copy import deepcopy
 from pathlib import Path
 from statistics import mean
@@ -23,6 +24,20 @@ DEFAULT_MODELS = [
     "OPENING_BURST_V01",
     "PROGRAM_FLOW_V01",
 ]
+
+ETF_ETN_PREFIXES = (
+    "KODEX",
+    "TIGER",
+    "ACE",
+    "RISE",
+    "PLUS",
+    "KBSTAR",
+    "ARIRANG",
+    "HANARO",
+    "KOSEF",
+    "TIMEFOLIO",
+    "SOL",
+)
 
 
 def parse_number(value: Any) -> float | None:
@@ -72,6 +87,83 @@ def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> 
         writer.writerows(rows)
 
 
+def load_tradable_codes(path: Path | None) -> tuple[set[str] | None, str | None]:
+    if path is None:
+        return None, None
+    if not path.exists():
+        return None, None
+
+    last_error: Exception | None = None
+    for encoding in ("utf-8-sig", "cp949", "utf-8"):
+        try:
+            codes: set[str] = set()
+            with path.open("r", encoding=encoding, newline="") as handle:
+                reader = csv.DictReader(handle)
+                for row in reader:
+                    code = (
+                        row.get("종목코드")
+                        or row.get("stock_code")
+                        or row.get("code")
+                        or row.get("Code")
+                        or row.get("종목 코드")
+                    )
+                    clean = clean_code(code)
+                    if clean:
+                        codes.add(clean)
+            return codes, str(path)
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+
+    raise RuntimeError(f"Failed to read tradable master: {path} / {last_error}")
+
+
+def is_builtin_excluded_name(stock_name: Any) -> tuple[bool, str | None]:
+    name = str(stock_name or "").strip()
+    if not name:
+        return False, None
+
+    compact_upper = re.sub(r"\s+", "", name.upper())
+
+    for prefix in ETF_ETN_PREFIXES:
+        if compact_upper.startswith(prefix):
+            return True, "etf_etn_prefix"
+
+    if "ETN" in compact_upper:
+        return True, "etn_name"
+
+    if "스팩" in name:
+        return True, "spac"
+
+    if name.endswith("리츠"):
+        return True, "reits"
+
+    # 우선주만 제외. 우진, 우주일렉트로, 한국항공우주처럼 '우'가 중간/앞에 있는 보통주는 제외하지 않음.
+    if re.search(r"(\d+우[BC]?|우[BC]?|우)$", name):
+        return True, "preferred_share"
+
+    return False, None
+
+
+def include_candidate_identity(
+    stock_code: str | None,
+    stock_name: Any,
+    tradable_codes: set[str] | None,
+    enable_builtin_filter: bool,
+) -> tuple[bool, str]:
+    if not stock_code:
+        return False, "bad_code"
+
+    if tradable_codes is not None and stock_code not in tradable_codes:
+        return False, "not_in_tradable_master"
+
+    if enable_builtin_filter:
+        excluded, reason = is_builtin_excluded_name(stock_name)
+        if excluded:
+            return False, reason or "builtin_excluded"
+
+    return True, "ok"
+
+
 def row_sort_trade_value(row: dict[str, Any]) -> tuple[float, float, float]:
     return (
         parse_number(row.get("minute_trade_value_eok_est")) or 0,
@@ -80,17 +172,37 @@ def row_sort_trade_value(row: dict[str, Any]) -> tuple[float, float, float]:
     )
 
 
-def build_replay_rows_for_minute(minute_rows: list[dict[str, Any]], prev_rank_by_code: dict[str, int]) -> list[dict[str, Any]]:
+def build_replay_rows_for_minute(
+    minute_rows: list[dict[str, Any]],
+    prev_rank_by_code: dict[str, int],
+    tradable_codes: set[str] | None,
+    enable_builtin_filter: bool,
+    filter_stats: Counter,
+) -> list[dict[str, Any]]:
     ranked = sorted(minute_rows, key=row_sort_trade_value, reverse=True)
     current_rank_by_code: dict[str, int] = {}
 
     replay_rows: list[dict[str, Any]] = []
-    for rank, source in enumerate(ranked, start=1):
+    for source in ranked:
+        filter_stats["source_rows_seen"] += 1
+
         stock_code = clean_code(source.get("stock_code"))
-        if not stock_code:
+        stock_name = source.get("stock_name")
+
+        include, reason = include_candidate_identity(
+            stock_code=stock_code,
+            stock_name=stock_name,
+            tradable_codes=tradable_codes,
+            enable_builtin_filter=enable_builtin_filter,
+        )
+        if not include:
+            filter_stats[f"excluded_{reason}"] += 1
             continue
 
-        current_rank_by_code[stock_code] = rank
+        assert stock_code is not None
+
+        filtered_rank = len(replay_rows) + 1
+        current_rank_by_code[stock_code] = filtered_rank
         prev_rank = prev_rank_by_code.get(stock_code)
 
         minute_trade_value = parse_number(source.get("minute_trade_value_eok_est"))
@@ -105,11 +217,11 @@ def build_replay_rows_for_minute(minute_rows: list[dict[str, Any]], prev_rank_by
 
         replay_row = {
             "stock_code": stock_code,
-            "stock_name": source.get("stock_name"),
-            "rank": rank,
-            "displayed_rank": rank,
+            "stock_name": stock_name,
+            "rank": filtered_rank,
+            "displayed_rank": filtered_rank,
             "prev_rank": prev_rank,
-            "rank_diff": (prev_rank - rank) if prev_rank is not None else None,
+            "rank_diff": (prev_rank - filtered_rank) if prev_rank is not None else None,
             "price": close,
             "display_price": close,
             "realtime_price": close,
@@ -143,6 +255,7 @@ def build_replay_rows_for_minute(minute_rows: list[dict[str, Any]], prev_rank_by
             "replay_source": "live_raw_minute_agg",
         }
         replay_rows.append(replay_row)
+        filter_stats["included_rows"] += 1
 
     prev_rank_by_code.clear()
     prev_rank_by_code.update(current_rank_by_code)
@@ -158,15 +271,75 @@ def score_value(row: dict[str, Any]) -> float:
 
 
 def stability_grade(score: float) -> str:
+    value = int(score)
     if score >= 91:
-        return f"A{int(round(score))}"
+        return f"A{value}"
     if score >= 81:
-        return f"B{int(round(score))}"
+        return f"B{value}"
     if score >= 71:
-        return f"C{int(round(score))}"
+        return f"C{value}"
     if score >= 61:
-        return f"D{int(round(score))}"
-    return f"F{int(round(score))}"
+        return f"D{value}"
+    return f"F{value}"
+
+
+def stability_band(score: float) -> str:
+    if score >= 81:
+        return "STABLE_STRONG"
+    if score >= 71:
+        return "STABLE_CANDIDATE"
+    if score >= 61:
+        return "STABLE_WATCH"
+    if score >= 50:
+        return "OBSERVE"
+    return "LOW"
+
+
+def apply_stability_gate(
+    stable_score: float,
+    current_score: float,
+    score_average: float,
+    recent_raw_count: int,
+    recent_stable_count: int,
+    prev_stable: bool,
+    trade_value: float | None,
+    execution_strength: float | None,
+) -> tuple[float, str]:
+    cap: float | None = None
+    reasons: list[str] = []
+
+    def set_cap(next_cap: float, reason: str) -> None:
+        nonlocal cap
+        cap = next_cap if cap is None else min(cap, next_cap)
+        reasons.append(reason)
+
+    raw_signal_ok_for_c = current_score >= 55 or score_average >= 61 or recent_raw_count >= 2
+    raw_signal_ok_for_b = current_score >= 61 or (score_average >= 65 and recent_raw_count >= 2)
+    raw_signal_ok_for_a = current_score >= 71 and score_average >= 71 and recent_raw_count >= 2
+
+    if trade_value is None or trade_value <= 0:
+        set_cap(50, "no_trade_value")
+
+    if current_score < 40 and not prev_stable:
+        set_cap(60, "raw_score_below_40_without_hold")
+
+    if execution_strength is not None and execution_strength < 70 and current_score < 55:
+        set_cap(60, "weak_strength_and_raw_score")
+
+    if stable_score >= 91 and not raw_signal_ok_for_a:
+        set_cap(90, "a_gate_requires_raw_a_signal")
+
+    if stable_score >= 81 and not raw_signal_ok_for_b:
+        set_cap(80, "b_gate_requires_raw_b_signal")
+
+    if stable_score >= 71 and not raw_signal_ok_for_c:
+        set_cap(70, "c_gate_requires_raw_c_signal")
+
+    gated = stable_score
+    if cap is not None and gated > cap:
+        gated = cap
+
+    return round(max(0, min(100, gated)), 2), ",".join(reasons)
 
 
 def compute_stability_score(
@@ -192,11 +365,14 @@ def compute_stability_score(
     except ValueError:
         raw_rank_int = None
 
+    prev_stable = code in prev_stable_codes
+    prev_raw = code in prev_raw_codes
+
     raw_rank_bonus = max(0, 6 - raw_rank_int) * 1.2 if raw_rank_int is not None else 0
     raw_candidate_bonus = 5 if code in raw_candidate_codes else 0
-    prev_stable_bonus = 10 if code in prev_stable_codes else 0
-    prev_raw_bonus = 4 if code in prev_raw_codes else 0
-    continuity_bonus = recent_raw_count * 4 + recent_stable_count * 4
+    prev_stable_bonus = 8 if prev_stable else 0
+    prev_raw_bonus = 3 if prev_raw else 0
+    continuity_bonus = recent_raw_count * 3.5 + recent_stable_count * 4.0
 
     penalty = 0.0
     change_rate = parse_number(row.get("change_rate"))
@@ -209,12 +385,12 @@ def compute_stability_score(
         penalty += 5
     if trade_value is None or trade_value <= 0:
         penalty += 20
-    if current_score < 35 and code not in prev_stable_codes:
+    if current_score < 35 and not prev_stable:
         penalty += 5
 
-    stable_score = (
-        current_score * 0.55
-        + score_average * 0.25
+    before_gate = (
+        current_score * 0.58
+        + score_average * 0.24
         + raw_rank_bonus
         + raw_candidate_bonus
         + prev_stable_bonus
@@ -222,20 +398,94 @@ def compute_stability_score(
         + continuity_bonus
         - penalty
     )
-    stable_score = round(max(0, min(100, stable_score)), 2)
+    before_gate = round(max(0, min(100, before_gate)), 2)
+
+    gated_score, gate_reason = apply_stability_gate(
+        stable_score=before_gate,
+        current_score=current_score,
+        score_average=score_average,
+        recent_raw_count=recent_raw_count,
+        recent_stable_count=recent_stable_count,
+        prev_stable=prev_stable,
+        trade_value=trade_value,
+        execution_strength=execution_strength,
+    )
 
     return {
-        "stable_score": stable_score,
-        "stable_grade_text": stability_grade(stable_score),
+        "stable_score_before_gate": before_gate,
+        "stable_score": gated_score,
+        "stable_grade_text": stability_grade(gated_score),
+        "stable_band": stability_band(gated_score),
+        "stable_gate_cap_reason": gate_reason,
         "stability_recent_score_avg": round(score_average, 2),
         "stability_recent_raw_count": recent_raw_count,
         "stability_recent_stable_count": recent_stable_count,
-        "stability_prev_stable": code in prev_stable_codes,
-        "stability_prev_raw": code in prev_raw_codes,
+        "stability_prev_stable": prev_stable,
+        "stability_prev_raw": prev_raw,
         "stability_raw_rank_bonus": round(raw_rank_bonus, 2),
         "stability_continuity_bonus": round(continuity_bonus, 2),
         "stability_penalty": round(penalty, 2),
     }
+
+
+def select_stable_rows(
+    stable_pool: list[dict[str, Any]],
+    stable_limit: int,
+    prev_stable_codes: set[str],
+    stable_hold_min_score: float,
+    stable_hold_candidate_floor: float,
+    stable_min_score: float,
+) -> list[dict[str, Any]]:
+    sorted_pool = sorted(
+        stable_pool,
+        key=lambda row: (
+            parse_number(row.get("stable_score")) or 0,
+            parse_number(row.get("candidate_score")) or 0,
+            -(int(row.get("rank") or 999999)),
+        ),
+        reverse=True,
+    )
+
+    selected: list[dict[str, Any]] = []
+    selected_codes: set[str] = set()
+
+    def add_row(row: dict[str, Any]) -> None:
+        code = str(row.get("stock_code") or "")
+        if not code or code in selected_codes:
+            return
+        selected.append(row)
+        selected_codes.add(code)
+
+    held_rows = []
+    for row in sorted_pool:
+        code = str(row.get("stock_code") or "")
+        if code not in prev_stable_codes:
+            continue
+        stable_score = parse_number(row.get("stable_score")) or 0
+        raw_score = parse_number(row.get("candidate_score")) or 0
+        penalty = parse_number(row.get("stability_penalty")) or 0
+        if stable_score >= stable_hold_min_score and raw_score >= stable_hold_candidate_floor and penalty <= 8:
+            held_rows.append(row)
+
+    for row in held_rows:
+        if len(selected) >= stable_limit:
+            break
+        add_row(row)
+
+    for row in sorted_pool:
+        if len(selected) >= stable_limit:
+            break
+        stable_score = parse_number(row.get("stable_score")) or 0
+        if stable_score >= stable_min_score:
+            add_row(row)
+
+    # Fallback: always fill Top5 for analysis continuity, even when every score is weak.
+    for row in sorted_pool:
+        if len(selected) >= stable_limit:
+            break
+        add_row(row)
+
+    return selected[:stable_limit]
 
 
 def replay_models(
@@ -246,6 +496,12 @@ def replay_models(
     include_all_top: int,
     stability_window: int,
     stable_limit: int,
+    tradable_codes: set[str] | None,
+    tradable_master_path: str | None,
+    enable_builtin_filter: bool,
+    stable_min_score: float,
+    stable_hold_min_score: float,
+    stable_hold_candidate_floor: float,
 ) -> dict[str, Any]:
     rows = read_csv(agg_csv)
     by_minute: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -267,6 +523,7 @@ def replay_models(
     stable_candidate_rows_out: list[dict[str, Any]] = []
     stable_transition_rows_out: list[dict[str, Any]] = []
 
+    filter_stats: Counter = Counter()
     prev_rank_by_code: dict[str, int] = {}
     prev_candidates_by_model: dict[str, set[str]] = {model_id: set() for model_id in model_ids}
     prev_stable_candidates_by_model: dict[str, set[str]] = {model_id: set() for model_id in model_ids}
@@ -276,7 +533,13 @@ def replay_models(
     }
 
     for minute in minutes:
-        replay_rows = build_replay_rows_for_minute(by_minute[minute], prev_rank_by_code)
+        replay_rows = build_replay_rows_for_minute(
+            minute_rows=by_minute[minute],
+            prev_rank_by_code=prev_rank_by_code,
+            tradable_codes=tradable_codes,
+            enable_builtin_filter=enable_builtin_filter,
+            filter_stats=filter_stats,
+        )
 
         for requested_model_id, model in model_objects:
             resolved_model_id = safe_model_id(model, requested_model_id)
@@ -335,16 +598,15 @@ def replay_models(
                 stable_row.update(stability)
                 stable_pool.append(stable_row)
 
-            stable_pool.sort(
-                key=lambda row: (
-                    parse_number(row.get("stable_score")) or 0,
-                    parse_number(row.get("candidate_score")) or 0,
-                    -(int(row.get("rank") or 999999)),
-                ),
-                reverse=True,
+            stable_rows = select_stable_rows(
+                stable_pool=stable_pool,
+                stable_limit=stable_limit,
+                prev_stable_codes=prev_stable_codes,
+                stable_hold_min_score=stable_hold_min_score,
+                stable_hold_candidate_floor=stable_hold_candidate_floor,
+                stable_min_score=stable_min_score,
             )
 
-            stable_rows = stable_pool[:stable_limit]
             current_stable_candidates = {
                 str(row.get("stock_code"))
                 for row in stable_rows
@@ -374,8 +636,11 @@ def replay_models(
             for stable_rank, row in enumerate(stable_rows, start=1):
                 next_row = output_row(minute, requested_model_id, resolved_model_id, row)
                 next_row["stable_candidate_rank"] = stable_rank
+                next_row["stable_score_before_gate"] = row.get("stable_score_before_gate")
                 next_row["stable_score"] = row.get("stable_score")
                 next_row["stable_grade_text"] = row.get("stable_grade_text")
+                next_row["stable_band"] = row.get("stable_band")
+                next_row["stable_gate_cap_reason"] = row.get("stable_gate_cap_reason")
                 next_row["stability_recent_score_avg"] = row.get("stability_recent_score_avg")
                 next_row["stability_recent_raw_count"] = row.get("stability_recent_raw_count")
                 next_row["stability_recent_stable_count"] = row.get("stability_recent_stable_count")
@@ -398,8 +663,9 @@ def replay_models(
                     "raw_candidate": code in current_candidates,
                     "stable_candidate": code in stable_codes_for_history,
                 })
-                if len(model_history[code]) > max(3, stability_window + 2):
-                    del model_history[code][0:len(model_history[code]) - max(3, stability_window + 2)]
+                keep = max(3, stability_window + 2)
+                if len(model_history[code]) > keep:
+                    del model_history[code][0:len(model_history[code]) - keep]
 
     prefix = agg_csv.stem.replace("_minute_agg", "")
     models_label = "_".join(model_ids)
@@ -426,8 +692,11 @@ def replay_models(
 
     stable_fieldnames = fieldnames + [
         "stable_candidate_rank",
+        "stable_score_before_gate",
         "stable_score",
         "stable_grade_text",
+        "stable_band",
+        "stable_gate_cap_reason",
         "stability_recent_score_avg",
         "stability_recent_raw_count",
         "stability_recent_stable_count",
@@ -458,13 +727,25 @@ def replay_models(
             }
             for requested, model in model_objects
         ],
+        "tradable_filter": {
+            "enabled": True,
+            "tradable_master_path": tradable_master_path,
+            "tradable_master_code_count": len(tradable_codes) if tradable_codes is not None else None,
+            "builtin_filter_enabled": enable_builtin_filter,
+            "filter_stats": dict(filter_stats),
+            "excluded_total": sum(value for key, value in filter_stats.items() if key.startswith("excluded_")),
+        },
         "candidate_limit": candidate_limit,
         "include_all_top": include_all_top,
         "stability": {
             "enabled": True,
             "window": stability_window,
             "stable_limit": stable_limit,
-            "formula": "current_score*0.55 + recent_avg*0.25 + raw/stable continuity bonuses - risk penalties",
+            "stable_min_score": stable_min_score,
+            "stable_hold_min_score": stable_hold_min_score,
+            "stable_hold_candidate_floor": stable_hold_candidate_floor,
+            "formula": "current_score*0.58 + recent_avg*0.24 + raw/stable continuity bonuses - risk penalties, then B/C/A gate caps",
+            "stable_grade_text_is_official_grade": False,
             "trade_metric_7_used": False,
         },
         "candidate_rows": len(candidate_rows_out),
@@ -483,8 +764,9 @@ def replay_models(
         "notes": {
             "trade_metric_7": "Included for observation only. Not mapped to one_min_net_buy_value_delta_eok.",
             "trade_value_eok": "Uses minute_trade_value_eok_est from replay parser.",
-            "rank": "Minute trade value rank within replay minute.",
+            "rank": "Minute trade value rank within filtered replay universe.",
             "stability": "Stable Top5 is a replay-only overlay; live StockBoard scoring is not changed.",
+            "stable_grade_text": "A display band derived from stable_score, not the official candidate model grade.",
         },
     }
     summary_json.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -582,10 +864,21 @@ def main() -> int:
     parser.add_argument("--include-all-top", type=int, default=30)
     parser.add_argument("--stability-window", type=int, default=3)
     parser.add_argument("--stable-limit", type=int, default=5)
+    parser.add_argument("--stable-min-score", type=float, default=45.0)
+    parser.add_argument("--stable-hold-min-score", type=float, default=50.0)
+    parser.add_argument("--stable-hold-candidate-floor", type=float, default=38.0)
+    parser.add_argument("--tradable-master", default="data/tradable_stock_master.csv")
+    parser.add_argument("--disable-tradable-master", action="store_true")
+    parser.add_argument("--disable-builtin-filter", action="store_true")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    tradable_codes: set[str] | None = None
+    tradable_master_used: str | None = None
+    if not args.disable_tradable_master:
+        tradable_codes, tradable_master_used = load_tradable_codes(Path(args.tradable_master))
 
     agg_csv = Path(args.agg_csv) if args.agg_csv else latest_minute_agg_csv(out_dir)
     summary = replay_models(
@@ -596,12 +889,20 @@ def main() -> int:
         include_all_top=args.include_all_top,
         stability_window=args.stability_window,
         stable_limit=args.stable_limit,
+        tradable_codes=tradable_codes,
+        tradable_master_path=tradable_master_used,
+        enable_builtin_filter=not args.disable_builtin_filter,
+        stable_min_score=args.stable_min_score,
+        stable_hold_min_score=args.stable_hold_min_score,
+        stable_hold_candidate_floor=args.stable_hold_candidate_floor,
     )
 
     print("REPLAY_CANDIDATE_MODELS_OK")
     print("agg_csv:", summary["agg_csv"])
     print("minute_count:", summary["minute_count"])
     print("models:", summary["models"])
+    print("tradable_filter:", summary["tradable_filter"])
+    print("stability:", summary["stability"])
     print("candidate_rows:", summary["candidate_rows"])
     print("ranked_top_rows:", summary["ranked_top_rows"])
     print("transition_rows:", summary["transition_rows"])
