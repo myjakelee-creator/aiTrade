@@ -207,7 +207,7 @@
     <div><button type="button" class="debug-toggle" id="debug-toggle">진단</button></div>
     <div><button type="button" class="width-reset" id="width-reset">폭 초기화</button></div>
     <div><span class="market-open" id="market-session">장마감</span></div>
-    <div><label class="candidate-model-control" for="candidate-model-selector">선발기준 <select id="candidate-model-selector" aria-label="선발기준"><option value="TVRANK_A_V03_TEMP">거래대금 순위 중심</option><option value="OPENING_MOMO_V01" disabled>장초반 탄력 중심</option><option value="PROGRAM_FLOW_V01" disabled>프로그램 순매수 중심</option><option value="LARGE_TRADE_V01" disabled>대량체결 중심</option></select></label></div>
+    <div><label class="candidate-model-control" for="candidate-model-selector">선발기준 <select id="candidate-model-selector" aria-label="선발기준"><option value="TVRANK_A_V03_TEMP">거래대금 순위 중심</option><option value="OPENING_MONEY_FLOW_V01">장초반 돈쏠림 시작형</option><option value="OPENING_ACCUMULATION_V01">조용한 매집 시작형</option><option value="OPENING_BURST_V01">장초반 폭발 확인형</option><option value="PROGRAM_FLOW_V01">프로그램 수급 동행형</option><option value="RELATIVE_STRENGTH_OPENING_V01">시장 대비 상대강도형</option></select></label></div>
     <div><button type="button" class="rank-basis-toggle" id="rank-basis-toggle" title="순위모드: 자동">순위: 자동</button></div>
   </div>
   <table class="grid us">
@@ -1506,6 +1506,7 @@
     aftermarketBackfillPolling: false,
     aftermarketBackfillPollTimer: null,
     rankMode: loadRankMode(),
+    candidateModelId: loadCandidateModelId(),
     rankMeta: null,
     top100ApiElapsedMs: null,
     hotRealtimePatchElapsedMs: null,
@@ -1533,6 +1534,7 @@
   function rankModeFetchUrl(options = {}) {
     const params = new URLSearchParams();
     params.set('rank_mode', top100State.rankMode);
+    params.set('candidate_model', top100State.candidateModelId || defaultCandidateModelId);
     if (options.force) {
       params.set('force', '1');
       params.set('ts', String(Date.now()));
@@ -1594,7 +1596,8 @@
 
   function applyCandidateModelSelector() {
     if (!candidateModelSelector) return;
-    candidateModelSelector.value = loadCandidateModelId();
+    top100State.candidateModelId = loadCandidateModelId();
+    candidateModelSelector.value = top100State.candidateModelId;
   }
 
   applyCandidateModelSelector();
@@ -1603,8 +1606,10 @@
     const modelId = selectedOption && !selectedOption.disabled
       ? candidateModelSelector.value
       : defaultCandidateModelId;
+    top100State.candidateModelId = modelId;
     candidateModelSelector.value = modelId;
     writeStoredValue(candidateModelStorageKey, modelId);
+    refreshTop100({ force: true });
   });
 
   safeAddEventListener(displayModeToggle, 'click', () => {
