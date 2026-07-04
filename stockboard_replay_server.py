@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import copy
 import json
-import mimetypes
 import sys
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -93,6 +92,63 @@ class ReplaySession:
         }
 
 
+@dataclass
+class TickReplaySession:
+    session_id: str
+    events_path: Path
+    events: list[dict[str, Any]]
+    summary: dict[str, Any] | None = None
+    snapshot: dict[str, Any] | None = None
+
+    @property
+    def event_count(self) -> int:
+        return len(self.events)
+
+    @property
+    def first_ts(self) -> str | None:
+        if self.summary:
+            return self.summary.get("first_event_ts")
+        return self.events[0].get("ts") if self.events else None
+
+    @property
+    def last_ts(self) -> str | None:
+        if self.summary:
+            return self.summary.get("last_event_ts")
+        return self.events[-1].get("ts") if self.events else None
+
+    @property
+    def start(self) -> str | None:
+        if self.summary:
+            return self.summary.get("start")
+        return self.first_ts
+
+    @property
+    def end(self) -> str | None:
+        if self.summary:
+            return self.summary.get("end")
+        return self.last_ts
+
+    def events_from(self, offset: int, limit: int) -> list[dict[str, Any]]:
+        if offset < 0:
+            offset = 0
+        limit = max(0, min(limit, 10000))
+        return self.events[offset:offset + limit]
+
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "event_count": self.event_count,
+            "first_ts": self.first_ts,
+            "last_ts": self.last_ts,
+            "start": self.start,
+            "end": self.end,
+            "events_path": str(self.events_path),
+            "summary": self.summary,
+            "snapshot_row_count": len((self.snapshot or {}).get("rows") or []),
+            "safety": SAFETY_PAYLOAD,
+        }
+
+
 def json_file(path: Path) -> dict[str, Any] | None:
     if not path.exists() or not path.is_file():
         return None
@@ -105,6 +161,11 @@ def json_file(path: Path) -> dict[str, Any] | None:
 def related_json_path(frames_path: Path, suffix: str) -> Path:
     name = frames_path.name.replace("_stockboard_frames.jsonl", suffix)
     return frames_path.with_name(name)
+
+
+def related_tick_json_path(events_path: Path, suffix: str) -> Path:
+    name = events_path.name.replace("_events.jsonl", suffix)
+    return events_path.with_name(name)
 
 
 def load_session(frames_path: Path) -> ReplaySession:
@@ -138,6 +199,41 @@ def load_session(frames_path: Path) -> ReplaySession:
     )
 
 
+def load_tick_session(events_path: Path) -> TickReplaySession:
+    events: list[dict[str, Any]] = []
+    with events_path.open("r", encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, start=1):
+            text = line.strip()
+            if not text:
+                continue
+            try:
+                event = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"Invalid tick JSONL: {events_path}:{line_no}: {exc}") from exc
+            if not isinstance(event, dict):
+                raise RuntimeError(f"Invalid tick payload type: {events_path}:{line_no}")
+            events.append(event)
+
+    if not events:
+        raise RuntimeError(f"No tick events in {events_path}")
+
+    summary = json_file(related_tick_json_path(events_path, "_summary.json"))
+    snapshot = json_file(related_tick_json_path(events_path, "_snapshot.json"))
+    session_id = str(
+        (summary or {}).get("session_id")
+        or events[0].get("session_id")
+        or events_path.stem.replace("_events", "")
+    )
+
+    return TickReplaySession(
+        session_id=session_id,
+        events_path=events_path,
+        events=events,
+        summary=summary,
+        snapshot=snapshot,
+    )
+
+
 def discover_sessions(out_dir: Path) -> dict[str, ReplaySession]:
     sessions: dict[str, ReplaySession] = {}
     paths = sorted(
@@ -161,6 +257,24 @@ def discover_sessions(out_dir: Path) -> dict[str, ReplaySession]:
     return sessions
 
 
+def discover_tick_sessions(out_dir: Path) -> dict[str, TickReplaySession]:
+    sessions: dict[str, TickReplaySession] = {}
+    paths = sorted(
+        out_dir.glob("tick_replay_*_events.jsonl"),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+
+    for path in paths:
+        try:
+            session = load_tick_session(path)
+            sessions[session.session_id] = session
+        except Exception as exc:  # noqa: BLE001
+            print(f"[WARN] failed to load tick replay session {path}: {exc}", file=sys.stderr)
+
+    return sessions
+
+
 class ReplayHTTPServer(ThreadingHTTPServer):
     def __init__(
         self,
@@ -168,16 +282,20 @@ class ReplayHTTPServer(ThreadingHTTPServer):
         handler_class: type[BaseHTTPRequestHandler],
         sessions: dict[str, ReplaySession],
         default_session_id: str,
+        tick_sessions: dict[str, TickReplaySession],
+        default_tick_session_id: str | None,
         out_dir: Path,
     ) -> None:
         super().__init__(server_address, handler_class)
         self.sessions = sessions
         self.default_session_id = default_session_id
+        self.tick_sessions = tick_sessions
+        self.default_tick_session_id = default_tick_session_id
         self.out_dir = out_dir
 
 
 class ReplayHandler(BaseHTTPRequestHandler):
-    server_version = "StockBoardReplay/1.0"
+    server_version = "StockBoardReplay/1.1"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         sys.stdout.write("%s - - [%s] %s\n" % (self.client_address[0], self.log_date_time_string(), fmt % args))
@@ -243,6 +361,14 @@ class ReplayHandler(BaseHTTPRequestHandler):
                 self.handle_frame(query)
             elif path == "/api/replay/frames":
                 self.handle_frames(query)
+            elif path == "/api/replay/tick/sessions":
+                self.handle_tick_sessions()
+            elif path == "/api/replay/tick/summary":
+                self.handle_tick_summary(query)
+            elif path == "/api/replay/tick/snapshot":
+                self.handle_tick_snapshot(query)
+            elif path == "/api/replay/tick/events":
+                self.handle_tick_events(query)
             elif path == "/favicon.ico":
                 self._send_bytes(b"", status=204, content_type="image/x-icon")
             else:
@@ -253,6 +379,16 @@ class ReplayHandler(BaseHTTPRequestHandler):
     def get_session(self, query: dict[str, list[str]]) -> ReplaySession | None:
         session_id = first_query(query, "session") or self.server.default_session_id
         return self.server.sessions.get(session_id)
+
+    def get_tick_session(self, query: dict[str, list[str]]) -> TickReplaySession | None:
+        session_id = (
+            first_query(query, "tick_session")
+            or first_query(query, "session")
+            or self.server.default_tick_session_id
+        )
+        if not session_id:
+            return None
+        return self.server.tick_sessions.get(session_id)
 
     def handle_root(self) -> None:
         html = f"""<!doctype html>
@@ -269,14 +405,19 @@ class ReplayHandler(BaseHTTPRequestHandler):
 <body>
   <h1>{SERVER_NAME}</h1>
   <p class="warn">REPLAY ONLY / NO KIWOOM / NO ORDER / NO LIVE API REUSE</p>
-  <p>Available endpoints:</p>
+  <p>Frame endpoints:</p>
   <ul>
     <li><code>/api/replay/health</code></li>
     <li><code>/api/replay/sessions</code></li>
     <li><code>/api/replay/minutes</code></li>
     <li><code>/api/replay/frame?index=0</code></li>
-    <li><code>/api/replay/frame?minute=YYYY-MM-DDTHH:MM</code></li>
-    <li><code>/api/replay/summary</code></li>
+  </ul>
+  <p>Tick endpoints:</p>
+  <ul>
+    <li><code>/api/replay/tick/sessions</code></li>
+    <li><code>/api/replay/tick/summary</code></li>
+    <li><code>/api/replay/tick/snapshot</code></li>
+    <li><code>/api/replay/tick/events?from=0&amp;limit=1000</code></li>
   </ul>
 </body>
 </html>
@@ -289,6 +430,8 @@ class ReplayHandler(BaseHTTPRequestHandler):
             "server": SERVER_NAME,
             "default_session_id": self.server.default_session_id,
             "session_count": len(self.server.sessions),
+            "default_tick_session_id": self.server.default_tick_session_id,
+            "tick_session_count": len(self.server.tick_sessions),
             "out_dir": str(self.server.out_dir),
             "safety": SAFETY_PAYLOAD,
         })
@@ -390,6 +533,70 @@ class ReplayHandler(BaseHTTPRequestHandler):
             "safety": SAFETY_PAYLOAD,
         })
 
+    def handle_tick_sessions(self) -> None:
+        sessions = [session.metadata() for session in self.server.tick_sessions.values()]
+        sessions.sort(key=lambda item: str(item.get("session_id")))
+        self._send_json({
+            "ok": True,
+            "default_tick_session_id": self.server.default_tick_session_id,
+            "tick_sessions": sessions,
+            "safety": SAFETY_PAYLOAD,
+        })
+
+    def handle_tick_summary(self, query: dict[str, list[str]]) -> None:
+        session = self.get_tick_session(query)
+        if session is None:
+            self._send_error_json(HTTPStatus.NOT_FOUND, "Tick replay session not found")
+            return
+
+        self._send_json({
+            "ok": True,
+            "tick_session": session.metadata(),
+            "summary": session.summary,
+            "safety": SAFETY_PAYLOAD,
+        })
+
+    def handle_tick_snapshot(self, query: dict[str, list[str]]) -> None:
+        session = self.get_tick_session(query)
+        if session is None:
+            self._send_error_json(HTTPStatus.NOT_FOUND, "Tick replay session not found")
+            return
+
+        snapshot = copy.deepcopy(session.snapshot or {})
+        snapshot["ok"] = True
+        snapshot["tick_session_id"] = session.session_id
+        snapshot["event_count"] = session.event_count
+        snapshot["safety"] = SAFETY_PAYLOAD
+        self._send_json(snapshot)
+
+    def handle_tick_events(self, query: dict[str, list[str]]) -> None:
+        session = self.get_tick_session(query)
+        if session is None:
+            self._send_error_json(HTTPStatus.NOT_FOUND, "Tick replay session not found")
+            return
+
+        offset = parse_positive_int(first_query(query, "from"), default=0)
+        limit = parse_positive_int(first_query(query, "limit"), default=1000)
+        limit = min(limit, 10000)
+        events = session.events_from(offset, limit)
+        next_from = offset + len(events)
+        has_more = next_from < session.event_count
+
+        self._send_json({
+            "ok": True,
+            "tick_session_id": session.session_id,
+            "from": offset,
+            "limit": limit,
+            "returned": len(events),
+            "next_from": next_from,
+            "has_more": has_more,
+            "event_count": session.event_count,
+            "first_ts": session.first_ts,
+            "last_ts": session.last_ts,
+            "events": events,
+            "safety": SAFETY_PAYLOAD,
+        })
+
 
 def first_query(query: dict[str, list[str]], key: str) -> str | None:
     values = query.get(key)
@@ -420,23 +627,41 @@ def choose_default_session_id(sessions: dict[str, ReplaySession], requested: str
     return newest.session_id
 
 
+def choose_default_tick_session_id(sessions: dict[str, TickReplaySession], requested: str | None = None) -> str | None:
+    if not sessions:
+        return None
+    if requested and requested in sessions:
+        return requested
+    newest = sorted(
+        sessions.values(),
+        key=lambda session: session.events_path.stat().st_mtime,
+        reverse=True,
+    )[0]
+    return newest.session_id
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Read-only StockBoard replay API server.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=18001)
     parser.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR))
     parser.add_argument("--session", default=None)
+    parser.add_argument("--tick-session", default=None)
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
     sessions = discover_sessions(out_dir)
     default_session_id = choose_default_session_id(sessions, args.session)
+    tick_sessions = discover_tick_sessions(out_dir)
+    default_tick_session_id = choose_default_tick_session_id(tick_sessions, args.tick_session)
 
     server = ReplayHTTPServer(
         (args.host, args.port),
         ReplayHandler,
         sessions=sessions,
         default_session_id=default_session_id,
+        tick_sessions=tick_sessions,
+        default_tick_session_id=default_tick_session_id,
         out_dir=out_dir,
     )
 
@@ -445,10 +670,15 @@ def main() -> int:
     print(f"port: {args.port}")
     print(f"default_session_id: {default_session_id}")
     print(f"session_count: {len(sessions)}")
+    print(f"default_tick_session_id: {default_tick_session_id}")
+    print(f"tick_session_count: {len(tick_sessions)}")
     print("safety:", SAFETY_PAYLOAD)
     print(f"health: http://{args.host}:{args.port}/api/replay/health")
     print(f"sessions: http://{args.host}:{args.port}/api/replay/sessions")
     print(f"frame0: http://{args.host}:{args.port}/api/replay/frame?index=0")
+    print(f"tick_summary: http://{args.host}:{args.port}/api/replay/tick/summary")
+    print(f"tick_snapshot: http://{args.host}:{args.port}/api/replay/tick/snapshot")
+    print(f"tick_events: http://{args.host}:{args.port}/api/replay/tick/events?from=0&limit=1000")
     sys.stdout.flush()
 
     try:
