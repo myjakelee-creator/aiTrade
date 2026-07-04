@@ -26,6 +26,7 @@ from stockboard_engine import (
     _request_sleep_sec,
     build_top100_filter_report,
     enrich_candidate_fields,
+    load_candidate_score_model,
     prepare_display_rows,
 )
 from stockboard_store import RealtimeStore, _load_tradable_stock_codes
@@ -4063,6 +4064,7 @@ def make_handler(
             if request_path == "/api/top100":
                 include_debug = _query_flag_enabled(query, "debug", "include_debug")
                 rank_mode = str(query.get("rank_mode", ["auto"])[0] or "auto")
+                candidate_model_id = str(query.get("candidate_model", [""])[0] or "").strip()
                 force_rank_refresh = str(query.get("force", ["0"])[0] or "0").strip().lower() in {"1", "true", "yes", "on"}
                 response_source_rows, rank_meta = rows_for_rank_mode(rank_mode, force=force_rank_refresh)
                 ohlc_count = sum(
@@ -4092,12 +4094,14 @@ def make_handler(
                     self.end_headers()
                     self.wfile.write(body)
                     return
+                candidate_model = load_candidate_score_model(candidate_model_id)
                 response_rows = enrich_candidate_fields(
                     _top100_with_realtime(
                         response_source_rows,
                         realtime_store,
                         include_debug=include_debug,
-                    )
+                    ),
+                    model=candidate_model,
                 )
                 for row in response_rows:
                     row.update(rank_meta)

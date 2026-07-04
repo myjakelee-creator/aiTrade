@@ -1,6 +1,8 @@
+import json
 import os
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
 
 KST = timezone(timedelta(hours=9))
@@ -32,6 +34,66 @@ CANDIDATE_SCORE_MODEL = {
         {"key": "top5_one_min_net_buy_value_growth", "stage": "top5", "max_score": 50, "enabled": True},
     ],
 }
+
+
+CANDIDATE_MODEL_CONFIG_DIR = Path(__file__).resolve().parent / "configs" / "candidate_models"
+CANDIDATE_MODEL_REGISTRY_FILE = CANDIDATE_MODEL_CONFIG_DIR / "_registry.json"
+
+
+def _read_candidate_model_json(path):
+    try:
+        with path.open("r", encoding="utf-8-sig") as handle:
+            return json.load(handle)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as error:
+        print(f"warning: candidate model json load failed: {path}: {error}")
+        return None
+
+
+def _candidate_model_registry():
+    registry = _read_candidate_model_json(CANDIDATE_MODEL_REGISTRY_FILE)
+    return registry if isinstance(registry, dict) else {}
+
+
+def _candidate_model_file_map(registry):
+    result = {}
+    for item in registry.get("models", []) or []:
+        if not isinstance(item, dict):
+            continue
+        model_id = str(item.get("id") or "").strip()
+        file_name = str(item.get("file") or "").strip()
+        if model_id and file_name:
+            result[model_id] = file_name
+    return result
+
+
+def load_candidate_score_model(model_id=None):
+    """Load a candidate model config. Empty or invalid model id keeps legacy behavior."""
+    requested_id = str(model_id or "").strip()
+    if not requested_id:
+        return CANDIDATE_SCORE_MODEL
+    if requested_id == CANDIDATE_SCORE_MODEL.get("id"):
+        return CANDIDATE_SCORE_MODEL
+
+    registry = _candidate_model_registry()
+    file_map = _candidate_model_file_map(registry)
+    file_name = file_map.get(requested_id) or f"{requested_id}.json"
+    model = _read_candidate_model_json(CANDIDATE_MODEL_CONFIG_DIR / file_name)
+
+    if not isinstance(model, dict):
+        print(f"warning: candidate model fallback used for {requested_id}")
+        return CANDIDATE_SCORE_MODEL
+
+    if not (model.get("items") or model.get("score_structure")):
+        print(f"warning: candidate model has no scoring structure: {requested_id}")
+        return CANDIDATE_SCORE_MODEL
+
+    model.setdefault("id", requested_id)
+    model.setdefault("version", model.get("id") or requested_id)
+    model.setdefault("name", model.get("id") or requested_id)
+    model["requested_model_id"] = requested_id
+    model["resolved_model_id"] = model.get("id")
+    return model
+
 
 def prepare_display_rows(top100_rows, tradable_codes, program_net_by_code):
     filtered_rows = [row for row in top100_rows if row["stock_code"] in tradable_codes]
@@ -404,8 +466,422 @@ def _candidate_text(row, current_rank, rank_gap, trend_ok):
     return " + ".join(momentum_parts), " + ".join(reason_parts)
 
 
+
+def _metric_max(metric_rows, key):
+    values = []
+    for _row, metrics in metric_rows:
+        value = _number_or_none(metrics.get(key))
+        if value is not None and value > 0:
+            values.append(value)
+    return max(values, default=None)
+
+
+def _price_value(row):
+    return _number_or_none(_first(row, "display_price", "realtime_price", "price"))
+
+
+def _open_value(row):
+    ohlc = _first(row, "display_ohlc", "realtime_ohlc", "ohlc")
+    if isinstance(ohlc, dict):
+        return _number_or_none(ohlc.get("open"))
+    return None
+
+
+def _vwap_value(row):
+    return _number_or_none(_first(row, "vwap", "realtime_vwap", "average_price"))
+
+
+def _change_rate_value(row):
+    return _number_or_none(_first(row, "display_change_rate", "realtime_change_rate", "change_rate"))
+
+
+def _above_reference(row, prefer_vwap=False):
+    price = _price_value(row)
+    if price is None:
+        return None
+    reference = _vwap_value(row) if prefer_vwap else None
+    if reference is None:
+        reference = _open_value(row)
+    if reference is None:
+        return None
+    return price >= reference
+
+
+def _hold_strength_score(strength, weight, threshold=100):
+    if strength is None or weight <= 0:
+        return None
+    if strength >= threshold:
+        return weight
+    if strength <= 0:
+        return 0
+    return round(_clamp(strength / threshold * weight, 0, weight), 2)
+
+
+def _safe_change_rate_score(change_rate, weight):
+    if change_rate is None or weight <= 0:
+        return None
+    if change_rate < -3:
+        return 0
+    if 0 <= change_rate <= 15:
+        return weight
+    if change_rate < 0:
+        return round(weight * 0.5, 2)
+    if change_rate <= 25:
+        return round(weight * 0.65, 2)
+    return 0
+
+
+def _bool_score(value, weight):
+    if value is None or weight <= 0:
+        return None
+    return weight if value else 0
+
+
+def _sell_wall_absorption_score(row, metrics, weight):
+    if weight <= 0:
+        return None
+    above = _above_reference(row, prefer_vwap=True)
+    strength = metrics.get("realtime_strength")
+    bid_ask_ratio = _number_or_none(_first(row, "bid_ask_ratio"))
+    ask_dominant = bid_ask_ratio is None or bid_ask_ratio < 1
+    if above is True and strength is not None and strength >= 100 and ask_dominant:
+        return weight
+    if above is True and strength is not None and strength >= 100:
+        return round(weight * 0.6, 2)
+    return 0
+
+
+def _score_structure_item_score(key, row, metrics, context, weight):
+    key = str(key or "")
+    if weight < 0:
+        change_rate = metrics.get("change_rate")
+        if key in {"spike_reversal_penalty", "burst_reversal_penalty", "overheat_penalty"}:
+            return weight if change_rate is not None and change_rate > 20 else 0
+        return 0
+
+    if key == "trade_value_rank":
+        return _rank_window_score(metrics.get("current_rank"), 300, weight)
+    if key in {"rank_gap", "rank_gap_continuation"}:
+        return _rank_gap_score(metrics.get("rank_gap"), weight)
+    if key in {"trade_value_growth", "one_min_trade_value_growth", "one_min_trade_value_burst"}:
+        metric_key = "one_min_trade_value_growth" if key.startswith("one_min") else "trade_value_eok"
+        return _positive_scaled_score(metrics.get(metric_key), context.get(f"max_{metric_key}"), weight)
+    if key in {"program_net", "program_net_growth", "program_plus_strength"}:
+        return _positive_scaled_score(metrics.get("program_net"), context.get("max_program_net"), weight)
+    if key in {"foreign_display_value", "flow_confirmation", "program_or_foreign_flow"}:
+        value = metrics.get("foreign_value")
+        if value is None:
+            value = metrics.get("program_net")
+        return _positive_scaled_score(value, context.get("max_flow_value"), weight)
+    if key in {"one_min_net_buy_value_growth", "one_min_net_buy_value_continuation"}:
+        return _positive_scaled_score(metrics.get("one_min_net_buy_value_growth"), context.get("max_one_min_net_buy_value_growth"), weight)
+    if key in {"one_min_strength_growth", "one_min_strength_acceleration"}:
+        return _positive_scaled_score(metrics.get("one_min_strength_growth"), context.get("max_one_min_strength_growth"), weight)
+    if key in {"realtime_strength", "realtime_strength_rank"}:
+        return _ranked_metric_score(metrics.get("realtime_strength"), context.get("realtime_strength_values", []), weight)
+    if key in {"realtime_strength_hold_100", "realtime_strength_hold"}:
+        return _hold_strength_score(metrics.get("realtime_strength"), weight, threshold=100)
+    if key == "session_strength":
+        return _hold_strength_score(metrics.get("session_strength"), weight, threshold=100)
+    if key in {"safe_change_rate_band", "change_rate_0_to_7", "change_rate_reaction", "not_overheated_volatility", "not_overextended"}:
+        return _safe_change_rate_score(metrics.get("change_rate"), weight)
+    if key in {"above_open", "breakout_or_above_open"}:
+        return _bool_score(_above_reference(row, prefer_vwap=False), weight)
+    if key in {"above_vwap", "above_vwap_hold", "above_vwap_or_open"}:
+        return _bool_score(_above_reference(row, prefer_vwap=True), weight)
+    if key in {"sell_wall_absorption", "program_sell_wall_absorption"}:
+        return _sell_wall_absorption_score(row, metrics, weight)
+    if key in {"market_relative_change_rate", "relative_strength_continuation", "green_while_market_weak", "near_high_hold"}:
+        change_rate = metrics.get("change_rate")
+        if change_rate is None:
+            return None
+        if key == "near_high_hold":
+            return _safe_change_rate_score(change_rate, weight)
+        return _positive_scaled_score(change_rate, context.get("max_change_rate"), weight)
+    if key == "no_trade_value_collapse":
+        return _bool_score((metrics.get("trade_value_eok") or 0) > 0, weight)
+    return None
+
+
+def _score_structure_component(key, stage, weight, score):
+    possible = weight if weight > 0 else 0
+    if score is None:
+        points = 0
+        status = "missing"
+    else:
+        if weight >= 0:
+            points = round(_clamp(score, 0, weight), 2)
+        else:
+            points = round(_clamp(score, weight, 0), 2)
+        status = "ok"
+    return {
+        "key": key,
+        "stage": stage,
+        "enabled": True,
+        "diagnostic_only": False,
+        "weight": weight,
+        "earned_points": points,
+        "points": points,
+        "possible_points": possible,
+        "source": "candidate_model_score_structure",
+        "status": status,
+        "coverage_status": status,
+        "reason": "score_structure",
+    }
+
+
+def _stage_percent(points, possible):
+    if possible <= 0:
+        return 0
+    return round(_clamp(points / possible * 100, 0, 100), 2)
+
+
+def _candidate_grade_for_model(score, model):
+    if score is None:
+        return (None, "")
+    score = _clamp(score, 0, 100)
+    policy = model.get("grade_policy") if isinstance(model, dict) else {}
+    bands = (policy or {}).get("base_bands") or {}
+    a = _number_or_none(bands.get("A")) or 85
+    b = _number_or_none(bands.get("B")) or 75
+    c = _number_or_none(bands.get("C")) or 62
+    d = _number_or_none(bands.get("D")) or 50
+    if score >= a:
+        return ("A", "a")
+    if score >= b:
+        return ("B", "b")
+    if score >= c:
+        return ("C", "c")
+    if score >= d:
+        return ("D", "d")
+    return ("F", "f")
+
+
+def _score_breakdown_section(score, possible, components, stage):
+    return {
+        "score": score,
+        "possible_points": possible,
+        "items": [item for item in components if item.get("stage") == stage],
+    }
+
+
+def _enrich_candidate_fields_score_structure(rows, model):
+    enrich_limit_state_fields(rows)
+    enriched_rows = []
+    metric_rows = []
+
+    for row in rows:
+        current_rank = _current_rank(row)
+        rank_gap = _rank_gap(row, current_rank)
+        metrics = {
+            "current_rank": current_rank,
+            "rank_gap": rank_gap,
+            "trade_value_eok": _number_or_none(_first(row, "trade_value_eok")),
+            "change_rate": _change_rate_value(row),
+            "program_net": _number_or_none(_first(row, "program_net")),
+            "foreign_value": _number_or_none(_first(row, "foreign_sum", "foreign_display_value", "foreign_investor_net")),
+            "one_min_trade_value_growth": _number_or_none(_first(row, "one_min_trade_value_delta_eok", "one_min_trade_value_eok")),
+            "one_min_strength_growth": _number_or_none(_first(row, "one_min_strength_growth_rate", "one_min_strength_delta")),
+            "one_min_net_buy_value_growth": _number_or_none(_first(row, "one_min_net_buy_value_delta_eok", "one_min_net_buy_value_eok")),
+            "realtime_strength": _number_or_none(_first(row, "realtime_strength", "execution_strength")),
+            "session_strength": _number_or_none(_first(row, "strength_day", "session_strength")),
+        }
+        metric_rows.append((row, metrics))
+
+    context = {
+        "max_trade_value_eok": _metric_max(metric_rows, "trade_value_eok"),
+        "max_one_min_trade_value_growth": _metric_max(metric_rows, "one_min_trade_value_growth"),
+        "max_program_net": _metric_max(metric_rows, "program_net"),
+        "max_flow_value": max(
+            [
+                value
+                for _row, metrics in metric_rows
+                for value in (metrics.get("foreign_value"), metrics.get("program_net"))
+                if value is not None and value > 0
+            ],
+            default=None,
+        ),
+        "max_one_min_strength_growth": _metric_max(metric_rows, "one_min_strength_growth"),
+        "max_one_min_net_buy_value_growth": _metric_max(metric_rows, "one_min_net_buy_value_growth"),
+        "max_change_rate": _metric_max(metric_rows, "change_rate"),
+        "realtime_strength_values": [
+            metrics["realtime_strength"]
+            for _row, metrics in metric_rows
+            if metrics.get("realtime_strength") is not None
+        ],
+    }
+
+    score_structure = model.get("score_structure") or {}
+    grade_weights = score_structure.get("grade_score_weights") or {
+        "entry_score": 0.35,
+        "confirmation_score": 0.40,
+        "focus_score": 0.25,
+    }
+
+    for row, metrics in metric_rows:
+        legacy_grade = _first(row, "grade", "legacy_grade")
+        score_components = []
+        for stage in ("entry_score", "confirmation_score", "focus_score"):
+            for item in score_structure.get(stage, []) or []:
+                key = item.get("key")
+                weight = _number_or_none(item.get("weight")) or 0
+                score = _score_structure_item_score(key, row, metrics, context, weight)
+                score_components.append(_score_structure_component(key, stage, weight, score))
+
+        entry_points = _sum_component_points(score_components, "entry_score")
+        confirm_points = _sum_component_points(score_components, "confirmation_score")
+        focus_points = _sum_component_points(score_components, "focus_score")
+        entry_possible = _sum_component_possible(score_components, "entry_score")
+        confirm_possible = _sum_component_possible(score_components, "confirmation_score")
+        focus_possible = _sum_component_possible(score_components, "focus_score")
+
+        entry_score = _stage_percent(entry_points, entry_possible)
+        confirmation_score = _stage_percent(confirm_points, confirm_possible)
+        focus_score = _stage_percent(focus_points, focus_possible)
+        grade_score = round(
+            entry_score * float(grade_weights.get("entry_score", 0))
+            + confirmation_score * float(grade_weights.get("confirmation_score", 0))
+            + focus_score * float(grade_weights.get("focus_score", 0)),
+            2,
+        )
+        score = int(round(_clamp(grade_score, 0, 100)))
+        grade, grade_class = _candidate_grade_for_model(score, model)
+        grade_text = f"{grade}{score}" if grade else "-"
+
+        current_rank = metrics["current_rank"]
+        rank_gap = metrics["rank_gap"]
+        trend_ok, trend_reason = _trend_status(row)
+        status = _candidate_status(score, trend_ok)
+        momentum, reason = _candidate_text(row, current_rank, rank_gap, trend_ok)
+        component_statuses = {item["key"]: item["status"] for item in score_components}
+        score_status = "partial" if any(item["status"] == "missing" for item in score_components) else "ok"
+
+        row["entry_score"] = entry_score
+        row["confirmation_score"] = confirmation_score
+        row["focus_score"] = focus_score
+        row["grade_score"] = grade_score
+        row["candidate_score_raw"] = grade_score
+        row["candidate_score_max"] = 100
+        row["candidate_score"] = score
+        row["score_top50"] = entry_score
+        row["score_top20"] = confirmation_score
+        row["score_top5"] = focus_score
+        row["score_total"] = grade_score
+        row["score_total_points"] = grade_score
+        row["score_possible_points"] = 100
+        row["score_percent"] = score
+        row["grade_letter"] = grade
+        row["legacy_grade"] = legacy_grade
+        row["candidate_grade"] = grade
+        row["candidate_grade_text"] = grade_text
+        row["candidate_grade_class"] = grade_class
+        row["display_grade_source"] = "candidate_grade_text"
+        row["grade_fallback_used"] = False
+        row["candidate_reason"] = reason
+        row["candidate_reason_tokens"] = [token.strip() for token in reason.split("+") if token.strip()]
+        row["trend_ok"] = trend_ok
+        row["trend_reason"] = trend_reason
+        row["momentum"] = momentum
+        row["candidate_status"] = status
+        row["candidate_model_id"] = model.get("id") or model.get("version")
+        row["candidate_model_name"] = model.get("name")
+        row["candidate_score_version"] = model.get("version") or model.get("id")
+        row["grade_policy_mode"] = (model.get("grade_policy") or {}).get("mode")
+
+        enabled_components = [item for item in score_components if item.get("enabled") and not item.get("diagnostic_only")]
+        row["candidate_score_coverage"] = (
+            round(len([item for item in enabled_components if item.get("status") != "missing"]) / len(enabled_components), 2)
+            if enabled_components
+            else None
+        )
+
+        row["candidate_score_items"] = {
+            "top50": {item["key"]: item["points"] for item in score_components if item.get("stage") == "entry_score"},
+            "top20": {item["key"]: item["points"] for item in score_components if item.get("stage") == "confirmation_score"},
+            "top5": {item["key"]: item["points"] for item in score_components if item.get("stage") == "focus_score"},
+            "entry_score": {item["key"]: item["points"] for item in score_components if item.get("stage") == "entry_score"},
+            "confirmation_score": {item["key"]: item["points"] for item in score_components if item.get("stage") == "confirmation_score"},
+            "focus_score": {item["key"]: item["points"] for item in score_components if item.get("stage") == "focus_score"},
+        }
+
+        top50_breakdown = _score_breakdown_section(entry_score, entry_possible, score_components, "entry_score")
+        top20_breakdown = _score_breakdown_section(confirmation_score, confirm_possible, score_components, "confirmation_score")
+        top5_breakdown = _score_breakdown_section(focus_score, focus_possible, score_components, "focus_score")
+
+        row["score_breakdown"] = {
+            "top50": top50_breakdown,
+            "top20": top20_breakdown,
+            "top5": top5_breakdown,
+            "entry_score": top50_breakdown,
+            "confirmation_score": top20_breakdown,
+            "focus_score": top5_breakdown,
+            "total": {
+                "score": grade_score,
+                "possible_points": 100,
+                "percent": score,
+                "formula": "weighted stage percentages",
+            },
+            "component_status": component_statuses,
+        }
+        row["score_sources"] = {"score_structure": model.get("id")}
+        row["score_status"] = score_status
+        row["is_candidate"] = False
+        row["candidate_rank"] = None
+        row["pool_stage"] = None
+        row["pool_rank"] = None
+        row["funnel_rank"] = None
+        enriched_rows.append(row)
+
+    top50_rows = sorted(
+        enriched_rows,
+        key=lambda row: (
+            -(_number_or_none(row.get("entry_score")) or -1),
+            -(_number_or_none(row.get("grade_score")) or -1),
+            _current_rank(row) or float("inf"),
+            -(_number_or_none(row.get("trade_value_eok")) or 0),
+        ),
+    )[:50]
+    top20_rows = sorted(
+        top50_rows,
+        key=lambda row: (
+            -(_number_or_none(row.get("confirmation_score")) or -1),
+            -(_number_or_none(row.get("grade_score")) or -1),
+            _current_rank(row) or float("inf"),
+            -(_number_or_none(row.get("trade_value_eok")) or 0),
+        ),
+    )[:20]
+    candidate_rows = sorted(
+        top20_rows,
+        key=lambda row: (
+            -(_number_or_none(row.get("focus_score")) or -1),
+            -(_number_or_none(row.get("grade_score")) or -1),
+            _current_rank(row) or float("inf"),
+            -(_number_or_none(row.get("trade_value_eok")) or 0),
+        ),
+    )[:5]
+
+    ranked_rows = candidate_rows + [row for row in top20_rows if row not in candidate_rows] + [row for row in top50_rows if row not in top20_rows] + [
+        item
+        for item in sorted(enriched_rows, key=lambda item: _current_rank(item) or float("inf"))
+        if item not in top50_rows
+    ]
+
+    for funnel_rank, row in enumerate(ranked_rows, start=1):
+        row["funnel_rank"] = funnel_rank
+        row["pool_rank"] = funnel_rank
+        row["pool_stage"] = _pool_stage(funnel_rank)
+
+    for candidate_rank, row in enumerate(candidate_rows, start=1):
+        row["is_candidate"] = True
+        row["candidate_rank"] = candidate_rank
+
+    return enriched_rows
+
+
 def enrich_candidate_fields(rows, model=None):
     model = model or CANDIDATE_SCORE_MODEL
+    if isinstance(model, dict) and model.get("score_structure"):
+        return _enrich_candidate_fields_score_structure(rows, model)
     enrich_limit_state_fields(rows)
     enriched_rows = []
     model_items = model.get("items", [])

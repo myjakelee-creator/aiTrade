@@ -1,48 +1,152 @@
 {
   "schema_version": 1,
   "id": "PROGRAM_FLOW_V01",
-  "name": "프로그램 수급 동행형",
+  "name": "Program Flow V01",
   "runtime_status": "design_ready_not_loaded_yet",
-  "purpose": "프로그램 순매수와 실체결 매수 우위가 함께 붙는 대형주/중형주 후보를 선발한다.",
+  "purpose": "Select candidates where program net buying and real buy pressure move together.",
   "grade_policy": {
-    "mode": "pool_percentile_calibrated",
-    "bands": [
-      {"grade": "A", "percentile_top": 15},
-      {"grade": "B", "percentile_top": 35},
-      {"grade": "C", "percentile_top": 65},
-      {"grade": "D", "percentile_top": 85},
-      {"grade": "F", "percentile_top": 100}
+    "mode": "absolute_market_calibrated",
+    "distribution": "natural_not_forced",
+    "base_bands": {
+      "A": 85,
+      "B": 75,
+      "C": 62,
+      "D": 50,
+      "F": 0
+    },
+    "market_adjustment": {
+      "strong": {
+        "A": 82,
+        "B": 72,
+        "C": 60,
+        "D": 45
+      },
+      "neutral": {
+        "A": 85,
+        "B": 75,
+        "C": 62,
+        "D": 50
+      },
+      "weak": {
+        "A": 90,
+        "B": 80,
+        "C": 68,
+        "D": 55
+      },
+      "very_weak": {
+        "A": 92,
+        "B": 84,
+        "C": 72,
+        "D": 60
+      }
+    },
+    "a_grade_guards": [
+      "price >= vwap_or_open",
+      "realtime_strength >= 100",
+      "score_has_money_flow_confirmation"
     ]
+  },
+  "promotion_demotion_policy": {
+    "principle": "group_membership_is_result_not_score_source",
+    "score_all_rows_for_entry": true,
+    "top50": "top 50 by entry_score from Top300",
+    "top20": "top 20 by confirmation_score from Top50",
+    "top5": "top 5 by focus_score from Top20",
+    "refresh_behavior": "every refresh can promote or demote rows"
   },
   "orderbook_policy": {
     "name": "program_sell_wall_absorption",
-    "principle": "프로그램 매수가 들어오는 상황에서 매도잔량이 두껍고 가격이 VWAP 위에 있으면 흡수로 가점한다.",
-    "favorable": ["program_net > 0", "ask_pct > bid_pct", "price >= vwap", "realtime_strength >= 100"]
-  },
-  "stages": {
-    "top50": [
-      {"key": "trade_value_rank", "weight": 20},
-      {"key": "rank_gap", "weight": 20},
-      {"key": "program_net", "weight": 40},
-      {"key": "safe_change_rate_band", "weight": 20}
-    ],
-    "top20": [
-      {"key": "program_net_growth", "weight": 35},
-      {"key": "foreign_display_value", "weight": 15},
-      {"key": "above_vwap", "weight": 20},
-      {"key": "realtime_strength_hold_100", "weight": 20},
-      {"key": "program_sell_wall_absorption", "weight": 10}
-    ],
-    "top5": [
-      {"key": "program_plus_strength", "weight": 35},
-      {"key": "above_vwap_or_open", "weight": 30},
-      {"key": "rank_gap_continuation", "weight": 20},
-      {"key": "overheat_penalty", "weight": -15}
+    "principle": "Treat thick ask volume as positive only when price holds above VWAP or open and realtime strength confirms buy-side absorption.",
+    "favorable": [
+      "program_net > 0",
+      "ask_pct > bid_pct",
+      "price >= vwap",
+      "realtime_strength >= 100"
     ]
   },
+  "score_structure": {
+    "entry_score": [
+      {
+        "key": "trade_value_rank",
+        "weight": 15
+      },
+      {
+        "key": "rank_gap",
+        "weight": 15
+      },
+      {
+        "key": "program_net",
+        "weight": 40
+      },
+      {
+        "key": "safe_change_rate_band",
+        "weight": 15
+      },
+      {
+        "key": "above_open",
+        "weight": 15
+      }
+    ],
+    "confirmation_score": [
+      {
+        "key": "program_net_growth",
+        "weight": 35
+      },
+      {
+        "key": "foreign_display_value",
+        "weight": 15
+      },
+      {
+        "key": "above_vwap",
+        "weight": 20
+      },
+      {
+        "key": "realtime_strength_hold_100",
+        "weight": 15
+      },
+      {
+        "key": "sell_wall_absorption",
+        "weight": 15
+      }
+    ],
+    "focus_score": [
+      {
+        "key": "program_plus_strength",
+        "weight": 35
+      },
+      {
+        "key": "above_vwap_or_open",
+        "weight": 25
+      },
+      {
+        "key": "rank_gap_continuation",
+        "weight": 15
+      },
+      {
+        "key": "overheat_penalty",
+        "weight": -15
+      }
+    ],
+    "grade_score_weights": {
+      "entry_score": 0.25,
+      "confirmation_score": 0.45,
+      "focus_score": 0.30
+    }
+  },
   "funnel": {
-    "top50": {"take": 50},
-    "top20": {"from": "top50", "take": 20},
-    "top5": {"from": "top20", "take": 5}
+    "top50": {
+      "take": 50,
+      "score": "entry_score"
+    },
+    "top20": {
+      "from": "top50",
+      "take": 20,
+      "score": "confirmation_score"
+    },
+    "top5": {
+      "from": "top20",
+      "take": 5,
+      "score": "focus_score"
+    }
   }
 }
