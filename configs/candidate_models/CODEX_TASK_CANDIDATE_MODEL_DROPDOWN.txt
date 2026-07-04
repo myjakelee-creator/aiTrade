@@ -1,0 +1,31 @@
+Goal: wire candidate model configs into StockBoard runtime.
+
+Branch: hot-priority-integrated-20260630
+
+Read first:
+- AGENTS.md
+- docs/STOCKBOARD_CURRENT_STATUS_20260625.md
+- docs/STOCKBOARD_NAMEPLATE_v1.4_20260625.md
+- configs/candidate_models/_registry.json
+
+Required:
+1. Add a Python loader for configs/candidate_models/*.json.
+2. Let /api/top100 accept candidate_model=<id>.
+3. Pass the loaded model into stockboard_engine.enrich_candidate_fields(..., model=model).
+4. Keep default OPENING_MONEY_FLOW_V01 when no model is selected.
+5. Keep 6-digit stock_code keys and _AL source policy unchanged.
+6. Add/enable topbar dropdown candidate-model-selector.
+7. Store selected model in localStorage key stockboard.candidateModel.v1.
+8. Add candidate_model to /api/top100 request URL.
+9. Do not move price calculation into HTML.
+10. Do not change live trading behavior.
+
+Validation:
+- git diff --check
+- py -3.10-32 -m py_compile stockboard_engine.py stockboard_server.py
+- fetch /api/top100?candidate_model=OPENING_MONEY_FLOW_V01
+- fetch /api/top100?candidate_model=TVRANK_A_V03_TEMP
+- verify candidate_model_id changes in returned rows
+- browser dropdown changes model and refreshes board
+
+Report changed files, checks run, unverified items, commit hash, push status.
