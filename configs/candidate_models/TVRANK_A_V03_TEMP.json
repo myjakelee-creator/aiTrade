@@ -1,5 +1,40 @@
 {
+  "schema_version": 1,
   "id": "TVRANK_A_V03_TEMP",
-  "name": "current_stockboard_candidate_model",
-  "runtime_status": "mirror_only"
+  "name": "거래대금 순위 중심",
+  "version": "TVRANK_A_V03_TEMP",
+  "runtime_status": "mirror_only_not_loaded_yet",
+  "source": "stockboard_engine.py:CANDIDATE_SCORE_MODEL",
+  "items": [
+    {"key": "top50_trade_value_rank", "stage": "top50", "enabled": true, "max_score": 30, "source": "rank/displayed_rank"},
+    {"key": "top50_rank_gap", "stage": "top50", "enabled": true, "max_score": 30, "source": "rank_diff_or_prev_rank"},
+    {"key": "top50_foreign_sum", "stage": "top50", "enabled": false, "max_score": 0, "source": "foreign_sum"},
+    {"key": "top50_program_net", "stage": "top50", "enabled": true, "max_score": 40, "source": "program_net"},
+    {"key": "top20_trade_value_ratio", "stage": "top20", "enabled": true, "max_score": 50, "source": "trade_value_eok/prev_trade_value_eok"},
+    {"key": "top20_large_trade_net_count", "stage": "top20", "enabled": false, "diagnostic_only": true, "max_score": 0, "source": "large_trade_net_count"},
+    {"key": "top5_one_min_strength_growth", "stage": "top5", "enabled": true, "max_score": 30, "source": "one_min_strength_growth_rate_or_delta"},
+    {"key": "top5_realtime_strength_rank", "stage": "top5", "enabled": true, "max_score": 20, "source": "realtime_strength"},
+    {"key": "top5_one_min_net_buy_value_growth", "stage": "top5", "enabled": true, "max_score": 50, "source": "one_min_net_buy_value_delta_eok"}
+  ],
+  "score": {
+    "enabled_possible_points": 250,
+    "percent_formula": "round(score_total_points / score_possible_points * 100)"
+  },
+  "funnel": {
+    "top50": {"take": 50, "sort": ["score_top50 desc", "current_rank asc"]},
+    "top20": {"take": 20, "from": "top50", "sort": ["score_top20 desc", "score_top50 desc", "current_rank asc"]},
+    "top5": {"take": 5, "from": "top20", "sort": ["score_top5 desc", "score_total desc", "current_rank asc"]}
+  },
+  "grades": [
+    {"grade": "A", "min": 91},
+    {"grade": "B", "min": 81},
+    {"grade": "C", "min": 71},
+    {"grade": "D", "min": 61},
+    {"grade": "F", "min": 0}
+  ],
+  "status": [
+    {"name": "WEAK", "when": "score is null or score < 40"},
+    {"name": "READY", "when": "trend_ok is true and score >= 60"},
+    {"name": "WATCH", "when": "otherwise"}
+  ]
 }
