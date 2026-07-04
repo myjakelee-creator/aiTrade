@@ -6,12 +6,38 @@
   "grade_policy": {
     "mode": "absolute_market_calibrated",
     "distribution": "natural_not_forced",
-    "base_bands": {"A": 85, "B": 75, "C": 62, "D": 50, "F": 0},
+    "base_bands": {
+      "A": 91,
+      "B": 81,
+      "C": 71,
+      "D": 61,
+      "F": 0
+    },
     "market_adjustment": {
-      "strong": {"A": 82, "B": 72, "C": 60, "D": 45},
-      "neutral": {"A": 85, "B": 75, "C": 62, "D": 50},
-      "weak": {"A": 90, "B": 80, "C": 68, "D": 55},
-      "very_weak": {"A": 92, "B": 84, "C": 72, "D": 60}
+      "strong": {
+        "A": 91,
+        "B": 81,
+        "C": 71,
+        "D": 61
+      },
+      "neutral": {
+        "A": 91,
+        "B": 81,
+        "C": 71,
+        "D": 61
+      },
+      "weak": {
+        "A": 91,
+        "B": 81,
+        "C": 71,
+        "D": 61
+      },
+      "very_weak": {
+        "A": 91,
+        "B": 81,
+        "C": 71,
+        "D": 61
+      }
     }
   },
   "promotion_demotion_policy": {
@@ -23,31 +49,98 @@
   },
   "score_structure": {
     "entry_score": [
-      {"key": "trade_value_rank", "weight": 15},
-      {"key": "rank_gap", "weight": 15},
-      {"key": "market_relative_change_rate", "weight": 35},
-      {"key": "trade_value_growth", "weight": 25},
-      {"key": "above_open", "weight": 10}
+      {
+        "key": "trade_value_rank",
+        "weight": 15
+      },
+      {
+        "key": "rank_gap",
+        "weight": 15
+      },
+      {
+        "key": "market_relative_change_rate",
+        "weight": 35
+      },
+      {
+        "key": "trade_value_growth",
+        "weight": 25
+      },
+      {
+        "key": "above_open",
+        "weight": 10
+      }
     ],
     "confirmation_score": [
-      {"key": "relative_strength_continuation", "weight": 30},
-      {"key": "realtime_strength", "weight": 20},
-      {"key": "above_vwap", "weight": 20},
-      {"key": "flow_confirmation", "weight": 10},
-      {"key": "sell_wall_absorption", "weight": 20}
+      {
+        "key": "relative_strength_continuation",
+        "weight": 30
+      },
+      {
+        "key": "realtime_strength",
+        "weight": 20
+      },
+      {
+        "key": "above_vwap",
+        "weight": 20
+      },
+      {
+        "key": "sell_wall_absorption",
+        "weight": 20
+      }
     ],
     "focus_score": [
-      {"key": "green_while_market_weak", "weight": 30},
-      {"key": "one_min_net_buy_value_growth", "weight": 25},
-      {"key": "near_high_hold", "weight": 20},
-      {"key": "realtime_strength_hold", "weight": 15},
-      {"key": "spike_reversal_penalty", "weight": -20}
+      {
+        "key": "green_while_market_weak",
+        "weight": 30
+      },
+      {
+        "key": "one_min_net_buy_value_growth",
+        "weight": 25
+      },
+      {
+        "key": "near_high_hold",
+        "weight": 20
+      },
+      {
+        "key": "realtime_strength_hold",
+        "weight": 15
+      },
+      {
+        "key": "spike_reversal_penalty",
+        "weight": -20
+      }
     ],
-    "grade_score_weights": {"entry_score": 0.30, "confirmation_score": 0.35, "focus_score": 0.35}
+    "grade_score_weights": {
+      "entry_score": 0.3,
+      "confirmation_score": 0.35,
+      "focus_score": 0.35
+    }
   },
   "funnel": {
-    "top50": {"take": 50, "score": "entry_score"},
-    "top20": {"from": "top50", "take": 20, "score": "confirmation_score"},
-    "top5": {"from": "top20", "take": 5, "score": "focus_score"}
-  }
+    "top50": {
+      "take": 50,
+      "score": "entry_score"
+    },
+    "top20": {
+      "from": "top50",
+      "take": 20,
+      "score": "confirmation_score"
+    },
+    "top5": {
+      "from": "top20",
+      "take": 5,
+      "score": "focus_score"
+    }
+  },
+  "excluded_scoring_items": [
+    {
+      "key": "flow_confirmation",
+      "weight": 10,
+      "stage": "confirmation_score",
+      "original_weight": 10,
+      "scoring_weight": 0,
+      "excluded_reason": "data_collection_not_stable_yet",
+      "enabled_for_scoring": false
+    }
+  ]
 }

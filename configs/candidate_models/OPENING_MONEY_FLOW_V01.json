@@ -7,14 +7,44 @@
   "grade_policy": {
     "mode": "absolute_market_calibrated",
     "distribution": "natural_not_forced",
-    "base_bands": {"A": 85, "B": 75, "C": 62, "D": 50, "F": 0},
-    "market_adjustment": {
-      "strong": {"A": 82, "B": 72, "C": 60, "D": 45},
-      "neutral": {"A": 85, "B": 75, "C": 62, "D": 50},
-      "weak": {"A": 90, "B": 80, "C": 68, "D": 55},
-      "very_weak": {"A": 92, "B": 84, "C": 72, "D": 60}
+    "base_bands": {
+      "A": 91,
+      "B": 81,
+      "C": 71,
+      "D": 61,
+      "F": 0
     },
-    "a_grade_guards": ["price >= vwap_or_open", "realtime_strength >= 100", "score_has_money_flow_confirmation"]
+    "market_adjustment": {
+      "strong": {
+        "A": 91,
+        "B": 81,
+        "C": 71,
+        "D": 61
+      },
+      "neutral": {
+        "A": 91,
+        "B": 81,
+        "C": 71,
+        "D": 61
+      },
+      "weak": {
+        "A": 91,
+        "B": 81,
+        "C": 71,
+        "D": 61
+      },
+      "very_weak": {
+        "A": 91,
+        "B": 81,
+        "C": 71,
+        "D": 61
+      }
+    },
+    "a_grade_guards": [
+      "price >= vwap_or_open",
+      "realtime_strength >= 100",
+      "score_has_money_flow_confirmation"
+    ]
   },
   "promotion_demotion_policy": {
     "principle": "group_membership_is_result_not_score_source",
@@ -27,36 +57,106 @@
   "orderbook_policy": {
     "name": "sell_wall_absorption",
     "principle": "매수잔량/매도잔량 비율이 작고 매도잔량 비율이 클수록 가점한다. 단, 가격이 시가 또는 VWAP 위에서 버티고 체결강도가 100 이상일 때만 좋은 신호로 본다.",
-    "favorable": ["bid_ask_ratio < 0.8", "bid_pct < 45", "ask_pct > 55", "price >= vwap_or_open", "realtime_strength >= 100"],
-    "avoid": ["bid_ask_ratio > 1.2", "bid_pct > ask_pct", "price below vwap and strength below 100"]
+    "favorable": [
+      "bid_ask_ratio < 0.8",
+      "bid_pct < 45",
+      "ask_pct > 55",
+      "price >= vwap_or_open",
+      "realtime_strength >= 100"
+    ],
+    "avoid": [
+      "bid_ask_ratio > 1.2",
+      "bid_pct > ask_pct",
+      "price below vwap and strength below 100"
+    ]
   },
   "score_structure": {
     "entry_score": [
-      {"key": "trade_value_rank", "weight": 15},
-      {"key": "rank_gap", "weight": 25},
-      {"key": "trade_value_growth", "weight": 30},
-      {"key": "above_open", "weight": 15},
-      {"key": "safe_change_rate_band", "weight": 15}
+      {
+        "key": "trade_value_rank",
+        "weight": 15
+      },
+      {
+        "key": "rank_gap",
+        "weight": 25
+      },
+      {
+        "key": "trade_value_growth",
+        "weight": 30
+      },
+      {
+        "key": "above_open",
+        "weight": 15
+      },
+      {
+        "key": "safe_change_rate_band",
+        "weight": 15
+      }
     ],
     "confirmation_score": [
-      {"key": "one_min_trade_value_growth", "weight": 25},
-      {"key": "realtime_strength", "weight": 20},
-      {"key": "one_min_net_buy_value_growth", "weight": 25},
-      {"key": "program_net", "weight": 10},
-      {"key": "sell_wall_absorption", "weight": 20}
+      {
+        "key": "one_min_trade_value_growth",
+        "weight": 25
+      },
+      {
+        "key": "realtime_strength",
+        "weight": 20
+      },
+      {
+        "key": "one_min_net_buy_value_growth",
+        "weight": 25
+      },
+      {
+        "key": "program_net",
+        "weight": 10
+      },
+      {
+        "key": "sell_wall_absorption",
+        "weight": 20
+      }
     ],
     "focus_score": [
-      {"key": "one_min_strength_growth", "weight": 25},
-      {"key": "above_vwap_or_open", "weight": 25},
-      {"key": "rank_gap_continuation", "weight": 20},
-      {"key": "one_min_net_buy_value_continuation", "weight": 20},
-      {"key": "spike_reversal_penalty", "weight": -20}
+      {
+        "key": "one_min_strength_growth",
+        "weight": 25
+      },
+      {
+        "key": "above_vwap_or_open",
+        "weight": 25
+      },
+      {
+        "key": "rank_gap_continuation",
+        "weight": 20
+      },
+      {
+        "key": "one_min_net_buy_value_continuation",
+        "weight": 20
+      },
+      {
+        "key": "spike_reversal_penalty",
+        "weight": -20
+      }
     ],
-    "grade_score_weights": {"entry_score": 0.35, "confirmation_score": 0.40, "focus_score": 0.25}
+    "grade_score_weights": {
+      "entry_score": 0.35,
+      "confirmation_score": 0.4,
+      "focus_score": 0.25
+    }
   },
   "funnel": {
-    "top50": {"take": 50, "score": "entry_score"},
-    "top20": {"from": "top50", "take": 20, "score": "confirmation_score"},
-    "top5": {"from": "top20", "take": 5, "score": "focus_score"}
+    "top50": {
+      "take": 50,
+      "score": "entry_score"
+    },
+    "top20": {
+      "from": "top50",
+      "take": 20,
+      "score": "confirmation_score"
+    },
+    "top5": {
+      "from": "top20",
+      "take": 5,
+      "score": "focus_score"
+    }
   }
 }

@@ -8,36 +8,36 @@
     "mode": "absolute_market_calibrated",
     "distribution": "natural_not_forced",
     "base_bands": {
-      "A": 85,
-      "B": 75,
-      "C": 62,
-      "D": 50,
+      "A": 91,
+      "B": 81,
+      "C": 71,
+      "D": 61,
       "F": 0
     },
     "market_adjustment": {
       "strong": {
-        "A": 82,
-        "B": 72,
-        "C": 60,
-        "D": 45
+        "A": 91,
+        "B": 81,
+        "C": 71,
+        "D": 61
       },
       "neutral": {
-        "A": 85,
-        "B": 75,
-        "C": 62,
-        "D": 50
+        "A": 91,
+        "B": 81,
+        "C": 71,
+        "D": 61
       },
       "weak": {
-        "A": 90,
-        "B": 80,
-        "C": 68,
-        "D": 55
+        "A": 91,
+        "B": 81,
+        "C": 71,
+        "D": 61
       },
       "very_weak": {
-        "A": 92,
-        "B": 84,
-        "C": 72,
-        "D": 60
+        "A": 91,
+        "B": 81,
+        "C": 71,
+        "D": 61
       }
     },
     "a_grade_guards": [
@@ -93,10 +93,6 @@
         "weight": 35
       },
       {
-        "key": "foreign_display_value",
-        "weight": 15
-      },
-      {
         "key": "above_vwap",
         "weight": 20
       },
@@ -130,7 +126,7 @@
     "grade_score_weights": {
       "entry_score": 0.25,
       "confirmation_score": 0.45,
-      "focus_score": 0.30
+      "focus_score": 0.3
     }
   },
   "funnel": {
@@ -148,5 +144,16 @@
       "take": 5,
       "score": "focus_score"
     }
-  }
+  },
+  "excluded_scoring_items": [
+    {
+      "key": "foreign_display_value",
+      "weight": 15,
+      "stage": "confirmation_score",
+      "original_weight": 15,
+      "scoring_weight": 0,
+      "excluded_reason": "data_collection_not_stable_yet",
+      "enabled_for_scoring": false
+    }
+  ]
 }
