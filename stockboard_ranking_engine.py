@@ -14,6 +14,7 @@ from typing import Any, Iterable
 NET_BUY_STRENGTH_V02 = "NET_BUY_STRENGTH_V02"
 NET_BUY_STRENGTH_TOTAL_POINTS = 700
 NET_BUY_STRENGTH_FALLBACK_AMOUNT_SCORE = 60
+NET_BUY_STRENGTH_MISSING_STRENGTH_SCORE = 50
 
 
 def _first(row: dict[str, Any], *keys: str) -> Any:
@@ -439,16 +440,6 @@ class NetBuyStrengthV02RankingEngine:
 
         five_min_strength = _five_min_strength(row)
         if five_min_strength is not None:
-            if five_min_strength <= 100:
-                return ScoreItem(
-                    "one_min_strength",
-                    "1분강도",
-                    0,
-                    "strength_5m_after_close",
-                    "proxy_nonpositive",
-                    value=five_min_strength,
-                    reason="after_close_5m_strength_at_or_below_neutral",
-                )
             return ScoreItem(
                 "one_min_strength",
                 "1분강도",
@@ -456,16 +447,16 @@ class NetBuyStrengthV02RankingEngine:
                 "strength_5m_after_close",
                 "proxy",
                 value=five_min_strength,
-                reason="after_close_5m_strength_proxy",
+                reason="after_close_5m_strength_linear_proxy",
             )
 
         return ScoreItem(
             "one_min_strength",
             "1분강도",
-            0,
-            "one_min_strength_growth_rate|one_min_strength_delta",
-            "missing",
-            reason="one_min_strength_growth_missing_or_nonpositive",
+            NET_BUY_STRENGTH_MISSING_STRENGTH_SCORE,
+            "one_min_strength_or_strength_5m_missing",
+            "fallback",
+            reason="strength_missing_neutral_50",
         )
 
     def _program_score(
