@@ -1,4 +1,5 @@
 from stockboard_ranking_engine import (
+    NET_BUY_STRENGTH_AFTER_CLOSE_TOTAL_POINTS,
     NET_BUY_STRENGTH_TOTAL_POINTS,
     enrich_net_buy_strength_v02_fields,
     grade_text_for_percent,
@@ -75,14 +76,17 @@ def test_net_buy_strength_v02_scores_and_pool():
     assert by_code["000003"]["candidate_grade_text"].startswith("F")
 
 
-def _one_min_item_for(row):
-    result = enrich_net_buy_strength_v02_fields([row], {"id": "NET_BUY_STRENGTH_V02"})
-    items = result[0]["score_breakdown"]["net_buy_strength"]["items"]
+def _result_for(row):
+    return enrich_net_buy_strength_v02_fields([row], {"id": "NET_BUY_STRENGTH_V02"})[0]
+
+
+def _one_min_item_for(result_row):
+    items = result_row["score_breakdown"]["net_buy_strength"]["items"]
     return next(item for item in items if item["key"] == "one_min_strength")
 
 
-def test_five_min_strength_is_linear_after_close_proxy_when_one_min_missing():
-    item_150 = _one_min_item_for(
+def test_after_close_five_min_strength_is_display_only_and_denominator_is_600():
+    result = _result_for(
         {
             "stock_code": "000001",
             "rank": 1,
@@ -96,30 +100,18 @@ def test_five_min_strength_is_linear_after_close_proxy_when_one_min_missing():
             "program_net": 0,
         }
     )
-    assert item_150["points"] == 75
-    assert item_150["status"] == "proxy"
-    assert item_150["source"] == "strength_5m_after_close"
+    item = _one_min_item_for(result)
 
-    item_80 = _one_min_item_for(
-        {
-            "stock_code": "000002",
-            "rank": 1,
-            "prev_rank": 1,
-            "trade_value_eok": 100,
-            "prev_trade_value_eok": 100,
-            "bid_volume": 100,
-            "ask_volume": 100,
-            "realtime_strength": 100,
-            "strength_5m": 80,
-            "program_net": 0,
-        }
-    )
-    assert item_80["points"] == 40
-    assert item_80["status"] == "proxy"
+    assert item["points"] == 0
+    assert item["possible_points"] == 0
+    assert item["status"] == "display_only"
+    assert item["value"] == 150
+    assert item["source"] == "strength_5m_after_close"
+    assert result["score_possible_points"] == NET_BUY_STRENGTH_AFTER_CLOSE_TOTAL_POINTS
 
 
-def test_missing_one_min_and_five_min_strength_gets_neutral_50():
-    item = _one_min_item_for(
+def test_regular_missing_one_min_and_five_min_strength_gets_neutral_50_with_700_denominator():
+    result = _result_for(
         {
             "stock_code": "000003",
             "rank": 1,
@@ -132,6 +124,10 @@ def test_missing_one_min_and_five_min_strength_gets_neutral_50():
             "program_net": 0,
         }
     )
+    item = _one_min_item_for(result)
+
     assert item["points"] == 50
+    assert item["possible_points"] == 100
     assert item["status"] == "fallback"
     assert item["source"] == "one_min_strength_or_strength_5m_missing"
+    assert result["score_possible_points"] == NET_BUY_STRENGTH_TOTAL_POINTS
