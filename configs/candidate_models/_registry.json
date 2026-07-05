@@ -1,9 +1,10 @@
 {
   "schema_version": 1,
-  "default_model_id": "OPENING_MONEY_FLOW_V01",
+  "default_model_id": "NET_BUY_STRENGTH_V01",
   "runtime_status": "design_ready_not_loaded_yet",
   "models": [
-    {"id": "OPENING_MONEY_FLOW_V01", "label": "돈쏠림 시작형", "file": "OPENING_MONEY_FLOW_V01.json", "recommended": true},
+    {"id": "NET_BUY_STRENGTH_V01", "label": "순매수 강도 v0.1", "file": "NET_BUY_STRENGTH_V01.json", "recommended": true},
+    {"id": "OPENING_MONEY_FLOW_V01", "label": "돈쏠림 시작형", "file": "OPENING_MONEY_FLOW_V01.json"},
     {"id": "OPENING_ACCUMULATION_V01", "label": "조용한 매집형", "file": "OPENING_ACCUMULATION_V01.json"},
     {"id": "OPENING_BURST_V01", "label": "폭발 확인형", "file": "OPENING_BURST_V01.json"},
     {"id": "PROGRAM_FLOW_V01", "label": "프로그램 동행형", "file": "PROGRAM_FLOW_V01.json"},
