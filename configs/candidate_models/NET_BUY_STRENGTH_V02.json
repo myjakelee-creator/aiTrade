@@ -13,7 +13,7 @@
     {"key": "trade_value_ratio", "label": "금액(억)", "max_score": 100, "method": "rank(trade_value_eok/prev_trade_value_eok)_100_to_0", "fallback_score": 60, "fallback_label": "전일대금 미확인 60점"},
     {"key": "ask_share", "label": "잔량비", "max_score": 100, "method": "ask_volume/(bid_volume+ask_volume)*100"},
     {"key": "instant_strength", "label": "순간강도", "max_score": 100, "method": "min(max(realtime_strength,0),200)/200*100"},
-    {"key": "one_min_strength", "label": "1분강도", "max_score": 100, "method": "rank(one_min_strength_growth_rate or one_min_strength_delta)_100_to_0"},
+    {"key": "one_min_strength", "label": "1분강도", "max_score": 100, "method": "regular: rank(one_min_strength_growth_rate or one_min_strength_delta)_100_to_0; after-close fallback: strength_5m as 0~200 linear proxy", "fallback_source": "strength_5m_after_close"},
     {"key": "program_ratio", "label": "프로(억)", "max_score": 100, "method": "rank(program_net/trade_value_eok)_100_to_0_when_program_net_positive", "zero_rule": "program_net<=0 => 0"}
   ],
   "grade_policy": {
@@ -43,7 +43,8 @@
       "bid_volume or bid_volume_snapshot",
       "ask_volume or ask_volume_snapshot",
       "realtime_strength or execution_strength",
-      "one_min_strength_growth_rate or one_min_strength_delta",
+      "regular: one_min_strength_growth_rate or one_min_strength_delta",
+      "after-close fallback: strength_5m",
       "program_net"
     ],
     "never_store_missing_as_zero": ["prev_trade_value_eok"],
