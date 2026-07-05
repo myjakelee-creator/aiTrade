@@ -1,6 +1,8 @@
 (function () {
   "use strict";
 
+  ensureLegacyCandidateModelOption();
+
   window.StockBoardControls = Object.assign(window.StockBoardControls || {}, {
     readStoredValue,
     writeStoredValue,
@@ -11,6 +13,25 @@
     safeAddEventListener,
     setElementText
   });
+
+  function ensureLegacyCandidateModelOption() {
+    const selector = document.getElementById('candidate-model-selector');
+    if (!selector) return;
+
+    const legacyModelId = 'TVRANK_A_V03_TEMP';
+    const legacyLabel = '현재 하드코딩 기준';
+    let legacyOption = Array.from(selector.options || [])
+      .find(option => option.value === legacyModelId);
+
+    if (!legacyOption) {
+      legacyOption = document.createElement('option');
+      legacyOption.value = legacyModelId;
+      selector.insertBefore(legacyOption, selector.firstChild || null);
+    }
+
+    legacyOption.textContent = legacyLabel;
+    legacyOption.dataset.legacy = 'true';
+  }
 
   function readStoredValue(storageKey, fallback) {
     try {
