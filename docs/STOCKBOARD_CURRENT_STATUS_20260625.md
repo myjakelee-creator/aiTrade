@@ -1,14 +1,14 @@
 # StockBoard Current Status
 
-작성 기준: 2026-07-04 인계서 Part 1~3 반영.
+작성 기준: 2026-07-05 장마감 검증 반영.
 
-> 이 문서는 StockBoard의 현재 운영 상태를 빠르게 파악하기 위한 기준문서다. 과거 상세 이력은 2026-07-04 인계서 Part 1~3을 우선 참고한다.
+> 이 문서는 StockBoard의 현재 운영 상태를 빠르게 파악하기 위한 기준문서다. 새 PC 또는 새 채팅창에서는 이 문서, `docs/candidate_model_specs/NET_BUY_STRENGTH_V02.md`, `configs/candidate_models/NET_BUY_STRENGTH_V02.json`을 우선 확인한다.
 
 ---
 
 ## 0. 현재 한 줄 요약
 
-StockBoard는 장마감/애프터장 이후 UI가 정상 작동하는 안정점에 있으며, 다음 핵심 과제는 월요일 08:00~09:00 장초반 거래량 폭탄 구간에서 Kiwoom 실시간 수신, HOT/MID/POOL patch, UI 반영 속도, HTS 가격 정합성을 실전 검증하는 것이다.
+StockBoard는 `순매수 강도 v0.2` 전용 ranking engine, 전일 거래대금 cache/API 주입, 장중 700점/장마감 600점 분모 이원화까지 반영됐다. 장마감 검증에서는 1분강도 항목이 `display_only`로 계산 제외되고, `score_possible_points=600` 기준으로 등급이 계산되는 것까지 확인했다. 다음 핵심 과제는 정규장 장중에 실시간 1분강도가 실제 700점 분모로 들어오는지, 그리고 Top5가 금융주/프로그램 비율에 과도하게 쏠리는지 검증하는 것이다.
 
 ---
 
@@ -19,9 +19,11 @@ StockBoard는 장마감/애프터장 이후 UI가 정상 작동하는 안정점�
 | 프로젝트 | aiTrade / StockBoard |
 | 작업 경로 | `C:\aiTrade` |
 | 브랜치 | `hot-priority-integrated-20260630` |
-| 최신 커밋 | `e4e5e78 Request close metrics for all StockBoard groups` |
-| 기준일 | 2026-07-04 |
-| 다음 핵심 과제 | 월요일 08:00~09:00 장초반 거래량 폭탄 구간 실전 검증 |
+| 기준일 | 2026-07-05 |
+| 현재 선발기준 | `NET_BUY_STRENGTH_V02` / 화면명 `순매수 강도 v0.2` |
+| 표준 실행 | `stockboard_live.cmd` → `kiwoom_trade_value_rank.py` 경유 |
+| 핵심 테스트 | `tests/test_stockboard_ranking_engine.py`, `tests/test_stockboard_previous_trade_value.py` |
+| 다음 핵심 과제 | 정규장 장중 700점 분모/실시간 1분강도 검증 |
 
 ---
 
@@ -30,36 +32,112 @@ StockBoard는 장마감/애프터장 이후 UI가 정상 작동하는 안정점�
 | 항목 | 원칙 |
 |---|---|
 | 언어 | 한국어 존댓말 |
-| 답변 | 줄글보다 표와 단계 중심 |
-| 코딩 | 먼저 설명하고 대표님 승인 후 진행 |
+| 답변 | 표와 단계 중심 |
 | 문서 | 새 문서 남발 금지, 기존 핵심 문서 최소 갱신 |
-| Git | `git add .` 금지 |
-| 커밋 | 의미 있는 단위로만 커밋 |
+| Git | `git add .` 금지, 의미 있는 단위로만 커밋 |
 | 보고 | 변경 파일, 검증 명령, 미검증 항목, 커밋 상태 분리 보고 |
 | 코드 수정 | 검증 가능한 작은 패치 단위 선호 |
+| UI | 표시 전용. 계산은 Python/server/ranking engine 쪽에서 처리 |
 
 ---
 
-## 3. 현재 확정 상태
+## 3. 2026-07-05 완료 작업 요약
 
-| 구분 | 현재 상태 |
+| 구분 | 완료 내용 | 확인 상태 |
+|---|---|---|
+| 선발기준 | `순매수 강도 v0.2` 전용 ranking engine 구현 | API/화면 반영 확인 |
+| 등급정책 | A90, B80, C70, D60, F59 정책 고정 | 테스트 반영 |
+| 전일 거래대금 | `ka10086` 기반 `prev_trade_value_eok` cache/API 주입 | 179개 row 주입 확인 |
+| 금액 점수 | `trade_value_eok / prev_trade_value_eok` 비율 줄세우기 | SK하이닉스 1.656배, 73.03점 확인 |
+| 장마감 1분강도 | `strength_5m`는 표시값으로만 유지, 계산 제외 | `display_only`, `possible_points=0` 확인 |
+| 분모 이원화 | 장중 700점, 장마감 600점 | 장마감 `score_possible_points=600` 확인 |
+| Top5 | 점수/분모/항목 breakdown 출력 확인 | 후보 산출 정상 |
+| UI 표시 | 1분강도 칸은 숫자만 표시하는 원상복구 완료 | 화면 확인 완료 |
+
+---
+
+## 4. 순매수 강도 v0.2 최종 계산 정책
+
+| 항목 | 장중 점수 | 장마감 점수 | 비고 |
+|---|---:|---:|---|
+| 순위 | 100 | 100 | 필터 통과 N개 기준 100~0점 |
+| 전일 | 100 | 100 | `min(max(prev_rank-rank,0),100)` |
+| 금액(억) | 100 | 100 | `trade_value_eok / prev_trade_value_eok` 비율 줄세우기 |
+| 잔량비 | 100 | 100 | `ask_volume / (bid_volume + ask_volume) × 100` |
+| 순간강도 | 100 | 100 | 체결강도 0~200을 0~100점 환산 |
+| 1분강도 | 100 | 0 | 장중 실시간 1분값만 계산, 장마감은 계산 제외 |
+| 프로(억) | 100 | 100 | `program_net / trade_value_eok`, 순매수 0 이하는 0점 |
+| 총 분모 | 700 | 600 | `score_total_points / score_possible_points × 100` |
+
+중요:
+
+```text
+장마감에는 1분강도 칸에 5분강도 참고값을 숫자로만 표시한다.
+하지만 점수 계산에서는 1분강도를 제외한다.
+따라서 장마감 등급은 600점 분모로 계산한다.
+```
+
+---
+
+## 5. 전일 거래대금 주입 상태
+
+| 항목 | 기준 |
 |---|---|
-| UI | 장마감/애프터장 이후 정상 작동 |
-| 가격 정합성 | HTS 0186과 Top5 / Top15 / Top30 / Top300 가격이 대체로 맞아 들어감 |
-| 화면 그룹 | Top5 / S1 / Top15 / Top30 / Top300 |
-| 내부명 주의 | 화면명은 Top15/Top30이지만 내부 변수명 `top20` / `top50`은 아직 남아 있을 수 있음 |
-| 미국시장 | QQQ 다음 SOXL 추가 |
-| 보조지표 | close metrics 요청 범위를 Top5/S1/Top15/Top30/Top300 전체 visible group으로 확대 |
-| 순위 전환 | 당일/전일 거래대금 순위 전환 버튼 force refresh 연결 |
-| 속도 배지 | 응답시간 표시용으로 유지. 실제 데이터 변화와 분리 판단 |
-| HTML 구조 | CSS와 일부 순수 helper asset 분리는 진행됨. render/main loop는 inline 유지. 월요일 검증 전 추가 대분리 금지 |
-| 선발기준 | 당분간 설정 파일 방식으로 관리 예정 |
+| cache 파일 | `data/runtime/previous_trade_value_YYYYMMDD.json` |
+| 원천 우선순위 | `ka10086_amt_mn` → 전일 종가×전일 거래량 계산 → cache → fallback |
+| missing 처리 | 0 저장 금지 |
+| 최종 실패 | 금액(억) 항목 60점 fallback, 화면/툴팁에 미확인 표시 필요 |
+| 검증 결과 | cache 생성 및 API row 주입 확인 |
+
+검증 예시:
+
+| 종목 | 오늘 거래대금 | 전일 거래대금 | 상태 |
+|---|---:|---:|---|
+| SK하이닉스 | 294,414.76억 | 177,745.37억 | `ok / ka10086_amt_mn` |
+| 삼성전자 | 171,834.63억 | 113,628.82억 | `ok / ka10086_amt_mn` |
 
 ---
 
-## 4. 현재 화면 그룹 / lane 구조
+## 6. 장마감 검증 결과
 
-### 4.1 화면 그룹
+### 6.1 SK하이닉스 breakdown
+
+| 항목 | 점수 | 분모 | 상태 |
+|---|---:|---:|---|
+| 순위 | 100.0 | 100 | 계산 포함 |
+| 전일 | 0.0 | 100 | 계산 포함 |
+| 금액(억) | 73.03 | 100 | 계산 포함 |
+| 잔량비 | 94.96 | 100 | 계산 포함 |
+| 순간강도 | 54.47 | 100 | 계산 포함 |
+| 1분강도 | 0.0 | 0 | `display_only` |
+| 프로(억) | 0.0 | 100 | `nonpositive` |
+
+계산:
+
+```text
+322.46 / 600 = 53.74 → F54
+```
+
+### 6.2 장마감 Top5 관찰값
+
+| 후보 | 등급 | 점수 | 분모 | 핵심 |
+|---:|---|---:|---:|---|
+| 1 | 한국금융지주 | B86 | 600 | 전일상승 + 금액 + 잔량비 + 순간강도 + 프로그램 강함 |
+| 2 | 삼성증권 | B83 | 600 | 금액/잔량비/프로그램 강함 |
+| 3 | 인텍플러스 | C79 | 600 | 전일상승 + 금액 + 강도 + 프로그램 양호 |
+| 4 | 미래에셋증권 | C77 | 600 | 순위/금액/잔량비/프로그램 고르게 양호 |
+| 5 | 한화시스템 | C75 | 600 | 전일상승 + 금액 + 잔량비 + 프로그램 양호 |
+
+주의:
+
+```text
+금융/증권주가 Top5에 다수 올라오는 현상이 관찰됐다.
+현재는 계산 오류로 보지 말고, 정규장 장중 데이터에서 프로그램 비율/전일상승 점수 쏠림을 추가 검증한다.
+```
+
+---
+
+## 7. 현재 화면 그룹 / lane 구조
 
 | 화면명 | 내부명 | 설명 |
 |---|---|---|
@@ -69,114 +147,136 @@ StockBoard는 장마감/애프터장 이후 UI가 정상 작동하는 안정점�
 | Top30 | `top50Rows` | Top20 제외 후 실제 30종목 |
 | Top300 | `top300Rows` / `trading-board` | 전체 pool |
 
-### 4.2 realtime lane
-
 | Lane | 대상 | API | 목적 |
 |---|---|---|---|
 | HOT | Top5 + S1 + Top15 | `/api/hot_realtime_patch` | 핵심 후보 빠른 갱신 |
 | MID | Top30 | `/api/realtime_patch?codes=...` | 넓은 후보군 중간 갱신 |
 | POOL | Top300 | `/api/realtime_patch` | 전체 pool 갱신 |
 
-중요:
-
-```text
-/api/top100 전체 재조회는 장중 자동 반복 금지 상태다.
-장중 실시간 갱신은 patch API 중심이다.
-TOP100_REFRESH_MS를 다시 30000 등으로 복구하지 말 것.
-```
-
----
-
-## 5. 주요 API
-
-| API | 역할 |
-|---|---|
-| `/api/top100` | 전체 순위 rows. 장중 자동 반복 호출 금지 유지 |
-| `/api/realtime` | 지정 코드 실시간 quote 조회 |
-| `/api/realtime_patch` | 실시간 light patch |
-| `/api/hot_realtime_patch` | HOT lane patch |
-| `/api/realtime_provider_status` | Kiwoom provider/store/등록/이벤트 상태 |
-| `/api/us_market` | 미국시장 QQQ/SOXL/SMH 등 |
-| `/api/market_supply` | 코스피/코스닥 시장수급 |
-| `/api/aftermarket_metrics_backfill_start` | 애프터장 metrics backfill 시작 |
-| `/api/aftermarket_metrics_backfill_status` | backfill 상태 조회 |
-
----
-
-## 6. 가격 표시 원칙
-
-| 항목 | 원칙 |
-|---|---|
-| 가격 표시 결정 | 서버에서 한다 |
-| HTML 역할 | `display_price` / `display_change_rate` / `price_source`를 표시만 한다 |
-| 정규장 | realtime 가격 우선 |
-| 15:30~15:40 | `regular_close_snapshot` lock 중요 |
-| 15:40 이후 애프터마켓 | fresh realtime 있으면 `aftermarket_realtime`, 없으면 `regular_close_snapshot_fallback` |
-| 장마감 이후 | 속도 숫자는 계속 변할 수 있음. 데이터 변화와 분리 판단 |
-
 금지:
 
 ```text
-HTML에서 현재가나 등락률을 새로 계산하지 말 것.
-가격 불일치를 보정식으로 해결하지 말 것.
-FID10/FID12 normalize 로직을 임의 수정하지 말 것.
-후보5/등급/모멘텀 계산에서 price/change_rate 원천값을 덮어쓰지 말 것.
+/api/top100 전체 자동 반복 재조회는 장중 복구하지 않는다.
+장중 실시간 갱신은 patch API 중심으로 유지한다.
 ```
 
 ---
 
-## 7. 6자리 key / _AL 원천 원칙
+## 8. 다른 PC에서 이어가기 절차
 
-```text
-row.stock_code = 005930
-Store key = 005930
-API row key = 005930
-DOM dataset stockCode = 005930
-주문 code = 005930
-종목마스터 code = 005930
+### 8.1 repo 동기화
 
-realtime_source_code = 005930_AL
-received_code = 005930_AL
-registered_code = 005930_AL
-normalized_code = 005930
+```powershell
+cd C:\aiTrade
+
+git status --short
+
+git fetch origin
+
+git checkout hot-priority-integrated-20260630
+
+git pull --ff-only
 ```
 
-| 구분 | 기준 |
-|---|---|
-| 화면 row key | 6자리 `stock_code` |
-| Store key | 6자리 normalized code |
-| 주문/종목마스터/DOM key | 6자리 code |
-| 실시간 표시 가격 원천 | `_AL` 통합 코드 |
-| NXT 전용 원천 | `_NX` 코드, 진단/향후 확장용 |
-| KRX 원천 | 6자리 code |
+### 8.2 기본 테스트
+
+```powershell
+cd C:\aiTrade
+
+python -m pytest tests/test_stockboard_ranking_engine.py tests/test_stockboard_previous_trade_value.py
+```
+
+### 8.3 실행
+
+```powershell
+cd C:\aiTrade
+
+.\stockboard_live.cmd stop
+.\stockboard_live.cmd
+```
+
+브라우저는 캐시 문제 방지를 위해 `Ctrl+F5` 강력 새로고침한다.
 
 ---
 
-## 8. 이미 해결한 문제와 금지 루프
+## 9. 다음 장중 검증 명령
 
-| 항목 | 현재 판단 | 금지 |
-|---|---|---|
-| 가격/FID 문제 | 가격 정합성은 대체로 회복됨 | FID10/FID12 정규화부터 다시 의심하지 말 것 |
-| KRX/NXT/통합장 | `_AL` 통합 표시 원천 유지 | 처음부터 반복 조사하지 말 것 |
-| stale trade drop | 5초 stale guard로 애프터장 늦은 체결이 전량 drop된 경험 있음 | 지연 데이터를 무조건 stale로 버리지 말 것 |
-| 브라우저 문제 | HOT patch timer/payload/DOM apply 정상 확인 이력 있음 | 바로 HTML 렌더링 문제로 단정하지 말 것 |
-| Top15/Top30 보조지표 빈칸 | close metrics 수집 대상을 전체 visible group으로 확대 | Top300만 훑는 과거 방식으로 되돌리지 말 것 |
-| `/api/top100` 반복 호출 | 장중 patch 중심 구조로 전환 | 자동 반복 refresh를 복구하지 말 것 |
+### 9.1 API row / 분모 / 전일대금 확인
 
----
+```powershell
+cd C:\aiTrade
 
-## 9. 현재 DONE 핵심
+$response = Invoke-RestMethod "http://127.0.0.1:8000/api/top100?candidate_model=NET_BUY_STRENGTH_V02"
 
-| 구분 | DONE |
+$flatRows = New-Object System.Collections.ArrayList
+function Add-FlatRow($item) {
+    if ($null -eq $item) { return }
+    if ($item -is [System.Array]) {
+        foreach ($sub in $item) { Add-FlatRow $sub }
+    } else {
+        [void]$flatRows.Add($item)
+    }
+}
+Add-FlatRow $response
+
+$flatRows |
+  Select-Object -First 20 stock_code,stock_name,candidate_grade_text,score_percent,score_total_points,score_possible_points,prev_trade_value_eok,program_net |
+  Format-Table -Auto
+```
+
+### 9.2 1분강도 상태 확인
+
+```powershell
+$items = foreach ($row in $flatRows) {
+    $one = $row.score_breakdown.net_buy_strength.items |
+      Where-Object { $_.key -eq "one_min_strength" } |
+      Select-Object -First 1
+
+    [PSCustomObject]@{
+        stock_code = $row.stock_code
+        stock_name = $row.stock_name
+        grade = $row.candidate_grade_text
+        score = $row.score_percent
+        one_min_points = $one.points
+        one_min_possible = $one.possible_points
+        one_min_status = $one.status
+        one_min_source = $one.source
+        one_min_value = $one.value
+    }
+}
+
+$items |
+  Group-Object one_min_status |
+  Sort-Object Count -Descending |
+  Select-Object Count,Name |
+  Format-Table -Auto
+```
+
+판정:
+
+| 상태 | 의미 |
 |---|---|
-| REST/API | `/api/top100`, `/api/market_supply`, `/api/realtime`, `/api/realtime_status`, `/api/realtime_provider_status`, `/api/realtime_patch` |
-| OpenAPI | QAxWidget, CommConnect, Qt event pump, SetRealReg, OnReceiveRealData, GetCommRealData 최소 파싱 |
-| 실시간 원천 | `_AL` 통합 원천 표시 전환, 6자리 Store/API/DOM/order key 유지 |
-| 화면 갱신 | 현재가, 등락률, 금액(억), 일봉, 잔량비, 순간강도, 세션강도 patch 표시 |
-| 후보5 | v0.1 candidate fields와 등급/점수 표시 |
-| 운영 | `stockboard_live.cmd` 통합 런처, AHK v1 HTS bridge, active row/clipboard/UpDown navigation |
-| 장마감/애프터장 | close metrics snapshot 저장/복원, opt10046/opt10004 snapshot, display price policy 1차 |
-| UI | Fast/Graphic mode, visual-cell, E palette, custom tooltip, 일부 CSS/helper asset 분리 |
+| `ok` | 장중 실시간 1분강도 계산 포함, 분모 700 기대 |
+| `display_only` | 장마감 5분강도 표시 전용, 분모 600 기대 |
+| `fallback` | 정규장인데 실시간 1분값 없음, 중립 50점 |
+| `missing` | 의도하지 않은 상태. 원인 조사 필요 |
+
+### 9.3 후보 Top5 breakdown
+
+```powershell
+$top5 = $flatRows |
+  Where-Object { $_.is_candidate -eq $true -or $_.candidate_rank -ne $null } |
+  Sort-Object candidate_rank |
+  Select-Object -First 5
+
+foreach ($row in $top5) {
+    ""
+    "===== $($row.candidate_rank)위 $($row.stock_code) $($row.stock_name) / $($row.candidate_grade_text) / $($row.score_percent)점 / 분모 $($row.score_possible_points) ====="
+    $row.score_breakdown.net_buy_strength.items |
+      Select-Object label,points,possible_points,status,value,source |
+      Format-Table -Auto
+}
+```
 
 ---
 
@@ -184,166 +284,40 @@ normalized_code = 005930
 
 | 우선순위 | TODO | 비고 |
 |---:|---|---|
-| 1 | 월요일 08:00~09:00 장초반 검증 | 실전 병목 확인 |
-| 2 | 기준문서 최소 갱신 | 새 채팅창이 현재 상태를 바로 이해하도록 유지 |
-| 3 | 틱데이터 저장 최소 설계 | 문제 재현 가능하게 함 |
-| 4 | 저장 틱데이터 replay 설계 | 장중 아니어도 테스트 가능하게 함 |
-| 5 | 선발기준 설정 파일화 | Python/HTML 직접 수정 부담 제거 |
-| 6 | 외선, 큰손, KRT, 정확한 당일강도 | 데이터 확장 후 진행 |
-| 7 | Signal / Ranking / Strategy 정식화 | 후속 큰 덩어리 |
-| 8 | HTML render/main loop 추가 분리 | 월요일 검증 이후. 당분간 보류 |
+| 1 | 정규장 장중 700점 분모 확인 | `one_min_status=ok`, `score_possible_points=700` 확인 |
+| 2 | 금융/증권주 쏠림 진단 | 전일 점수/프로그램 비율이 과도한지 확인 |
+| 3 | 전일 점수 capped 영향 점검 | 100점 capped가 Top5를 과도하게 지배하는지 확인 |
+| 4 | 프로그램 점수 상한/완만화 필요 여부 판단 | 금융주 편향이 반복되면 검토 |
+| 5 | UI 툴팁 추가 개선 | 셀에는 숫자만 유지. 설명은 툴팁에만 표시 |
+| 6 | 틱데이터 저장/replay 최소 설계 | 장중 재현 가능성 확보 |
+| 7 | HTML render/main loop 추가 분리 | 장중 검증 이후. 당분간 보류 |
 
 ---
 
-## 11. 월요일 08:00~09:00 검증 체크리스트
+## 11. 금지 루프
 
-### 11.1 08:00 프리마켓
-
-| 확인 | 명령/화면 |
+| 항목 | 금지 |
 |---|---|
-| 서버 상태 | `stockboard_live.cmd status` |
-| 로그인/등록 | `/api/realtime_provider_status` |
-| 수신 이벤트 | `realdata_received_count` |
-| 체결 적용 | `trade_event_applied_count` |
-| stale drop | `stale_trade_drop_count` |
-| UI | Top5/S1/Top15/Top30/Top300 표시 |
+| 가격/FID | FID10/FID12 정규화부터 다시 의심하지 말 것 |
+| KRX/NXT/통합장 | `_AL` 통합 표시 원천 유지 |
+| top100 refresh | 장중 `/api/top100` 자동 반복 호출 복구 금지 |
+| UI 계산 | HTML에서 등급/점수/가격을 새로 계산하지 말 것 |
+| 1분강도 표시 | 장마감에도 셀 안에는 숫자만 표시. `5분`, `5분참고` 문구를 셀에 직접 넣지 말 것 |
+| 문서 | 인계 목적 외 새 문서 남발 금지 |
 
-명령:
+---
 
-```powershell
-cd C:\aiTrade
+## 12. 관련 파일
 
-.\stockboard_live.cmd status
-
-Invoke-RestMethod "http://127.0.0.1:8000/api/realtime_provider_status"
-```
-
-### 11.2 09:00 장개시
-
-| 확인 | 기준 |
+| 파일 | 역할 |
 |---|---|
-| HOT patch | 멈추지 않아야 함 |
-| price_sequence | 증가해야 함 |
-| trade_event_applied_count | 빠르게 증가해야 함 |
-| Top5 가격 | HTS와 대조 |
-| Top15/Top30 가격 | 늦어도 계속 따라와야 함 |
-| UI | 멈춤/브라우저 렉 없어야 함 |
-
-샘플 API:
-
-```powershell
-cd C:\aiTrade
-
-$codes = "005930,000660,009150,402340,005380,011070"
-
-Invoke-RestMethod "http://127.0.0.1:8000/api/realtime?codes=$codes" |
-  Select-Object -ExpandProperty quotes
-```
-
----
-
-## 12. 문제 상황별 판단표
-
-| 증상 | 먼저 확인 | 판단 |
-|---|---|---|
-| 가격이 안 움직임 | received/applied/drop count | received 증가, applied 0이면 stale/drop 문제 가능성 |
-| realdata 증가, registered_count 낮음 | SetRealReg 등록 목록 | 등록 우선순위 문제 가능성 |
-| `/api/realtime_patch` 값 있음, DOM만 안 바뀜 | patch payload / DOM apply | HTML apply 문제 가능성 |
-| `/api/realtime_patch` 값 없음 | provider/store | 수신 또는 store 문제 가능성 |
-| Top5만 빠르고 나머지가 느림 | HOT/MID/POOL lane | lane 차이 자체는 정상 |
-| 보조지표 늦음 | close metrics batch/throttle | batch size/throttle 조정 후보 |
-
----
-
-## 13. 선발기준 설정 파일 방향
-
-대표님 결정:
-
-```text
-선발기준은 당분간 설정 파일로 사용한다.
-코드 수정으로 선발기준을 바꾸지 않는다.
-조작판은 나중에 만든다.
-```
-
-추천 경로:
-
-```text
-configs/candidate_models/
-```
-
-예시 파일:
-
-```text
-configs/candidate_models/OPENING_MOMO_V01.yaml
-configs/candidate_models/PROGRAM_FLOW_V01.yaml
-configs/candidate_models/LARGE_TRADE_V01.yaml
-```
-
----
-
-## 14. 틱데이터 저장 / replay 방향
-
-가능하다. 저장된 틱데이터를 replay feeder로 흘려보내면 StockBoard를 장중처럼 재생할 수 있다.
-
-권장 구조:
-
-```text
-저장 tick
-→ replay feeder
-→ RealtimeStore
-→ /api/realtime_patch
-→ StockBoard UI
-```
-
-초기 저장 형식:
-
-```text
-data/runtime/ticks/YYYYMMDD/*.jsonl
-```
-
-우선 저장 대상:
-
-| 대상 | 이유 |
-|---|---|
-| 체결 tick | 가격/체결량/체결강도/대량체결 분석 |
-| 호가 snapshot | 잔량비/매수·매도 압력 분석 |
-| realtime patch | 화면 표시와 store 비교 |
-| rank snapshot | 거래대금 순위 변화 추적 |
-| API 응답시간 | UI/서버 병목 분석 |
-| provider status | stale/drop/등록 문제 재현 |
-
----
-
-## 15. 문서 우선순위
-
-| 문서 | 우선순위 |
-|---|---|
-| `docs/STOCKBOARD_HANDOVER_20260704_PART1_STATUS_AND_AUTOMATION.md` | 최신 사실 우선 |
-| `docs/STOCKBOARD_HANDOVER_20260704_PART2_STRUCTURE_AND_TROUBLESHOOTING.md` | 최신 사실 우선 |
-| `docs/STOCKBOARD_HANDOVER_20260704_PART3_NEXT_WORK.md` | 최신 사실 우선 |
-| `docs/STOCKBOARD_CURRENT_STATUS_20260625.md` | 현재 문서. 최신 요약 유지 |
-| `docs/STOCKBOARD_NAMEPLATE_v1.4_20260625.md` | 화면명/내부키 매핑 유지 |
-
-기준문서가 코드보다 오래됐을 수 있으므로, 2026-07-04 인계서 3개를 최신 사실로 우선한다.
-
----
-
-## 16. 최종 운영 원칙
-
-```text
-REST/TR 데이터
-+ OpenAPI 실시간 데이터(_AL 통합 원천)
-→ RealtimeStore
-→ Engine
-→ Server API
-→ HTML 표시
-```
-
-- HTML은 계산하지 않는다.
-- Python이 계산한다.
-- Store는 저장한다.
-- Engine은 판단한다.
-- Server는 전달한다.
-- HTML은 보여준다.
-- 화면 표시 실시간 가격은 `_AL` 통합 원천을 사용한다.
-- 내부 식별자와 주문 코드는 6자리 코드를 유지한다.
+| `stockboard_ranking_engine.py` | `NET_BUY_STRENGTH_V02` 전용 점수/등급/pool 계산 |
+| `stockboard_previous_trade_value.py` | 전일 거래대금 TR/cache/API row 주입 |
+| `stockboard_ranking_runtime_patch.py` | 표준 런처 경유 runtime patch 설치 |
+| `kiwoom_trade_value_rank.py` | 표준 진입점. patch 설치 후 server import |
+| `configs/candidate_models/NET_BUY_STRENGTH_V02.json` | 모델 설정/정책 |
+| `docs/candidate_model_specs/NET_BUY_STRENGTH_V02.md` | 선발기준 설계 문서 |
+| `tests/test_stockboard_ranking_engine.py` | 등급/분모/장마감 display_only 테스트 |
+| `tests/test_stockboard_previous_trade_value.py` | 전일 거래대금 계산/cache 테스트 |
+| `docs/stockboard_v0_3_0_sample.html` | 현재 화면 HTML |
+| `docs/assets/stockboard_tooltip.js` | 툴팁 기본 helper. 셀 텍스트 수정 금지 |
