@@ -12,7 +12,9 @@ from typing import Any, Iterable
 
 
 NET_BUY_STRENGTH_V02 = "NET_BUY_STRENGTH_V02"
-NET_BUY_STRENGTH_TOTAL_POINTS = 700
+NET_BUY_STRENGTH_REGULAR_TOTAL_POINTS = 700
+NET_BUY_STRENGTH_AFTER_CLOSE_TOTAL_POINTS = 600
+NET_BUY_STRENGTH_TOTAL_POINTS = NET_BUY_STRENGTH_REGULAR_TOTAL_POINTS
 NET_BUY_STRENGTH_FALLBACK_AMOUNT_SCORE = 60
 NET_BUY_STRENGTH_MISSING_STRENGTH_SCORE = 50
 
@@ -146,6 +148,28 @@ def _program_net(row: dict[str, Any]) -> float | None:
     return _number_or_none(_first(row, "program_net", "program_sum", "program_net_eok"))
 
 
+def _after_close_context(row: dict[str, Any], *, five_min_strength: float | None = None) -> bool:
+    """Return True when the one-minute row should use after-close denominator logic."""
+    session = str(
+        _first(
+            row,
+            "market_session",
+            "stockboard_market_session",
+            "market_clock_phase",
+            "market_phase",
+            "session",
+        )
+        or ""
+    ).strip().lower()
+    if session in {"장마감", "애프터마켓", "aftermarket", "after_close", "closed", "close"}:
+        return True
+    if "장마감" in session or "애프터" in session or "after" in session or "close" in session:
+        return True
+    # Current runtime attaches strength_5m only when the real-time one-minute bucket is unavailable.
+    # Until every row carries an explicit market session, this is the safest after-close inference.
+    return five_min_strength is not None
+
+
 def _rank_position_score(position: int | None, total_count: int) -> float:
     if position is None or total_count <= 0:
         return 0.0
@@ -205,13 +229,14 @@ class ScoreItem:
     value: float | None = None
     raw_value: float | None = None
     reason: str = ""
+    possible_points: float = 100
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "key": self.key,
             "label": self.label,
             "points": _round_score(self.points),
-            "possible_points": 100,
+            "possible_points": _round_score(self.possible_points),
             "source": self.source,
             "status": self.status,
             "coverage_status": self.status,
@@ -439,15 +464,16 @@ class NetBuyStrengthV02RankingEngine:
             )
 
         five_min_strength = _five_min_strength(row)
-        if five_min_strength is not None:
+        if _after_close_context(row, five_min_strength=five_min_strength):
             return ScoreItem(
                 "one_min_strength",
                 "1분강도",
-                _clamp(five_min_strength, 0, 200) / 200 * 100,
+                0,
                 "strength_5m_after_close",
-                "proxy",
+                "display_only" if five_min_strength is not None else "display_missing",
                 value=five_min_strength,
-                reason="after_close_5m_strength_linear_proxy",
+                reason="after_close_5m_strength_display_only_denominator_600",
+                possible_points=0,
             )
 
         return ScoreItem(
@@ -456,7 +482,7 @@ class NetBuyStrengthV02RankingEngine:
             NET_BUY_STRENGTH_MISSING_STRENGTH_SCORE,
             "one_min_strength_or_strength_5m_missing",
             "fallback",
-            reason="strength_missing_neutral_50",
+            reason="regular_one_min_strength_missing_neutral_50",
         )
 
     def _program_score(
@@ -510,12 +536,16 @@ class NetBuyStrengthV02RankingEngine:
     def _apply_score(self, row: dict[str, Any], score_items: list[ScoreItem]) -> None:
         item_dicts = [item.as_dict() for item in score_items]
         score_total_points = round(sum(item["points"] for item in item_dicts), 2)
-        score_percent = int(round(_clamp(score_total_points / NET_BUY_STRENGTH_TOTAL_POINTS * 100, 0, 100)))
+        score_possible_points = round(sum(item["possible_points"] for item in item_dicts), 2)
+        if score_possible_points <= 0:
+            score_possible_points = NET_BUY_STRENGTH_REGULAR_TOTAL_POINTS
+        score_percent = int(round(_clamp(score_total_points / score_possible_points * 100, 0, 100)))
         grade, grade_class = grade_for_percent(score_percent)
         grade_text = grade_text_for_percent(score_percent)
         score_status = "fallback" if any(item["status"] == "fallback" for item in item_dicts) else (
             "partial" if any(item["status"] == "missing" for item in item_dicts) else "ok"
         )
+        scorable_items = [item for item in item_dicts if item["possible_points"] > 0]
 
         row.update(
             {
@@ -523,12 +553,13 @@ class NetBuyStrengthV02RankingEngine:
                 "candidate_model_name": self.model_name,
                 "candidate_score_version": self.model_id,
                 "candidate_score_raw": score_total_points,
-                "candidate_score_max": NET_BUY_STRENGTH_TOTAL_POINTS,
+                "candidate_score_max": score_possible_points,
                 "candidate_score": score_percent,
                 "score_total": score_total_points,
                 "score_total_points": score_total_points,
-                "score_possible_points": NET_BUY_STRENGTH_TOTAL_POINTS,
+                "score_possible_points": score_possible_points,
                 "score_percent": score_percent,
+                "score_denominator_points": score_possible_points,
                 "grade_score": score_percent,
                 "grade_letter": grade,
                 "legacy_grade": _first(row, "grade", "legacy_grade"),
@@ -546,10 +577,10 @@ class NetBuyStrengthV02RankingEngine:
                 "score_status": score_status,
                 "candidate_status": "READY" if score_percent >= 60 else "WEAK",
                 "candidate_score_coverage": round(
-                    len([item for item in item_dicts if item["status"] not in {"missing"}])
-                    / len(item_dicts),
+                    len([item for item in scorable_items if item["status"] not in {"missing"}])
+                    / len(scorable_items),
                     2,
-                ),
+                ) if scorable_items else None,
                 "candidate_score_items": {
                     "net_buy_strength": {item["key"]: item["points"] for item in item_dicts},
                     "entry_score": {item["key"]: item["points"] for item in item_dicts},
@@ -559,16 +590,16 @@ class NetBuyStrengthV02RankingEngine:
                 "score_breakdown": {
                     "net_buy_strength": {
                         "score": score_total_points,
-                        "possible_points": NET_BUY_STRENGTH_TOTAL_POINTS,
+                        "possible_points": score_possible_points,
                         "percent": score_percent,
                         "items": item_dicts,
                     },
                     "total": {
                         "score": score_total_points,
-                        "possible_points": NET_BUY_STRENGTH_TOTAL_POINTS,
+                        "possible_points": score_possible_points,
                         "percent": score_percent,
                         "grade": grade_text,
-                        "formula": "sum seven 100-point components",
+                        "formula": "round(score_total_points / score_possible_points * 100)",
                     },
                     "component_status": {item["key"]: item["status"] for item in item_dicts},
                 },
