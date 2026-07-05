@@ -73,3 +73,28 @@ def test_net_buy_strength_v02_scores_and_pool():
     assert amount_item["status"] == "fallback"
 
     assert by_code["000003"]["candidate_grade_text"].startswith("F")
+
+
+def test_five_min_strength_is_after_close_proxy_when_one_min_missing():
+    rows = [
+        {
+            "stock_code": "000001",
+            "rank": 1,
+            "prev_rank": 1,
+            "trade_value_eok": 100,
+            "prev_trade_value_eok": 100,
+            "bid_volume": 100,
+            "ask_volume": 100,
+            "realtime_strength": 100,
+            "strength_5m": 150,
+            "program_net": 0,
+        }
+    ]
+
+    result = enrich_net_buy_strength_v02_fields(rows, {"id": "NET_BUY_STRENGTH_V02"})
+    items = result[0]["score_breakdown"]["net_buy_strength"]["items"]
+    one_min_item = next(item for item in items if item["key"] == "one_min_strength")
+
+    assert one_min_item["points"] == 75
+    assert one_min_item["status"] == "proxy"
+    assert one_min_item["source"] == "strength_5m_after_close"
