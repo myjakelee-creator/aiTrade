@@ -91,47 +91,41 @@
   .market-distribution{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex:0 0 auto;min-width:calc((var(--grade-distribution-chart-size) * 4) + 92px);margin-left:6px;padding:var(--grade-distribution-padding-y) 8px var(--grade-distribution-padding-y) 4px;border:1px solid var(--line);background:#f8fbff}
   .market-distribution-item{display:grid;grid-template-rows:auto min-content;justify-items:center;gap:2px;min-width:var(--grade-distribution-chart-size)}
   .market-distribution-chart{width:var(--grade-distribution-chart-size);height:var(--grade-distribution-chart-size);flex:0 0 var(--grade-distribution-chart-size);border-radius:50%;background:#e3e8ec;box-shadow:inset 0 0 0 1px #b7c1ca;position:relative}
-  .market-distribution-chart::after{content:"";position:absolute;inset:var(--grade-distribution-hole-inset);border-radius:50%;background:#fff;box-shadow:0 0 0 1px #d4dbe1}
-  .market-distribution-label{font-size:var(--grade-distribution-title-size);font-weight:700;color:#263747;line-height:1;white-space:nowrap}
-  .grade-dot{display:inline-block;width:8px;height:8px;margin-right:4px;border-radius:2px}
-  .board td{font-size:var(--board-font-size);height:var(--board-row-height);font-weight:700}.board th{font-size:var(--board-header-font-size);font-weight:700}
-  .enhanced-board td:nth-child(3){text-align:center;vertical-align:middle}
-  .note{text-align:left!important;font-size:12px;min-width:0}
-  .note .momentum{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  #trading-board,#candidate-board,#selected-board{table-layout:fixed;min-width:0}
-  #trading-board th,#candidate-board th,#selected-board th{position:relative;overflow:visible}
-  #trading-board .column-label,#candidate-board .column-label,#selected-board .column-label{display:block;overflow:hidden;text-overflow:ellipsis}
-  #trading-board .column-resizer,#candidate-board .column-resizer,#selected-board .column-resizer{position:absolute;top:0;right:-4px;width:8px;height:100%;z-index:5;cursor:col-resize;touch-action:none;user-select:none}
-  #trading-board .metric,#candidate-board .metric,#selected-board .metric{min-width:0}
-  #trading-board .note,#candidate-board .note,#selected-board .note{min-width:0}
-  #trading-board .rank-cell{text-align:center}
-  #trading-board .stock-name{text-align:left}
-  #trading-board .number-cell{text-align:right;font-variant-numeric:tabular-nums}
-  #trading-board th[data-sort-key]{cursor:pointer}
-  #trading-board th.sorted{background:#dbe7f3}
-  #trading-board .sort-indicator{display:inline-block;min-width:12px;margin-left:3px;color:#1266d6;font-size:11px}
-  #trading-board td.realtime-flash,#candidate-board td.realtime-flash,#selected-board td.realtime-flash{background:#fff3b0;transition:background-color .18s ease}
-  .enhanced-board .flow-number{text-align:right;font-variant-numeric:tabular-nums}
-  .flow-zero{color:#7f8c8d}
-  body.column-resizing{cursor:col-resize;user-select:none}
-  .enhanced-board .stock-name{cursor:help;text-decoration:underline dotted #7b8a97;text-underline-offset:3px}
-  .enhanced-board .ohlc-cell{cursor:pointer}
-  /* CSS: Fast Mode / Graphic Mode visual cells */
-  .ohlc-fast-text{display:block;width:100%;text-align:left}
-  .enhanced-board .ohlc-chart{position:relative;width:100%;min-width:0;height:var(--ohlc-height);margin:auto;background:linear-gradient(90deg,#eef3f8,#fff);border-radius:3px;overflow:hidden}
-  .enhanced-board .ohlc-range{position:absolute;left:var(--low);right:calc(100% - var(--high));top:var(--ohlc-range-top);height:2px;background:#17202a;z-index:1}
-  .enhanced-board .ohlc-body{position:absolute;left:var(--body-left);right:var(--body-right);top:var(--ohlc-body-top);min-width:2px;min-height:10px;height:var(--ohlc-body-height);background:var(--red);border:1px solid #cf666d;z-index:2}
-  .enhanced-board .ohlc-down .ohlc-body{background:var(--blue);border-color:#5f8fd7}
-  .enhanced-board .ohlc-doji .ohlc-body{background:#d9dee3;border-color:#89939c}
-  .enhanced-board .ohlc-open{position:absolute;left:var(--open);top:var(--ohlc-open-top);width:3px;height:var(--ohlc-open-height);background:#17202a;z-index:4}
-  .enhanced-board .ohlc-level{position:absolute;top:var(--ohlc-level-top);width:2px;height:var(--ohlc-level-height);opacity:1}
-  .enhanced-board .ohlc-vwap{left:var(--vwap);background:#d3a900;z-index:8}
-  .enhanced-board .ohlc-prev-high{left:var(--prev-high);background:var(--red);z-index:7}
-  .enhanced-board .ohlc-prev-close{left:var(--prev-close);background:var(--green);z-index:6}
-  .enhanced-board .ohlc-prev-low{left:var(--prev-low);background:var(--blue);z-index:5}
-  .enhanced-board .ohlc-proportional-center{left:50%;background:var(--green);z-index:6}
-  .enhanced-board .metric{position:relative;display:flex;align-items:center;justify-content:center;min-width:0;height:var(--metric-height);overflow:hidden;background:#e5e9ed;border:1px solid #c5cdd4;border-radius:2px;font-size:var(--metric-font-size)}
-  .enhanced-board .metric-track{position:absolute;inset:0;width:100%;height:100%;overflow:hidden}
+  .market-distribution-chart::after{content:"";position:absolute;inset:var(--grade-distribution-hole-inset);border-radius:50%;background:#fff;box-shadow:inset 0 0 0 1px #cfd7df}
+  .market-distribution-label{font-size:var(--grade-distribution-font-size);font-weight:var(--grade-distribution-font-weight);color:#4b6175;text-align:center;line-height:1.1;white-space:nowrap}
+  .market-distribution-title{font-size:var(--grade-distribution-title-size);font-weight:700;color:#263747;white-space:nowrap}
+  .candidate-model-control{display:inline-flex;align-items:center;gap:4px;margin-left:10px;font-size:12px;font-weight:600;color:#263747}
+  .candidate-model-select{height:22px;min-width:118px;border:1px solid #aab7c4;border-radius:3px;background:#fff;color:#19324a;font:inherit;font-size:12px;font-weight:600;padding:0 4px}
+  .candidate-model-select:focus{outline:1px solid #5f9ef5}
+  .rank-basis-toggle{height:22px;min-width:96px;margin-left:6px;border:1px solid #aab7c4;border-radius:3px;background:#fff;color:#19324a;font:inherit;font-size:12px;font-weight:700;padding:0 7px;cursor:pointer}
+  .rank-basis-toggle:hover{background:#eef6ff}
+  .rank-basis-toggle:disabled{cursor:not-allowed;color:#8a98a8;background:#edf1f4;border-color:#cfd7df}
+  .code{font-size:11px;color:#7f8c8d}.name{font-weight:700}
+  .stock-name-cell{display:flex;align-items:center;gap:4px;min-width:0}
+  .stock-name-cell .name{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .stock-name-cell .code{flex:0 0 auto}
+  .price,.value,.score,.rank,.foreign,.program,.momentum-cell{font-variant-numeric:tabular-nums;font-weight:700}
+  .note{color:#7f8c8d}.candidate{font-weight:800;color:#d46b00}.trade-ready{font-weight:800;color:#168000}.trade-watch{font-weight:800;color:#b8860b}
+  /* CSS: cell update flash */
+  .flash-update{background:rgba(24,165,88,.10)!important;outline:none!important;box-shadow:none!important}
+  .flash-update.flash-strong{background:rgba(24,165,88,.14)!important;outline:none!important;box-shadow:none!important}
+  /* CSS: daily candle */
+  .ohlc{position:relative;height:var(--ohlc-height);min-width:110px;background:#eef2f6;border:1px solid #cbd5df;overflow:hidden}
+  .ohlc-range{position:absolute;top:var(--ohlc-range-top);height:2px;background:#506070}
+  .ohlc-body{position:absolute;top:var(--ohlc-body-top);height:var(--ohlc-body-height);border:1px solid #222;background:#fff}
+  .ohlc-body.up{background:#ffb3b3;border-color:#d71920}.ohlc-body.down{background:#b9d3ff;border-color:#1266d6}.ohlc-body.flat{background:#d9dde3;border-color:#7f8c8d}
+  .ohlc-level{position:absolute;top:var(--ohlc-level-top);width:2px;height:var(--ohlc-level-height)}
+  .ohlc-prev-close{background:#111}.ohlc-prev-high{background:#ff8c00}.ohlc-prev-low{background:#1f65c2}.ohlc-vwap{background:#8a2be2}
+  .ohlc-open{position:absolute;top:var(--ohlc-open-top);width:2px;height:var(--ohlc-open-height);background:#2e7d32}
+  .ohlc-current{position:absolute;top:0;width:2px;height:100%;background:#d71920;box-shadow:0 0 0 1px rgba(215,25,32,.22)}
+  .ohlc-axis{position:absolute;left:0;right:0;top:50%;height:1px;background:rgba(80,96,112,.35)}
+  /* CSS: metric bars */
+  .metric{position:relative;height:var(--metric-height);min-width:80px;background:#eef2f6;border:1px solid #cbd5df;display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:var(--metric-font-size)}
+  .metric-fill{position:absolute;left:0;top:0;bottom:0;opacity:.35}
+  .metric-fill.red{background:#ff6b6b}.metric-fill.blue{background:#5f9ef5}.metric-fill.gray{background:#aab7c4}
+  .metric-text{position:relative;z-index:2;font-weight:800;text-shadow:0 0 2px #fff}
+  .enhanced-board .metric-cell,.enhanced-board .visual-cell{padding:2px 3px}
+  .enhanced-board .metric-box{position:relative;width:100%;height:var(--metric-height);overflow:hidden;background:#edf1f4;border:1px solid #c5cdd4;border-radius:2px;display:flex;align-items:center;justify-content:center;font-size:var(--metric-font-size)}
   .enhanced-board .metric-fill{display:block;width:var(--bar-width);height:100%;background:var(--bar-color)}
   .enhanced-board .metric-value{position:relative;z-index:2;width:100%;text-align:center;font-variant-numeric:tabular-nums;text-shadow:0 0 2px #fff,0 0 2px #fff;pointer-events:none}
   .enhanced-board .price-limit-metric .metric-value{color:#fff;text-shadow:none}
@@ -178,18 +172,18 @@
     padding: 8px 12px;
     border: 1px solid rgba(255, 214, 102, 0.45);
     background: rgba(24, 28, 34, 0.94);
-    color: #f7f1d0;
-    border-radius: 6px;
+    color: #f9fafb;
     font-size: 12px;
-    line-height: 1.35;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
-    opacity: 0;
-    pointer-events: none;
-    transform: translateY(4px);
-    transition: opacity 140ms ease, transform 140ms ease;
+    font-weight: 700;
+    line-height: 1.4;
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.26);
   }
 
-  .stock-link-status.visible {
-    opacity: 1;
-    transform: translateY(0);
+  .stock-link-status[hidden] {
+    display: none;
+  }
+
+  .stock-link-status.error {
+    border-color: rgba(215, 25, 32, 0.65);
   }
