@@ -110,7 +110,7 @@
   #trading-board th[data-sort-key]{cursor:pointer}
   #trading-board th.sorted{background:#dbe7f3}
   #trading-board .sort-indicator{display:inline-block;min-width:12px;margin-left:3px;color:#1266d6;font-size:11px}
-  #trading-board td.realtime-flash,#candidate-board td.realtime-flash,#selected-board td.realtime-flash{background:rgba(24,165,88,.10)!important;outline:none!important;box-shadow:none!important;transition:background-color .18s ease}
+  #trading-board td.realtime-flash,#candidate-board td.realtime-flash,#selected-board td.realtime-flash,#top20-board td.realtime-flash,#top50-board td.realtime-flash{background-color:rgba(24,165,88,.10);outline:none!important;box-shadow:none!important;transition:background-color .18s ease}
   .enhanced-board .flow-number{text-align:right;font-variant-numeric:tabular-nums}
   .flow-zero{color:#7f8c8d}
   body.column-resizing{cursor:col-resize;user-select:none}
