@@ -75,8 +75,14 @@ def test_net_buy_strength_v02_scores_and_pool():
     assert by_code["000003"]["candidate_grade_text"].startswith("F")
 
 
-def test_five_min_strength_is_after_close_proxy_when_one_min_missing():
-    rows = [
+def _one_min_item_for(row):
+    result = enrich_net_buy_strength_v02_fields([row], {"id": "NET_BUY_STRENGTH_V02"})
+    items = result[0]["score_breakdown"]["net_buy_strength"]["items"]
+    return next(item for item in items if item["key"] == "one_min_strength")
+
+
+def test_five_min_strength_is_linear_after_close_proxy_when_one_min_missing():
+    item_150 = _one_min_item_for(
         {
             "stock_code": "000001",
             "rank": 1,
@@ -89,12 +95,43 @@ def test_five_min_strength_is_after_close_proxy_when_one_min_missing():
             "strength_5m": 150,
             "program_net": 0,
         }
-    ]
+    )
+    assert item_150["points"] == 75
+    assert item_150["status"] == "proxy"
+    assert item_150["source"] == "strength_5m_after_close"
 
-    result = enrich_net_buy_strength_v02_fields(rows, {"id": "NET_BUY_STRENGTH_V02"})
-    items = result[0]["score_breakdown"]["net_buy_strength"]["items"]
-    one_min_item = next(item for item in items if item["key"] == "one_min_strength")
+    item_80 = _one_min_item_for(
+        {
+            "stock_code": "000002",
+            "rank": 1,
+            "prev_rank": 1,
+            "trade_value_eok": 100,
+            "prev_trade_value_eok": 100,
+            "bid_volume": 100,
+            "ask_volume": 100,
+            "realtime_strength": 100,
+            "strength_5m": 80,
+            "program_net": 0,
+        }
+    )
+    assert item_80["points"] == 40
+    assert item_80["status"] == "proxy"
 
-    assert one_min_item["points"] == 75
-    assert one_min_item["status"] == "proxy"
-    assert one_min_item["source"] == "strength_5m_after_close"
+
+def test_missing_one_min_and_five_min_strength_gets_neutral_50():
+    item = _one_min_item_for(
+        {
+            "stock_code": "000003",
+            "rank": 1,
+            "prev_rank": 1,
+            "trade_value_eok": 100,
+            "prev_trade_value_eok": 100,
+            "bid_volume": 100,
+            "ask_volume": 100,
+            "realtime_strength": 100,
+            "program_net": 0,
+        }
+    )
+    assert item["points"] == 50
+    assert item["status"] == "fallback"
+    assert item["source"] == "one_min_strength_or_strength_5m_missing"
