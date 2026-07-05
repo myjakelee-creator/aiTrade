@@ -59,17 +59,17 @@ def _score_text(value: float | int | None) -> str:
 
 
 def grade_for_percent(score: int | float | None) -> tuple[str | None, str]:
-    """Return grade letter and css class. 60 or lower is F."""
+    """Return grade letter and css class. 60 or higher is D, below 60 is F."""
     if score is None:
         return None, ""
     score = int(round(_clamp(float(score), 0, 100)))
-    if score >= 91:
+    if score >= 90:
         return "A", "a"
-    if score >= 81:
+    if score >= 80:
         return "B", "b"
-    if score >= 71:
+    if score >= 70:
         return "C", "c"
-    if score >= 61:
+    if score >= 60:
         return "D", "d"
     return "F", "f"
 
@@ -525,7 +525,7 @@ class NetBuyStrengthV02RankingEngine:
                 "confirmation_score": score_percent,
                 "focus_score": score_percent,
                 "score_status": score_status,
-                "candidate_status": "READY" if score_percent >= 61 else "WEAK",
+                "candidate_status": "READY" if score_percent >= 60 else "WEAK",
                 "candidate_score_coverage": round(
                     len([item for item in item_dicts if item["status"] not in {"missing"}])
                     / len(item_dicts),
