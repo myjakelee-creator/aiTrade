@@ -1,0 +1,1624 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>StockBoard Replay</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel2: #172033;
+      --line: rgba(255, 255, 255, 0.10);
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --hot: #fb7185;
+      --good: #60a5fa;
+      --ok: #34d399;
+      --warn: #fbbf24;
+      --bad: #f87171;
+      --chip: rgba(255, 255, 255, 0.08);
+      --stable: rgba(34, 197, 94, 0.22);
+      --raw: rgba(251, 191, 36, 0.18);
+      --tick: rgba(56, 189, 248, 0.18);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      background: linear-gradient(90deg, #3f0f18, #111827 42%, #0f172a);
+      border-bottom: 1px solid var(--line);
+      padding: 10px 14px;
+    }
+
+    .topline {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .title {
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-right: 6px;
+    }
+
+    .watermark {
+      color: white;
+      background: #dc2626;
+      border: 1px solid rgba(255,255,255,0.24);
+      font-weight: 800;
+      padding: 4px 8px;
+      border-radius: 999px;
+    }
+
+    .safe {
+      color: #d1fae5;
+      background: rgba(16,185,129,0.18);
+      border: 1px solid rgba(16,185,129,0.45);
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-weight: 700;
+    }
+
+    .chip {
+      background: var(--chip);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      padding: 4px 8px;
+      border-radius: 999px;
+    }
+
+    .chip.hot {
+      color: #fee2e2;
+      background: rgba(220,38,38,0.28);
+      border-color: rgba(248,113,113,0.45);
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-top: 10px;
+    }
+
+    button, select {
+      background: #1f2937;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 10px;
+      font: inherit;
+      min-height: 34px;
+    }
+
+    button {
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    button:hover { background: #263244; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    #minuteSelect { min-width: 280px; flex: 1 1 320px; }
+    #modelSelect { min-width: 210px; flex: 0 1 270px; }
+    #speedSelect, #replayModeSelect, #batchSelect { min-width: 145px; }
+
+    .status {
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1 1 260px;
+    }
+
+    main {
+      padding: 12px 14px 28px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .metrics-panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 10px 12px;
+      display: grid;
+      grid-template-columns: repeat(8, minmax(120px, 1fr));
+      gap: 8px;
+    }
+
+    .metric-box {
+      background: rgba(255,255,255,0.045);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      padding: 7px 9px;
+      min-width: 0;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 3px;
+    }
+
+    .metric-value {
+      font-weight: 900;
+      font-size: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .grid > .panel {
+      min-width: 0;
+      height: 100%;
+    }
+
+
+    .rows-title {
+      display: grid !important;
+      grid-template-columns: auto minmax(420px, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      min-height: 58px;
+    }
+
+    .rows-title-main {
+      font-size: 16px;
+      font-weight: 900;
+    }
+
+    .big-clock-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(150px, 1fr));
+      gap: 8px;
+      width: 100%;
+    }
+
+    .big-clock-item {
+      background: rgba(15, 23, 42, 0.72);
+      border: 1px solid rgba(148, 163, 184, 0.30);
+      border-radius: 12px;
+      padding: 6px 10px;
+      min-width: 0;
+    }
+
+    .big-clock-item.lag {
+      background: rgba(220, 38, 38, 0.18);
+      border-color: rgba(248, 113, 113, 0.45);
+    }
+
+    .big-clock-label {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      margin-bottom: 2px;
+    }
+
+    .big-clock-item b {
+      display: block;
+      font-size: 22px;
+      line-height: 1.08;
+      letter-spacing: 0.01em;
+      color: #f8fafc;
+      font-variant-numeric: tabular-nums;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .big-clock-item.lag b {
+      color: #fecaca;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.20);
+    }
+
+    .panel h2 {
+      font-size: 14px;
+      margin: 0;
+      padding: 10px 12px;
+      background: var(--panel2);
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .panel-body { padding: 10px 12px; }
+
+    .candidate-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .candidate-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 8px 10px;
+      background: rgba(255,255,255,0.035);
+      display: grid;
+      gap: 4px;
+      cursor: copy;
+    }
+
+    .candidate-card:hover .name {
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+
+    .candidate-card.rank1 {
+      background: linear-gradient(90deg, rgba(251,113,133,0.22), rgba(255,255,255,0.04));
+      border-color: rgba(251,113,133,0.55);
+    }
+
+    .candidate-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .name {
+      font-weight: 800;
+      font-size: 14px;
+    }
+
+    .code {
+      color: var(--muted);
+      font-size: 12px;
+      margin-left: 4px;
+    }
+
+    .score {
+      font-weight: 900;
+      color: #fde68a;
+    }
+
+    .metrics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .metric {
+      background: rgba(255,255,255,0.06);
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.07);
+    }
+
+    .table-scroll {
+      overflow: auto;
+      max-height: calc(100vh - 400px);
+      position: relative;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+    }
+
+    th, td {
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+      padding: 6px 7px;
+      white-space: nowrap;
+      text-align: right;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 12;
+      background: #172033;
+      color: #cbd5e1;
+      font-weight: 800;
+      box-shadow: 0 1px 0 rgba(255,255,255,0.08);
+    }
+
+    td.name-cell, th.name-cell { text-align: left; }
+
+    tbody tr { cursor: copy; }
+    tbody tr:hover { background: rgba(255,255,255,0.06); }
+    tbody tr:hover .name-cell b {
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+    tbody tr.stable-row { background: var(--stable); }
+    tbody tr.raw-row:not(.stable-row) { background: var(--raw); }
+    tbody tr.tick-updated { outline: 1px solid rgba(56,189,248,0.55); background: var(--tick); }
+
+    .up { color: #fca5a5; font-weight: 800; }
+    .down { color: #93c5fd; font-weight: 800; }
+    .flat { color: #cbd5e1; }
+
+    .badge {
+      display: inline-block;
+      min-width: 38px;
+      text-align: center;
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+
+    .badge-stable { color: #bbf7d0; background: rgba(34,197,94,0.18); }
+    .badge-raw { color: #fde68a; background: rgba(251,191,36,0.16); }
+    .badge-play { color: #bfdbfe; background: rgba(59,130,246,0.18); }
+
+    .empty {
+      padding: 18px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .error {
+      background: rgba(248,113,113,0.14);
+      border: 1px solid rgba(248,113,113,0.35);
+      color: #fecaca;
+      padding: 10px 12px;
+      border-radius: 12px;
+      white-space: pre-wrap;
+    }
+
+    .small {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .copy-toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 100;
+      background: rgba(15, 23, 42, 0.96);
+      color: #d1fae5;
+      border: 1px solid rgba(16,185,129,0.55);
+      box-shadow: 0 12px 32px rgba(0,0,0,0.35);
+      border-radius: 999px;
+      padding: 9px 14px;
+      font-weight: 800;
+      opacity: 0;
+      transform: translateY(10px);
+      pointer-events: none;
+      transition: opacity 160ms ease, transform 160ms ease;
+    }
+
+    .copy-toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 1100px) {
+      .grid { grid-template-columns: 1fr; }
+      .metrics-panel { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+      .table-scroll { max-height: calc(100vh - 470px); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="topline">
+      <div class="title">StockBoard Replay</div>
+      <div class="watermark">REPLAY MODE</div>
+      <div class="safe">NO BROKER · NO ORDER · READ ONLY</div>
+      <div id="sessionChip" class="chip">session: -</div>
+      <div id="minuteChip" class="chip">time: -</div>
+      <div id="speedChip" class="chip">speed: -</div>
+      <div id="tickChip" class="chip hot">tick: -</div>
+      <div id="safetyChip" class="chip">safety: checking</div>
+    </div>
+
+    <div class="toolbar">
+      <select id="replayModeSelect" title="Replay mode">
+        <option value="frame">1분 프레임</option>
+        <option value="tick_actual">Tick Actual</option>
+        <option value="tick_stress">Tick Stress</option>
+      </select>
+
+      <button id="firstBtn" type="button">|← 처음</button>
+      <button id="prevBtn" type="button">← 이전</button>
+      <button id="back1mBtn" type="button" title="현재 위치에서 1분 뒤로 이동">-1분</button>
+      <button id="goto0900Btn" type="button" title="09:00:00으로 바로 이동">09:00:00</button>
+      <button id="playBtn" type="button">▶ 재생</button>
+      <button id="forward1mBtn" type="button" title="현재 위치에서 1분 앞으로 이동">+1분</button>
+      <button id="nextBtn" type="button">다음 →</button>
+      <button id="lastBtn" type="button">끝 →|</button>
+
+      <select id="speedSelect" title="재생 속도">
+        <option value="1">1x 실제속도</option>
+        <option value="5">5x</option>
+        <option value="10">10x</option>
+        <option value="30">30x</option>
+        <option value="60" selected>60x · 1분/초</option>
+        <option value="120">120x</option>
+        <option value="300">300x</option>
+      </select>
+
+      <select id="batchSelect" title="Tick batch">
+        <option value="1">1 tick</option>
+        <option value="16" selected>16ms batch</option>
+        <option value="50">50ms batch</option>
+        <option value="100">100ms batch</option>
+      </select>
+
+      <select id="minuteSelect" title="리플레이 분 선택"></select>
+      <select id="modelSelect" title="후보모델 선택"></select>
+      <button id="reloadBtn" type="button">새로고침</button>
+      <div id="status" class="status">초기화 중...</div>
+    </div>
+  </header>
+
+  <main>
+    <div id="errorBox" class="error" style="display:none"></div>
+    <div id="copyToast" class="copy-toast" role="status" aria-live="polite"></div>
+
+    <section class="metrics-panel">
+      <div class="metric-box"><div class="metric-label">Replay Time</div><div id="metricReplayTime" class="metric-value">-</div></div>
+      <div class="metric-box"><div class="metric-label">Event</div><div id="metricEventIndex" class="metric-value">-</div></div>
+      <div class="metric-box"><div class="metric-label">Events/sec</div><div id="metricEventsSec" class="metric-value">-</div></div>
+      <div class="metric-box"><div class="metric-label">Render ms</div><div id="metricRenderMs" class="metric-value">-</div></div>
+      <div class="metric-box"><div class="metric-label">Fetch ms</div><div id="metricFetchMs" class="metric-value">-</div></div>
+      <div class="metric-box"><div class="metric-label">FPS</div><div id="metricFps" class="metric-value">-</div></div>
+      <div class="metric-box"><div class="metric-label">Updated rows</div><div id="metricUpdatedRows" class="metric-value">-</div></div>
+      <div class="metric-box"><div class="metric-label">Ignored</div><div id="metricIgnored" class="metric-value">-</div></div>
+    </section>
+
+    <section class="grid">
+      <div class="panel">
+        <h2>
+          <span>Stable 후보 Top5</span>
+          <span id="stableCount" class="small">-</span>
+        </h2>
+        <div class="panel-body">
+          <div id="stableCandidates" class="candidate-list"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>
+          <span>Raw 후보 Top5</span>
+          <span id="rawCount" class="small">-</span>
+        </h2>
+        <div class="panel-body">
+          <div id="rawCandidates" class="candidate-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 class="rows-title">
+        <span class="rows-title-main">Replay Rows</span>
+        <span class="big-clock-strip">
+          <span class="big-clock-item"><span class="big-clock-label">원본 Tick</span><b id="bigOriginalTime">-</b></span>
+          <span class="big-clock-item"><span class="big-clock-label">표시 목표</span><b id="bigDisplayTime">-</b></span>
+          <span class="big-clock-item lag"><span class="big-clock-label">밀림</span><b id="bigLagTime">-</b></span>
+        </span>
+        <span id="rowCount" class="small">-</span>
+      </h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>순위</th>
+              <th class="name-cell">종목</th>
+              <th>현재가</th>
+              <th>등락률</th>
+              <th>1분대금(억)</th>
+              <th>체결강도</th>
+              <th>잔량비</th>
+              <th>프로그램</th>
+              <th>M7</th>
+              <th>후보</th>
+            </tr>
+          </thead>
+          <tbody id="rowsBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const API_BASE = window.REPLAY_API_BASE || 'http://127.0.0.1:18001';
+
+    const state = {
+      mode: 'frame',
+      sessions: [],
+      minutes: [],
+      currentIndex: 0,
+      sessionId: null,
+      modelId: 'OPENING_BURST_V01',
+      frame: null,
+      playing: false,
+      timer: null,
+      speed: 60,
+      batchMs: 16,
+
+      tickSummary: null,
+      tickSnapshot: null,
+      tickEvents: [],
+      tickIndex: 0,
+      tickStartPerf: 0,
+      tickBaseRelMs: 0,
+      tickLoaded: false,
+      tickRowState: new Map(),
+      tickRowElement: new Map(),
+
+      metrics: {
+        processed: 0,
+        ignored: 0,
+        updatedRows: 0,
+        renderMs: 0,
+        fetchMs: 0,
+        eventsSec: 0,
+        fps: 0,
+        targetRelMs: 0,
+        lagMs: 0,
+        lastMetricAt: performance.now(),
+        lastProcessed: 0
+      }
+    };
+
+    const el = {
+      sessionChip: document.getElementById('sessionChip'),
+      minuteChip: document.getElementById('minuteChip'),
+      speedChip: document.getElementById('speedChip'),
+      tickChip: document.getElementById('tickChip'),
+      safetyChip: document.getElementById('safetyChip'),
+      status: document.getElementById('status'),
+      errorBox: document.getElementById('errorBox'),
+      copyToast: document.getElementById('copyToast'),
+      replayModeSelect: document.getElementById('replayModeSelect'),
+      firstBtn: document.getElementById('firstBtn'),
+      prevBtn: document.getElementById('prevBtn'),
+      back1mBtn: document.getElementById('back1mBtn'),
+      goto0900Btn: document.getElementById('goto0900Btn'),
+      playBtn: document.getElementById('playBtn'),
+      forward1mBtn: document.getElementById('forward1mBtn'),
+      nextBtn: document.getElementById('nextBtn'),
+      lastBtn: document.getElementById('lastBtn'),
+      reloadBtn: document.getElementById('reloadBtn'),
+      speedSelect: document.getElementById('speedSelect'),
+      batchSelect: document.getElementById('batchSelect'),
+      minuteSelect: document.getElementById('minuteSelect'),
+      modelSelect: document.getElementById('modelSelect'),
+      stableCandidates: document.getElementById('stableCandidates'),
+      rawCandidates: document.getElementById('rawCandidates'),
+      stableCount: document.getElementById('stableCount'),
+      rawCount: document.getElementById('rawCount'),
+      rowCount: document.getElementById('rowCount'),
+      bigOriginalTime: document.getElementById('bigOriginalTime'),
+      bigDisplayTime: document.getElementById('bigDisplayTime'),
+      bigLagTime: document.getElementById('bigLagTime'),
+      rowsBody: document.getElementById('rowsBody'),
+      metricReplayTime: document.getElementById('metricReplayTime'),
+      metricEventIndex: document.getElementById('metricEventIndex'),
+      metricEventsSec: document.getElementById('metricEventsSec'),
+      metricRenderMs: document.getElementById('metricRenderMs'),
+      metricFetchMs: document.getElementById('metricFetchMs'),
+      metricFps: document.getElementById('metricFps'),
+      metricUpdatedRows: document.getElementById('metricUpdatedRows'),
+      metricIgnored: document.getElementById('metricIgnored')
+    };
+
+    let copyToastTimer = null;
+    let fpsFrames = 0;
+    let fpsLastAt = performance.now();
+
+    function setStatus(text) { el.status.textContent = text; }
+
+    function showError(error) {
+      const text = error instanceof Error ? error.message : String(error);
+      el.errorBox.textContent = text;
+      el.errorBox.style.display = 'block';
+      stopPlayback();
+      setStatus('오류');
+    }
+
+    function clearError() {
+      el.errorBox.style.display = 'none';
+      el.errorBox.textContent = '';
+    }
+
+    async function fetchReplay(path) {
+      const started = performance.now();
+      const response = await fetch(`${API_BASE}${path}`, { cache: 'no-store' });
+      state.metrics.fetchMs = performance.now() - started;
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`Replay API 오류 ${response.status}: ${path}\n${body.slice(0, 600)}`);
+      }
+      return response.json();
+    }
+
+    function fmtNumber(value, digits = 0) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return '-';
+      return number.toLocaleString('ko-KR', {
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits
+      });
+    }
+
+    function fmtPrice(value) { return fmtNumber(value, 0); }
+
+    function fmtPct(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return '-';
+      return `${number > 0 ? '+' : ''}${number.toFixed(2)}%`;
+    }
+
+    function fmtEok(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return '-';
+      if (Math.abs(number) >= 100) return fmtNumber(number, 1);
+      return fmtNumber(number, 2);
+    }
+
+    function clsChange(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number) || number === 0) return 'flat';
+      return number > 0 ? 'up' : 'down';
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function showCopyToast(message) {
+      el.copyToast.textContent = message;
+      el.copyToast.classList.add('show');
+      if (copyToastTimer) clearTimeout(copyToastTimer);
+      copyToastTimer = window.setTimeout(() => {
+        el.copyToast.classList.remove('show');
+      }, 1100);
+    }
+
+    function fallbackCopyText(text) {
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.left = '-9999px';
+      area.style.top = '0';
+      document.body.appendChild(area);
+      area.focus();
+      area.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } finally { document.body.removeChild(area); }
+      if (!ok) throw new Error('클립보드 복사 실패');
+    }
+
+    async function writeClipboardText(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      fallbackCopyText(text);
+    }
+
+    async function copyStockCode(code) {
+      const clean = String(code || '').trim();
+      if (!clean) return;
+      await writeClipboardText(clean);
+      showCopyToast(`종목코드 복사: ${clean}`);
+      setStatus(`종목코드 복사: ${clean}`);
+    }
+
+    function speedLabel() {
+      if (state.speed === 1) return '1x 실제속도';
+      if (state.speed === 60) return '60x · 1분/초';
+      return `${state.speed}x`;
+    }
+
+    function playbackIntervalMs() {
+      const speed = Number(state.speed) || 60;
+      return Math.max(120, Math.round(60000 / speed));
+    }
+
+    function tickBatchLabel() {
+      return `${state.batchMs}${state.batchMs === 1 ? ' tick' : 'ms'}`;
+    }
+
+    function updatePlayButton() {
+      el.playBtn.textContent = state.playing ? '⏸ 정지' : '▶ 재생';
+      el.playBtn.classList.toggle('badge-play', state.playing);
+      el.speedChip.textContent = `speed: ${speedLabel()}`;
+      el.tickChip.textContent = state.mode.startsWith('tick')
+        ? `tick: ${state.tickIndex}/${state.tickEvents.length} · ${tickBatchLabel()}`
+        : 'tick: off';
+    }
+
+
+    function currentDisplayedTickEvent() {
+      if (!state.tickEvents || state.tickEvents.length === 0) return null;
+      const index = Math.max(
+        0,
+        Math.min(
+          state.tickEvents.length - 1,
+          state.tickIndex > 0 ? state.tickIndex - 1 : state.tickIndex
+        )
+      );
+      return state.tickEvents[index] || null;
+    }
+
+    function targetTickIndexByRelMs(targetRelMs) {
+      if (!state.tickEvents || state.tickEvents.length === 0) return 0;
+
+      const firstRel = Number(state.tickEvents[0].rel_ms || 0);
+      const lastRel = Number(state.tickEvents[state.tickEvents.length - 1].rel_ms || 0);
+      const clamped = Math.max(firstRel, Math.min(targetRelMs, lastRel));
+
+      // Return first event index whose rel_ms is greater than clamped.
+      // jumpTickTo(index) then applies all events <= target time.
+      let lo = 0;
+      let hi = state.tickEvents.length;
+      while (lo < hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        const rel = Number(state.tickEvents[mid].rel_ms || 0);
+        if (rel <= clamped) lo = mid + 1;
+        else hi = mid;
+      }
+      return lo;
+    }
+
+    function currentDisplayedTickRelMs() {
+      const event = currentDisplayedTickEvent();
+      return Number(event && event.rel_ms || 0);
+    }
+
+
+    function timePartToMs(value) {
+      const text = String(value || '').trim();
+      const part = text.includes('T') ? text.split('T')[1] : text;
+      const pieces = part.split(':');
+      if (pieces.length < 3) return 0;
+      const hour = Number(pieces[0]) || 0;
+      const minute = Number(pieces[1]) || 0;
+      const secFloat = Number(pieces[2]) || 0;
+      const second = Math.floor(secFloat);
+      const ms = Math.round((secFloat - second) * 1000);
+      return (((hour * 60 + minute) * 60 + second) * 1000) + ms;
+    }
+
+    function msToTimePart(msOfDay) {
+      const day = 24 * 60 * 60 * 1000;
+      let ms = Math.round(msOfDay % day);
+      if (ms < 0) ms += day;
+      const hour = Math.floor(ms / 3600000);
+      ms -= hour * 3600000;
+      const minute = Math.floor(ms / 60000);
+      ms -= minute * 60000;
+      const second = Math.floor(ms / 1000);
+      ms -= second * 1000;
+      return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+    }
+
+    function tickSessionStartMsOfDay() {
+      const start =
+        (state.tickSummary && state.tickSummary.tick_session && state.tickSummary.tick_session.start) ||
+        (state.tickSummary && state.tickSummary.summary && state.tickSummary.summary.start) ||
+        (state.tickEvents[0] && state.tickEvents[0].ts) ||
+        '09:00:00';
+      return timePartToMs(String(start).slice(11, 23));
+    }
+
+    function tickRelMsToTimeText(relMs) {
+      return msToTimePart(tickSessionStartMsOfDay() + Number(relMs || 0));
+    }
+
+    function tickTimeTextToRelMs(timeText) {
+      const target = timePartToMs(timeText);
+      const start = tickSessionStartMsOfDay();
+      let rel = target - start;
+      if (rel < -12 * 3600000) rel += 24 * 3600000;
+      return rel;
+    }
+
+    function formatLagMs(value) {
+      const ms = Math.max(0, Number(value) || 0);
+      if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
+      return `${Math.round(ms)}ms`;
+    }
+
+    function updateBigReplayClock() {
+      if (!el.bigOriginalTime || !el.bigDisplayTime || !el.bigLagTime) return;
+
+      if (state.mode.startsWith('tick')) {
+        const event = currentDisplayedTickEvent();
+        const currentRel = currentDisplayedTickRelMs();
+        const targetRel = Number(state.metrics.targetRelMs || currentRel || 0);
+        const lag = Math.max(0, targetRel - currentRel);
+
+        el.bigOriginalTime.textContent = event ? String(event.time_text || event.ts || '-') : '-';
+        el.bigDisplayTime.textContent = tickRelMsToTimeText(targetRel);
+        el.bigLagTime.textContent = formatLagMs(lag);
+        return;
+      }
+
+      const minute = state.frame ? String(state.frame.minute || '-') : '-';
+      el.bigOriginalTime.textContent = minute;
+      el.bigDisplayTime.textContent = minute;
+      el.bigLagTime.textContent = '0ms';
+    }
+
+    function updateMetrics() {
+      const now = performance.now();
+      const elapsed = Math.max(1, now - state.metrics.lastMetricAt);
+      if (elapsed >= 500) {
+        const delta = state.metrics.processed - state.metrics.lastProcessed;
+        state.metrics.eventsSec = delta / (elapsed / 1000);
+        state.metrics.lastMetricAt = now;
+        state.metrics.lastProcessed = state.metrics.processed;
+      }
+
+      const event = currentDisplayedTickEvent();
+      const replayTime = state.mode.startsWith('tick')
+        ? (event ? String(event.time_text || event.ts || '-') : '-')
+        : (state.frame ? String(state.frame.minute || '-') : '-');
+
+      el.metricReplayTime.textContent = replayTime;
+      el.metricEventIndex.textContent = state.mode.startsWith('tick')
+        ? `${fmtNumber(state.tickIndex)}/${fmtNumber(state.tickEvents.length)}`
+        : `${fmtNumber(state.currentIndex + 1)}/${fmtNumber(state.minutes.length)}`;
+      el.metricEventsSec.textContent = fmtNumber(state.metrics.eventsSec, 1);
+      el.metricRenderMs.textContent = fmtNumber(state.metrics.renderMs, 2);
+      el.metricFetchMs.textContent = fmtNumber(state.metrics.fetchMs, 1);
+      el.metricFps.textContent = fmtNumber(state.metrics.fps, 0);
+      el.metricUpdatedRows.textContent = fmtNumber(state.metrics.updatedRows, 0);
+      el.metricIgnored.textContent = fmtNumber(state.metrics.ignored, 0);
+      updateBigReplayClock();
+      updatePlayButton();
+    }
+
+    function fpsLoop() {
+      fpsFrames += 1;
+      const now = performance.now();
+      const elapsed = now - fpsLastAt;
+      if (elapsed >= 1000) {
+        state.metrics.fps = fpsFrames / (elapsed / 1000);
+        fpsFrames = 0;
+        fpsLastAt = now;
+      }
+      requestAnimationFrame(fpsLoop);
+    }
+
+    function candidateCard(candidate, index, stable) {
+      const rank = candidate.rank ?? index + 1;
+      const score = fmtNumber(candidate.score, 2);
+      const grade = candidate.grade_text || '-';
+      const cls = Number(rank) === 1 ? 'candidate-card rank1' : 'candidate-card';
+      const scoreLabel = stable ? 'stable' : 'raw';
+      return `
+        <div class="${cls}" data-stock-code="${escapeHtml(candidate.stock_code)}" title="클릭하면 종목코드 복사">
+          <div class="candidate-head">
+            <div>
+              <span class="badge ${stable ? 'badge-stable' : 'badge-raw'}">#${escapeHtml(rank)}</span>
+              <span class="name">${escapeHtml(candidate.stock_name)}</span>
+              <span class="code">${escapeHtml(candidate.stock_code)}</span>
+            </div>
+            <div class="score">${escapeHtml(grade)} · ${score}</div>
+          </div>
+          <div class="metrics">
+            <span class="metric">${scoreLabel}</span>
+            <span class="metric">대금 ${fmtEok(candidate.trade_value_eok)}억</span>
+            <span class="metric">강도 ${fmtNumber(candidate.execution_strength, 2)}</span>
+            <span class="metric">등락 ${fmtPct(candidate.change_rate)}</span>
+            <span class="metric">M7 ${fmtNumber(candidate.trade_metric_7_delta_in_min, 0)}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderCandidateList(target, candidates, stable) {
+      if (!candidates || candidates.length === 0) {
+        target.innerHTML = '<div class="empty">후보 없음</div>';
+        return;
+      }
+      target.innerHTML = candidates.map((candidate, index) => candidateCard(candidate, index, stable)).join('');
+    }
+
+    function rowTradeValue(row) {
+      return row.trade_value_eok ?? row.minute_trade_value_eok_est ?? row.acc_trade_value_eok_est;
+    }
+
+    function rowM7(row) {
+      return row.trade_metric_7_delta_in_min ?? row.trade_metric_7;
+    }
+
+    function renderRows(rows) {
+      state.tickRowElement.clear();
+      state.tickRowState.clear();
+
+      if (!rows || rows.length === 0) {
+        el.rowsBody.innerHTML = '<tr><td colspan="10" class="empty">rows 없음</td></tr>';
+        return;
+      }
+
+      el.rowsBody.innerHTML = rows.map(row => {
+        const stable = Boolean(row.is_stable_candidate);
+        const raw = Boolean(row.is_raw_candidate);
+        const trClass = stable ? 'stable-row' : (raw ? 'raw-row' : '');
+        const flags = [
+          stable ? '<span class="badge badge-stable">STABLE</span>' : '',
+          raw ? '<span class="badge badge-raw">RAW</span>' : ''
+        ].filter(Boolean).join(' ');
+
+        return `
+          <tr class="${trClass}" data-stock-code="${escapeHtml(row.stock_code)}" title="클릭하면 종목코드 복사">
+            <td data-cell="rank">${escapeHtml(row.rank)}</td>
+            <td class="name-cell"><b>${escapeHtml(row.stock_name)}</b> <span class="code">${escapeHtml(row.stock_code)}</span></td>
+            <td data-cell="price">${fmtPrice(row.price)}</td>
+            <td data-cell="change_rate" class="${clsChange(row.change_rate)}">${fmtPct(row.change_rate)}</td>
+            <td data-cell="trade_value">${fmtEok(rowTradeValue(row))}</td>
+            <td data-cell="execution_strength">${fmtNumber(row.execution_strength, 2)}</td>
+            <td data-cell="bid_ask_ratio">${fmtNumber(row.bid_ask_ratio, 2)}</td>
+            <td data-cell="program_net">${fmtNumber(row.program_net, 0)}</td>
+            <td data-cell="m7">${fmtNumber(rowM7(row), 0)}</td>
+            <td data-cell="flags">${flags || '-'}</td>
+          </tr>
+        `;
+      }).join('');
+
+      for (const tr of el.rowsBody.querySelectorAll('tr[data-stock-code]')) {
+        const code = tr.getAttribute('data-stock-code');
+        state.tickRowElement.set(code, tr);
+      }
+
+      for (const row of rows) {
+        if (row.stock_code) state.tickRowState.set(String(row.stock_code), { ...row });
+      }
+    }
+
+    function updateRowDom(code) {
+      const tr = state.tickRowElement.get(String(code));
+      const row = state.tickRowState.get(String(code));
+      if (!tr || !row) return false;
+
+      const priceCell = tr.querySelector('[data-cell="price"]');
+      const changeCell = tr.querySelector('[data-cell="change_rate"]');
+      const tradeCell = tr.querySelector('[data-cell="trade_value"]');
+      const strengthCell = tr.querySelector('[data-cell="execution_strength"]');
+      const bidAskCell = tr.querySelector('[data-cell="bid_ask_ratio"]');
+      const programCell = tr.querySelector('[data-cell="program_net"]');
+      const m7Cell = tr.querySelector('[data-cell="m7"]');
+
+      if (priceCell) priceCell.textContent = fmtPrice(row.price);
+      if (changeCell) {
+        changeCell.textContent = fmtPct(row.change_rate);
+        changeCell.className = clsChange(row.change_rate);
+        changeCell.setAttribute('data-cell', 'change_rate');
+      }
+      if (tradeCell) tradeCell.textContent = fmtEok(rowTradeValue(row));
+      if (strengthCell) strengthCell.textContent = fmtNumber(row.execution_strength, 2);
+      if (bidAskCell) bidAskCell.textContent = fmtNumber(row.bid_ask_ratio, 2);
+      if (programCell) programCell.textContent = fmtNumber(row.program_net, 0);
+      if (m7Cell) m7Cell.textContent = fmtNumber(rowM7(row), 0);
+
+      tr.classList.add('tick-updated');
+      window.setTimeout(() => tr.classList.remove('tick-updated'), 120);
+      return true;
+    }
+
+    function updateControls() {
+      const lastIndex = state.mode.startsWith('tick') ? state.tickEvents.length - 1 : state.minutes.length - 1;
+      const current = state.mode.startsWith('tick') ? state.tickIndex : state.currentIndex;
+
+      el.firstBtn.disabled = current <= 0;
+      el.prevBtn.disabled = current <= 0;
+      el.back1mBtn.disabled = current <= 0;
+      el.forward1mBtn.disabled = current >= lastIndex;
+      el.nextBtn.disabled = current >= lastIndex;
+      el.lastBtn.disabled = current >= lastIndex;
+      el.minuteSelect.disabled = state.mode.startsWith('tick');
+      el.modelSelect.disabled = state.mode.startsWith('tick');
+      el.batchSelect.disabled = !state.mode.startsWith('tick');
+      el.sessionChip.textContent = `session: ${state.sessionId || '-'}`;
+
+      if (state.mode.startsWith('tick')) {
+        const event = currentDisplayedTickEvent();
+        el.minuteChip.textContent = `time: ${event ? (event.time_text || event.ts) : '-'}`;
+      } else if (state.frame) {
+        el.minuteChip.textContent = `minute: ${state.frame.minute || '-'}`;
+        el.minuteSelect.value = String(state.currentIndex);
+      }
+
+      updateMetrics();
+    }
+
+    function renderFrame(frame) {
+      state.frame = frame;
+      state.currentIndex = Number(frame.minute_index ?? state.currentIndex);
+
+      const candidates = frame.candidates || {};
+      const stableDefault = candidates.stable_default || [];
+      const rawDefault = candidates.raw_default || [];
+      const rows = frame.rows || [];
+      const safety = frame.safety || {};
+
+      el.safetyChip.textContent = safety.replay_only ? 'safety: replay only' : 'safety: unknown';
+      el.stableCount.textContent = `${stableDefault.length}개`;
+      el.rawCount.textContent = `${rawDefault.length}개`;
+      el.rowCount.textContent = `${rows.length} rows`;
+
+      renderCandidateList(el.stableCandidates, stableDefault, true);
+      renderCandidateList(el.rawCandidates, rawDefault, false);
+      renderRows(rows);
+      updateControls();
+
+      const playState = state.playing ? ` · 재생중 ${speedLabel()}` : '';
+      setStatus(`frame ${frame.minute} · rows ${rows.length} · model ${state.modelId}${playState}`);
+    }
+
+    async function loadFrameByIndex(index) {
+      clearError();
+      const safeIndex = Math.max(0, Math.min(index, state.minutes.length - 1));
+      const modelParam = encodeURIComponent(state.modelId);
+      const frame = await fetchReplay(`/api/replay/frame?index=${safeIndex}&model=${modelParam}`);
+      renderFrame(frame);
+    }
+
+    async function loadTickSessionIfNeeded() {
+      if (state.tickLoaded) return;
+
+      clearError();
+      setStatus('tick replay 데이터 로딩 중...');
+
+      const summary = await fetchReplay('/api/replay/tick/summary');
+      const snapshot = await fetchReplay('/api/replay/tick/snapshot');
+
+      state.tickSummary = summary;
+      state.tickSnapshot = snapshot;
+      state.sessionId = summary.tick_session.session_id;
+
+      const allEvents = [];
+      let offset = 0;
+      const limit = 10000;
+
+      while (true) {
+        const chunk = await fetchReplay(`/api/replay/tick/events?from=${offset}&limit=${limit}`);
+        allEvents.push(...(chunk.events || []));
+        offset = chunk.next_from;
+        setStatus(`tick events loading ${fmtNumber(allEvents.length)}/${fmtNumber(chunk.event_count)}`);
+        if (!chunk.has_more) break;
+      }
+
+      state.tickEvents = allEvents;
+      state.tickLoaded = true;
+      resetTickBoard();
+      setStatus(`tick replay loaded · events ${fmtNumber(state.tickEvents.length)}`);
+    }
+
+    function resetTickBoard() {
+      const rows = (state.tickSnapshot && state.tickSnapshot.rows) ? state.tickSnapshot.rows.map(row => ({ ...row })) : [];
+      state.tickIndex = 0;
+      state.metrics.processed = 0;
+      state.metrics.ignored = 0;
+      state.metrics.updatedRows = 0;
+      state.metrics.renderMs = 0;
+      state.metrics.eventsSec = 0;
+      state.metrics.targetRelMs = 0;
+      state.metrics.lagMs = 0;
+      state.metrics.lastMetricAt = performance.now();
+      state.metrics.lastProcessed = 0;
+
+      el.stableCount.textContent = 'tick mode';
+      el.rawCount.textContent = 'tick mode';
+      renderCandidateList(el.stableCandidates, [], true);
+      renderCandidateList(el.rawCandidates, [], false);
+      el.stableCandidates.innerHTML = '<div class="empty">Tick mode에서는 초기 snapshot 후 종목별 patch를 직접 적용합니다.</div>';
+      el.rawCandidates.innerHTML = '<div class="empty">후보 계산은 1분 frame 기준입니다. Tick mode는 보드 부하 측정용입니다.</div>';
+      el.rowCount.textContent = `${rows.length} rows`;
+      renderRows(rows);
+      updateControls();
+    }
+
+    function applyTickEvent(event, updateDomImmediately, changedCodes) {
+      const code = String(event.code || '');
+      const patch = event.patch || {};
+      const row = state.tickRowState.get(code);
+
+      if (!row) {
+        state.metrics.ignored += 1;
+        return false;
+      }
+
+      row.price = patch.price ?? row.price;
+      row.current_price = row.price;
+      row.display_price = row.price;
+      row.change_rate = patch.change_rate ?? row.change_rate;
+      row.trade_value_eok = patch.minute_trade_value_eok_est ?? row.trade_value_eok;
+      row.minute_trade_value_eok_est = patch.minute_trade_value_eok_est ?? row.minute_trade_value_eok_est;
+      row.acc_volume = patch.acc_volume ?? row.acc_volume;
+      row.execution_strength = patch.execution_strength ?? row.execution_strength;
+      row.bid_ask_ratio = patch.bid_ask_ratio ?? row.bid_ask_ratio;
+      row.program_net = patch.program_net ?? row.program_net;
+      row.trade_metric_7 = patch.trade_metric_7 ?? row.trade_metric_7;
+      row.last_ts = event.ts;
+      row.last_kind = event.kind;
+
+      state.metrics.processed += 1;
+
+      if (updateDomImmediately) {
+        if (updateRowDom(code)) state.metrics.updatedRows += 1;
+      } else if (changedCodes) {
+        changedCodes.add(code);
+      }
+
+      return true;
+    }
+
+    function applyChangedCodes(changedCodes) {
+      let updated = 0;
+      for (const code of changedCodes) {
+        if (updateRowDom(code)) updated += 1;
+      }
+      state.metrics.updatedRows += updated;
+    }
+
+    function processTickEventsUntil(targetRelMs) {
+      state.metrics.targetRelMs = targetRelMs;
+      const batchMs = Number(state.batchMs) || 16;
+      const immediate = batchMs === 1;
+      const changedCodes = immediate ? null : new Set();
+      const started = performance.now();
+      let guard = 0;
+
+      while (state.tickIndex < state.tickEvents.length) {
+        const event = state.tickEvents[state.tickIndex];
+        if (Number(event.rel_ms || 0) > targetRelMs) break;
+        applyTickEvent(event, immediate, changedCodes);
+        state.tickIndex += 1;
+        guard += 1;
+        if (guard > 6000) break;
+      }
+
+      if (changedCodes) applyChangedCodes(changedCodes);
+      state.metrics.renderMs = performance.now() - started;
+      state.metrics.lagMs = Math.max(0, targetRelMs - currentDisplayedTickRelMs());
+      updateControls();
+      return guard;
+    }
+
+    function processTickStressChunk() {
+      const batchMs = Number(state.batchMs) || 16;
+      const immediate = batchMs === 1;
+      const changedCodes = immediate ? null : new Set();
+      const started = performance.now();
+      const budgetMs = immediate ? 10 : 14;
+      let processed = 0;
+
+      while (state.tickIndex < state.tickEvents.length) {
+        const event = state.tickEvents[state.tickIndex];
+        applyTickEvent(event, immediate, changedCodes);
+        state.tickIndex += 1;
+        processed += 1;
+
+        if (processed >= 2000) break;
+        if (performance.now() - started >= budgetMs) break;
+      }
+
+      if (changedCodes) applyChangedCodes(changedCodes);
+      state.metrics.renderMs = performance.now() - started;
+      state.metrics.targetRelMs = currentDisplayedTickRelMs();
+      state.metrics.lagMs = 0;
+      updateControls();
+      return processed;
+    }
+
+    function scheduleNextFrame() {
+      if (!state.playing) return;
+
+      if (state.mode === 'frame') {
+        clearTimeout(state.timer);
+        state.timer = window.setTimeout(async () => {
+          try {
+            if (state.currentIndex >= state.minutes.length - 1) {
+              stopPlayback();
+              setStatus('frame 재생 완료');
+              return;
+            }
+            await loadFrameByIndex(state.currentIndex + 1);
+            scheduleNextFrame();
+          } catch (error) {
+            showError(error);
+          }
+        }, playbackIntervalMs());
+        return;
+      }
+
+      if (state.mode === 'tick_actual') {
+        requestAnimationFrame(() => {
+          try {
+            if (!state.playing) return;
+            if (state.tickIndex >= state.tickEvents.length) {
+              stopPlayback();
+              setStatus('tick actual 재생 완료');
+              return;
+            }
+            const elapsedReal = performance.now() - state.tickStartPerf;
+            const targetRel = state.tickBaseRelMs + elapsedReal * (Number(state.speed) || 1);
+            processTickEventsUntil(targetRel);
+            scheduleNextFrame();
+          } catch (error) {
+            showError(error);
+          }
+        });
+        return;
+      }
+
+      if (state.mode === 'tick_stress') {
+        requestAnimationFrame(() => {
+          try {
+            if (!state.playing) return;
+            if (state.tickIndex >= state.tickEvents.length) {
+              stopPlayback();
+              setStatus('tick stress 완료');
+              return;
+            }
+            const processed = processTickStressChunk();
+            setStatus(`tick stress · processed ${fmtNumber(processed)} events/chunk`);
+            scheduleNextFrame();
+          } catch (error) {
+            showError(error);
+          }
+        });
+      }
+    }
+
+    async function startPlayback() {
+      if (state.playing) return;
+
+      if (state.mode.startsWith('tick')) {
+        await loadTickSessionIfNeeded();
+        if (state.tickIndex >= state.tickEvents.length) resetTickBoard();
+        const current = state.tickEvents[state.tickIndex] || state.tickEvents[0];
+        state.tickBaseRelMs = Number(current && current.rel_ms || 0);
+        state.metrics.targetRelMs = state.tickBaseRelMs;
+        state.metrics.lagMs = 0;
+        state.tickStartPerf = performance.now();
+      }
+
+      if (state.mode === 'frame' && state.currentIndex >= state.minutes.length - 1) {
+        await loadFrameByIndex(0);
+      }
+
+      state.playing = true;
+      updateControls();
+      setStatus(`재생 시작 · ${state.mode} · ${speedLabel()} · batch ${tickBatchLabel()}`);
+      scheduleNextFrame();
+    }
+
+    function stopPlayback() {
+      state.playing = false;
+      if (state.timer) {
+        clearTimeout(state.timer);
+        state.timer = null;
+      }
+      updateControls();
+    }
+
+    async function togglePlayback() {
+      if (state.playing) {
+        stopPlayback();
+        setStatus('정지');
+      } else {
+        await startPlayback();
+      }
+    }
+
+    function playbackIntervalMs() {
+      const speed = Number(state.speed) || 60;
+      return Math.max(120, Math.round(60000 / speed));
+    }
+
+    async function jumpTickTo(index) {
+      await loadTickSessionIfNeeded();
+      const target = Math.max(0, Math.min(index, state.tickEvents.length));
+      resetTickBoard();
+
+      const changedCodes = new Set();
+      const started = performance.now();
+      for (let i = 0; i < target; i += 1) {
+        applyTickEvent(state.tickEvents[i], false, changedCodes);
+      }
+      applyChangedCodes(changedCodes);
+      state.tickIndex = target;
+      state.metrics.renderMs = performance.now() - started;
+      state.metrics.targetRelMs = currentDisplayedTickRelMs();
+      state.metrics.lagMs = 0;
+      updateControls();
+      setStatus(`tick jump · ${fmtNumber(target)}/${fmtNumber(state.tickEvents.length)}`);
+    }
+
+
+
+    async function goToTickTime(timeText) {
+      await loadTickSessionIfNeeded();
+      stopPlayback();
+
+      const targetRel = tickTimeTextToRelMs(timeText);
+      const targetIndex = targetTickIndexByRelMs(targetRel);
+      await jumpTickTo(targetIndex);
+
+      const event = currentDisplayedTickEvent();
+      const label = event ? (event.time_text || event.ts || '-') : '-';
+      setStatus(`tick ${timeText} 바로가기 · 현재 ${label} · event ${fmtNumber(state.tickIndex)}/${fmtNumber(state.tickEvents.length)}`);
+    }
+
+    async function goTo0900() {
+      if (state.mode.startsWith('tick')) {
+        await goToTickTime('09:00:00.000');
+        return;
+      }
+
+      stopPlayback();
+      const targetIndex = state.minutes.findIndex(item => String(item.minute || '').includes('T09:00'));
+      await loadFrameByIndex(targetIndex >= 0 ? targetIndex : 0);
+      setStatus(`frame 09:00 바로가기 · ${state.frame ? state.frame.minute : '-'}`);
+    }
+
+    async function jumpTickByMs(deltaMs) {
+      await loadTickSessionIfNeeded();
+      if (!state.tickEvents || state.tickEvents.length === 0) return;
+
+      stopPlayback();
+
+      const baseRel = currentDisplayedTickRelMs();
+      const targetRel = baseRel + deltaMs;
+      const targetIndex = targetTickIndexByRelMs(targetRel);
+
+      await jumpTickTo(targetIndex);
+
+      const event = currentDisplayedTickEvent();
+      const label = event ? (event.time_text || event.ts || '-') : '-';
+      setStatus(`tick ${deltaMs > 0 ? '+1분' : '-1분'} 이동 · ${label} · event ${fmtNumber(state.tickIndex)}/${fmtNumber(state.tickEvents.length)}`);
+    }
+
+    async function goBackOneMinute() {
+      if (state.mode.startsWith('tick')) {
+        await jumpTickByMs(-60000);
+      } else {
+        stopPlayback();
+        await loadFrameByIndex(Math.max(0, state.currentIndex - 1));
+        setStatus(`frame -1분 이동 · ${state.frame ? state.frame.minute : '-'}`);
+      }
+    }
+
+    async function goForwardOneMinute() {
+      if (state.mode.startsWith('tick')) {
+        await jumpTickByMs(60000);
+      } else {
+        stopPlayback();
+        await loadFrameByIndex(Math.min(state.minutes.length - 1, state.currentIndex + 1));
+        setStatus(`frame +1분 이동 · ${state.frame ? state.frame.minute : '-'}`);
+      }
+    }
+
+    async function goFirst() {
+      if (state.mode.startsWith('tick')) {
+        await jumpTickTo(0);
+      } else {
+        await loadFrameByIndex(0);
+      }
+    }
+
+    async function goPrev() {
+      if (state.mode.startsWith('tick')) {
+        await jumpTickTo(Math.max(0, state.tickIndex - 1));
+      } else {
+        await loadFrameByIndex(state.currentIndex - 1);
+      }
+    }
+
+    async function goNext() {
+      if (state.mode.startsWith('tick')) {
+        await jumpTickTo(Math.min(state.tickEvents.length, state.tickIndex + 1));
+      } else {
+        await loadFrameByIndex(state.currentIndex + 1);
+      }
+    }
+
+    async function goLast() {
+      if (state.mode.startsWith('tick')) {
+        await jumpTickTo(state.tickEvents.length);
+      } else {
+        await loadFrameByIndex(state.minutes.length - 1);
+      }
+    }
+
+    async function reloadCurrent() {
+      if (state.mode.startsWith('tick')) {
+        state.tickLoaded = false;
+        state.tickEvents = [];
+        await loadTickSessionIfNeeded();
+      } else {
+        await loadFrameByIndex(state.currentIndex);
+      }
+    }
+
+    async function loadInitial() {
+      clearError();
+      setStatus('replay server 연결 중...');
+
+      const health = await fetchReplay('/api/replay/health');
+      if (!health.safety || health.safety.live_api_reuse !== false || health.safety.order_enabled !== false) {
+        throw new Error('Replay safety flag가 예상과 다릅니다.');
+      }
+
+      const sessions = await fetchReplay('/api/replay/sessions');
+      state.sessions = sessions.sessions || [];
+      state.sessionId = sessions.default_session_id;
+
+      const minutes = await fetchReplay('/api/replay/minutes');
+      state.minutes = minutes.minutes || [];
+
+      el.minuteSelect.innerHTML = state.minutes.map(item => {
+        const index = Number(item.minute_index);
+        const label = `${item.minute} (${item.row_count} rows)`;
+        return `<option value="${index}">${escapeHtml(label)}</option>`;
+      }).join('');
+
+      const firstSession = state.sessions[0] || {};
+      const modelIds = ((firstSession.summary || {}).models || [])
+        .map(item => item.requested_model_id || item.resolved_model_id)
+        .filter(Boolean);
+
+      const fallbackModels = ['OPENING_BURST_V01', 'OPENING_MONEY_FLOW_V01', 'PROGRAM_FLOW_V01'];
+      const uniqueModels = [...new Set([...modelIds, ...fallbackModels])];
+
+      el.modelSelect.innerHTML = uniqueModels.map(model => {
+        const selected = model === state.modelId ? ' selected' : '';
+        return `<option value="${escapeHtml(model)}"${selected}>${escapeHtml(model)}</option>`;
+      }).join('');
+
+      el.speedSelect.value = String(state.speed);
+      el.batchSelect.value = String(state.batchMs);
+      el.replayModeSelect.value = state.mode;
+
+      if (state.minutes.length === 0) {
+        throw new Error('Replay minutes가 없습니다.');
+      }
+
+      await loadFrameByIndex(0);
+      fpsLoop();
+    }
+
+    el.firstBtn.addEventListener('click', () => { goFirst().catch(showError); });
+    el.prevBtn.addEventListener('click', () => { goPrev().catch(showError); });
+    el.back1mBtn.addEventListener('click', () => { goBackOneMinute().catch(showError); });
+    el.goto0900Btn.addEventListener('click', () => { goTo0900().catch(showError); });
+    el.playBtn.addEventListener('click', () => { togglePlayback().catch(showError); });
+    el.forward1mBtn.addEventListener('click', () => { goForwardOneMinute().catch(showError); });
+    el.nextBtn.addEventListener('click', () => { goNext().catch(showError); });
+    el.lastBtn.addEventListener('click', () => { goLast().catch(showError); });
+    el.reloadBtn.addEventListener('click', () => { reloadCurrent().catch(showError); });
+
+    el.replayModeSelect.addEventListener('change', event => {
+      stopPlayback();
+      state.mode = event.target.value;
+      if (state.mode.startsWith('tick')) {
+        loadTickSessionIfNeeded().catch(showError);
+      } else {
+        loadFrameByIndex(state.currentIndex).catch(showError);
+      }
+      updateControls();
+    });
+
+    el.speedSelect.addEventListener('change', event => {
+      state.speed = Number(event.target.value) || 60;
+      updateControls();
+      if (state.playing && state.mode === 'tick_actual') {
+        const current = state.tickEvents[state.tickIndex] || state.tickEvents[state.tickIndex - 1] || state.tickEvents[0];
+        state.tickBaseRelMs = Number(current && current.rel_ms || 0);
+        state.tickStartPerf = performance.now();
+      }
+      if (state.playing && state.mode === 'frame') {
+        scheduleNextFrame();
+      }
+    });
+
+    el.batchSelect.addEventListener('change', event => {
+      state.batchMs = Number(event.target.value) || 16;
+      updateControls();
+    });
+
+    el.minuteSelect.addEventListener('change', event => {
+      loadFrameByIndex(Number(event.target.value)).catch(showError);
+    });
+
+    el.modelSelect.addEventListener('change', event => {
+      state.modelId = event.target.value;
+      if (!state.mode.startsWith('tick')) {
+        loadFrameByIndex(state.currentIndex).catch(showError);
+      }
+    });
+
+    document.addEventListener('click', event => {
+      const target = event.target.closest('[data-stock-code]');
+      if (!target) return;
+      const code = target.getAttribute('data-stock-code');
+      if (!code) return;
+      copyStockCode(code).catch(showError);
+    });
+
+    window.addEventListener('keydown', event => {
+      const tag = String(event.target && event.target.tagName || '').toUpperCase();
+      if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        if (!el.prevBtn.disabled) goPrev().catch(showError);
+      }
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        if (!el.nextBtn.disabled) goNext().catch(showError);
+      }
+      if (event.key === '9') {
+        event.preventDefault();
+        goTo0900().catch(showError);
+      }
+      if (event.key === 'PageUp') {
+        event.preventDefault();
+        goBackOneMinute().catch(showError);
+      }
+      if (event.key === 'PageDown') {
+        event.preventDefault();
+        goForwardOneMinute().catch(showError);
+      }
+      if (event.key === 'Home') {
+        event.preventDefault();
+        goFirst().catch(showError);
+      }
+      if (event.key === 'End') {
+        event.preventDefault();
+        goLast().catch(showError);
+      }
+      if (event.key === ' ') {
+        event.preventDefault();
+        togglePlayback().catch(showError);
+      }
+    });
+
+    loadInitial().catch(showError);
+  </script>
+</body>
+</html>

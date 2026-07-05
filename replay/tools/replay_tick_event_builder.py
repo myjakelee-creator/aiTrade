@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import csv
@@ -11,7 +11,7 @@ from typing import Any
 from zipfile import ZipFile
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 ETF_ETN_PREFIXES = (
     "KODEX",
@@ -779,8 +779,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build tick-level replay events for StockBoard stress/replay tests.")
     parser.add_argument("--zip", default="data/runtime/replay_inbox/live_raw_20260616.zip")
     parser.add_argument("--member", default=None)
-    parser.add_argument("--start", default="2026-06-16T08:59:30")
-    parser.add_argument("--end", default="2026-06-16T09:02:30")
+    parser.add_argument("--start", default="2026-06-16T08:59:00")
+    parser.add_argument("--end", default="2026-06-16T09:10:00")
     parser.add_argument("--out-dir", default="data/runtime/replay_output")
     parser.add_argument("--top-n", type=int, default=100)
     parser.add_argument("--tradable-master", default="docs/tradable_stock_master.csv")

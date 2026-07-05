@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import copy
@@ -12,7 +12,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT_DIR = ROOT / "data" / "runtime" / "replay_output"
 SERVER_NAME = "StockBoard Replay Server"
 SAFETY_PAYLOAD = {
