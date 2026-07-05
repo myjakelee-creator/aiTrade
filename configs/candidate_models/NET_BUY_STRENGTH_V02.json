@@ -19,13 +19,13 @@
   "grade_policy": {
     "display": "letter_with_score",
     "base_bands": {
-      "A": 91,
-      "B": 81,
-      "C": 71,
-      "D": 61,
+      "A": 90,
+      "B": 80,
+      "C": 70,
+      "D": 60,
       "F": 0
     },
-    "fixed_rule": "60점 이하는 F, 61점부터 D"
+    "fixed_rule": "90점 이상 A, 80~89점 B, 70~79점 C, 60~69점 D, 60점 미만 F"
   },
   "pool_policy": {
     "sort": "score_total_points desc, rank asc, trade_value_eok desc",
