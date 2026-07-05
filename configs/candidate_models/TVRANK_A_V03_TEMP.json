@@ -1,9 +1,10 @@
 {
   "schema_version": 1,
   "id": "TVRANK_A_V03_TEMP",
-  "name": "거래대금 순위 중심",
+  "name": "현재 하드코딩 기준",
+  "label": "현재 하드코딩 기준",
   "version": "TVRANK_A_V03_TEMP",
-  "runtime_status": "mirror_only_not_loaded_yet",
+  "runtime_status": "legacy_hardcoded_available",
   "source": "stockboard_engine.py:CANDIDATE_SCORE_MODEL",
   "items": [
     {"key": "top50_trade_value_rank", "stage": "top50", "enabled": true, "max_score": 30, "source": "rank/displayed_rank"},
