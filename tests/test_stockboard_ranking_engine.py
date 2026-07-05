@@ -5,19 +5,22 @@ from stockboard_ranking_engine import (
 )
 
 
-def test_grade_policy_60_or_lower_is_f():
-    assert grade_text_for_percent(60) == "F60"
-    assert grade_text_for_percent(61) == "D61"
-    assert grade_text_for_percent(71) == "C71"
-    assert grade_text_for_percent(81) == "B81"
-    assert grade_text_for_percent(91) == "A91"
+def test_grade_policy_bands_are_fixed():
+    assert grade_text_for_percent(59) == "F59"
+    assert grade_text_for_percent(60) == "D60"
+    assert grade_text_for_percent(69) == "D69"
+    assert grade_text_for_percent(70) == "C70"
+    assert grade_text_for_percent(79) == "C79"
+    assert grade_text_for_percent(80) == "B80"
+    assert grade_text_for_percent(89) == "B89"
+    assert grade_text_for_percent(90) == "A90"
 
 
 def test_net_buy_strength_v02_scores_and_pool():
     rows = [
         {
             "stock_code": "000001",
-            "stock_name": "강한종목",
+            "stock_name": "strong_sample",
             "rank": 1,
             "prev_rank": 80,
             "trade_value_eok": 100,
@@ -30,7 +33,7 @@ def test_net_buy_strength_v02_scores_and_pool():
         },
         {
             "stock_code": "000002",
-            "stock_name": "중간종목",
+            "stock_name": "middle_sample",
             "rank": 2,
             "prev_rank": 20,
             "trade_value_eok": 200,
@@ -43,7 +46,7 @@ def test_net_buy_strength_v02_scores_and_pool():
         },
         {
             "stock_code": "000003",
-            "stock_name": "약한종목",
+            "stock_name": "fallback_sample",
             "rank": 3,
             "prev_rank": 3,
             "trade_value_eok": 50,
@@ -64,8 +67,8 @@ def test_net_buy_strength_v02_scores_and_pool():
     assert by_code["000001"]["funnel_rank"] == 1
     assert by_code["000001"]["score_possible_points"] == NET_BUY_STRENGTH_TOTAL_POINTS
 
-    weak_breakdown = by_code["000003"]["score_breakdown"]["net_buy_strength"]["items"]
-    amount_item = next(item for item in weak_breakdown if item["key"] == "trade_value_ratio")
+    fallback_items = by_code["000003"]["score_breakdown"]["net_buy_strength"]["items"]
+    amount_item = next(item for item in fallback_items if item["key"] == "trade_value_ratio")
     assert amount_item["points"] == 60
     assert amount_item["status"] == "fallback"
 
