@@ -3,7 +3,7 @@
   "id": "NET_BUY_STRENGTH_V02",
   "name": "순매수 강도 v0.2",
   "label": "순매수 강도 v0.2",
-  "runtime_status": "ranking_engine_ready_not_wired",
+  "runtime_status": "ranking_engine_standard_launcher_wired",
   "runtime_engine": "stockboard_ranking_engine.enrich_net_buy_strength_v02_fields",
   "purpose": "순위, 전일 순위상승, 거래대금/전일 거래대금, 잔량비, 순간강도, 1분강도, 프로그램 순매수/거래대금을 100점씩 평가해 총점이 높은 종목부터 전체 줄세우기한다.",
   "total_points": 700,
