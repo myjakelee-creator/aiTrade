@@ -6,6 +6,7 @@ new ranking-engine-owned model to run through the existing /api/top100 flow.
 
 from __future__ import annotations
 
+from stockboard_previous_trade_value import install_previous_trade_value_patch
 from stockboard_ranking_engine import (
     NET_BUY_STRENGTH_V02,
     enrich_net_buy_strength_v02_fields,
@@ -13,12 +14,14 @@ from stockboard_ranking_engine import (
 
 
 def install_stockboard_ranking_engine_patch() -> None:
-    """Patch stockboard_engine.enrich_candidate_fields for NET_BUY_STRENGTH_V02.
+    """Patch stockboard_engine for NET_BUY_STRENGTH_V02 runtime support.
 
     The standard launcher imports this before stockboard_server imports
-    enrich_candidate_fields, so stockboard_server receives the patched callable
-    without changing its public interface.
+    enrich_candidate_fields and fetch_ohlc, so stockboard_server receives the
+    patched callables without changing its public interface.
     """
+    install_previous_trade_value_patch()
+
     import stockboard_engine
 
     if getattr(stockboard_engine, "_ranking_engine_patch_installed", False):
