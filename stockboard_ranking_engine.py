@@ -137,6 +137,10 @@ def _one_min_strength_growth(row: dict[str, Any]) -> float | None:
     )
 
 
+def _five_min_strength(row: dict[str, Any]) -> float | None:
+    return _number_or_none(_first(row, "strength_5m", "five_min_strength"))
+
+
 def _program_net(row: dict[str, Any]) -> float | None:
     return _number_or_none(_first(row, "program_net", "program_sum", "program_net_eok"))
 
@@ -302,7 +306,7 @@ class NetBuyStrengthV02RankingEngine:
             self._amount_score(row, index, amount_ratios, amount_scores),
             self._ask_share_score(row),
             self._instant_strength_score(row),
-            self._one_min_strength_score(index, one_min_growth_values, one_min_scores),
+            self._one_min_strength_score(row, index, one_min_growth_values, one_min_scores),
             self._program_score(row, index, program_ratios, program_scores),
         ]
 
@@ -417,27 +421,51 @@ class NetBuyStrengthV02RankingEngine:
 
     def _one_min_strength_score(
         self,
+        row: dict[str, Any],
         index: int,
         one_min_growth_values: dict[int, float],
         one_min_scores: dict[int, float],
     ) -> ScoreItem:
-        if index not in one_min_growth_values:
+        if index in one_min_growth_values:
             return ScoreItem(
                 "one_min_strength",
                 "1분강도",
-                0,
+                one_min_scores.get(index, 0),
                 "one_min_strength_growth_rate|one_min_strength_delta",
-                "missing",
-                reason="one_min_strength_growth_missing_or_nonpositive",
+                "ok",
+                value=one_min_growth_values[index],
+                reason="ranked_one_min_strength_growth",
             )
+
+        five_min_strength = _five_min_strength(row)
+        if five_min_strength is not None:
+            if five_min_strength <= 100:
+                return ScoreItem(
+                    "one_min_strength",
+                    "1분강도",
+                    0,
+                    "strength_5m_after_close",
+                    "proxy_nonpositive",
+                    value=five_min_strength,
+                    reason="after_close_5m_strength_at_or_below_neutral",
+                )
+            return ScoreItem(
+                "one_min_strength",
+                "1분강도",
+                _clamp(five_min_strength, 0, 200) / 200 * 100,
+                "strength_5m_after_close",
+                "proxy",
+                value=five_min_strength,
+                reason="after_close_5m_strength_proxy",
+            )
+
         return ScoreItem(
             "one_min_strength",
             "1분강도",
-            one_min_scores.get(index, 0),
+            0,
             "one_min_strength_growth_rate|one_min_strength_delta",
-            "ok",
-            value=one_min_growth_values[index],
-            reason="ranked_one_min_strength_growth",
+            "missing",
+            reason="one_min_strength_growth_missing_or_nonpositive",
         )
 
     def _program_score(
