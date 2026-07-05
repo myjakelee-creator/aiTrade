@@ -18,8 +18,10 @@
     const selector = document.getElementById('candidate-model-selector');
     if (!selector) return;
 
-    const primaryModelId = 'NET_BUY_STRENGTH_V01';
-    const primaryLabel = '순매수 강도 v0.1';
+    const primaryModelId = 'NET_BUY_STRENGTH_V02';
+    const primaryLabel = '순매수 강도 v0.2';
+    const previousModelId = 'NET_BUY_STRENGTH_V01';
+    const previousLabel = '순매수 강도 v0.1';
     const legacyModelId = 'TVRANK_A_V03_TEMP';
     const legacyLabel = '현재 하드코딩 기준';
 
@@ -32,6 +34,16 @@
     primaryOption.textContent = primaryLabel;
     primaryOption.dataset.primary = 'true';
     selector.insertBefore(primaryOption, selector.firstChild || null);
+
+    let previousOption = Array.from(selector.options || [])
+      .find(option => option.value === previousModelId);
+    if (!previousOption) {
+      previousOption = document.createElement('option');
+      previousOption.value = previousModelId;
+      selector.insertBefore(previousOption, primaryOption.nextSibling || null);
+    }
+    previousOption.textContent = previousLabel;
+    previousOption.dataset.previous = 'true';
 
     let legacyOption = Array.from(selector.options || [])
       .find(option => option.value === legacyModelId);
@@ -46,7 +58,7 @@
     try {
       const storageKey = 'stockboard.candidateModelId.v1';
       const saved = localStorage.getItem(storageKey);
-      if (saved === null || saved === legacyModelId) {
+      if (saved === null || saved === legacyModelId || saved === previousModelId) {
         localStorage.setItem(storageKey, primaryModelId);
       }
     } catch (error) {
