@@ -36,8 +36,10 @@
     element.classList.remove('visible');
   }
 
-  function installServerDisconnectGuard() {
+  function installInjectedStyles() {
+    if (document.getElementById('stockboard-tooltip-runtime-style')) return;
     const style = document.createElement('style');
+    style.id = 'stockboard-tooltip-runtime-style';
     style.textContent = `
       @keyframes stockboard-server-down-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
       body.stockboard-server-down #combined-status-lamp,
@@ -58,9 +60,7 @@
         background: #fff0f0 !important;
       }
       #top20-board .stock-name,
-      #top50-board .stock-name {
-        text-align: left !important;
-      }
+      #top50-board .stock-name { text-align: left !important; }
       #top20-board td:nth-child(5),
       #top20-board td:nth-child(6),
       #top20-board td:nth-child(7),
@@ -70,57 +70,30 @@
         text-align: right !important;
         font-variant-numeric: tabular-nums;
       }
-      .enhanced-board th.stockboard-sortable-header {
-        cursor: pointer;
-        user-select: none;
-      }
-      .enhanced-board th.stockboard-sortable-header[data-sort-dir="asc"]::after {
-        content: " ▲";
-        color: #1d4ed8;
-      }
-      .enhanced-board th.stockboard-sortable-header[data-sort-dir="desc"]::after {
-        content: " ▼";
-        color: #b91c1c;
-      }
+      .enhanced-board th.stockboard-sortable-header { cursor: pointer; user-select: none; }
+      .enhanced-board th.stockboard-sortable-header[data-sort-dir="asc"]::after { content: " ▲"; color: #1d4ed8; }
+      .enhanced-board th.stockboard-sortable-header[data-sort-dir="desc"]::after { content: " ▼"; color: #b91c1c; }
       .amount-ratio-cell {
-        padding: 2px 4px !important;
-      }
-      .amount-ratio-box {
-        position: relative;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 100%;
-        min-width: 0;
-        height: calc(var(--metric-height, 26px) - 2px);
-        overflow: hidden;
-        border: 1px solid #c5cdd4;
-        border-radius: 2px;
-        background: #edf1f4;
+        text-align: right !important;
         font-variant-numeric: tabular-nums;
       }
-      .amount-ratio-fill {
-        position: absolute;
-        inset: 0 auto 0 0;
-        width: var(--amount-ratio-width, 0%);
-        background: var(--amount-ratio-color, #cbd5e1);
-        opacity: .72;
-      }
-      .amount-ratio-value {
-        position: relative;
-        z-index: 1;
+      .amount-ratio-number {
+        display: inline-block;
         width: 100%;
-        text-align: center;
-        color: #17202a;
-        font-weight: 800;
-        text-shadow: 0 0 2px #fff, 0 0 2px #fff;
+        text-align: right;
+        font: inherit;
+        font-weight: 700;
+        line-height: inherit;
       }
-      .amount-ratio-missing {
-        color: #7f8c8d;
-      }
+      .amount-ratio-strong { color: var(--red); }
+      .amount-ratio-weak { color: var(--blue); }
+      .amount-ratio-neutral,
+      .amount-ratio-missing { color: #4b5563; }
     `;
     document.head.appendChild(style);
+  }
 
+  function installServerDisconnectGuard() {
     const idsToFreeze = [
       'refresh-delay',
       'hot-lane-speed-badge', 'hot-actual-speed',
@@ -216,9 +189,7 @@
     const graphBlock = row.querySelector('.market-distribution');
     const supplyTable = row.querySelector('table.grid.market');
     if (!graphBlock || !supplyTable) return;
-    if (row.firstElementChild !== graphBlock) {
-      row.insertBefore(graphBlock, supplyTable);
-    }
+    if (row.firstElementChild !== graphBlock) row.insertBefore(graphBlock, supplyTable);
   }
 
   const SORT_TABLE_IDS = ['candidate-board', 'top20-board', 'top50-board', 'trading-board'];
@@ -228,9 +199,7 @@
     SORT_TABLE_IDS.forEach((id) => {
       const table = document.getElementById(id);
       if (!table) return;
-      Array.from(table.querySelectorAll('th')).forEach((th) => {
-        th.classList.add('stockboard-sortable-header');
-      });
+      Array.from(table.querySelectorAll('th')).forEach((th) => th.classList.add('stockboard-sortable-header'));
     });
   }
 
@@ -263,11 +232,8 @@
     rows.forEach((row) => body.appendChild(row));
     Array.from(table.querySelectorAll('th')).forEach((th, index) => {
       th.classList.add('stockboard-sortable-header');
-      if (index === columnIndex) {
-        th.dataset.sortDir = direction;
-      } else {
-        delete th.dataset.sortDir;
-      }
+      if (index === columnIndex) th.dataset.sortDir = direction;
+      else delete th.dataset.sortDir;
     });
   }
 
@@ -374,30 +340,26 @@
       const header = table.querySelector(`th:nth-child(${AMOUNT_RATIO_COLUMN_INDEX + 1})`);
       if (!header) return;
       const label = header.querySelector('.column-label');
-      if (label && label.firstChild) {
-        label.firstChild.nodeValue = '대금비';
-      } else if (label) {
-        label.textContent = '대금비';
-      } else {
-        header.textContent = '대금비';
-      }
+      if (label && label.firstChild) label.firstChild.nodeValue = '대금비';
+      else if (label) label.textContent = '대금비';
+      else header.textContent = '대금비';
       header.dataset.amountRatioHeader = '1';
     });
   }
 
-  function ratioTone(ratio) {
-    if (ratio >= 1.2) return 'var(--red)';
-    if (ratio <= 0.8) return 'var(--blue)';
-    return '#94a3b8';
+  function amountRatioTextClass(ratio) {
+    if (!Number.isFinite(ratio) || ratio <= 0) return 'amount-ratio-number amount-ratio-missing';
+    if (ratio >= 1.2) return 'amount-ratio-number amount-ratio-strong';
+    if (ratio <= 0.8) return 'amount-ratio-number amount-ratio-weak';
+    return 'amount-ratio-number amount-ratio-neutral';
   }
 
   function amountRatioCellHtml(ratio) {
     if (!Number.isFinite(ratio) || ratio <= 0) {
-      return '<span class="amount-ratio-missing">-</span>';
+      return '<span class="amount-ratio-number amount-ratio-missing">-</span>';
     }
     const display = ratio >= 10 ? '10x+' : `${ratio.toFixed(ratio >= 3 ? 1 : 2)}x`;
-    const width = Math.max(3, Math.min(100, ratio / 3 * 100));
-    return `<div class="amount-ratio-box" style="--amount-ratio-width:${width.toFixed(1)}%;--amount-ratio-color:${ratioTone(ratio)}"><span class="amount-ratio-fill"></span><span class="amount-ratio-value">${display}</span></div>`;
+    return `<span class="${amountRatioTextClass(ratio)}">${display}</span>`;
   }
 
   function applyAmountRatioToRow(row) {
@@ -413,7 +375,7 @@
       cell.innerHTML = html;
       cell.dataset.amountRatioHtml = html;
     }
-    cell.className = 'amount-ratio-cell visual-cell';
+    cell.className = 'amount-ratio-cell number-cell';
     const tooltip = [
       '대금비 = 당일 거래대금 / 전일 거래대금',
       `당일 거래대금: ${current === null ? '-' : current.toLocaleString('en-US')}억`,
@@ -447,7 +409,7 @@
     window.setInterval(loadAmountRatioBase, 60000);
     window.setInterval(queueApplyAmountRatio, 1000);
     const observer = new MutationObserver(queueApplyAmountRatio);
-    if (document.body) observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    if (document.body) observer.observe(document.body, { childList: true, subtree: true });
     queueApplyAmountRatio();
   }
 
