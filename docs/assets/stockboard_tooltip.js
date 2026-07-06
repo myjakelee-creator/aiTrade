@@ -161,6 +161,17 @@
     window.setInterval(checkServer, 1000);
   }
 
+  function installMarketSupplyGraphFirst() {
+    const row = document.querySelector('.market-supply-row');
+    if (!row) return;
+    const graphBlock = row.querySelector('.market-distribution');
+    const supplyTable = row.querySelector('table.grid.market');
+    if (!graphBlock || !supplyTable) return;
+    if (row.firstElementChild !== graphBlock) {
+      row.insertBefore(graphBlock, supplyTable);
+    }
+  }
+
   const BOARD_SORT_TABLE_IDS = [
     'candidate-board',
     'top20-board',
@@ -335,6 +346,7 @@
 
   function installUiHotfixes() {
     installServerDisconnectGuard();
+    installMarketSupplyGraphFirst();
     installBoardHeaderSort();
     installTop5ArrowNavigation();
   }
