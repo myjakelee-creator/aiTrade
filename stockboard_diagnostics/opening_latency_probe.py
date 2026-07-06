@@ -19,16 +19,15 @@ import argparse
 import csv
 import json
 import os
-import statistics
-import sys
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
+
+KST = timezone(timedelta(hours=9))
 
 DEFAULT_CODES = (
     "000660",  # SK하이닉스
@@ -59,15 +58,29 @@ def epoch_ms() -> int:
     return int(time.time() * 1000)
 
 
-def parse_code_list(value: str | None) -> list[str]:
-    if not value:
+def parse_code_list(value: str | list[str] | tuple[str, ...] | None) -> list[str]:
+    """Parse quoted or unquoted PowerShell code arguments safely.
+
+    PowerShell can split comma-separated native-command args in surprising ways
+    when the value is not quoted. Accept both a single CSV string and multiple
+    positional values consumed by argparse nargs='*'.
+    """
+    if value is None or value == []:
         return list(DEFAULT_CODES)
+    raw_items: list[str]
+    if isinstance(value, (list, tuple)):
+        raw_items = [str(item) for item in value]
+    else:
+        raw_items = [str(value)]
     codes: list[str] = []
-    for raw in value.split(","):
-        code = raw.strip().upper().replace("A", "", 1) if raw.strip().upper().startswith("A") else raw.strip().upper()
-        code = code.replace("_AL", "").replace("_NX", "")
-        if len(code) == 6 and code.isdigit() and code not in codes:
-            codes.append(code)
+    for item in raw_items:
+        for raw in item.split(","):
+            code = raw.strip().upper()
+            if code.startswith("A") and len(code) == 7:
+                code = code[1:]
+            code = code.replace("_AL", "").replace("_NX", "")
+            if len(code) == 6 and code.isdigit() and code not in codes:
+                codes.append(code)
     return codes or list(DEFAULT_CODES)
 
 
@@ -91,7 +104,7 @@ def age_seconds(timestamp_text: Any, now_epoch_ms: int | None = None) -> float |
     except ValueError:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=KST)
     base = (now_epoch_ms or epoch_ms()) / 1000
     return round(max(0.0, base - dt.timestamp()), 3)
 
@@ -118,7 +131,7 @@ def get_json(url: str, timeout: float) -> tuple[dict[str, Any] | list[Any] | Non
             raw = response.read().decode("utf-8", errors="replace")
             elapsed_ms = (time.perf_counter() - start) * 1000
             return json.loads(raw), None, elapsed_ms
-    except Exception as error:  # live diagnostics should not crash on one failed poll
+    except Exception as error:
         elapsed_ms = (time.perf_counter() - start) * 1000
         return None, str(error), elapsed_ms
 
@@ -256,32 +269,53 @@ def write_rows(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) ->
 def summarize(csv_path: Path) -> dict[str, Any]:
     if not csv_path.exists():
         return {"error": f"missing csv: {csv_path}"}
-    by_code: dict[str, dict[str, list[float]]] = {}
+    groups: dict[tuple[str, str], dict[str, list[float]]] = {}
     rows = 0
+    metric_keys = [
+        "request_elapsed_ms",
+        "price_age_sec_client",
+        "trade_age_sec_client",
+        "price_age_sec_api",
+        "fid20_trade_lag_sec",
+        "server_to_client_ms",
+    ]
     with csv_path.open("r", encoding="utf-8-sig", newline="") as file:
         reader = csv.DictReader(file)
         for row in reader:
             rows += 1
             code = row.get("stock_code") or ""
+            endpoint = row.get("endpoint") or ""
             if not code:
                 continue
-            bucket = by_code.setdefault(code, {"request_elapsed_ms": [], "price_age_sec_client": [], "trade_age_sec_client": [], "server_to_client_ms": []})
-            for key in list(bucket):
+            bucket = groups.setdefault((code, endpoint), {key: [] for key in metric_keys})
+            for key in metric_keys:
                 value = number_or_none(row.get(key))
                 if value is not None:
                     bucket[key].append(value)
     summary_rows = []
-    for code, metrics in sorted(by_code.items()):
+    by_code_rows = []
+    by_code_metrics: dict[str, dict[str, list[float]]] = {}
+    for (code, endpoint), metrics in sorted(groups.items()):
+        item = {"stock_code": code, "endpoint": endpoint}
+        code_bucket = by_code_metrics.setdefault(code, {key: [] for key in metric_keys})
+        for key, values in metrics.items():
+            code_bucket[key].extend(values)
+            item[f"{key}_p50"] = pct(values, 0.50)
+            item[f"{key}_p95"] = pct(values, 0.95)
+            item[f"{key}_max"] = round(max(values), 3) if values else None
+        summary_rows.append(item)
+    for code, metrics in sorted(by_code_metrics.items()):
         item = {"stock_code": code}
         for key, values in metrics.items():
             item[f"{key}_p50"] = pct(values, 0.50)
             item[f"{key}_p95"] = pct(values, 0.95)
             item[f"{key}_max"] = round(max(values), 3) if values else None
-        summary_rows.append(item)
+        by_code_rows.append(item)
     return {
         "sample_rows": rows,
-        "code_count": len(by_code),
-        "summary": summary_rows,
+        "code_count": len(by_code_metrics),
+        "summary_by_code": by_code_rows,
+        "summary_by_code_endpoint": summary_rows,
     }
 
 
@@ -334,16 +368,17 @@ def run_probe(config: ProbeConfig) -> Path:
                     "error": error,
                     "payload": payload if endpoint in {"provider_status"} else None,
                 })
-                samples = extract_sample(
-                    endpoint=endpoint,
-                    payload=payload,
-                    request_elapsed_ms=elapsed_ms,
-                    requested_at_epoch_ms=requested_at,
-                    received_at_epoch_ms=received_at,
-                    error=error,
-                    target_codes=target_codes,
+                all_samples.extend(
+                    extract_sample(
+                        endpoint=endpoint,
+                        payload=payload,
+                        request_elapsed_ms=elapsed_ms,
+                        requested_at_epoch_ms=requested_at,
+                        received_at_epoch_ms=received_at,
+                        error=error,
+                        target_codes=target_codes,
+                    )
                 )
-                all_samples.extend(samples)
             if all_samples:
                 write_rows(csv_path, all_samples, fieldnames)
                 with jsonl_path.open("a", encoding="utf-8") as file:
@@ -366,6 +401,7 @@ def run_probe(config: ProbeConfig) -> Path:
         "duration_sec": config.duration_sec,
         "csv_path": str(csv_path),
         "jsonl_path": str(jsonl_path),
+        "timestamp_policy": "naive server timestamps are interpreted as KST",
     })
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"summary={summary_path}")
@@ -375,7 +411,7 @@ def run_probe(config: ProbeConfig) -> Path:
 def main(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="StockBoard opening latency probe")
     parser.add_argument("--base-url", default=os.getenv("STOCKBOARD_PROBE_BASE_URL", DEFAULT_BASE_URL))
-    parser.add_argument("--codes", default=os.getenv("STOCKBOARD_PROBE_CODES"))
+    parser.add_argument("--codes", nargs="*", default=None)
     parser.add_argument("--interval", type=float, default=float(os.getenv("STOCKBOARD_PROBE_INTERVAL_SEC", "0.5")))
     parser.add_argument("--duration", type=float, default=float(os.getenv("STOCKBOARD_PROBE_DURATION_SEC", "1800")))
     parser.add_argument("--output-dir", default=os.getenv("STOCKBOARD_PROBE_OUTPUT_DIR", DEFAULT_OUTPUT_DIR))
@@ -385,9 +421,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=float(os.getenv("STOCKBOARD_PROBE_TIMEOUT_SEC", "2.0")))
     args = parser.parse_args(list(argv) if argv is not None else None)
 
+    env_codes = os.getenv("STOCKBOARD_PROBE_CODES")
+    code_arg = args.codes if args.codes else env_codes
     config = ProbeConfig(
         base_url=args.base_url.rstrip("/"),
-        codes=parse_code_list(args.codes),
+        codes=parse_code_list(code_arg),
         interval_sec=args.interval,
         duration_sec=args.duration,
         output_dir=Path(args.output_dir),
