@@ -59,20 +59,42 @@
         border-color: #dc8b8b !important;
         background: #fff0f0 !important;
       }
+      #candidate-board th.stockboard-sortable-header,
+      #top20-board th.stockboard-sortable-header,
+      #top50-board th.stockboard-sortable-header {
+        cursor: pointer;
+        user-select: none;
+      }
+      #candidate-board th.stockboard-sortable-header[data-sort-dir="asc"]::after,
+      #top20-board th.stockboard-sortable-header[data-sort-dir="asc"]::after,
+      #top50-board th.stockboard-sortable-header[data-sort-dir="asc"]::after {
+        content: " ▲";
+        color: #1d4ed8;
+      }
+      #candidate-board th.stockboard-sortable-header[data-sort-dir="desc"]::after,
+      #top20-board th.stockboard-sortable-header[data-sort-dir="desc"]::after,
+      #top50-board th.stockboard-sortable-header[data-sort-dir="desc"]::after {
+        content: " ▼";
+        color: #b91c1c;
+      }
+      #top20-board td:nth-child(4),
+      #top50-board td:nth-child(4),
       #top20-board .stock-name,
-      #top50-board .stock-name { text-align: left !important; }
+      #top50-board .stock-name {
+        text-align: left !important;
+      }
       #top20-board td:nth-child(5),
       #top20-board td:nth-child(6),
       #top20-board td:nth-child(7),
+      #top20-board .number-cell,
+      #top20-board .flow-number,
+      #top20-board .amount-ratio-cell,
       #top50-board td:nth-child(5),
       #top50-board td:nth-child(6),
-      #top50-board td:nth-child(7) {
-        text-align: right !important;
-        font-variant-numeric: tabular-nums;
-      }
-      .enhanced-board th.stockboard-sortable-header { cursor: pointer; user-select: none; }
-      .enhanced-board th.stockboard-sortable-header[data-sort-dir="asc"]::after { content: " ▲"; color: #1d4ed8; }
-      .enhanced-board th.stockboard-sortable-header[data-sort-dir="desc"]::after { content: " ▼"; color: #b91c1c; }
+      #top50-board td:nth-child(7),
+      #top50-board .number-cell,
+      #top50-board .flow-number,
+      #top50-board .amount-ratio-cell,
       .amount-ratio-cell {
         text-align: right !important;
         font-variant-numeric: tabular-nums;
@@ -85,10 +107,9 @@
         font-weight: 700;
         line-height: inherit;
       }
-      .amount-ratio-strong { color: var(--red); }
-      .amount-ratio-weak { color: var(--blue); }
-      .amount-ratio-neutral,
-      .amount-ratio-missing { color: #4b5563; }
+      .amount-ratio-number.amount-ratio-strong { color: var(--red) !important; }
+      .amount-ratio-number.amount-ratio-weak { color: var(--blue) !important; }
+      .amount-ratio-number.amount-ratio-missing { color: #4b5563 !important; }
     `;
     document.head.appendChild(style);
   }
@@ -192,19 +213,31 @@
     if (row.firstElementChild !== graphBlock) row.insertBefore(graphBlock, supplyTable);
   }
 
-  const SORT_TABLE_IDS = ['candidate-board', 'top20-board', 'top50-board', 'trading-board'];
-  const sortState = new Map();
+  const TOP_SORT_TABLE_IDS = ['candidate-board', 'top20-board', 'top50-board'];
+  const topSortState = new Map();
+  let lastSortEventKey = '';
+  let lastSortEventUntil = 0;
+  let reapplyQueued = false;
 
-  function markSortHeaders() {
-    SORT_TABLE_IDS.forEach((id) => {
-      const table = document.getElementById(id);
-      if (!table) return;
-      Array.from(table.querySelectorAll('th')).forEach((th) => th.classList.add('stockboard-sortable-header'));
+  function topSortTables() {
+    return TOP_SORT_TABLE_IDS.map(id => document.getElementById(id)).filter(Boolean);
+  }
+
+  function markTopSortHeaders() {
+    topSortTables().forEach(table => {
+      Array.from(table.querySelectorAll('th')).forEach(header => {
+        header.classList.add('stockboard-sortable-header');
+      });
     });
   }
 
   function normalizeSortText(text) {
-    return String(text || '').replace(/[↑↓▲▼]/g, '').replace(/,/g, '').replace(/%/g, '').trim();
+    return String(text || '')
+      .replace(/[↑↓▲▼]/g, '')
+      .replace(/,/g, '')
+      .replace(/%/g, '')
+      .replace(/x\+?/gi, '')
+      .trim();
   }
 
   function sortCellValue(row, columnIndex) {
@@ -217,45 +250,88 @@
     return { type: 'text', value: text.toLowerCase() };
   }
 
-  function applySort(table, columnIndex, direction) {
+  function dataRows(table) {
     const body = table.tBodies && table.tBodies[0] ? table.tBodies[0] : table;
-    const rows = Array.from(body.querySelectorAll('tr')).filter((row) => !row.querySelector('th') && row.children.length > 1);
+    return Array.from(body.querySelectorAll('tr')).filter(row => !row.querySelector('th') && row.children.length > 1);
+  }
+
+  function applyTopSort(table) {
+    const state = topSortState.get(table.id);
+    if (!state) return;
+    const rows = dataRows(table);
     if (rows.length <= 1) return;
     rows.sort((left, right) => {
-      const l = sortCellValue(left, columnIndex);
-      const r = sortCellValue(right, columnIndex);
+      const leftValue = sortCellValue(left, state.columnIndex);
+      const rightValue = sortCellValue(right, state.columnIndex);
       let result = 0;
-      if (l.type === 'number' && r.type === 'number') result = l.value - r.value;
-      else result = String(l.value).localeCompare(String(r.value), 'ko-KR', { numeric: true });
-      return direction === 'asc' ? result : -result;
+      if (leftValue.type === 'number' && rightValue.type === 'number') {
+        result = leftValue.value - rightValue.value;
+      } else {
+        result = String(leftValue.value).localeCompare(String(rightValue.value), 'ko-KR', { numeric: true });
+      }
+      return state.direction === 'asc' ? result : -result;
     });
-    rows.forEach((row) => body.appendChild(row));
-    Array.from(table.querySelectorAll('th')).forEach((th, index) => {
-      th.classList.add('stockboard-sortable-header');
-      if (index === columnIndex) th.dataset.sortDir = direction;
-      else delete th.dataset.sortDir;
+    const body = table.tBodies && table.tBodies[0] ? table.tBodies[0] : table;
+    rows.forEach(row => body.appendChild(row));
+    Array.from(table.querySelectorAll('th')).forEach((header, index) => {
+      header.classList.add('stockboard-sortable-header');
+      if (index === state.columnIndex) header.dataset.sortDir = state.direction;
+      else delete header.dataset.sortDir;
     });
   }
 
-  function installBoardHeaderSort() {
-    document.addEventListener('click', (event) => {
-      const th = event.target?.closest?.('th');
-      if (!th || event.target?.closest?.('.column-resizer')) return;
-      const table = th.closest('table');
-      if (!table || !SORT_TABLE_IDS.includes(table.id)) return;
-      const columnIndex = Array.from(th.parentElement.children || []).indexOf(th);
-      if (columnIndex < 0) return;
+  function reapplyTopSorts() {
+    reapplyQueued = false;
+    markTopSortHeaders();
+    topSortTables().forEach(applyTopSort);
+  }
+
+  function queueReapplyTopSorts() {
+    if (reapplyQueued) return;
+    reapplyQueued = true;
+    window.requestAnimationFrame(reapplyTopSorts);
+  }
+
+  function eventHeader(event) {
+    const target = event.target;
+    const header = target && target.closest ? target.closest('th') : null;
+    if (!header || target.closest?.('.column-resizer')) return null;
+    const table = header.closest('table');
+    if (!table || !TOP_SORT_TABLE_IDS.includes(table.id)) return null;
+    const columnIndex = Array.from(header.parentElement.children || []).indexOf(header);
+    if (columnIndex < 0) return null;
+    return { table, header, columnIndex };
+  }
+
+  function handleTopHeaderSort(event) {
+    const hit = eventHeader(event);
+    if (!hit) return;
+    const eventKey = `${hit.table.id}:${hit.columnIndex}`;
+    const now = performance.now();
+    if (event.type !== 'pointerdown' && event.type !== 'mousedown' && eventKey === lastSortEventKey && now < lastSortEventUntil) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      const current = sortState.get(table.id);
-      const direction = current && current.columnIndex === columnIndex && current.direction === 'asc' ? 'desc' : 'asc';
-      sortState.set(table.id, { columnIndex, direction });
-      applySort(table, columnIndex, direction);
-    }, true);
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const current = topSortState.get(hit.table.id);
+    const direction = current && current.columnIndex === hit.columnIndex && current.direction === 'asc' ? 'desc' : 'asc';
+    topSortState.set(hit.table.id, { columnIndex: hit.columnIndex, direction });
+    applyTopSort(hit.table);
+    lastSortEventKey = eventKey;
+    lastSortEventUntil = now + 450;
+  }
 
-    markSortHeaders();
-    const observer = new MutationObserver(markSortHeaders);
+  function installBoardHeaderSort() {
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(eventName => {
+      window.addEventListener(eventName, handleTopHeaderSort, true);
+      document.addEventListener(eventName, handleTopHeaderSort, true);
+    });
+    markTopSortHeaders();
+    const observer = new MutationObserver(queueReapplyTopSorts);
     if (document.body) observer.observe(document.body, { childList: true, subtree: true });
+    window.setInterval(queueReapplyTopSorts, 1000);
   }
 
   const AMOUNT_RATIO_COLUMN_INDEX = 11;
@@ -314,7 +390,7 @@
       if (!response.ok) throw new Error(`amount ratio top100 failed: ${response.status}`);
       const rows = await response.json();
       if (!Array.isArray(rows)) return;
-      rows.forEach((row) => {
+      rows.forEach(row => {
         const code = String(firstRowValue(row, ['stock_code', 'code']) || '').replace(/^A(?=\d{6}$)/, '').replace(/_AL$/, '').replace(/_NX$/, '');
         const prev = parseNumber(firstRowValue(row, [
           'prev_trade_value_eok',
@@ -334,7 +410,7 @@
   }
 
   function setAmountRatioHeaders() {
-    SORT_TABLE_IDS.forEach((id) => {
+    TOP_SORT_TABLE_IDS.concat(['trading-board']).forEach(id => {
       const table = document.getElementById(id);
       if (!table) return;
       const header = table.querySelector(`th:nth-child(${AMOUNT_RATIO_COLUMN_INDEX + 1})`);
@@ -349,15 +425,11 @@
 
   function amountRatioTextClass(ratio) {
     if (!Number.isFinite(ratio) || ratio <= 0) return 'amount-ratio-number amount-ratio-missing';
-    if (ratio >= 1.2) return 'amount-ratio-number amount-ratio-strong';
-    if (ratio <= 0.8) return 'amount-ratio-number amount-ratio-weak';
-    return 'amount-ratio-number amount-ratio-neutral';
+    return ratio >= 1 ? 'amount-ratio-number amount-ratio-strong' : 'amount-ratio-number amount-ratio-weak';
   }
 
   function amountRatioCellHtml(ratio) {
-    if (!Number.isFinite(ratio) || ratio <= 0) {
-      return '<span class="amount-ratio-number amount-ratio-missing">-</span>';
-    }
+    if (!Number.isFinite(ratio) || ratio <= 0) return '<span class="amount-ratio-number amount-ratio-missing">-</span>';
     const display = ratio >= 10 ? '10x+' : `${ratio.toFixed(ratio >= 3 ? 1 : 2)}x`;
     return `<span class="${amountRatioTextClass(ratio)}">${display}</span>`;
   }
@@ -376,6 +448,13 @@
       cell.dataset.amountRatioHtml = html;
     }
     cell.className = 'amount-ratio-cell number-cell';
+    cell.style.setProperty('text-align', 'right', 'important');
+    const value = cell.querySelector('.amount-ratio-number');
+    if (value) {
+      if (ratio && Number.isFinite(ratio) && ratio >= 1) value.style.setProperty('color', 'var(--red)', 'important');
+      else if (ratio && Number.isFinite(ratio)) value.style.setProperty('color', 'var(--blue)', 'important');
+      else value.style.setProperty('color', '#4b5563', 'important');
+    }
     const tooltip = [
       '대금비 = 당일 거래대금 / 전일 거래대금',
       `당일 거래대금: ${current === null ? '-' : current.toLocaleString('en-US')}억`,
@@ -388,7 +467,7 @@
 
   function applyAmountRatio() {
     setAmountRatioHeaders();
-    SORT_TABLE_IDS.concat(['selected-board']).forEach((id) => {
+    TOP_SORT_TABLE_IDS.concat(['selected-board', 'trading-board']).forEach(id => {
       const table = document.getElementById(id);
       if (!table) return;
       table.querySelectorAll('tr[data-stock-code], tr[data-stockcode]').forEach(applyAmountRatioToRow);
@@ -437,10 +516,10 @@
 
     function visibleRows() {
       const rows = [];
-      NAV_TABLE_IDS.forEach((id) => {
+      NAV_TABLE_IDS.forEach(id => {
         const table = document.getElementById(id);
         if (!table) return;
-        Array.from(table.querySelectorAll('tr')).forEach((row) => {
+        Array.from(table.querySelectorAll('tr')).forEach(row => {
           if (row.querySelector('th') || row.offsetParent === null) return;
           const code = codeFromNode(row);
           if (code) rows.push({ row, code, tableId: id });
@@ -453,14 +532,14 @@
       return Boolean(target && target.closest && target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]'));
     }
 
-    document.addEventListener('keydown', (event) => {
+    document.addEventListener('keydown', event => {
       if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
       if (isEditableTarget(event.target)) return;
       const selection = window.StockBoardSelection;
       const activeCode = normalizeCode(selection && selection.activeStockCode);
       if (!selection || !activeCode || typeof selection.activateStock !== 'function') return;
       const rows = visibleRows();
-      const index = rows.findIndex((item) => item.code === activeCode);
+      const index = rows.findIndex(item => item.code === activeCode);
       const next = rows[index + (event.key === 'ArrowUp' ? -1 : 1)];
       if (!next) return;
       event.preventDefault();
@@ -470,6 +549,7 @@
   }
 
   function installUiHotfixes() {
+    installInjectedStyles();
     installServerDisconnectGuard();
     installMarketSupplyGraphFirst();
     installBoardHeaderSort();
