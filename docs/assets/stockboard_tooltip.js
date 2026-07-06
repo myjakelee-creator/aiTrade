@@ -38,7 +38,8 @@
 
   function installCandidateModelPersistenceGuard() {
     const selector = document.getElementById('candidate-model-selector');
-    if (!selector) return;
+    if (!selector || selector.dataset.candidateModelGuardInstalled === '1') return;
+    selector.dataset.candidateModelGuardInstalled = '1';
 
     const primaryKey = 'stockboard.candidateModelId.v1';
     const legacyKey = 'stockboard.candidateModel.v1';
@@ -56,8 +57,7 @@
     const labelToId = new Map(models.map(([id, label]) => [label.replace(/\s+/g, ''), id]));
 
     function optionForValue(value) {
-      const escaped = String(value).replace(/"/g, '\\"');
-      return selector.querySelector(`option[value="${escaped}"]`);
+      return Array.from(selector.options || []).find(option => option.value === value) || null;
     }
 
     function normalizeModelId(value) {
@@ -67,6 +67,8 @@
     }
 
     function ensureCanonicalOptions() {
+      const currentValue = selector.value;
+      const firstOption = selector.options && selector.options[0] ? selector.options[0] : null;
       models.forEach(([id, label]) => {
         let option = optionForValue(id);
         if (!option) {
@@ -77,6 +79,9 @@
         option.textContent = label;
         option.disabled = false;
       });
+      if (currentValue && !optionForValue(currentValue) && firstOption) {
+        firstOption.value = normalizeModelId(firstOption.value) || firstOption.value;
+      }
     }
 
     function readStoredModelId() {
@@ -100,10 +105,13 @@
     }
 
     ensureCanonicalOptions();
+    const selectedFromCurrent = normalizeModelId(selector.value)
+      || normalizeModelId(selector.selectedOptions && selector.selectedOptions[0] && selector.selectedOptions[0].textContent);
     const storedModelId = readStoredModelId();
-    if (storedModelId && optionForValue(storedModelId)) {
-      selector.value = storedModelId;
-      writeStoredModelId(storedModelId);
+    const modelId = storedModelId || selectedFromCurrent;
+    if (modelId && optionForValue(modelId)) {
+      selector.value = modelId;
+      writeStoredModelId(modelId);
     }
 
     selector.addEventListener('change', () => {
@@ -350,7 +358,6 @@
       boardSortTables().forEach((table) => {
         Array.from(table.querySelectorAll('th')).forEach((th) => {
           th.classList.add('stockboard-sortable-header');
-          if (!th.getAttribute('title')) th.setAttribute('title', '클릭하면 정렬 / 다시 클릭하면 역정렬');
         });
       });
     }
@@ -363,11 +370,13 @@
       const headerCells = Array.from(th.parentElement.children || []);
       const columnIndex = headerCells.indexOf(th);
       if (columnIndex < 0) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
       const current = sortState.get(table.id);
       const direction = current && current.columnIndex === columnIndex && current.direction === 'asc' ? 'desc' : 'asc';
       sortState.set(table.id, { columnIndex, direction });
       applySort(table);
-    });
+    }, true);
 
     const observer = new MutationObserver(queueApplySorts);
     if (document.body) observer.observe(document.body, { childList: true, subtree: true });
@@ -439,12 +448,14 @@
   }
 
   function installUiHotfixes() {
-    installCandidateModelPersistenceGuard();
     installServerDisconnectGuard();
     installMarketSupplyGraphFirst();
     installBoardHeaderSort();
     installTop5ArrowNavigation();
   }
+
+  // This must run before the main inline StockBoard script initializes top100State.
+  installCandidateModelPersistenceGuard();
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', installUiHotfixes, { once: true });
