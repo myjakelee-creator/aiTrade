@@ -57,6 +57,18 @@
         border-color: #dc8b8b !important;
         background: #fff0f0 !important;
       }
+      .enhanced-board th.stockboard-sortable-header {
+        cursor: pointer;
+        user-select: none;
+      }
+      .enhanced-board th.stockboard-sortable-header[data-sort-dir="asc"]::after {
+        content: " ▲";
+        color: #1d4ed8;
+      }
+      .enhanced-board th.stockboard-sortable-header[data-sort-dir="desc"]::after {
+        content: " ▼";
+        color: #b91c1c;
+      }
     `;
     document.head.appendChild(style);
 
@@ -149,10 +161,188 @@
     window.setInterval(checkServer, 1000);
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', installServerDisconnectGuard, { once: true });
-  } else {
+  const BOARD_SORT_TABLE_IDS = [
+    'candidate-board',
+    'top20-board',
+    'top50-board',
+    'trading-board'
+  ];
+
+  function boardSortTables() {
+    return BOARD_SORT_TABLE_IDS.map((id) => document.getElementById(id)).filter(Boolean);
+  }
+
+  function installBoardHeaderSort() {
+    const sortState = new Map();
+    let applyingSort = false;
+    let applyQueued = false;
+
+    function normalizeCellText(text) {
+      return String(text || '')
+        .replace(/[↑↓▲▼]/g, '')
+        .replace(/,/g, '')
+        .replace(/%/g, '')
+        .trim();
+    }
+
+    function cellValue(row, columnIndex) {
+      const cell = row.children[columnIndex];
+      const text = normalizeCellText(cell ? cell.textContent : '');
+      const numberMatch = text.match(/[-+]?\d+(?:\.\d+)?/);
+      if (numberMatch && text.replace(numberMatch[0], '').trim().length <= 2) {
+        const number = Number(numberMatch[0]);
+        if (Number.isFinite(number)) return { type: 'number', value: number };
+      }
+      return { type: 'text', value: text.toLowerCase() };
+    }
+
+    function rowsForSort(table) {
+      return Array.from(table.querySelectorAll('tr')).filter((row) => !row.querySelector('th'));
+    }
+
+    function applySort(table) {
+      const state = sortState.get(table.id);
+      if (!state) return;
+      const rows = rowsForSort(table);
+      if (rows.length <= 1) return;
+      applyingSort = true;
+      rows.sort((a, b) => {
+        const av = cellValue(a, state.columnIndex);
+        const bv = cellValue(b, state.columnIndex);
+        let result;
+        if (av.type === 'number' && bv.type === 'number') {
+          result = av.value - bv.value;
+        } else {
+          result = String(av.value).localeCompare(String(bv.value), 'ko-KR', { numeric: true });
+        }
+        return state.direction === 'asc' ? result : -result;
+      });
+      const body = table.tBodies && table.tBodies[0] ? table.tBodies[0] : table;
+      rows.forEach((row) => body.appendChild(row));
+      Array.from(table.querySelectorAll('th')).forEach((th, index) => {
+        th.classList.add('stockboard-sortable-header');
+        if (index === state.columnIndex) {
+          th.dataset.sortDir = state.direction;
+          th.setAttribute('aria-sort', state.direction === 'asc' ? 'ascending' : 'descending');
+        } else {
+          delete th.dataset.sortDir;
+          th.removeAttribute('aria-sort');
+        }
+      });
+      applyingSort = false;
+    }
+
+    function queueApplySorts() {
+      if (applyQueued || applyingSort) return;
+      applyQueued = true;
+      window.requestAnimationFrame(() => {
+        applyQueued = false;
+        boardSortTables().forEach(applySort);
+      });
+    }
+
+    function markHeaders() {
+      boardSortTables().forEach((table) => {
+        Array.from(table.querySelectorAll('th')).forEach((th) => {
+          th.classList.add('stockboard-sortable-header');
+          if (!th.getAttribute('title')) th.setAttribute('title', '클릭하면 정렬 / 다시 클릭하면 역정렬');
+        });
+      });
+    }
+
+    document.addEventListener('click', (event) => {
+      const th = event.target && event.target.closest ? event.target.closest('th') : null;
+      if (!th || event.target.closest?.('.column-resizer')) return;
+      const table = th.closest('table');
+      if (!table || !BOARD_SORT_TABLE_IDS.includes(table.id)) return;
+      const headerCells = Array.from(th.parentElement.children || []);
+      const columnIndex = headerCells.indexOf(th);
+      if (columnIndex < 0) return;
+      const current = sortState.get(table.id);
+      const direction = current && current.columnIndex === columnIndex && current.direction === 'asc' ? 'desc' : 'asc';
+      sortState.set(table.id, { columnIndex, direction });
+      applySort(table);
+    });
+
+    const observer = new MutationObserver(queueApplySorts);
+    if (document.body) observer.observe(document.body, { childList: true, subtree: true });
+    markHeaders();
+    queueApplySorts();
+  }
+
+  function installTop5ArrowNavigation() {
+    const NAV_TABLE_IDS = ['candidate-board', 'top20-board', 'top50-board', 'trading-board'];
+    const STOCK_CODE_PATTERN = /^\d{6}$/;
+
+    function normalizeCode(value) {
+      let text = String(value || '').trim().toUpperCase();
+      if (text.startsWith('A') && text.length === 7) text = text.slice(1);
+      text = text.replace('_AL', '').replace('_NX', '');
+      return STOCK_CODE_PATTERN.test(text) ? text : null;
+    }
+
+    function codeFromNode(node) {
+      let current = node;
+      while (current && current !== document.body) {
+        const data = current.dataset || {};
+        const code = normalizeCode(data.stockCode || data.stockcode || data.code || data.stock_code || data.stockNameCode);
+        if (code) return code;
+        current = current.parentElement;
+      }
+      return null;
+    }
+
+    function visibleRows() {
+      const rows = [];
+      NAV_TABLE_IDS.forEach((id) => {
+        const table = document.getElementById(id);
+        if (!table) return;
+        Array.from(table.querySelectorAll('tr')).forEach((row) => {
+          if (row.querySelector('th')) return;
+          if (row.offsetParent === null) return;
+          const code = codeFromNode(row);
+          if (code) rows.push({ row, code, tableId: id });
+        });
+      });
+      return rows;
+    }
+
+    function isEditableTarget(target) {
+      return Boolean(target && target.closest && target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]'));
+    }
+
+    function move(direction, event) {
+      const selection = window.StockBoardSelection;
+      const activeCode = normalizeCode(selection && selection.activeStockCode);
+      if (!selection || !activeCode || typeof selection.activateStock !== 'function') return false;
+      const rows = visibleRows();
+      const index = rows.findIndex((item) => item.code === activeCode);
+      if (index < 0) return false;
+      const next = rows[index + direction];
+      if (!next) return false;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      selection.activateStock(next.code, { scroll: true });
+      return true;
+    }
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+      if (isEditableTarget(event.target)) return;
+      move(event.key === 'ArrowUp' ? -1 : 1, event);
+    }, true);
+  }
+
+  function installUiHotfixes() {
     installServerDisconnectGuard();
+    installBoardHeaderSort();
+    installTop5ArrowNavigation();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', installUiHotfixes, { once: true });
+  } else {
+    installUiHotfixes();
   }
 
   window.StockBoardTooltip = Object.assign(window.StockBoardTooltip || {}, {
