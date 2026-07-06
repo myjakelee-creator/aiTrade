@@ -56,10 +56,15 @@
     legacyOption.dataset.legacy = 'true';
 
     try {
-      const storageKey = 'stockboard.candidateModelId.v1';
-      const saved = localStorage.getItem(storageKey);
-      if (saved === null || saved === legacyModelId || saved === previousModelId) {
-        localStorage.setItem(storageKey, primaryModelId);
+      const primaryKey = 'stockboard.candidateModelId.v1';
+      const legacyKey = 'stockboard.candidateModel.v1';
+      const saved = localStorage.getItem(primaryKey) || localStorage.getItem(legacyKey);
+      if (saved === null) {
+        localStorage.setItem(primaryKey, primaryModelId);
+        localStorage.setItem(legacyKey, primaryModelId);
+      } else if ([primaryModelId, previousModelId, legacyModelId].includes(saved)) {
+        localStorage.setItem(primaryKey, saved);
+        localStorage.setItem(legacyKey, saved);
       }
     } catch (error) {
       // Ignore storage failures; inline board code still falls back safely.
@@ -78,6 +83,9 @@
   function writeStoredValue(storageKey, value) {
     try {
       localStorage.setItem(storageKey, value);
+      if (storageKey === 'stockboard.candidateModelId.v1') {
+        localStorage.setItem('stockboard.candidateModel.v1', value);
+      }
       return true;
     } catch (error) {
       return false;
