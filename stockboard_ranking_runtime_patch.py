@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from stockboard_large_trade_accumulator import install_large_trade_accumulator_patch
 from stockboard_previous_trade_value import install_previous_trade_value_patch
-from stockboard_program_net_cache import install_program_net_cache_patch
 from stockboard_ranking_engine import (
     NET_BUY_STRENGTH_V02,
     enrich_net_buy_strength_v02_fields,
@@ -23,7 +22,6 @@ def install_stockboard_ranking_engine_patch() -> None:
     patched callables without changing its public interface.
     """
     install_previous_trade_value_patch()
-    install_program_net_cache_patch()
     install_large_trade_accumulator_patch()
 
     import stockboard_engine
