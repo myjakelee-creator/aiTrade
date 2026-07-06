@@ -36,93 +36,114 @@
     element.classList.remove('visible');
   }
 
+  const CANDIDATE_MODEL_PRIMARY_KEY = 'stockboard.candidateModelId.v1';
+  const CANDIDATE_MODEL_LEGACY_KEY = 'stockboard.candidateModel.v1';
+  const CANDIDATE_MODELS = [
+    ['NET_BUY_STRENGTH_V02', '순매수 강도 v0.2'],
+    ['NET_BUY_STRENGTH_V01', '순매수 강도 v0.1'],
+    ['TVRANK_A_V03_TEMP', '현재 하드코딩 기준'],
+    ['OPENING_MONEY_FLOW_V01', '돈쏠림 시작형'],
+    ['OPENING_ACCUMULATION_V01', '조용한 매집형'],
+    ['OPENING_BURST_V01', '폭발 확인형'],
+    ['PROGRAM_FLOW_V01', '프로그램 동행형'],
+    ['RELATIVE_STRENGTH_OPENING_V01', '시장대비 강도형']
+  ];
+  const CANDIDATE_MODEL_IDS = new Set(CANDIDATE_MODELS.map(([id]) => id));
+  const CANDIDATE_MODEL_LABEL_TO_ID = new Map(
+    CANDIDATE_MODELS.map(([id, label]) => [label.replace(/\s+/g, ''), id])
+  );
+
+  function candidateModelSelector() {
+    return document.getElementById('candidate-model-selector');
+  }
+
+  function normalizeCandidateModelId(value) {
+    const text = String(value || '').trim();
+    if (CANDIDATE_MODEL_IDS.has(text)) return text;
+    return CANDIDATE_MODEL_LABEL_TO_ID.get(text.replace(/\s+/g, '')) || '';
+  }
+
+  function readStoredCandidateModelId() {
+    try {
+      return normalizeCandidateModelId(
+        localStorage.getItem(CANDIDATE_MODEL_PRIMARY_KEY)
+        || localStorage.getItem(CANDIDATE_MODEL_LEGACY_KEY)
+        || ''
+      );
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  function writeStoredCandidateModelId(modelId) {
+    const normalized = normalizeCandidateModelId(modelId);
+    if (!normalized) return '';
+    try {
+      localStorage.setItem(CANDIDATE_MODEL_PRIMARY_KEY, normalized);
+      localStorage.setItem(CANDIDATE_MODEL_LEGACY_KEY, normalized);
+    } catch (_error) {
+      // localStorage can be unavailable in restricted environments.
+    }
+    return normalized;
+  }
+
+  function optionForCandidateModel(selector, modelId) {
+    return Array.from(selector?.options || []).find(option => option.value === modelId) || null;
+  }
+
+  function ensureCandidateModelOptions(selector) {
+    if (!selector) return;
+    CANDIDATE_MODELS.forEach(([id, label]) => {
+      let option = optionForCandidateModel(selector, id);
+      if (!option) {
+        option = document.createElement('option');
+        option.value = id;
+        selector.appendChild(option);
+      }
+      option.textContent = label;
+      option.disabled = false;
+    });
+  }
+
+  function currentCandidateModelId(selector) {
+    return normalizeCandidateModelId(selector?.value)
+      || normalizeCandidateModelId(selector?.selectedOptions?.[0]?.textContent);
+  }
+
+  function reconcileCandidateModelSelection(options = {}) {
+    const selector = candidateModelSelector();
+    if (!selector) return '';
+    ensureCandidateModelOptions(selector);
+    const stored = readStoredCandidateModelId();
+    const current = currentCandidateModelId(selector);
+    const modelId = stored || current;
+    if (!modelId || !optionForCandidateModel(selector, modelId)) return '';
+    const changed = selector.value !== modelId;
+    selector.value = modelId;
+    writeStoredCandidateModelId(modelId);
+    if (changed && options.dispatchChange) {
+      selector.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    return modelId;
+  }
+
   function installCandidateModelPersistenceGuard() {
-    const selector = document.getElementById('candidate-model-selector');
-    if (!selector || selector.dataset.candidateModelGuardInstalled === '1') return;
-    selector.dataset.candidateModelGuardInstalled = '1';
-
-    const primaryKey = 'stockboard.candidateModelId.v1';
-    const legacyKey = 'stockboard.candidateModel.v1';
-    const models = [
-      ['NET_BUY_STRENGTH_V02', '순매수 강도 v0.2'],
-      ['NET_BUY_STRENGTH_V01', '순매수 강도 v0.1'],
-      ['TVRANK_A_V03_TEMP', '현재 하드코딩 기준'],
-      ['OPENING_MONEY_FLOW_V01', '돈쏠림 시작형'],
-      ['OPENING_ACCUMULATION_V01', '조용한 매집형'],
-      ['OPENING_BURST_V01', '폭발 확인형'],
-      ['PROGRAM_FLOW_V01', '프로그램 동행형'],
-      ['RELATIVE_STRENGTH_OPENING_V01', '시장대비 강도형']
-    ];
-    const idSet = new Set(models.map(([id]) => id));
-    const labelToId = new Map(models.map(([id, label]) => [label.replace(/\s+/g, ''), id]));
-
-    function optionForValue(value) {
-      return Array.from(selector.options || []).find(option => option.value === value) || null;
+    const selector = candidateModelSelector();
+    if (!selector) return;
+    ensureCandidateModelOptions(selector);
+    reconcileCandidateModelSelection({ dispatchChange: false });
+    if (selector.dataset.candidateModelGuardInstalled !== '1') {
+      selector.dataset.candidateModelGuardInstalled = '1';
+      selector.addEventListener('change', () => {
+        const modelId = currentCandidateModelId(selector) || selector.value;
+        if (!modelId || !optionForCandidateModel(selector, modelId)) return;
+        selector.value = modelId;
+        writeStoredCandidateModelId(modelId);
+      }, true);
     }
-
-    function normalizeModelId(value) {
-      const text = String(value || '').trim();
-      if (idSet.has(text)) return text;
-      return labelToId.get(text.replace(/\s+/g, '')) || '';
-    }
-
-    function ensureCanonicalOptions() {
-      const currentValue = selector.value;
-      const firstOption = selector.options && selector.options[0] ? selector.options[0] : null;
-      models.forEach(([id, label]) => {
-        let option = optionForValue(id);
-        if (!option) {
-          option = document.createElement('option');
-          option.value = id;
-          selector.appendChild(option);
-        }
-        option.textContent = label;
-        option.disabled = false;
-      });
-      if (currentValue && !optionForValue(currentValue) && firstOption) {
-        firstOption.value = normalizeModelId(firstOption.value) || firstOption.value;
-      }
-    }
-
-    function readStoredModelId() {
-      let saved = '';
-      try {
-        saved = localStorage.getItem(primaryKey) || localStorage.getItem(legacyKey) || '';
-      } catch (_error) {
-        saved = '';
-      }
-      return normalizeModelId(saved);
-    }
-
-    function writeStoredModelId(modelId) {
-      if (!modelId) return;
-      try {
-        localStorage.setItem(primaryKey, modelId);
-        localStorage.setItem(legacyKey, modelId);
-      } catch (_error) {
-        // localStorage may be unavailable in restricted environments.
-      }
-    }
-
-    ensureCanonicalOptions();
-    const selectedFromCurrent = normalizeModelId(selector.value)
-      || normalizeModelId(selector.selectedOptions && selector.selectedOptions[0] && selector.selectedOptions[0].textContent);
-    const storedModelId = readStoredModelId();
-    const modelId = storedModelId || selectedFromCurrent;
-    if (modelId && optionForValue(modelId)) {
-      selector.value = modelId;
-      writeStoredModelId(modelId);
-    }
-
-    selector.addEventListener('change', () => {
-      const selectedOption = selector.selectedOptions && selector.selectedOptions[0];
-      const modelId = normalizeModelId(selector.value)
-        || normalizeModelId(selectedOption && selectedOption.textContent)
-        || selector.value;
-      if (!modelId || !optionForValue(modelId)) return;
-      selector.value = modelId;
-      writeStoredModelId(modelId);
-    }, true);
+    [0, 50, 250, 1000, 2000].forEach((delay) => {
+      window.setTimeout(() => reconcileCandidateModelSelection({ dispatchChange: delay >= 250 }), delay);
+    });
   }
 
   function installServerDisconnectGuard() {
@@ -274,12 +295,7 @@
     }
   }
 
-  const BOARD_SORT_TABLE_IDS = [
-    'candidate-board',
-    'top20-board',
-    'top50-board',
-    'trading-board'
-  ];
+  const BOARD_SORT_TABLE_IDS = ['candidate-board', 'top20-board', 'top50-board', 'trading-board'];
 
   function boardSortTables() {
     return BOARD_SORT_TABLE_IDS.map((id) => document.getElementById(id)).filter(Boolean);
@@ -289,6 +305,8 @@
     const sortState = new Map();
     let applyingSort = false;
     let applyQueued = false;
+    let suppressClickUntil = 0;
+    let suppressClickKey = '';
 
     function normalizeCellText(text) {
       return String(text || '')
@@ -310,7 +328,8 @@
     }
 
     function rowsForSort(table) {
-      return Array.from(table.querySelectorAll('tr')).filter((row) => !row.querySelector('th'));
+      const body = table.tBodies && table.tBodies[0] ? table.tBodies[0] : table;
+      return Array.from(body.querySelectorAll('tr')).filter((row) => !row.querySelector('th'));
     }
 
     function applySort(table) {
@@ -354,33 +373,55 @@
       });
     }
 
-    function markHeaders() {
+    function markHeadersAndListeners() {
       boardSortTables().forEach((table) => {
+        if (table.dataset.stockboardHeaderSortInstalled !== '1') {
+          table.dataset.stockboardHeaderSortInstalled = '1';
+          table.addEventListener('pointerup', handleHeaderSortEvent, true);
+          table.addEventListener('click', handleHeaderSortEvent, true);
+        }
         Array.from(table.querySelectorAll('th')).forEach((th) => {
           th.classList.add('stockboard-sortable-header');
         });
       });
     }
 
-    document.addEventListener('click', (event) => {
-      const th = event.target && event.target.closest ? event.target.closest('th') : null;
-      if (!th || event.target.closest?.('.column-resizer')) return;
+    function handleHeaderSortEvent(event) {
+      const target = event.target;
+      const th = target && target.closest ? target.closest('th') : null;
+      if (!th || target.closest?.('.column-resizer')) return;
       const table = th.closest('table');
       if (!table || !BOARD_SORT_TABLE_IDS.includes(table.id)) return;
       const headerCells = Array.from(th.parentElement.children || []);
       const columnIndex = headerCells.indexOf(th);
       if (columnIndex < 0) return;
+      const eventKey = `${table.id}:${columnIndex}`;
+      const now = performance.now();
+      if (event.type === 'click' && suppressClickKey === eventKey && now < suppressClickUntil) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
       event.preventDefault();
       event.stopImmediatePropagation();
       const current = sortState.get(table.id);
       const direction = current && current.columnIndex === columnIndex && current.direction === 'asc' ? 'desc' : 'asc';
       sortState.set(table.id, { columnIndex, direction });
       applySort(table);
-    }, true);
+      if (event.type === 'pointerup') {
+        suppressClickKey = eventKey;
+        suppressClickUntil = now + 350;
+      }
+    }
 
-    const observer = new MutationObserver(queueApplySorts);
+    document.addEventListener('pointerup', handleHeaderSortEvent, true);
+    document.addEventListener('click', handleHeaderSortEvent, true);
+    const observer = new MutationObserver(() => {
+      markHeadersAndListeners();
+      queueApplySorts();
+    });
     if (document.body) observer.observe(document.body, { childList: true, subtree: true });
-    markHeaders();
+    markHeadersAndListeners();
     queueApplySorts();
   }
 
@@ -452,9 +493,9 @@
     installMarketSupplyGraphFirst();
     installBoardHeaderSort();
     installTop5ArrowNavigation();
+    installCandidateModelPersistenceGuard();
   }
 
-  // This must run before the main inline StockBoard script initializes top100State.
   installCandidateModelPersistenceGuard();
 
   if (document.readyState === 'loading') {
