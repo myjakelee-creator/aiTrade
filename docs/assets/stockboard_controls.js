@@ -2,6 +2,7 @@
   "use strict";
 
   ensureCandidateModelOptions();
+  installRuntimeDisplayFixes();
 
   window.StockBoardControls = Object.assign(window.StockBoardControls || {}, {
     readStoredValue,
@@ -69,6 +70,115 @@
     } catch (error) {
       // Ignore storage failures; inline board code still falls back safely.
     }
+  }
+
+  function installRuntimeDisplayFixes() {
+    injectRuntimeDisplayFixStyles();
+    const apply = () => {
+      applyAmountRatioColorRule();
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        apply();
+        observeRuntimeDisplayFixes(apply);
+      }, { once: true });
+    } else {
+      apply();
+      observeRuntimeDisplayFixes(apply);
+    }
+  }
+
+  function injectRuntimeDisplayFixStyles() {
+    if (document.getElementById('stockboard-controls-runtime-fix-style')) return;
+    const style = document.createElement('style');
+    style.id = 'stockboard-controls-runtime-fix-style';
+    style.textContent = `
+      #top20-board .stock-name,
+      #top50-board .stock-name {
+        text-align: left !important;
+      }
+      #top20-board td:nth-child(5),
+      #top20-board td:nth-child(6),
+      #top20-board td:nth-child(7),
+      #top20-board .number-cell,
+      #top20-board .flow-number,
+      #top20-board .amount-ratio-cell,
+      #top50-board td:nth-child(5),
+      #top50-board td:nth-child(6),
+      #top50-board td:nth-child(7),
+      #top50-board .number-cell,
+      #top50-board .flow-number,
+      #top50-board .amount-ratio-cell {
+        text-align: right !important;
+        font-variant-numeric: tabular-nums;
+      }
+      #top20-board td:nth-child(4),
+      #top50-board td:nth-child(4) {
+        text-align: left !important;
+      }
+      .amount-ratio-cell {
+        text-align: right !important;
+        font-variant-numeric: tabular-nums;
+      }
+      .amount-ratio-number {
+        display: inline-block;
+        width: 100%;
+        text-align: right;
+        font: inherit;
+        font-weight: 700;
+        line-height: inherit;
+      }
+      .amount-ratio-number.amount-ratio-strong {
+        color: var(--red) !important;
+      }
+      .amount-ratio-number.amount-ratio-weak {
+        color: var(--blue) !important;
+      }
+      .amount-ratio-number.amount-ratio-missing {
+        color: #4b5563 !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function observeRuntimeDisplayFixes(apply) {
+    if (window.__stockboardRuntimeDisplayFixObserverInstalled) return;
+    window.__stockboardRuntimeDisplayFixObserverInstalled = true;
+    const observer = new MutationObserver(() => {
+      if (window.__stockboardRuntimeDisplayFixQueued) return;
+      window.__stockboardRuntimeDisplayFixQueued = true;
+      window.requestAnimationFrame(() => {
+        window.__stockboardRuntimeDisplayFixQueued = false;
+        apply();
+      });
+    });
+    if (document.body) {
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    }
+    window.setInterval(apply, 1000);
+  }
+
+  function parseAmountRatioText(text) {
+    const normalized = String(text || '').replace(/,/g, '').trim();
+    if (!normalized || normalized === '-') return null;
+    const match = normalized.match(/[-+]?\d+(?:\.\d+)?/);
+    if (!match) return null;
+    const value = Number(match[0]);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  function applyAmountRatioColorRule() {
+    document.querySelectorAll('.amount-ratio-number').forEach(element => {
+      const ratio = parseAmountRatioText(element.textContent);
+      element.classList.remove('amount-ratio-strong', 'amount-ratio-weak', 'amount-ratio-neutral', 'amount-ratio-missing');
+      if (ratio === null) {
+        element.classList.add('amount-ratio-missing');
+      } else if (ratio >= 1) {
+        element.classList.add('amount-ratio-strong');
+      } else {
+        element.classList.add('amount-ratio-weak');
+      }
+    });
   }
 
   function readStoredValue(storageKey, fallback) {
