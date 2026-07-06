@@ -3,10 +3,6 @@
 The net-buy-strength ranking model needs a stable previous trade value.
 This module derives it from the already-used ka10086 daily rows, persists it
 under data/runtime, and injects it into each display row before ranking.
-
-It also provides a safe previous-rank mode: Kiwoom ka10032 previous-day input is
-not verified in our local docs/code, so previous rank is produced by sorting the
-current tradable universe by ka10086 previous trade value after OHLC enrichment.
 """
 
 from __future__ import annotations
@@ -24,7 +20,6 @@ KST = timezone(timedelta(hours=9))
 KRW_PER_EOK = Decimal("100000000")
 MILLION_KRW_PER_EOK = Decimal("100")
 CACHE_SCHEMA_VERSION = 1
-PREVIOUS_RANK_MARKER = "_stockboard_previous_rank_requested"
 _CACHE_LOCK = RLock()
 
 
@@ -188,45 +183,6 @@ def _entry_from_row(row: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def _original_rank_value(row: dict[str, Any]) -> int:
-    value = _number_or_none(row.get("original_rank"))
-    if value is None:
-        value = _number_or_none(row.get("rank"))
-    if value is None:
-        return 999999
-    return int(value)
-
-
-def _sort_rows_by_previous_trade_value(rows: list[dict[str, Any]]) -> int:
-    sortable_rows = [row for row in rows if isinstance(row, dict)]
-    if not sortable_rows:
-        return 0
-
-    def sort_key(row: dict[str, Any]):
-        value = _number_or_none(row.get("prev_trade_value_eok"))
-        has_value = value is not None and value > 0
-        return (
-            0 if has_value else 1,
-            -(value or 0),
-            _original_rank_value(row),
-            str(row.get("stock_code") or ""),
-        )
-
-    rows.sort(key=sort_key)
-    ranked_count = 0
-    for rank, row in enumerate(rows, start=1):
-        if not isinstance(row, dict):
-            continue
-        row["rank"] = rank
-        row["displayed_rank"] = rank
-        row["previous_trade_value_rank"] = rank
-        row["rank_basis_source"] = "ka10086_previous_trade_value"
-        row["rank_basis_sort_key"] = "prev_trade_value_eok_desc"
-        if _number_or_none(row.get("prev_trade_value_eok")) is not None:
-            ranked_count += 1
-    return ranked_count
-
-
 def install_previous_trade_value_patch() -> None:
     import kiwoom_data_provider
 
@@ -235,17 +191,6 @@ def install_previous_trade_value_patch() -> None:
 
     original_build_ohlc = kiwoom_data_provider._build_ohlc
     original_fetch_ohlc = kiwoom_data_provider.fetch_ohlc
-    original_fetch_trade_value_top100 = kiwoom_data_provider.fetch_trade_value_top100
-
-    def fetch_trade_value_top100_with_previous_rank(access_token, rank_basis="today"):
-        basis = str(rank_basis or "today").strip().lower()
-        if basis != "previous":
-            return original_fetch_trade_value_top100(access_token, rank_basis)
-        rows, page_counts = original_fetch_trade_value_top100(access_token, "today")
-        for row in rows:
-            if isinstance(row, dict):
-                row[PREVIOUS_RANK_MARKER] = True
-        return rows, page_counts
 
     def build_ohlc_with_previous_trade_value(current_row, previous_row):
         ohlc, sample = original_build_ohlc(current_row, previous_row)
@@ -267,9 +212,6 @@ def install_previous_trade_value_patch() -> None:
         cache_file = _cache_path(query_date)
         with _CACHE_LOCK:
             cache_payload = _load_cache(cache_file)
-        previous_rank_requested = any(
-            isinstance(row, dict) and row.get(PREVIOUS_RANK_MARKER) for row in rows
-        )
         result = original_fetch_ohlc(access_token, rows, query_date, sleep_seconds, sequential=sequential)
         entries = cache_payload.setdefault("entries", {})
         attached = 0
@@ -303,22 +245,15 @@ def install_previous_trade_value_patch() -> None:
         if changed:
             with _CACHE_LOCK:
                 _save_cache(cache_file, cache_payload)
-        previous_rank_sorted_count = 0
-        if previous_rank_requested:
-            previous_rank_sorted_count = _sort_rows_by_previous_trade_value(rows)
         if isinstance(result, dict):
             result["previous_trade_value"] = {
                 "attached_count": attached,
                 "cached_count": cached,
                 "fallback_count": fallback,
                 "cache_file": str(cache_file),
-                "previous_rank_requested": previous_rank_requested,
-                "previous_rank_sorted_count": previous_rank_sorted_count,
-                "previous_rank_sort_key": "prev_trade_value_eok_desc" if previous_rank_requested else None,
             }
         return result
 
-    kiwoom_data_provider.fetch_trade_value_top100 = fetch_trade_value_top100_with_previous_rank
     kiwoom_data_provider._build_ohlc = build_ohlc_with_previous_trade_value
     kiwoom_data_provider.fetch_ohlc = fetch_ohlc_with_previous_trade_value
     kiwoom_data_provider._previous_trade_value_patch_installed = True
