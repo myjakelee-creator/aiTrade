@@ -36,6 +36,87 @@
     element.classList.remove('visible');
   }
 
+  function installCandidateModelPersistenceGuard() {
+    const selector = document.getElementById('candidate-model-selector');
+    if (!selector) return;
+
+    const primaryKey = 'stockboard.candidateModelId.v1';
+    const legacyKey = 'stockboard.candidateModel.v1';
+    const models = [
+      ['NET_BUY_STRENGTH_V02', '순매수 강도 v0.2'],
+      ['NET_BUY_STRENGTH_V01', '순매수 강도 v0.1'],
+      ['TVRANK_A_V03_TEMP', '현재 하드코딩 기준'],
+      ['OPENING_MONEY_FLOW_V01', '돈쏠림 시작형'],
+      ['OPENING_ACCUMULATION_V01', '조용한 매집형'],
+      ['OPENING_BURST_V01', '폭발 확인형'],
+      ['PROGRAM_FLOW_V01', '프로그램 동행형'],
+      ['RELATIVE_STRENGTH_OPENING_V01', '시장대비 강도형']
+    ];
+    const idSet = new Set(models.map(([id]) => id));
+    const labelToId = new Map(models.map(([id, label]) => [label.replace(/\s+/g, ''), id]));
+
+    function optionForValue(value) {
+      const escaped = String(value).replace(/"/g, '\\"');
+      return selector.querySelector(`option[value="${escaped}"]`);
+    }
+
+    function normalizeModelId(value) {
+      const text = String(value || '').trim();
+      if (idSet.has(text)) return text;
+      return labelToId.get(text.replace(/\s+/g, '')) || '';
+    }
+
+    function ensureCanonicalOptions() {
+      models.forEach(([id, label]) => {
+        let option = optionForValue(id);
+        if (!option) {
+          option = document.createElement('option');
+          option.value = id;
+          selector.appendChild(option);
+        }
+        option.textContent = label;
+        option.disabled = false;
+      });
+    }
+
+    function readStoredModelId() {
+      let saved = '';
+      try {
+        saved = localStorage.getItem(primaryKey) || localStorage.getItem(legacyKey) || '';
+      } catch (_error) {
+        saved = '';
+      }
+      return normalizeModelId(saved);
+    }
+
+    function writeStoredModelId(modelId) {
+      if (!modelId) return;
+      try {
+        localStorage.setItem(primaryKey, modelId);
+        localStorage.setItem(legacyKey, modelId);
+      } catch (_error) {
+        // localStorage may be unavailable in restricted environments.
+      }
+    }
+
+    ensureCanonicalOptions();
+    const storedModelId = readStoredModelId();
+    if (storedModelId && optionForValue(storedModelId)) {
+      selector.value = storedModelId;
+      writeStoredModelId(storedModelId);
+    }
+
+    selector.addEventListener('change', () => {
+      const selectedOption = selector.selectedOptions && selector.selectedOptions[0];
+      const modelId = normalizeModelId(selector.value)
+        || normalizeModelId(selectedOption && selectedOption.textContent)
+        || selector.value;
+      if (!modelId || !optionForValue(modelId)) return;
+      selector.value = modelId;
+      writeStoredModelId(modelId);
+    }, true);
+  }
+
   function installServerDisconnectGuard() {
     const style = document.createElement('style');
     style.textContent = `
@@ -345,6 +426,7 @@
   }
 
   function installUiHotfixes() {
+    installCandidateModelPersistenceGuard();
     installServerDisconnectGuard();
     installMarketSupplyGraphFirst();
     installBoardHeaderSort();
