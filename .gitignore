@@ -6,4 +6,6 @@ data/runtime/
 data/execution_charts/
 *.pid
 
+docs/assets/program_net_snapshot.json
+
 _zz_/
