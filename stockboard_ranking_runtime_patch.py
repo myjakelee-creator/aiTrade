@@ -6,6 +6,7 @@ new ranking-engine-owned model to run through the existing /api/top100 flow.
 
 from __future__ import annotations
 
+from stockboard_large_trade_accumulator import install_large_trade_accumulator_patch
 from stockboard_previous_trade_value import install_previous_trade_value_patch
 from stockboard_ranking_engine import (
     NET_BUY_STRENGTH_V02,
@@ -21,6 +22,7 @@ def install_stockboard_ranking_engine_patch() -> None:
     patched callables without changing its public interface.
     """
     install_previous_trade_value_patch()
+    install_large_trade_accumulator_patch()
 
     import stockboard_engine
 
