@@ -138,6 +138,19 @@
         border-color: #dc8b8b !important;
         background: #fff0f0 !important;
       }
+      #top20-board .stock-name,
+      #top50-board .stock-name {
+        text-align: left !important;
+      }
+      #top20-board td:nth-child(5),
+      #top20-board td:nth-child(6),
+      #top20-board td:nth-child(7),
+      #top50-board td:nth-child(5),
+      #top50-board td:nth-child(6),
+      #top50-board td:nth-child(7) {
+        text-align: right !important;
+        font-variant-numeric: tabular-nums;
+      }
       .enhanced-board th.stockboard-sortable-header {
         cursor: pointer;
         user-select: none;
