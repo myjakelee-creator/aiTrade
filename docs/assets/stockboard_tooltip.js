@@ -42,6 +42,8 @@
       @keyframes stockboard-server-down-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
       @keyframes stockboard-amount-ratio-flash-up { 0% { background:#ffe0e0; box-shadow:inset 0 0 0 1px rgba(215,25,32,.55); } 100% { background:transparent; box-shadow:none; } }
       @keyframes stockboard-amount-ratio-flash-down { 0% { background:#dcecff; box-shadow:inset 0 0 0 1px rgba(18,102,214,.45); } 100% { background:transparent; box-shadow:none; } }
+      @keyframes stockboard-program-net-flash-up { 0% { background:#ffe9e9; box-shadow:inset 0 0 0 1px rgba(215,25,32,.45); } 100% { background:transparent; box-shadow:none; } }
+      @keyframes stockboard-program-net-flash-down { 0% { background:#e4f0ff; box-shadow:inset 0 0 0 1px rgba(18,102,214,.40); } 100% { background:transparent; box-shadow:none; } }
       body.stockboard-server-down #combined-status-lamp,
       body.stockboard-server-down #api-status-lamp,
       body.stockboard-server-down #web-status-lamp {
@@ -69,7 +71,8 @@
       #top50-board td:nth-child(5),
       #top50-board td:nth-child(6),
       #top50-board td:nth-child(7),
-      .amount-ratio-cell {
+      .amount-ratio-cell,
+      .program-net-cell {
         text-align: right !important;
         font-variant-numeric: tabular-nums;
       }
@@ -98,6 +101,8 @@
       .amount-ratio-missing { color: #4b5563 !important; }
       .amount-ratio-flash-up { animation: stockboard-amount-ratio-flash-up .7s ease-out 1; }
       .amount-ratio-flash-down { animation: stockboard-amount-ratio-flash-down .7s ease-out 1; }
+      .program-net-flash-up { animation: stockboard-program-net-flash-up .7s ease-out 1; }
+      .program-net-flash-down { animation: stockboard-program-net-flash-down .7s ease-out 1; }
     `;
     document.head.appendChild(style);
 
@@ -202,6 +207,7 @@
   }
 
   const SORT_TABLE_IDS = ['candidate-board', 'top20-board', 'top50-board', 'trading-board'];
+  const BOARD_TABLE_IDS = SORT_TABLE_IDS.concat(['selected-board']);
   const sortState = new Map();
   const GRAPHIC_SORT_COLUMNS = new Set([8, 9, 10]);
 
@@ -370,7 +376,7 @@
   }
 
   function setAmountRatioHeaders() {
-    SORT_TABLE_IDS.concat(['selected-board']).forEach((id) => {
+    BOARD_TABLE_IDS.forEach((id) => {
       const table = document.getElementById(id);
       if (!table) return;
       const header = table.querySelector(`th:nth-child(${AMOUNT_RATIO_COLUMN_INDEX + 1})`);
@@ -421,6 +427,7 @@
     const display = amountRatioDisplay(ratio);
     const previousDisplay = cell.dataset.amountRatioDisplay || '';
     const previousRatio = parseNumber(cell.dataset.amountRatioRatio);
+    cell.className = 'amount-ratio-cell number-cell';
     if (cell.dataset.amountRatioHtml !== html) {
       cell.innerHTML = html;
       cell.dataset.amountRatioHtml = html;
@@ -430,7 +437,6 @@
     }
     cell.dataset.amountRatioDisplay = display;
     cell.dataset.amountRatioRatio = Number.isFinite(ratio) ? String(ratio) : '';
-    cell.className = 'amount-ratio-cell number-cell';
     const tooltip = [
       '대금비 = 당일 거래대금 / 전일 거래대금',
       `당일 거래대금: ${current === null ? '-' : current.toLocaleString('en-US')}억`,
@@ -443,7 +449,7 @@
 
   function applyAmountRatio() {
     setAmountRatioHeaders();
-    SORT_TABLE_IDS.concat(['selected-board']).forEach((id) => {
+    BOARD_TABLE_IDS.forEach((id) => {
       const table = document.getElementById(id);
       if (!table) return;
       table.querySelectorAll('tr[data-stock-code], tr[data-stockcode]').forEach(applyAmountRatioToRow);
@@ -466,6 +472,123 @@
     const observer = new MutationObserver(queueApplyAmountRatio);
     if (document.body) observer.observe(document.body, { childList: true, subtree: true });
     queueApplyAmountRatio();
+  }
+
+  const PROGRAM_NET_COLUMN_INDEX = 12;
+  const PROGRAM_NET_SNAPSHOT_URL = '/assets/program_net_snapshot.json';
+  let programNetSnapshot = null;
+  let programNetLoading = false;
+  let programNetApplyQueued = false;
+
+  function signedIntegerDisplay(value) {
+    const number = parseNumber(value);
+    if (number === null) return null;
+    const integer = Math.trunc(number);
+    const formatted = Math.abs(integer).toLocaleString('en-US');
+    return integer > 0 ? `+${formatted}` : integer < 0 ? `-${formatted}` : '0';
+  }
+
+  function signedClass(value) {
+    const number = parseNumber(value);
+    if (number === null) return '';
+    return number > 0 ? 'plus' : number < 0 ? 'minus' : 'flow-zero';
+  }
+
+  function programNetValue(code) {
+    const values = programNetSnapshot && programNetSnapshot.values;
+    if (!values || typeof values !== 'object') return null;
+    const entry = values[code];
+    if (entry && typeof entry === 'object') return parseNumber(entry.program_net ?? entry.value ?? entry.program_net_eok);
+    return parseNumber(entry);
+  }
+
+  function flashProgramNetCell(cell, previousValue, value) {
+    if (!cell || !Number.isFinite(value)) return;
+    cell.classList.remove('program-net-flash-up', 'program-net-flash-down');
+    void cell.offsetWidth;
+    const className = Number.isFinite(previousValue) && value < previousValue
+      ? 'program-net-flash-down'
+      : 'program-net-flash-up';
+    cell.classList.add(className);
+    window.setTimeout(() => cell.classList.remove(className), 750);
+  }
+
+  async function loadProgramNetSnapshot() {
+    if (programNetLoading) return;
+    programNetLoading = true;
+    try {
+      const response = await fetch(`${PROGRAM_NET_SNAPSHOT_URL}?ts=${Date.now()}`, { cache: 'no-store' });
+      if (response.status === 404) return;
+      if (!response.ok) throw new Error(`program net snapshot failed: ${response.status}`);
+      const payload = await response.json();
+      if (!payload || typeof payload !== 'object' || !payload.values) return;
+      programNetSnapshot = payload;
+      queueApplyProgramNetSnapshot();
+    } catch (error) {
+      console.warn(error);
+    } finally {
+      programNetLoading = false;
+    }
+  }
+
+  function applyProgramNetToRow(row) {
+    const code = stockCodeFromRow(row);
+    if (!code) return;
+    const value = programNetValue(code);
+    if (value === null) return;
+    const cell = row.children[PROGRAM_NET_COLUMN_INDEX];
+    if (!cell) return;
+    const display = signedIntegerDisplay(value);
+    if (display === null) return;
+    const previousDisplay = cell.dataset.programNetDisplay || '';
+    const previousValue = parseNumber(cell.dataset.programNetValue);
+    const className = signedClass(value);
+    cell.className = `program-net-cell flow-number ${className}`.trim();
+    if (cell.dataset.programNetDisplay !== display) {
+      cell.textContent = display;
+      if (previousDisplay && previousDisplay !== display) {
+        flashProgramNetCell(cell, previousValue, value);
+      }
+    }
+    cell.dataset.programNetDisplay = display;
+    cell.dataset.programNetValue = String(value);
+    const tooltip = [
+      `프로(억): ${display}`,
+      'source: sidecar_program_net_snapshot',
+      `snapshot: ${programNetSnapshot?.updated_at || '-'}`,
+      `query_date: ${programNetSnapshot?.query_date || '-'}`,
+      `status: ${programNetSnapshot?.status || 'ok'}`,
+      programNetSnapshot?.error ? `error: ${programNetSnapshot.error}` : null
+    ].filter(Boolean).join('\n');
+    cell.dataset.tooltip = tooltip;
+    cell.setAttribute('aria-label', tooltip);
+  }
+
+  function applyProgramNetSnapshot() {
+    if (!programNetSnapshot || !programNetSnapshot.values) return;
+    BOARD_TABLE_IDS.forEach((id) => {
+      const table = document.getElementById(id);
+      if (!table) return;
+      table.querySelectorAll('tr[data-stock-code], tr[data-stockcode]').forEach(applyProgramNetToRow);
+    });
+  }
+
+  function queueApplyProgramNetSnapshot() {
+    if (programNetApplyQueued) return;
+    programNetApplyQueued = true;
+    window.requestAnimationFrame(() => {
+      programNetApplyQueued = false;
+      applyProgramNetSnapshot();
+    });
+  }
+
+  function installProgramNetOverlay() {
+    loadProgramNetSnapshot();
+    window.setInterval(loadProgramNetSnapshot, 60000);
+    window.setInterval(queueApplyProgramNetSnapshot, 1000);
+    const observer = new MutationObserver(queueApplyProgramNetSnapshot);
+    if (document.body) observer.observe(document.body, { childList: true, subtree: true });
+    queueApplyProgramNetSnapshot();
   }
 
   function installTop5ArrowNavigation() {
@@ -529,6 +652,7 @@
     installMarketSupplyGraphFirst();
     installBoardHeaderSort();
     installAmountRatioColumn();
+    installProgramNetOverlay();
     installTop5ArrowNavigation();
   }
 
