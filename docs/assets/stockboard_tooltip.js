@@ -66,7 +66,8 @@
       #top20-board td:nth-child(7),
       #top50-board td:nth-child(5),
       #top50-board td:nth-child(6),
-      #top50-board td:nth-child(7) {
+      #top50-board td:nth-child(7),
+      .amount-ratio-cell {
         text-align: right !important;
         font-variant-numeric: tabular-nums;
       }
@@ -82,6 +83,17 @@
         content: " ▼";
         color: #b91c1c;
       }
+      .amount-ratio-number {
+        display: inline-block;
+        width: 100%;
+        text-align: right;
+        font: inherit;
+        font-weight: 700;
+        line-height: inherit;
+      }
+      .amount-ratio-strong { color: var(--red) !important; }
+      .amount-ratio-weak { color: var(--blue) !important; }
+      .amount-ratio-missing { color: #4b5563 !important; }
     `;
     document.head.appendChild(style);
 
@@ -187,6 +199,7 @@
 
   const SORT_TABLE_IDS = ['candidate-board', 'top20-board', 'top50-board', 'trading-board'];
   const sortState = new Map();
+  const GRAPHIC_SORT_COLUMNS = new Set([8, 9, 10]);
 
   function markSortHeaders() {
     SORT_TABLE_IDS.forEach((id) => {
@@ -199,15 +212,36 @@
   }
 
   function normalizeSortText(text) {
-    return String(text || '').replace(/[↑↓▲▼]/g, '').replace(/,/g, '').replace(/%/g, '').trim();
+    return String(text || '').replace(/[↑↓▲▼]/g, '').replace(/,/g, '').replace(/%/g, '').replace(/x\+?/gi, '').trim();
+  }
+
+  function firstNumberInText(text) {
+    const normalized = normalizeSortText(text);
+    const match = normalized.match(/[-+]?\d+(?:\.\d+)?/);
+    if (!match) return null;
+    const value = Number(match[0]);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  function visualSortText(cell) {
+    return cell?.dataset?.tooltip
+      || cell?.getAttribute?.('aria-label')
+      || cell?.firstElementChild?.dataset?.tooltip
+      || cell?.firstElementChild?.getAttribute?.('aria-label')
+      || '';
   }
 
   function sortCellValue(row, columnIndex) {
-    const text = normalizeSortText(row.children[columnIndex]?.textContent || '');
+    const cell = row.children[columnIndex];
+    const text = normalizeSortText(cell?.textContent || '');
     const numeric = text.replace(/[^0-9+\-.]/g, '');
     if (numeric && /^[-+]?\d+(?:\.\d+)?$/.test(numeric)) {
       const value = Number(numeric);
       if (Number.isFinite(value)) return { type: 'number', value };
+    }
+    if (GRAPHIC_SORT_COLUMNS.has(columnIndex)) {
+      const visualValue = firstNumberInText(visualSortText(cell));
+      if (visualValue !== null) return { type: 'number', value: visualValue };
     }
     return { type: 'text', value: text.toLowerCase() };
   }
@@ -254,6 +288,154 @@
     markSortHeaders();
     const observer = new MutationObserver(markSortHeaders);
     if (document.body) observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  const AMOUNT_RATIO_COLUMN_INDEX = 11;
+  const amountRatioPrevByCode = new Map();
+  let amountRatioLoading = false;
+  let amountRatioApplyQueued = false;
+
+  function parseNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(String(value).replace(/,/g, '').replace(/%/g, '').replace(/x/g, '').replace(/\+/g, '').trim());
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function stockCodeFromRow(row) {
+    let code = String(row?.dataset?.stockCode || row?.dataset?.stockcode || '').trim();
+    code = code.toUpperCase().replace(/^A(?=\d{6}$)/, '').replace(/_AL$/, '').replace(/_NX$/, '');
+    return /^\d{6}$/.test(code) ? code : '';
+  }
+
+  function top100ModelForRatio() {
+    const selector = document.getElementById('candidate-model-selector');
+    return selector?.value || '';
+  }
+
+  function rankModeForRatio() {
+    try {
+      return localStorage.getItem('stockboard.rankMode.v1') || 'auto';
+    } catch (_error) {
+      return 'auto';
+    }
+  }
+
+  function amountRatioUrl() {
+    const params = new URLSearchParams();
+    const model = top100ModelForRatio();
+    const rankMode = rankModeForRatio();
+    if (model) params.set('candidate_model', model);
+    if (rankMode) params.set('rank_mode', rankMode);
+    params.set('ts', String(Date.now()));
+    return `/api/top100?${params.toString()}`;
+  }
+
+  function firstRowValue(row, keys) {
+    for (const key of keys) {
+      const value = row && row[key];
+      if (value !== null && value !== undefined && value !== '') return value;
+    }
+    return null;
+  }
+
+  async function loadAmountRatioBase() {
+    if (amountRatioLoading) return;
+    amountRatioLoading = true;
+    try {
+      const response = await fetch(amountRatioUrl(), { cache: 'no-store' });
+      if (!response.ok) throw new Error(`amount ratio top100 failed: ${response.status}`);
+      const rows = await response.json();
+      if (!Array.isArray(rows)) return;
+      rows.forEach((row) => {
+        const code = String(firstRowValue(row, ['stock_code', 'code']) || '').replace(/^A(?=\d{6}$)/, '').replace(/_AL$/, '').replace(/_NX$/, '');
+        const prev = parseNumber(firstRowValue(row, [
+          'prev_trade_value_eok',
+          'previous_trade_value_eok',
+          'yesterday_trade_value_eok',
+          'prevTradeValueEok',
+          'previousTradeValueEok'
+        ]));
+        if (/^\d{6}$/.test(code) && prev && prev > 0) amountRatioPrevByCode.set(code, prev);
+      });
+      queueApplyAmountRatio();
+    } catch (error) {
+      console.warn(error);
+    } finally {
+      amountRatioLoading = false;
+    }
+  }
+
+  function setAmountRatioHeaders() {
+    SORT_TABLE_IDS.concat(['selected-board']).forEach((id) => {
+      const table = document.getElementById(id);
+      if (!table) return;
+      const header = table.querySelector(`th:nth-child(${AMOUNT_RATIO_COLUMN_INDEX + 1})`);
+      if (!header) return;
+      const label = header.querySelector('.column-label');
+      if (label && label.firstChild) label.firstChild.nodeValue = '대금비';
+      else if (label) label.textContent = '대금비';
+      else header.textContent = '대금비';
+    });
+  }
+
+  function amountRatioClass(ratio) {
+    if (!Number.isFinite(ratio) || ratio <= 0) return 'amount-ratio-number amount-ratio-missing';
+    return ratio >= 1 ? 'amount-ratio-number amount-ratio-strong' : 'amount-ratio-number amount-ratio-weak';
+  }
+
+  function amountRatioHtml(ratio) {
+    if (!Number.isFinite(ratio) || ratio <= 0) return '<span class="amount-ratio-number amount-ratio-missing">-</span>';
+    const display = ratio >= 10 ? '10x+' : `${ratio.toFixed(ratio >= 3 ? 1 : 2)}x`;
+    return `<span class="${amountRatioClass(ratio)}">${display}</span>`;
+  }
+
+  function applyAmountRatioToRow(row) {
+    const code = stockCodeFromRow(row);
+    if (!code) return;
+    const cell = row.children[AMOUNT_RATIO_COLUMN_INDEX];
+    if (!cell) return;
+    const prev = amountRatioPrevByCode.get(code);
+    const current = parseNumber(row.children[6]?.textContent);
+    const ratio = prev && current !== null ? current / prev : null;
+    const html = amountRatioHtml(ratio);
+    if (cell.dataset.amountRatioHtml !== html) {
+      cell.innerHTML = html;
+      cell.dataset.amountRatioHtml = html;
+    }
+    cell.className = 'amount-ratio-cell number-cell';
+    const tooltip = [
+      '대금비 = 당일 거래대금 / 전일 거래대금',
+      `당일 거래대금: ${current === null ? '-' : current.toLocaleString('en-US')}억`,
+      `전일 거래대금: ${prev ? prev.toLocaleString('en-US', { maximumFractionDigits: 2 }) + '억' : '-'}`,
+      `대금비: ${ratio && Number.isFinite(ratio) ? ratio.toFixed(2) + 'x' : '-'}`
+    ].join('\n');
+    cell.dataset.tooltip = tooltip;
+    cell.setAttribute('aria-label', tooltip);
+  }
+
+  function applyAmountRatio() {
+    setAmountRatioHeaders();
+    SORT_TABLE_IDS.concat(['selected-board']).forEach((id) => {
+      const table = document.getElementById(id);
+      if (!table) return;
+      table.querySelectorAll('tr[data-stock-code], tr[data-stockcode]').forEach(applyAmountRatioToRow);
+    });
+  }
+
+  function queueApplyAmountRatio() {
+    if (amountRatioApplyQueued) return;
+    amountRatioApplyQueued = true;
+    window.requestAnimationFrame(() => {
+      amountRatioApplyQueued = false;
+      applyAmountRatio();
+    });
+  }
+
+  function installAmountRatioColumn() {
+    loadAmountRatioBase();
+    window.setInterval(loadAmountRatioBase, 60000);
+    window.setInterval(queueApplyAmountRatio, 1000);
+    queueApplyAmountRatio();
   }
 
   function installTop5ArrowNavigation() {
@@ -316,6 +498,7 @@
     installServerDisconnectGuard();
     installMarketSupplyGraphFirst();
     installBoardHeaderSort();
+    installAmountRatioColumn();
     installTop5ArrowNavigation();
   }
 
