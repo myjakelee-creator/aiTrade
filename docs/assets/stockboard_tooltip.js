@@ -435,6 +435,8 @@
     loadAmountRatioBase();
     window.setInterval(loadAmountRatioBase, 60000);
     window.setInterval(queueApplyAmountRatio, 1000);
+    const observer = new MutationObserver(queueApplyAmountRatio);
+    if (document.body) observer.observe(document.body, { childList: true, subtree: true });
     queueApplyAmountRatio();
   }
 
