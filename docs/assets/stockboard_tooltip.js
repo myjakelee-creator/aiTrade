@@ -40,6 +40,8 @@
     const style = document.createElement('style');
     style.textContent = `
       @keyframes stockboard-server-down-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+      @keyframes stockboard-amount-ratio-flash-up { 0% { background:#ffe0e0; box-shadow:inset 0 0 0 1px rgba(215,25,32,.55); } 100% { background:transparent; box-shadow:none; } }
+      @keyframes stockboard-amount-ratio-flash-down { 0% { background:#dcecff; box-shadow:inset 0 0 0 1px rgba(18,102,214,.45); } 100% { background:transparent; box-shadow:none; } }
       body.stockboard-server-down #combined-status-lamp,
       body.stockboard-server-down #api-status-lamp,
       body.stockboard-server-down #web-status-lamp {
@@ -94,6 +96,8 @@
       .amount-ratio-strong { color: var(--red) !important; }
       .amount-ratio-weak { color: var(--blue) !important; }
       .amount-ratio-missing { color: #4b5563 !important; }
+      .amount-ratio-flash-up { animation: stockboard-amount-ratio-flash-up .7s ease-out 1; }
+      .amount-ratio-flash-down { animation: stockboard-amount-ratio-flash-down .7s ease-out 1; }
     `;
     document.head.appendChild(style);
 
@@ -383,10 +387,26 @@
     return ratio >= 1 ? 'amount-ratio-number amount-ratio-strong' : 'amount-ratio-number amount-ratio-weak';
   }
 
+  function amountRatioDisplay(ratio) {
+    if (!Number.isFinite(ratio) || ratio <= 0) return '-';
+    return ratio >= 10 ? '10x+' : `${ratio.toFixed(ratio >= 3 ? 1 : 2)}x`;
+  }
+
   function amountRatioHtml(ratio) {
-    if (!Number.isFinite(ratio) || ratio <= 0) return '<span class="amount-ratio-number amount-ratio-missing">-</span>';
-    const display = ratio >= 10 ? '10x+' : `${ratio.toFixed(ratio >= 3 ? 1 : 2)}x`;
+    const display = amountRatioDisplay(ratio);
+    if (display === '-') return '<span class="amount-ratio-number amount-ratio-missing">-</span>';
     return `<span class="${amountRatioClass(ratio)}">${display}</span>`;
+  }
+
+  function flashAmountRatioCell(cell, previousRatio, ratio) {
+    if (!cell || !Number.isFinite(ratio)) return;
+    cell.classList.remove('amount-ratio-flash-up', 'amount-ratio-flash-down');
+    void cell.offsetWidth;
+    const className = Number.isFinite(previousRatio) && ratio < previousRatio
+      ? 'amount-ratio-flash-down'
+      : 'amount-ratio-flash-up';
+    cell.classList.add(className);
+    window.setTimeout(() => cell.classList.remove(className), 750);
   }
 
   function applyAmountRatioToRow(row) {
@@ -398,10 +418,18 @@
     const current = parseNumber(row.children[6]?.textContent);
     const ratio = prev && current !== null ? current / prev : null;
     const html = amountRatioHtml(ratio);
+    const display = amountRatioDisplay(ratio);
+    const previousDisplay = cell.dataset.amountRatioDisplay || '';
+    const previousRatio = parseNumber(cell.dataset.amountRatioRatio);
     if (cell.dataset.amountRatioHtml !== html) {
       cell.innerHTML = html;
       cell.dataset.amountRatioHtml = html;
+      if (previousDisplay && previousDisplay !== display) {
+        flashAmountRatioCell(cell, previousRatio, ratio);
+      }
     }
+    cell.dataset.amountRatioDisplay = display;
+    cell.dataset.amountRatioRatio = Number.isFinite(ratio) ? String(ratio) : '';
     cell.className = 'amount-ratio-cell number-cell';
     const tooltip = [
       '대금비 = 당일 거래대금 / 전일 거래대금',
