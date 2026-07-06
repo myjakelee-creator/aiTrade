@@ -7,9 +7,13 @@ echo   StockBoard Live + Program Net Sidecar
 echo ============================================================
 echo.
 echo This launcher starts StockBoard first, then starts the 프로(억) sidecar
-echo in a separate window. If the sidecar fails, StockBoard keeps running.
+echo hidden in the background. If the sidecar fails, StockBoard keeps running.
 echo.
 
+if /I "%~1"=="stop" goto stop_all
+if /I "%~1"=="restart" goto restart_all
+
+:start_all
 call stockboard_live.cmd start
 set STOCKBOARD_EXIT=%ERRORLEVEL%
 
@@ -23,14 +27,36 @@ if not "%STOCKBOARD_EXIT%"=="0" (
 )
 
 echo.
-echo Starting Program Net Sidecar in a separate window...
-start "StockBoard Program Net Sidecar" cmd /k "cd /d "%~dp0" && scripts\run_stockboard_program_net_snapshot.cmd"
+echo Starting Program Net Sidecar hidden in background...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start_stockboard_program_net_sidecar_hidden.ps1"
+set SIDECAR_EXIT=%ERRORLEVEL%
+
+if not "%SIDECAR_EXIT%"=="0" (
+  echo.
+  echo Program net sidecar start returned code %SIDECAR_EXIT%.
+  echo StockBoard is still running. Review the sidecar log messages above.
+  echo.
+  pause
+  exit /b %SIDECAR_EXIT%
+)
 
 echo.
-echo StockBoard and Program Net Sidecar start commands completed.
-echo - Main board: stockboard_live.cmd
-echo - Sidecar: scripts\run_stockboard_program_net_snapshot.cmd
+echo StockBoard and hidden Program Net Sidecar start commands completed.
+echo This launcher window will close soon. The sidecar keeps running hidden.
 echo.
-echo You may close this launcher window after confirming both windows are open.
+timeout /t 4 /nobreak >nul
+exit /b 0
+
+:restart_all
+call "%~f0" stop
+call "%~f0"
+exit /b %ERRORLEVEL%
+
+:stop_all
 echo.
-pause
+echo == Stopping Program Net Sidecar ==
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\stop_stockboard_program_net_sidecar.ps1"
+echo.
+echo == Stopping StockBoard ==
+call stockboard_live.cmd stop
+exit /b %ERRORLEVEL%
