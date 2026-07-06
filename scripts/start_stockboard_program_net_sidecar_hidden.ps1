@@ -24,7 +24,7 @@ function Stop-ExistingSidecar {
             Stop-Process -Id $oldPid -Force -ErrorAction Stop
             Start-Sleep -Milliseconds 300
         } catch {
-            Write-Warning "failed to stop old program net sidecar pid=$oldPid: $_"
+            Write-Warning "failed to stop old program net sidecar pid=${oldPid}: $_"
         }
     }
     Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
