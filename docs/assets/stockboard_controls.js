@@ -75,6 +75,7 @@
   function installRuntimeDisplayFixes() {
     injectRuntimeDisplayFixStyles();
     const apply = () => {
+      applyTopGroupAlignment();
       applyAmountRatioColorRule();
     };
     if (document.readyState === 'loading') {
@@ -93,6 +94,8 @@
     const style = document.createElement('style');
     style.id = 'stockboard-controls-runtime-fix-style';
     style.textContent = `
+      #top20-board td:nth-child(4),
+      #top50-board td:nth-child(4),
       #top20-board .stock-name,
       #top50-board .stock-name {
         text-align: left !important;
@@ -112,10 +115,6 @@
         text-align: right !important;
         font-variant-numeric: tabular-nums;
       }
-      #top20-board td:nth-child(4),
-      #top50-board td:nth-child(4) {
-        text-align: left !important;
-      }
       .amount-ratio-cell {
         text-align: right !important;
         font-variant-numeric: tabular-nums;
@@ -128,15 +127,9 @@
         font-weight: 700;
         line-height: inherit;
       }
-      .amount-ratio-number.amount-ratio-strong {
-        color: var(--red) !important;
-      }
-      .amount-ratio-number.amount-ratio-weak {
-        color: var(--blue) !important;
-      }
-      .amount-ratio-number.amount-ratio-missing {
-        color: #4b5563 !important;
-      }
+      .amount-ratio-number.amount-ratio-strong { color: var(--red) !important; }
+      .amount-ratio-number.amount-ratio-weak { color: var(--blue) !important; }
+      .amount-ratio-number.amount-ratio-missing { color: #4b5563 !important; }
     `;
     document.head.appendChild(style);
   }
@@ -158,6 +151,23 @@
     window.setInterval(apply, 1000);
   }
 
+  function applyTopGroupAlignment() {
+    ['top20-board', 'top50-board'].forEach(tableId => {
+      const table = document.getElementById(tableId);
+      if (!table) return;
+      table.querySelectorAll('tr').forEach(row => {
+        if (row.querySelector('th')) return;
+        const cells = row.children || [];
+        if (cells[3]) cells[3].style.setProperty('text-align', 'left', 'important');
+        [4, 5, 6, 11, 12, 13].forEach(index => {
+          if (!cells[index]) return;
+          cells[index].style.setProperty('text-align', 'right', 'important');
+          cells[index].style.fontVariantNumeric = 'tabular-nums';
+        });
+      });
+    });
+  }
+
   function parseAmountRatioText(text) {
     const normalized = String(text || '').replace(/,/g, '').trim();
     if (!normalized || normalized === '-') return null;
@@ -171,12 +181,21 @@
     document.querySelectorAll('.amount-ratio-number').forEach(element => {
       const ratio = parseAmountRatioText(element.textContent);
       element.classList.remove('amount-ratio-strong', 'amount-ratio-weak', 'amount-ratio-neutral', 'amount-ratio-missing');
+      element.style.removeProperty('color');
       if (ratio === null) {
         element.classList.add('amount-ratio-missing');
+        element.style.setProperty('color', '#4b5563', 'important');
       } else if (ratio >= 1) {
         element.classList.add('amount-ratio-strong');
+        element.style.setProperty('color', 'var(--red)', 'important');
       } else {
         element.classList.add('amount-ratio-weak');
+        element.style.setProperty('color', 'var(--blue)', 'important');
+      }
+      const cell = element.closest('td');
+      if (cell) {
+        cell.style.setProperty('text-align', 'right', 'important');
+        cell.style.fontVariantNumeric = 'tabular-nums';
       }
     });
   }
