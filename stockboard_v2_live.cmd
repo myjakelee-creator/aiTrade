@@ -14,6 +14,7 @@ echo   1 Start v2
 echo   2 Stop v2
 echo   3 Restart v2
 echo   4 Status v2
+echo   5 Start HTS Bridge only
 echo   0 Exit
 echo.
 set /p "CHOICE=Select: "
@@ -21,6 +22,7 @@ if "%CHOICE%"=="1" set "ACTION=start"
 if "%CHOICE%"=="2" set "ACTION=stop"
 if "%CHOICE%"=="3" set "ACTION=restart"
 if "%CHOICE%"=="4" set "ACTION=status"
+if "%CHOICE%"=="5" set "ACTION=ahk"
 if "%CHOICE%"=="0" exit /b 0
 if "%ACTION%"=="" (
   echo Invalid selection.
@@ -49,6 +51,18 @@ $WorkerPidFile = Join-Path $RuntimeDir "worker64.pid"
 $CollectorPidFile = Join-Path $RuntimeDir "collector32.pid"
 $WorkerUrl = "http://127.0.0.1:8765/api/v2/health"
 $BoardUrl = "http://127.0.0.1:8765/"
+$AhkScript = Join-Path $ProjectRoot "scripts\stockboard_kiwoom_link_v1.ahk"
+$AhkPidFile = Join-Path $RuntimeDir "stockboard_v2_ahk.pid"
+$AhkStatusFile = Join-Path $RuntimeDir "hts_link_status.txt"
+$AhkExeCandidates = @(
+    "C:\Program Files\AutoHotkey\v1.1.37.02\AutoHotkeyU64.exe",
+    "C:\Program Files\AutoHotkey\v1.1.37.02\AutoHotkeyU32.exe",
+    "C:\Program Files\AutoHotkey\v1.1.37.02\AutoHotkeyA32.exe",
+    "C:\Program Files\AutoHotkey\v1.1\AutoHotkeyU64.exe",
+    "C:\Program Files\AutoHotkey\v1.1\AutoHotkeyU32.exe",
+    "C:\Program Files\AutoHotkey\AutoHotkey.exe",
+    "C:\Program Files (x86)\AutoHotkey\AutoHotkey.exe"
+)
 
 function Write-Step([string]$Message) {
     Write-Host ""
@@ -94,6 +108,85 @@ function Stop-Port([int]$Port) {
             Stop-Process -Id $pidNumber -Force -ErrorAction SilentlyContinue
         }
     }
+}
+
+function Resolve-AhkExe {
+    foreach ($candidate in $AhkExeCandidates) {
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+    return $null
+}
+
+function Stop-HtsBridge {
+    Ensure-RuntimeDir
+    $scriptName = Split-Path -Leaf $AhkScript
+    $ids = New-Object System.Collections.Generic.HashSet[int]
+    try {
+        Get-CimInstance Win32_Process -ErrorAction Stop |
+            Where-Object { $_.Name -like "AutoHotkey*" -and $_.CommandLine -and $_.CommandLine -like "*$scriptName*" } |
+            ForEach-Object { [void]$ids.Add([int]$_.ProcessId) }
+    } catch {
+        Write-Host "AHK bridge lookup warning: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+    if (Test-Path -LiteralPath $AhkPidFile) {
+        $raw = Get-Content -LiteralPath $AhkPidFile -ErrorAction SilentlyContinue | Select-Object -First 1
+        $pidNumber = 0
+        if ([int]::TryParse([string]$raw, [ref]$pidNumber)) {
+            [void]$ids.Add($pidNumber)
+        }
+    }
+    foreach ($pidNumber in $ids) {
+        try {
+            Write-Host "Stopping HTS bridge PID=$pidNumber"
+            Stop-Process -Id $pidNumber -Force -ErrorAction Stop
+        } catch {
+            Write-Host "Could not stop HTS bridge PID=${pidNumber}: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+    Remove-Item -LiteralPath $AhkPidFile -Force -ErrorAction SilentlyContinue
+}
+
+function Start-HtsBridge {
+    Ensure-RuntimeDir
+    if (-not (Test-Path -LiteralPath $AhkScript)) {
+        Write-Host "AHK bridge script not found: $AhkScript" -ForegroundColor Yellow
+        return $false
+    }
+    $ahkExe = Resolve-AhkExe
+    if (-not $ahkExe) {
+        Write-Host "AutoHotkey v1 executable not found." -ForegroundColor Yellow
+        return $false
+    }
+    Stop-HtsBridge
+    try {
+        Write-Host "Starting HTS bridge as administrator. Approve the UAC prompt if Windows asks."
+        $process = Start-Process -FilePath $ahkExe -ArgumentList "`"$AhkScript`"" -Verb RunAs -PassThru -ErrorAction Stop
+        if ($process -and $process.Id) {
+            Set-Content -LiteralPath $AhkPidFile -Value ([string]$process.Id) -Encoding ASCII
+            Write-Host "AHK_PID=$($process.Id)"
+        }
+        Write-Host "AHK_EXE=$ahkExe"
+        Write-Host "AHK_SCRIPT=$AhkScript"
+        return $true
+    } catch {
+        Write-Host "HTS bridge start failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    }
+}
+
+function Get-HtsBridgeStatus {
+    $scriptName = Split-Path -Leaf $AhkScript
+    $pids = @()
+    try {
+        $pids = @(Get-CimInstance Win32_Process -ErrorAction Stop |
+            Where-Object { $_.Name -like "AutoHotkey*" -and $_.CommandLine -and $_.CommandLine -like "*$scriptName*" } |
+            Select-Object -ExpandProperty ProcessId -Unique)
+    } catch { $pids = @() }
+    $lastStatus = ""
+    if (Test-Path -LiteralPath $AhkStatusFile) {
+        $lastStatus = Get-Content -LiteralPath $AhkStatusFile -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+    return @{ running = ($pids.Count -gt 0); pids = $pids; last_status = $lastStatus }
 }
 
 function Test-WorkerReady {
@@ -149,6 +242,9 @@ function Start-V2 {
     Write-Host "COLLECTOR32_STDOUT=$collectorOut"
     Write-Host "COLLECTOR32_STDERR=$collectorErr"
 
+    Write-Step "Starting HTS bridge"
+    [void](Start-HtsBridge)
+
     Start-Process $BoardUrl
     Write-Host ""
     Write-Host "Open $BoardUrl"
@@ -156,7 +252,8 @@ function Start-V2 {
 
 function Stop-V2 {
     Ensure-RuntimeDir
-    Write-Step "Stopping v2 collector/worker"
+    Write-Step "Stopping v2 collector/worker/HTS bridge"
+    Stop-HtsBridge
     Stop-PidFile $CollectorPidFile "collector32"
     Stop-PidFile $WorkerPidFile "worker64"
     Stop-Port 8765
@@ -169,6 +266,10 @@ function Status-V2 {
     if (Test-Path -LiteralPath $WorkerPidFile) { Write-Host "WORKER_PID=$(Get-Content -LiteralPath $WorkerPidFile | Select-Object -First 1)" }
     Write-Host "COLLECTOR_PID_FILE=$CollectorPidFile"
     if (Test-Path -LiteralPath $CollectorPidFile) { Write-Host "COLLECTOR_PID=$(Get-Content -LiteralPath $CollectorPidFile | Select-Object -First 1)" }
+    $hts = Get-HtsBridgeStatus
+    Write-Host "AHK_RUNNING=$($hts.running)"
+    Write-Host "AHK_PIDS=$($hts.pids -join ',')"
+    Write-Host "AHK_LAST_STATUS=$($hts.last_status)"
     try {
         $health = Invoke-RestMethod -Uri $WorkerUrl -TimeoutSec 1
         Write-Host "WORKER_HEALTH=True"
@@ -190,4 +291,5 @@ if ($Action -eq "start") { Start-V2; exit 0 }
 if ($Action -eq "stop") { Stop-V2; exit 0 }
 if ($Action -eq "restart") { Stop-V2; Start-V2; exit 0 }
 if ($Action -eq "status") { Status-V2; exit 0 }
+if ($Action -eq "ahk") { [void](Start-HtsBridge); exit 0 }
 throw "unknown action: $Action"
