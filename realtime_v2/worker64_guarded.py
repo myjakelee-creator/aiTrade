@@ -27,6 +27,19 @@ from realtime_v2.common import (
 from realtime_v2.market_session import market_session_now
 
 STALE_LAG_WARN_SEC = 10.0
+PERSISTED_LIVE_KEYS = (
+    "execution_strength",
+    "execution_strength_updated_at",
+    "ask_volume",
+    "bid_volume",
+    "ask_pct",
+    "bid_pct",
+    "bid_ask_ratio",
+    "best_ask_price",
+    "best_bid_price",
+    "orderbook_received_at",
+)
+base.DAILY_PERSIST_KEYS = tuple(dict.fromkeys((*base.DAILY_PERSIST_KEYS, *PERSISTED_LIVE_KEYS)))
 
 
 def _time_seconds(value: Any) -> int | None:
@@ -128,6 +141,27 @@ def _mark_lag_warning(state, quote: dict[str, Any], code: str, values: dict[str,
     quote["last_lagged_trade_warning_at"] = now_text()
 
 
+def _restore_persisted_live_metrics(quote: dict[str, Any], persisted: dict[str, Any]) -> None:
+    for key in PERSISTED_LIVE_KEYS:
+        if key in persisted:
+            quote[key] = persisted.get(key)
+
+
+def _persist_live_metrics(state, code: str, quote: dict[str, Any], *keys: str) -> None:
+    if not code:
+        return
+    entry = state.daily_values_by_code.setdefault(code, {})
+    changed = False
+    for key in keys:
+        value = quote.get(key)
+        if value not in (None, ""):
+            if entry.get(key) != value:
+                entry[key] = value
+                changed = True
+    if changed:
+        state._mark_daily_dirty()
+
+
 def _guarded_load_universe(self) -> None:
     """Load seed rows and create base quotes for the whole universe.
 
@@ -209,6 +243,7 @@ def _guarded_quote(self, code: str) -> dict[str, Any]:
     for key in ("program_net", "program_net_updated_at", "program_net_source", "program_net_status"):
         if key in persisted:
             quote[key] = persisted.get(key)
+    _restore_persisted_live_metrics(quote, persisted)
     self.quotes[code] = quote
     return quote
 
@@ -343,6 +378,8 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
         quote["trade_value_eok"] = trade_value_eok
     if strength is not None:
         quote["execution_strength"] = round(strength, 4)
+        quote["execution_strength_updated_at"] = received_at
+        _persist_live_metrics(self, code, quote, "execution_strength", "execution_strength_updated_at")
     quote["trade_time"] = trade_time
     if trade_time_sec is not None:
         quote["_trade_time_seconds"] = trade_time_sec
@@ -383,6 +420,39 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
             self._mark_daily_dirty()
 
 
+_original_apply_orderbook = base.State._apply_orderbook
+
+
+def _guarded_apply_orderbook(self, event: dict[str, Any]) -> None:
+    _original_apply_orderbook(self, event)
+    values = base.merged_event_values(event)
+    code = normalize_code(
+        event.get("stock_code")
+        or event.get("received_code")
+        or values.get("stock_code")
+        or values.get("normalized_code")
+        or values.get("received_code")
+    )
+    if not code:
+        return
+    quote = self.quotes.get(code)
+    if not isinstance(quote, dict):
+        return
+    _persist_live_metrics(
+        self,
+        code,
+        quote,
+        "ask_volume",
+        "bid_volume",
+        "ask_pct",
+        "bid_pct",
+        "bid_ask_ratio",
+        "best_ask_price",
+        "best_bid_price",
+        "orderbook_received_at",
+    )
+
+
 _original_snapshot = base.State.snapshot
 
 
@@ -408,6 +478,7 @@ base.State._load_universe = _guarded_load_universe
 base.State._quote = _guarded_quote
 base.State.rows = _guarded_rows
 base.State._apply_trade = _guarded_apply_trade
+base.State._apply_orderbook = _guarded_apply_orderbook
 base.State.snapshot = _guarded_snapshot
 
 if __name__ == "__main__":
