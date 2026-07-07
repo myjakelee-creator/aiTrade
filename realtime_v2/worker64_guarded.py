@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import sys
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -87,6 +89,120 @@ def _mark_lag_warning(state, quote: dict[str, Any], code: str, values: dict[str,
     quote["last_lagged_trade_warning_at"] = now_text()
 
 
+def _guarded_load_universe(self) -> None:
+    """Load seed rows and create base quotes for the whole universe.
+
+    During market halts, closing call auction, after-close gaps, or immediately
+    after a v2 restart, many stocks may not receive a realtime trade event. If
+    rows are created only from realtime trades, price/rate/value cells stay
+    blank. The universe already contains the latest ka10032 seed snapshot; use
+    it as the base row, then let realtime events overwrite it.
+    """
+    self.seed_by_code: dict[str, dict[str, Any]] = {}
+    try:
+        payload = json.loads(self.universe_file.read_text(encoding="utf-8-sig"))
+        built_at = payload.get("built_at") if isinstance(payload, dict) else None
+        for item in payload.get("items", []) or []:
+            code = normalize_code(item.get("stock_code"))
+            if not code:
+                continue
+            self.name_by_code[code] = str(item.get("stock_name") or code)
+            self.seed_rank_by_code[code] = int(
+                item.get("seed_rank") or item.get("original_rank") or 999999
+            )
+            previous_rank = to_int(item.get("prev_rank"))
+            previous_value = to_number(item.get("prev_trade_value_eok"))
+            if previous_rank is not None and previous_rank > 0:
+                self.prev_rank_by_code[code] = previous_rank
+            if previous_value is not None and previous_value > 0:
+                self.prev_trade_value_by_code[code] = float(previous_value)
+            self.seed_by_code[code] = {
+                "seed_price": item.get("seed_price"),
+                "seed_change_rate": item.get("seed_change_rate"),
+                "seed_trade_value_eok": item.get("seed_trade_value_eok"),
+                "seed_built_at": built_at,
+            }
+        for code in list(self.seed_rank_by_code):
+            self._quote(code)
+        self.status["universe_seed_quote_count"] = len(self.quotes)
+        self.status["universe_seed_built_at"] = built_at
+    except Exception as error:
+        self.status["last_error"] = f"universe load failed: {error}"
+
+
+def _guarded_quote(self, code: str) -> dict[str, Any]:
+    code = normalize_code(code)
+    quote = self.quotes.get(code)
+    if quote is not None:
+        return quote
+    persisted = self.daily_values_by_code.get(code) or {}
+    seed = getattr(self, "seed_by_code", {}).get(code, {}) or {}
+    quote = {
+        "stock_code": code,
+        "stock_name": self.name_by_code.get(code, code),
+        "seed_rank": self.seed_rank_by_code.get(code, 999999),
+        "prev_rank": self.prev_rank_by_code.get(code),
+        "prev_trade_value_eok": self.prev_trade_value_by_code.get(code),
+        "large_trade_buy_count": persisted.get("large_trade_buy_count", 0),
+        "large_trade_sell_count": persisted.get("large_trade_sell_count", 0),
+        "large_trade_net_count": persisted.get("large_trade_net_count", 0),
+        "large_trade_buy_sum_eok": persisted.get("large_trade_buy_sum_eok", 0.0),
+        "large_trade_sell_sum_eok": persisted.get("large_trade_sell_sum_eok", 0.0),
+        "large_trade_net_sum_eok": persisted.get("large_trade_net_sum_eok", 0.0),
+        "source_code": "seed_universe",
+        "row_source": "seed_universe",
+    }
+    seed_price = normalized_price(seed.get("seed_price"))
+    seed_rate = normalized_rate(seed.get("seed_change_rate"))
+    seed_value = to_number(seed.get("seed_trade_value_eok"))
+    if seed_price is not None:
+        quote["price"] = seed_price
+        quote["seed_price"] = seed_price
+    if seed_rate is not None:
+        quote["change_rate"] = seed_rate
+        quote["seed_change_rate"] = seed_rate
+    if seed_value is not None:
+        quote["trade_value_eok"] = round(float(seed_value), 4)
+        quote["seed_trade_value_eok"] = round(float(seed_value), 4)
+    if seed.get("seed_built_at"):
+        quote["seed_built_at"] = seed.get("seed_built_at")
+    for key in ("program_net", "program_net_updated_at", "program_net_source", "program_net_status"):
+        if key in persisted:
+            quote[key] = persisted.get(key)
+    self.quotes[code] = quote
+    return quote
+
+
+def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
+    with self.lock:
+        for code in list(self.seed_rank_by_code):
+            self._quote(code)
+        rows = [deepcopy(row) for row in self.quotes.values()]
+    for row in rows:
+        if row.get("received_at"):
+            row["price_age_sec"] = event_age_sec(row.get("received_at"))
+        elif row.get("price") is not None:
+            row["price_age_sec"] = None
+    rows.sort(
+        key=lambda row: (
+            -(to_number(row.get("trade_value_eok")) or 0),
+            row.get("seed_rank") or 999999,
+            row.get("stock_code") or "",
+        )
+    )
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
+        prev_rank = to_int(row.get("prev_rank"))
+        row["rank_change"] = (prev_rank - rank) if prev_rank is not None else None
+        previous_amount = to_number(row.get("prev_trade_value_eok"))
+        current_amount = to_number(row.get("trade_value_eok"))
+        if previous_amount is not None and previous_amount > 0 and current_amount is not None:
+            row["amount_ratio"] = round(current_amount / previous_amount, 4)
+        else:
+            row["amount_ratio"] = None
+    return rows[:limit]
+
+
 def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
     values = base.merged_event_values(event)
     raw = values.get("raw") if isinstance(values.get("raw"), dict) else values
@@ -146,25 +262,25 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
     previous_time_sec = quote.get("_trade_time_seconds")
     previous_value = to_number(quote.get("trade_value_eok"))
     previous_volume = to_int(quote.get("cumulative_volume"))
-    has_accepted_price = to_number(quote.get("price")) is not None
+    has_accepted_realtime = quote.get("row_source") == "realtime"
     drop_reason = None
-    if has_accepted_price and trade_time_sec is not None and previous_time_sec is not None:
+    if has_accepted_realtime and trade_time_sec is not None and previous_time_sec is not None:
         try:
             if int(trade_time_sec) < int(previous_time_sec):
                 drop_reason = "older_fid20_than_last_accepted"
         except (TypeError, ValueError):
             pass
-    if drop_reason is None and has_accepted_price and trade_value_eok is not None and previous_value is not None:
+    if drop_reason is None and has_accepted_realtime and trade_value_eok is not None and previous_value is not None:
         if float(trade_value_eok) + 1.0 < float(previous_value):
             drop_reason = "cumulative_trade_value_decreased"
-    if drop_reason is None and has_accepted_price and cumulative_volume is not None and previous_volume is not None:
+    if drop_reason is None and has_accepted_realtime and cumulative_volume is not None and previous_volume is not None:
         if int(cumulative_volume) < int(previous_volume):
             drop_reason = "cumulative_volume_decreased"
     # Do NOT drop by absolute FID20 lag alone. During halts and closing phases,
     # Kiwoom can send delayed-but-monotonic events. Dropping every delayed first
     # event leaves price/rate/value blank. We warn on lag but accept monotonic
     # events; decreasing cumulative value/volume and older trade-time events are
-    # still rejected.
+    # still rejected after a realtime event has already been accepted.
     if drop_reason is not None:
         _drop_trade(self, quote, code, drop_reason, event, values, trade_time, fid20_lag_sec)
         return
@@ -188,11 +304,10 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
         quote["_trade_time_seconds"] = trade_time_sec
     quote["fid20_lag_sec"] = fid20_lag_sec
     quote["received_at"] = received_at
-    # UI freshness should be based on receive/update time. FID20 lag is exposed
-    # separately for diagnostics and should not by itself gray out all rows.
     quote["price_age_sec"] = event_age_sec(received_at)
     quote["market_type_raw"] = raw.get("market_type_raw") or values.get("market_type")
     quote["source_code"] = values.get("source_code") or values.get("registered_code")
+    quote["row_source"] = "realtime"
     quote.pop("last_dropped_trade_reason", None)
     self.status["trade_count"] += 1
 
@@ -224,6 +339,9 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
             self._mark_daily_dirty()
 
 
+base.State._load_universe = _guarded_load_universe
+base.State._quote = _guarded_quote
+base.State.rows = _guarded_rows
 base.State._apply_trade = _guarded_apply_trade
 
 if __name__ == "__main__":
