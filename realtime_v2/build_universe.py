@@ -114,10 +114,13 @@ def _request_previous_value_one(access_token: str, code: str, query_date: str, r
         return None
 
 
-def _fetch_previous_value_dual(access_token: str, code: str, query_date: str) -> dict[str, Any] | None:
-    # First try the integrated/NXT-aware AL code. If the stock is not in NXT or
-    # AL returns no previous row, fall back to the regular-session base code.
-    candidates = [f"{code}_AL", code]
+def _fetch_previous_value_regular_first(access_token: str, code: str, query_date: str) -> dict[str, Any] | None:
+    # Current policy: use the most reliable regular-session daily close source as
+    # the denominator for amount ratio. For NXT-traded stocks this intentionally
+    # ignores previous-day NXT pre/aftermarket add-ons when no authoritative NXT
+    # previous close amount source is available. _AL remains only a fallback for
+    # stocks whose base-code lookup fails.
+    candidates = [code, f"{code}_AL"]
     seen = set()
     for registered_code in candidates:
         if registered_code in seen:
@@ -143,7 +146,7 @@ def _attach_direct_previous_values(items: list[dict[str, Any]], query_date: str,
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
-                _fetch_previous_value_dual,
+                _fetch_previous_value_regular_first,
                 access_token,
                 str(item.get("stock_code")),
                 query_date,
@@ -244,8 +247,8 @@ def build_universe(limit: int, rank_basis: str) -> dict:
         "tradable_filter_enabled": bool(tradable_codes),
         "previous_trade_value_attached_count": cached_previous_count + direct_previous_count,
         "previous_trade_value_cached_count": cached_previous_count,
-        "previous_trade_value_direct_dual_count": direct_previous_count,
-        "previous_trade_value_policy": "cache first; ka10086 _AL then regular-code fallback",
+        "previous_trade_value_direct_regular_count": direct_previous_count,
+        "previous_trade_value_policy": "cache first; ka10086 regular base-code first; _AL fallback only",
         "items": items,
     }
 
@@ -268,7 +271,7 @@ def main() -> int:
     print(f"FILTERED_OUT_NOT_TRADABLE={payload['filtered_out_not_tradable']}")
     print(f"PREVIOUS_TRADE_VALUE_ATTACHED={payload['previous_trade_value_attached_count']}")
     print(f"PREVIOUS_TRADE_VALUE_CACHED={payload['previous_trade_value_cached_count']}")
-    print(f"PREVIOUS_TRADE_VALUE_DIRECT_DUAL={payload['previous_trade_value_direct_dual_count']}")
+    print(f"PREVIOUS_TRADE_VALUE_DIRECT_REGULAR={payload['previous_trade_value_direct_regular_count']}")
     return 0
 
 
