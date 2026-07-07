@@ -6,13 +6,14 @@
   <title>StockBoard v2 Realtime</title>
   <style>
     :root { --red:#d71920; --blue:#1266d6; --grid:#c7d1dc; --head:#eaf0f6; --text:#111827; }
-    body { margin:0; font-family: Malgun Gothic, Arial, sans-serif; font-size:12px; color:var(--text); background:#f8fafc; }
-    .topbar { position:sticky; top:0; z-index:5; display:flex; gap:12px; align-items:center; padding:6px 8px; border-bottom:1px solid #aab7c6; background:#dde7f1; }
+    html { overflow-x:auto; }
+    body { margin:0; min-width:100vw; overflow-x:auto; font-family: Malgun Gothic, Arial, sans-serif; font-size:12px; color:var(--text); background:#f8fafc; }
+    .topbar { position:sticky; top:0; z-index:5; display:flex; gap:12px; align-items:center; padding:6px 8px; border-bottom:1px solid #aab7c6; background:#dde7f1; min-width:max-content; }
     .title { font-weight:800; }
     .badge { padding:2px 6px; border:1px solid #9aa8b5; background:white; border-radius:3px; }
     .ok { color:#067a2a; font-weight:800; }
     .bad { color:var(--red); font-weight:800; }
-    table { width:max-content; min-width:100%; border-collapse:collapse; table-layout:fixed; background:white; }
+    table { width:max-content; min-width:max-content; border-collapse:collapse; table-layout:fixed; background:white; }
     col { width: var(--col-width, 80px); }
     th, td { border:1px solid var(--grid); padding:2px 4px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; height:20px; }
     th { background:var(--head); font-weight:800; position:sticky; top:31px; z-index:4; user-select:none; cursor:pointer; }
@@ -84,16 +85,16 @@
     const clockEl = document.getElementById('clock');
     const rowByCode = new Map();
     const columnDefs = [
-      { key:'rank', width:48, min:40, max:80 },
-      { key:'rank_change', width:58, min:48, max:90 },
-      { key:'stock_name', width:170, min:110, max:260 },
-      { key:'price', width:92, min:72, max:120 },
-      { key:'change_rate', width:76, min:62, max:100 },
-      { key:'trade_value_eok', width:106, min:82, max:140 },
-      { key:'amount_ratio', width:72, min:58, max:95 },
-      { key:'execution_strength', width:82, min:68, max:115 },
-      { key:'bid_ask_ratio', width:72, min:58, max:95 },
-      { key:'large_trade_net_count', width:72, min:58, max:100 }
+      { key:'rank', width:48, min:18, max:260 },
+      { key:'rank_change', width:58, min:18, max:260 },
+      { key:'stock_name', width:170, min:22, max:520 },
+      { key:'price', width:92, min:22, max:360 },
+      { key:'change_rate', width:76, min:22, max:320 },
+      { key:'trade_value_eok', width:106, min:22, max:420 },
+      { key:'amount_ratio', width:72, min:18, max:260 },
+      { key:'execution_strength', width:82, min:22, max:320 },
+      { key:'bid_ask_ratio', width:72, min:18, max:260 },
+      { key:'large_trade_net_count', width:72, min:18, max:260 }
     ];
     let lastPayload = null;
     let lastStreamAt = 0;
@@ -124,10 +125,11 @@
     function saveColumnWidths() {
       try { localStorage.setItem('stockboard.v2.columnWidths', JSON.stringify(columnWidths)); } catch (_error) {}
     }
-    function columnDef(index) { return columnDefs[index] || { key:String(index), width:80, min:40, max:240 }; }
+    function columnDef(index) { return columnDefs[index] || { key:String(index), width:80, min:18, max:520 }; }
     function clampWidth(index, value) {
       const def = columnDef(index);
-      return Math.max(def.min, Math.min(def.max, Math.round(value || def.width)));
+      const width = Math.round(Number(value) || def.width);
+      return Math.max(def.min, Math.min(def.max || 520, width));
     }
     function setColumnWidth(index, width, save=true) {
       const def = columnDef(index);
@@ -155,7 +157,6 @@
       return ctx.measureText(String(text || '')).width;
     }
     function autoFitColumn(index, save=true) {
-      const def = columnDef(index);
       const th = boardEl.querySelectorAll('thead th')[index];
       let width = measureText(th?.querySelector('.header-label')?.textContent || th?.textContent || '') + 26;
       rowsEl.querySelectorAll('tr').forEach((row) => {
