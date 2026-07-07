@@ -31,7 +31,7 @@
     .zero { color:#4b5563; }
     .ratio-hot { color:var(--red); font-weight:700; }
     .ratio-cold { color:var(--blue); font-weight:700; }
-    .stock-name-copy { cursor:copy; text-decoration: underline dotted rgba(31,41,55,.35); text-underline-offset:2px; }
+    .stock-name-copy { cursor:pointer; text-decoration: underline dotted rgba(31,41,55,.35); text-underline-offset:2px; }
     .stock-name-copy.copied { background:#dcfce7 !important; color:#166534 !important; font-weight:800; }
     tr.stale { opacity:.55; }
     tr.hot { background:#fff7d6; }
@@ -45,7 +45,7 @@
     <span id="status" class="badge bad">연결 대기</span>
     <span id="counts" class="badge">rows 0 · events 0</span>
     <span id="latency" class="badge">stream - ms</span>
-    <span id="copy-status" class="badge">종목명 클릭=코드복사</span>
+    <span id="copy-status" class="badge">종목명 클릭=HTS연동</span>
     <span class="small">32bit 수집기 → 64bit worker → 100ms micro-batch stream</span>
   </div>
   <table id="board">
@@ -109,6 +109,7 @@
     let lastAutoFitAt = 0;
     let firstAutoFitDone = false;
     let copyTimer = null;
+    let htsLinkSeq = 0;
 
     function loadSortState() {
       try {
@@ -277,7 +278,7 @@
       const stockCell = event.target.closest('td.stock-name-copy');
       if (stockCell) {
         const code = stockCell.dataset.code || stockCell.closest('tr')?.dataset?.code || '';
-        if (code) copyStockCode(stockCell, code);
+        if (code) linkStockToHts(stockCell, code, event.shiftKey);
         event.preventDefault();
         event.stopPropagation();
         return;
@@ -292,34 +293,41 @@
       if (lastPayload) render(lastPayload, 'stream');
     });
 
-    async function copyStockCode(cell, code) {
+    async function writeClipboardText(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      const input = document.createElement('input');
+      input.value = text;
+      input.setAttribute('readonly', 'readonly');
+      input.style.position = 'fixed';
+      input.style.left = '-9999px';
+      document.body.appendChild(input);
+      input.focus();
+      input.select();
+      document.execCommand('copy');
+      input.remove();
+    }
+
+    async function linkStockToHts(cell, code, copyOnly=false) {
       const text = String(code || '').trim();
-      if (!text) return;
+      if (!/^\d{6}$/.test(text)) return;
       try {
-        if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(text);
-        else {
-          const input = document.createElement('input');
-          input.value = text;
-          input.setAttribute('readonly', 'readonly');
-          input.style.position = 'fixed';
-          input.style.left = '-9999px';
-          document.body.appendChild(input);
-          input.focus();
-          input.select();
-          document.execCommand('copy');
-          input.remove();
-        }
+        const commandSeq = `${Date.now()}${++htsLinkSeq}`;
+        const payload = copyOnly ? text : `SBV2|${commandSeq}|${text}`;
+        await writeClipboardText(payload);
         cell.classList.add('copied');
-        copyStatusEl.textContent = `복사됨 ${text}`;
+        copyStatusEl.textContent = copyOnly ? `코드 복사 ${text}` : `HTS 연동 ${text}`;
         copyStatusEl.className = 'badge copy-ok';
         window.clearTimeout(copyTimer);
         copyTimer = window.setTimeout(() => {
           cell.classList.remove('copied');
-          copyStatusEl.textContent = '종목명 클릭=코드복사';
+          copyStatusEl.textContent = '종목명 클릭=HTS연동';
           copyStatusEl.className = 'badge';
-        }, 700);
+        }, 900);
       } catch (_error) {
-        copyStatusEl.textContent = `복사 실패 ${text}`;
+        copyStatusEl.textContent = `HTS 요청 실패 ${text}`;
         copyStatusEl.className = 'badge bad';
       }
     }
@@ -400,7 +408,7 @@
         tr.className = `${age > 3 ? 'stale ' : ''}${Number.isFinite(rank) && rank <= 20 ? 'hot' : ''}`.trim();
         tr.title = [
           `코드: ${code}`,
-          `종목명 클릭: 종목코드 클립보드 저장`,
+          `종목명 클릭: HTS 연동 / Shift+클릭: 코드만 복사`,
           `수신: ${r.trade_time || '-'} / ${Number.isFinite(age) ? age.toFixed(1) + 's' : '-'}`,
           `전일 거래대금: ${fmtNum(r.prev_trade_value_eok, 0)}억`,
           `프로그램 순매수: ${fmtNum(r.program_net, 0)}억`,
@@ -413,7 +421,7 @@
         setCell(tr, 1, fmtRankChange(r.rank_change), `center ${clsSigned(r.rank_change)}`);
         setCell(tr, 2, r.stock_name || code, 'stock-name-copy');
         tr.children[2].dataset.code = code;
-        tr.children[2].title = `${r.stock_name || code}\n클릭하면 ${code} 복사`;
+        tr.children[2].title = `${r.stock_name || code}\n클릭하면 HTS 연동\nShift+클릭하면 ${code} 복사`;
         setCell(tr, 3, fmtNum(r.price), 'num');
         setCell(tr, 4, Number.isFinite(rate) ? `${rate > 0 ? '+' : ''}${rate.toFixed(2)}%` : '-', `num ${clsSigned(rate)}`);
         setCell(tr, 5, fmtNum(r.trade_value_eok, 0), 'num');
