@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>StockBoard v2 Realtime</title>
+  <style>
+    :root { --red:#d71920; --blue:#1266d6; --grid:#c7d1dc; --head:#eaf0f6; --text:#111827; }
+    html, body { overflow-x:auto; }
+    body { margin:0; min-width:100vw; font-family: Malgun Gothic, Arial, sans-serif; font-size:12px; color:var(--text); background:#f8fafc; }
+    .topbar { position:sticky; top:0; z-index:5; display:flex; gap:10px; align-items:center; padding:6px 8px; border-bottom:1px solid #aab7c6; background:#dde7f1; min-width:max-content; }
+    .title { font-weight:800; }
+    .badge { padding:2px 6px; border:1px solid #9aa8b5; background:white; border-radius:3px; }
+    .ok { color:#067a2a; font-weight:800; }
+    .bad { color:var(--red); font-weight:800; }
+    .copy-ok { color:#166534; border-color:#86efac; background:#dcfce7; font-weight:800; }
+    table { border-collapse:collapse; table-layout:fixed; background:white; }
+    col { width: var(--col-width, 80px); min-width:0 !important; }
+    th, td { box-sizing:border-box; border:1px solid var(--grid); padding:2px 4px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; height:20px; min-width:0 !important; max-width:none; }
+    th { background:var(--head); font-weight:800; position:sticky; top:31px; z-index:4; user-select:none; cursor:pointer; }
+    th[data-sort-dir="asc"] .header-label::after { content:" ▲"; color:#1d4ed8; }
+    th[data-sort-dir="desc"] .header-label::after { content:" ▼"; color:#b91c1c; }
+    .header-label { pointer-events:none; }
+    .column-resizer { position:absolute; top:0; right:-4px; width:9px; height:100%; cursor:col-resize; z-index:20; }
+    .column-resizer:hover { background:rgba(29,78,216,.18); }
+    body.resizing-column { cursor:col-resize; user-select:none; }
+    td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+    td.center, th.center { text-align:center; }
+    .plus { color:var(--red); font-weight:700; }
+    .minus { color:var(--blue); font-weight:700; }
+    .zero { color:#4b5563; }
+    .ratio-hot { color:var(--red); font-weight:700; }
+    .ratio-cold { color:var(--blue); font-weight:700; }
+    .stock-name-copy { cursor:pointer; text-decoration: underline dotted rgba(31,41,55,.35); text-underline-offset:2px; }
+    .stock-name-copy.copied { background:#dcfce7 !important; color:#166534 !important; font-weight:800; }
+    tr.stale { opacity:.55; }
+    tr.hot { background:#fff7d6; }
+    .small { color:#4b5563; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <span class="title">StockBoard v2 Realtime</span>
+    <span id="clock" class="badge">-</span>
+    <span id="status" class="badge bad">연결 대기</span>
+    <span id="counts" class="badge">rows 0 · events 0</span>
+    <span id="latency" class="badge">stream - ms</span>
+    <span id="copy-status" class="badge">종목명 클릭=HTS연동</span>
+    <span class="small">32bit 수집기 → 64bit worker → 100ms micro-batch stream</span>
+  </div>
+  <table id="board">
+    <colgroup id="cols">
+      <col data-key="rank" />
+      <col data-key="rank_change" />
+      <col data-key="stock_name" />
+      <col data-key="price" />
+      <col data-key="change_rate" />
+      <col data-key="trade_value_eok" />
+      <col data-key="amount_ratio" />
+      <col data-key="execution_strength" />
+      <col data-key="bid_ask_ratio" />
+      <col data-key="large_trade_net_count" />
+    </colgroup>
+    <thead>
+      <tr>
+        <th class="center" data-sort-key="rank"><span class="header-label">순위</span></th>
+        <th class="center" data-sort-key="rank_change"><span class="header-label">전일</span></th>
+        <th data-sort-key="stock_name"><span class="header-label">종목명</span></th>
+        <th class="num" data-sort-key="price"><span class="header-label">현재가</span></th>
+        <th class="num" data-sort-key="change_rate"><span class="header-label">등락률</span></th>
+        <th class="num" data-sort-key="trade_value_eok"><span class="header-label">거래대금</span></th>
+        <th class="num" data-sort-key="amount_ratio"><span class="header-label">대금비</span></th>
+        <th class="num" data-sort-key="execution_strength"><span class="header-label">체결강도</span></th>
+        <th class="num" data-sort-key="bid_ask_ratio"><span class="header-label">잔량비</span></th>
+        <th class="num" data-sort-key="large_trade_net_count"><span class="header-label">대량건</span></th>
+      </tr>
+    </thead>
+    <tbody id="rows"><tr><td colspan="10" class="center">v2 stream 연결 대기 중입니다.</td></tr></tbody>
+  </table>
+  <script>
+    const boardEl = document.getElementById('board');
+    const colsEl = document.getElementById('cols');
+    const rowsEl = document.getElementById('rows');
+    const statusEl = document.getElementById('status');
+    const countsEl = document.getElementById('counts');
+    const latencyEl = document.getElementById('latency');
+    const clockEl = document.getElementById('clock');
+    const copyStatusEl = document.getElementById('copy-status');
+    const rowByCode = new Map();
+    const columnDefs = [
+      { key:'rank', width:48, min:8, max:1200 },
+      { key:'rank_change', width:58, min:8, max:1200 },
+      { key:'stock_name', width:170, min:8, max:1200 },
+      { key:'price', width:92, min:8, max:1200 },
+      { key:'change_rate', width:76, min:8, max:1200 },
+      { key:'trade_value_eok', width:106, min:8, max:1200 },
+      { key:'amount_ratio', width:72, min:8, max:1200 },
+      { key:'execution_strength', width:82, min:8, max:1200 },
+      { key:'bid_ask_ratio', width:72, min:8, max:1200 },
+      { key:'large_trade_net_count', width:72, min:8, max:1200 }
+    ];
+    let lastPayload = null;
+    let lastStreamAt = 0;
+    let fallbackTimer = null;
+    let stream = null;
+    let sortState = loadSortState();
+    let columnWidths = loadColumnWidths();
+    let autoFitQueued = false;
+    let lastAutoFitAt = 0;
+    let firstAutoFitDone = false;
+    let copyTimer = null;
+    let htsLinkSeq = 0;
+
+    function loadSortState() {
+      try {
+        const saved = JSON.parse(localStorage.getItem('stockboard.v2.sort') || '{}');
+        if (saved && saved.key) return { key: saved.key, dir: saved.dir === 'asc' ? 'asc' : 'desc' };
+      } catch (_error) {}
+      return { key: 'rank', dir: 'asc' };
+    }
+    function saveSortState() {
+      try { localStorage.setItem('stockboard.v2.sort', JSON.stringify(sortState)); } catch (_error) {}
+    }
+    function loadColumnWidths() {
+      try {
+        const saved = JSON.parse(localStorage.getItem('stockboard.v2.columnWidths') || '{}');
+        return saved && typeof saved === 'object' ? saved : {};
+      } catch (_error) { return {}; }
+    }
+    function saveColumnWidths() {
+      try { localStorage.setItem('stockboard.v2.columnWidths', JSON.stringify(columnWidths)); } catch (_error) {}
+    }
+    function columnDef(index) { return columnDefs[index] || { key:String(index), width:80, min:8, max:1200 }; }
+    function clampWidth(index, value) {
+      const def = columnDef(index);
+      const number = Math.round(Number(value));
+      const width = Number.isFinite(number) ? number : def.width;
+      return Math.max(def.min, Math.min(def.max || 1200, width));
+    }
+    function totalColumnWidth() {
+      return columnDefs.reduce((sum, def, index) => {
+        const col = colsEl.children[index];
+        const styleWidth = col ? parseFloat(col.style.getPropertyValue('--col-width')) : NaN;
+        const width = Number.isFinite(styleWidth) ? styleWidth : Number(columnWidths[def.key] || def.width);
+        return sum + clampWidth(index, width);
+      }, 0);
+    }
+    function updateBoardWidth() {
+      const width = Math.max(1, totalColumnWidth());
+      boardEl.style.width = `${width}px`;
+      boardEl.style.minWidth = `${width}px`;
+    }
+    function setColumnWidth(index, width, save=true) {
+      const def = columnDef(index);
+      const col = colsEl.children[index];
+      const px = clampWidth(index, width);
+      if (col) {
+        col.style.width = `${px}px`;
+        col.style.minWidth = '0px';
+        col.style.setProperty('--col-width', `${px}px`);
+      }
+      if (save) {
+        columnWidths[def.key] = px;
+        saveColumnWidths();
+      }
+      updateBoardWidth();
+    }
+    function applyColumnWidths() {
+      columnDefs.forEach((def, index) => {
+        const width = Number(columnWidths[def.key] || def.width);
+        setColumnWidth(index, width, false);
+      });
+      updateBoardWidth();
+    }
+    function measureText(text) {
+      if (!measureText.canvas) {
+        measureText.canvas = document.createElement('canvas');
+        measureText.ctx = measureText.canvas.getContext('2d');
+      }
+      const ctx = measureText.ctx;
+      ctx.font = getComputedStyle(boardEl).font || '12px Malgun Gothic';
+      return ctx.measureText(String(text || '')).width;
+    }
+    function autoFitColumn(index, save=true) {
+      const th = boardEl.querySelectorAll('thead th')[index];
+      let width = measureText(th?.querySelector('.header-label')?.textContent || th?.textContent || '') + 26;
+      rowsEl.querySelectorAll('tr').forEach((row) => {
+        const cell = row.children[index];
+        if (!cell) return;
+        width = Math.max(width, measureText(cell.textContent || '') + 18);
+      });
+      setColumnWidth(index, width, save);
+      return width;
+    }
+    function autoFitColumns(save=false, includeManual=false) {
+      columnDefs.forEach((def, index) => {
+        if (!includeManual && columnWidths[def.key]) return;
+        autoFitColumn(index, save);
+      });
+    }
+    function scheduleAutoFit() {
+      const now = performance.now();
+      if (autoFitQueued || (firstAutoFitDone && now - lastAutoFitAt < 2500)) return;
+      autoFitQueued = true;
+      requestAnimationFrame(() => {
+        autoFitQueued = false;
+        lastAutoFitAt = performance.now();
+        autoFitColumns(false, false);
+        firstAutoFitDone = true;
+      });
+    }
+    function initColumnResizers() {
+      boardEl.querySelectorAll('thead th').forEach((th, index) => {
+        if (th.querySelector('.column-resizer')) return;
+        const handle = document.createElement('span');
+        handle.className = 'column-resizer';
+        handle.title = '드래그: 열 폭 조절 / 더블클릭: 자동 폭조절';
+        handle.addEventListener('click', (event) => event.stopPropagation());
+        handle.addEventListener('dblclick', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          autoFitColumn(index, true);
+        });
+        handle.addEventListener('mousedown', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const startX = event.clientX;
+          const col = colsEl.children[index];
+          const parsed = col ? parseFloat(col.style.getPropertyValue('--col-width')) : NaN;
+          const startWidth = Number.isFinite(parsed) ? parsed : columnDef(index).width;
+          document.body.classList.add('resizing-column');
+          function onMove(moveEvent) { setColumnWidth(index, startWidth + moveEvent.clientX - startX, false); }
+          function onUp(upEvent) {
+            setColumnWidth(index, startWidth + upEvent.clientX - startX, true);
+            document.body.classList.remove('resizing-column');
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+          }
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        });
+        th.appendChild(handle);
+      });
+    }
+
+    function numeric(v) {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    }
+    function sortValue(row, key) {
+      if (key === 'stock_name') return String(row.stock_name || '').toLowerCase();
+      const value = numeric(row[key]);
+      return value === null ? null : value;
+    }
+    function sortedRows(rows) {
+      const key = sortState.key || 'rank';
+      const dir = sortState.dir === 'asc' ? 'asc' : 'desc';
+      return [...rows].sort((a, b) => {
+        const av = sortValue(a, key);
+        const bv = sortValue(b, key);
+        let result = 0;
+        if (av === null && bv === null) result = (numeric(a.rank) || 999999) - (numeric(b.rank) || 999999);
+        else if (av === null) result = 1;
+        else if (bv === null) result = -1;
+        else if (typeof av === 'number' && typeof bv === 'number') result = av - bv;
+        else result = String(av).localeCompare(String(bv), 'ko-KR', { numeric:true });
+        if (result === 0) result = (numeric(a.rank) || 999999) - (numeric(b.rank) || 999999);
+        return dir === 'asc' ? result : -result;
+      });
+    }
+    function markSortHeaders() {
+      document.querySelectorAll('th[data-sort-key]').forEach((th) => {
+        if (th.dataset.sortKey === sortState.key) th.dataset.sortDir = sortState.dir;
+        else delete th.dataset.sortDir;
+      });
+    }
+    document.addEventListener('click', (event) => {
+      const stockCell = event.target.closest('td.stock-name-copy');
+      if (stockCell) {
+        const code = stockCell.dataset.code || stockCell.closest('tr')?.dataset?.code || '';
+        if (code) linkStockToHts(stockCell, code, event.shiftKey);
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      const th = event.target.closest('th[data-sort-key]');
+      if (!th || event.target.closest('.column-resizer')) return;
+      const key = th.dataset.sortKey;
+      const dir = sortState.key === key && sortState.dir === 'asc' ? 'desc' : 'asc';
+      sortState = { key, dir };
+      saveSortState();
+      markSortHeaders();
+      if (lastPayload) render(lastPayload, 'stream');
+    });
+
+    async function writeClipboardText(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      const input = document.createElement('input');
+      input.value = text;
+      input.setAttribute('readonly', 'readonly');
+      input.style.position = 'fixed';
+      input.style.left = '-9999px';
+      document.body.appendChild(input);
+      input.focus();
+      input.select();
+      document.execCommand('copy');
+      input.remove();
+    }
+
+    async function linkStockToHts(cell, code, copyOnly=false) {
+      const text = String(code || '').trim();
+      if (!/^\d{6}$/.test(text)) return;
+      try {
+        const commandSeq = `${Date.now()}${++htsLinkSeq}`;
+        const payload = copyOnly ? text : `SBV2|${commandSeq}|${text}`;
+        await writeClipboardText(payload);
+        cell.classList.add('copied');
+        copyStatusEl.textContent = copyOnly ? `코드 복사 ${text}` : `HTS 연동 ${text}`;
+        copyStatusEl.className = 'badge copy-ok';
+        window.clearTimeout(copyTimer);
+        copyTimer = window.setTimeout(() => {
+          cell.classList.remove('copied');
+          copyStatusEl.textContent = '종목명 클릭=HTS연동';
+          copyStatusEl.className = 'badge';
+        }, 900);
+      } catch (_error) {
+        copyStatusEl.textContent = `HTS 요청 실패 ${text}`;
+        copyStatusEl.className = 'badge bad';
+      }
+    }
+
+    function fmtNum(v, digits=0) {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return '-';
+      return n.toLocaleString('en-US', { maximumFractionDigits: digits, minimumFractionDigits: digits });
+    }
+    function fmtRatio(v) {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n <= 0) return '-';
+      return n >= 10 ? '10x+' : `${n.toFixed(n >= 3 ? 1 : 2)}x`;
+    }
+    function fmtRankChange(v) {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return '-';
+      if (n > 0) return `↑${Math.round(n)}`;
+      if (n < 0) return `↓${Math.abs(Math.round(n))}`;
+      return '0';
+    }
+    function clsSigned(v) {
+      const n = Number(v);
+      return !Number.isFinite(n) ? '' : n > 0 ? 'plus' : n < 0 ? 'minus' : 'zero';
+    }
+    function clsRatio(v) {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n <= 0) return 'zero';
+      return n >= 1 ? 'ratio-hot' : 'ratio-cold';
+    }
+    function ensureRow(code) {
+      let tr = rowByCode.get(code);
+      if (tr) return tr;
+      tr = document.createElement('tr');
+      tr.innerHTML = Array.from({ length: 10 }, () => '<td></td>').join('');
+      tr.dataset.code = code;
+      rowByCode.set(code, tr);
+      return tr;
+    }
+    function setCell(tr, index, text, className='') {
+      const td = tr.children[index];
+      if (!td) return;
+      if (td.textContent !== String(text)) td.textContent = text;
+      td.className = className;
+    }
+    function payloadLagMs(payload) {
+      const sentAt = Date.parse(payload && payload.ts ? payload.ts : '');
+      if (!Number.isFinite(sentAt)) return null;
+      return Math.max(0, Date.now() - sentAt);
+    }
+    function render(payload, mode='stream') {
+      lastPayload = payload;
+      markSortHeaders();
+      const rawRows = Array.isArray(payload.rows) ? payload.rows : [];
+      const rows = sortedRows(rawRows);
+      const lag = payloadLagMs(payload);
+      const phase = payload.market_session?.phase_label || payload.status?.market_phase_label || '';
+      statusEl.textContent = phase ? `연결 OK · ${phase}` : '연결 OK';
+      statusEl.className = mode === 'stream' ? 'badge ok' : 'badge bad';
+      countsEl.textContent = `rows ${payload.row_count || rawRows.length} · events ${payload.status?.event_count || 0} · trades ${payload.status?.trade_count || 0}`;
+      latencyEl.textContent = `${mode} ${lag === null ? '-' : lag.toFixed(0)} ms · q ${payload.status?.event_log_queue_size ?? '-'} · sort ${sortState.key}/${sortState.dir}`;
+      const seen = new Set();
+      if (!rows.length) {
+        rowsEl.innerHTML = '<tr><td colspan="10" class="center">실시간 수신 대기 중입니다.</td></tr>';
+        rowByCode.clear();
+        return;
+      }
+      if (rowsEl.children.length === 1 && rowsEl.children[0].children.length === 1) rowsEl.innerHTML = '';
+      rows.forEach((r) => {
+        const code = String(r.stock_code || '');
+        if (!code) return;
+        seen.add(code);
+        const tr = ensureRow(code);
+        tr.dataset.code = code;
+        const rate = Number(r.change_rate);
+        const age = Number(r.price_age_sec);
+        const rank = Number(r.rank);
+        tr.className = `${age > 3 ? 'stale ' : ''}${Number.isFinite(rank) && rank <= 20 ? 'hot' : ''}`.trim();
+        tr.title = [
+          `코드: ${code}`,
+          `종목명 클릭: HTS 연동 / Shift+클릭: 코드만 복사`,
+          `수신: ${r.trade_time || '-'} / ${Number.isFinite(age) ? age.toFixed(1) + 's' : '-'}`,
+          `전일 거래대금: ${fmtNum(r.prev_trade_value_eok, 0)}억`,
+          `프로그램 순매수: ${fmtNum(r.program_net, 0)}억`,
+          `누적량: ${fmtNum(r.cumulative_volume, 0)}`,
+          `체결량: ${fmtNum(r.trade_qty, 0)}`,
+          `row_source: ${r.row_source || '-'}`,
+          `source: ${r.source_code || '-'}`
+        ].join('\n');
+        setCell(tr, 0, r.rank ?? '-', 'center');
+        setCell(tr, 1, fmtRankChange(r.rank_change), `center ${clsSigned(r.rank_change)}`);
+        setCell(tr, 2, r.stock_name || code, 'stock-name-copy');
+        tr.children[2].dataset.code = code;
+        tr.children[2].title = `${r.stock_name || code}\n클릭하면 HTS 연동\nShift+클릭하면 ${code} 복사`;
+        setCell(tr, 3, fmtNum(r.price), 'num');
+        setCell(tr, 4, Number.isFinite(rate) ? `${rate > 0 ? '+' : ''}${rate.toFixed(2)}%` : '-', `num ${clsSigned(rate)}`);
+        setCell(tr, 5, fmtNum(r.trade_value_eok, 0), 'num');
+        setCell(tr, 6, fmtRatio(r.amount_ratio), `num ${clsRatio(r.amount_ratio)}`);
+        setCell(tr, 7, fmtNum(r.execution_strength, 2), 'num');
+        setCell(tr, 8, fmtNum(r.bid_ask_ratio, 2), 'num');
+        setCell(tr, 9, fmtNum(r.large_trade_net_count, 0), `num ${clsSigned(r.large_trade_net_count)}`);
+        rowsEl.appendChild(tr);
+      });
+      for (const [code, tr] of rowByCode.entries()) {
+        if (!seen.has(code)) {
+          tr.remove();
+          rowByCode.delete(code);
+        }
+      }
+      scheduleAutoFit();
+      updateBoardWidth();
+    }
+    async function fallbackPoll() {
+      try {
+        const res = await fetch(`/api/v2/snapshot?limit=300&ts=${Date.now()}`, { cache:'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const payload = await res.json();
+        render(payload, 'poll');
+      } catch (e) {
+        statusEl.textContent = `연결 실패: ${e.message}`;
+        statusEl.className = 'badge bad';
+      }
+    }
+    function startFallback() {
+      if (fallbackTimer) return;
+      fallbackTimer = setInterval(() => {
+        if (!lastStreamAt || performance.now() - lastStreamAt > 4000) fallbackPoll();
+      }, 1000);
+    }
+    function connectStream() {
+      if (!window.EventSource) {
+        startFallback();
+        return;
+      }
+      stream = new EventSource(`/api/v2/stream?limit=300&interval_ms=100&ts=${Date.now()}`);
+      stream.addEventListener('snapshot', (event) => {
+        try {
+          lastStreamAt = performance.now();
+          render(JSON.parse(event.data), 'stream');
+        } catch (error) {
+          console.warn(error);
+        }
+      });
+      stream.onerror = () => {
+        statusEl.textContent = 'stream 재연결 중';
+        statusEl.className = 'badge bad';
+        startFallback();
+      };
+    }
+    setInterval(() => {
+      clockEl.textContent = new Date().toLocaleTimeString('ko-KR', { hour12:false });
+      if (lastPayload && (!lastStreamAt || performance.now() - lastStreamAt > 1000)) render(lastPayload, 'stream');
+    }, 500);
+    clockEl.textContent = new Date().toLocaleTimeString('ko-KR', { hour12:false });
+    applyColumnWidths();
+    initColumnResizers();
+    markSortHeaders();
+    connectStream();
+  </script>
+</body>
+</html>

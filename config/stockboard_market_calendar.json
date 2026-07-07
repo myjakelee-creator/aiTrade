@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "description": "StockBoard v2 market-session override file. Weekends are closed automatically. Add official holidays to holidays. For special days such as CSAT delayed open, add YYYYMMDD under special_days with open_delay_minutes or explicit windows.",
+  "default_windows": {
+    "premarket_start": "08:00",
+    "opening_call_start": "08:30",
+    "regular_start": "09:00",
+    "closing_call_start": "15:20",
+    "regular_close": "15:30",
+    "aftermarket_start": "15:40",
+    "aftermarket_end": "20:00"
+  },
+  "holidays": [],
+  "special_days": {}
+}

@@ -1,0 +1,725 @@
+from __future__ import annotations
+
+import argparse
+import json
+import queue
+import socketserver
+import sys
+import threading
+import time
+from copy import deepcopy
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qs, urlparse
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from realtime_v2.common import (  # noqa: E402
+    DEFAULT_EVENT_PORT,
+    DEFAULT_HOST,
+    DEFAULT_WEB_PORT,
+    LARGE_TRADE_THRESHOLD_KRW,
+    RUNTIME_DIR,
+    atomic_write_json,
+    event_age_sec,
+    normalize_code,
+    normalize_trade_time,
+    normalized_price,
+    normalized_rate,
+    normalized_trade_value_eok,
+    now_text,
+    safe_json_dumps,
+    to_int,
+    to_number,
+    trading_date_text,
+)
+
+DAILY_PERSIST_KEYS = (
+    "large_trade_buy_count",
+    "large_trade_sell_count",
+    "large_trade_net_count",
+    "large_trade_buy_sum_eok",
+    "large_trade_sell_sum_eok",
+    "large_trade_net_sum_eok",
+    "program_net",
+    "program_net_updated_at",
+    "program_net_source",
+    "program_net_status",
+)
+
+
+def merged_event_values(event: dict[str, Any]) -> dict[str, Any]:
+    """Merge collector event payloads.
+
+    The v2 collector uses the existing KiwoomOpenApiRealtimeProvider adapter.
+    That provider calls store.update_trade(code, **fields), so the useful fields
+    arrive in event["kwargs"], while raw/direct adapters may use event["values"].
+    """
+    result: dict[str, Any] = {}
+    values = event.get("values")
+    if isinstance(values, dict):
+        result.update(values)
+    kwargs = event.get("kwargs")
+    if isinstance(kwargs, dict):
+        result.update(kwargs)
+    return result
+
+
+class AsyncEventLogger(threading.Thread):
+    """Buffered JSONL event logger.
+
+    Event logging must never block the TCP receive path during the market-open
+    burst. The worker enqueues event objects quickly; this logger serializes and
+    writes them in large batches from a separate thread.
+    """
+
+    def __init__(self, path: Path, max_queue: int = 200_000, flush_count: int = 3000, flush_sec: float = 0.25):
+        super().__init__(name="stockboard-v2-event-logger", daemon=True)
+        self.path = path
+        self.queue: "queue.Queue[dict[str, Any]]" = queue.Queue(maxsize=max_queue)
+        self.flush_count = max(1, int(flush_count))
+        self.flush_sec = max(0.05, float(flush_sec))
+        self.stop_event = threading.Event()
+        self.written_count = 0
+        self.dropped_count = 0
+        self.last_flush_at = None
+        self.last_error = None
+
+    def enqueue(self, event: dict[str, Any]) -> None:
+        try:
+            self.queue.put_nowait(event)
+        except queue.Full:
+            self.dropped_count += 1
+
+    def stop(self) -> None:
+        self.stop_event.set()
+
+    def run(self) -> None:
+        batch: list[str] = []
+        last_flush = time.monotonic()
+        while not self.stop_event.is_set() or not self.queue.empty() or batch:
+            timeout = max(0.01, self.flush_sec - (time.monotonic() - last_flush))
+            try:
+                event = self.queue.get(timeout=timeout)
+                batch.append(safe_json_dumps(event))
+            except queue.Empty:
+                pass
+            now = time.monotonic()
+            if batch and (len(batch) >= self.flush_count or now - last_flush >= self.flush_sec or self.stop_event.is_set()):
+                self._flush(batch)
+                batch = []
+                last_flush = now
+
+    def _flush(self, batch: list[str]) -> None:
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write("\n".join(batch))
+                handle.write("\n")
+            self.written_count += len(batch)
+            self.last_flush_at = now_text()
+            self.last_error = None
+        except OSError as error:
+            self.last_error = str(error)
+            self.dropped_count += len(batch)
+
+    def stats(self) -> dict[str, Any]:
+        return {
+            "event_log_queue_size": self.queue.qsize(),
+            "event_log_written_count": self.written_count,
+            "event_log_dropped_count": self.dropped_count,
+            "event_log_last_flush_at": self.last_flush_at,
+            "event_log_last_error": self.last_error,
+            "event_log_path": str(self.path),
+        }
+
+
+class State:
+    def __init__(self, universe_file: Path):
+        self.lock = threading.RLock()
+        self.universe_file = universe_file
+        self.name_by_code: dict[str, str] = {}
+        self.seed_rank_by_code: dict[str, int] = {}
+        self.prev_rank_by_code: dict[str, int] = {}
+        self.prev_trade_value_by_code: dict[str, float] = {}
+        self.quotes: dict[str, dict[str, Any]] = {}
+        self.logger: AsyncEventLogger | None = None
+        self.daily_state_path = RUNTIME_DIR / f"daily_state_{trading_date_text()}.json"
+        self.daily_values_by_code = self._load_daily_state()
+        self.daily_dirty = False
+        self.status: dict[str, Any] = {
+            "started_at": now_text(),
+            "event_count": 0,
+            "trade_count": 0,
+            "orderbook_count": 0,
+            "collector_status": None,
+            "last_event_at": None,
+            "last_error": None,
+            "tcp_clients": 0,
+            "stream_clients": 0,
+            "program_net_count": 0,
+            "program_net_last_at": None,
+            "program_net_last_error": None,
+            "daily_state_path": str(self.daily_state_path),
+            "daily_state_loaded_count": len(self.daily_values_by_code),
+            "daily_state_last_saved_at": None,
+        }
+        self._load_universe()
+
+    def attach_logger(self, logger: AsyncEventLogger) -> None:
+        self.logger = logger
+
+    def _load_daily_state(self) -> dict[str, dict[str, Any]]:
+        try:
+            if not self.daily_state_path.is_file():
+                return {}
+            payload = json.loads(self.daily_state_path.read_text(encoding="utf-8-sig"))
+            codes = payload.get("codes") if isinstance(payload, dict) else None
+            if not isinstance(codes, dict):
+                return {}
+            result = {}
+            for raw_code, values in codes.items():
+                code = normalize_code(raw_code)
+                if code and isinstance(values, dict):
+                    result[code] = dict(values)
+            return result
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _load_universe(self) -> None:
+        try:
+            payload = json.loads(self.universe_file.read_text(encoding="utf-8-sig"))
+            for item in payload.get("items", []) or []:
+                code = normalize_code(item.get("stock_code"))
+                if not code:
+                    continue
+                self.name_by_code[code] = str(item.get("stock_name") or code)
+                self.seed_rank_by_code[code] = int(
+                    item.get("seed_rank") or item.get("original_rank") or 999999
+                )
+                previous_rank = to_int(item.get("prev_rank"))
+                previous_value = to_number(item.get("prev_trade_value_eok"))
+                if previous_rank is not None and previous_rank > 0:
+                    self.prev_rank_by_code[code] = previous_rank
+                if previous_value is not None and previous_value > 0:
+                    self.prev_trade_value_by_code[code] = float(previous_value)
+        except Exception as error:
+            self.status["last_error"] = f"universe load failed: {error}"
+
+    def logger_stats(self) -> dict[str, Any]:
+        logger = self.logger
+        return logger.stats() if logger is not None else {}
+
+    def _mark_daily_dirty(self) -> None:
+        self.daily_dirty = True
+
+    def export_daily_state(self) -> dict[str, Any]:
+        with self.lock:
+            codes = deepcopy(self.daily_values_by_code)
+            for code, quote in self.quotes.items():
+                entry = codes.setdefault(code, {})
+                for key in DAILY_PERSIST_KEYS:
+                    value = quote.get(key)
+                    if value not in (None, ""):
+                        entry[key] = value
+            return {
+                "schema_version": 1,
+                "source": "stockboard_v2_daily_state",
+                "trading_date": trading_date_text(),
+                "updated_at": now_text(),
+                "codes": codes,
+            }
+
+    def persist_daily_state_if_needed(self, force: bool = False) -> bool:
+        with self.lock:
+            should_save = force or self.daily_dirty
+            if not should_save:
+                return False
+            self.daily_dirty = False
+        payload = self.export_daily_state()
+        atomic_write_json(self.daily_state_path, payload)
+        with self.lock:
+            self.status["daily_state_last_saved_at"] = payload.get("updated_at")
+        return True
+
+    def apply_program_net_values(self, values: dict[str, Any], source: str, status: str) -> int:
+        updated = 0
+        updated_at = now_text()
+        with self.lock:
+            for raw_code, raw_value in (values or {}).items():
+                code = normalize_code(raw_code)
+                value = to_number(
+                    raw_value.get("program_net") if isinstance(raw_value, dict) else raw_value
+                )
+                if not code or value is None:
+                    continue
+                value = round(float(value), 4)
+                entry = self.daily_values_by_code.setdefault(code, {})
+                entry.update(
+                    {
+                        "program_net": value,
+                        "program_net_updated_at": updated_at,
+                        "program_net_source": source,
+                        "program_net_status": status,
+                    }
+                )
+                quote = self.quotes.get(code)
+                if quote is not None:
+                    quote.update(entry)
+                updated += 1
+            if updated:
+                self.status["program_net_count"] = updated
+                self.status["program_net_last_at"] = updated_at
+                self.status["program_net_last_error"] = None
+                self._mark_daily_dirty()
+        return updated
+
+    def set_program_net_error(self, message: str) -> None:
+        with self.lock:
+            self.status["program_net_last_error"] = message
+
+    def apply_event(self, event: dict[str, Any]) -> None:
+        event_type = event.get("type")
+        with self.lock:
+            self.status["event_count"] += 1
+            self.status["last_event_at"] = event.get("ts") or now_text()
+            if event_type in {"collector_status", "collector_heartbeat", "register_result"}:
+                self.status["collector_status"] = deepcopy(event)
+                return
+            if event_type == "trade":
+                self._apply_trade(event)
+            elif event_type == "orderbook":
+                self._apply_orderbook(event)
+            elif event_type == "close_metrics":
+                self._apply_close_metrics(event)
+
+    def _quote(self, code: str) -> dict[str, Any]:
+        quote = self.quotes.get(code)
+        if quote is None:
+            persisted = self.daily_values_by_code.get(code) or {}
+            quote = {
+                "stock_code": code,
+                "stock_name": self.name_by_code.get(code, code),
+                "seed_rank": self.seed_rank_by_code.get(code, 999999),
+                "prev_rank": self.prev_rank_by_code.get(code),
+                "prev_trade_value_eok": self.prev_trade_value_by_code.get(code),
+                "large_trade_buy_count": persisted.get("large_trade_buy_count", 0),
+                "large_trade_sell_count": persisted.get("large_trade_sell_count", 0),
+                "large_trade_net_count": persisted.get("large_trade_net_count", 0),
+                "large_trade_buy_sum_eok": persisted.get("large_trade_buy_sum_eok", 0.0),
+                "large_trade_sell_sum_eok": persisted.get("large_trade_sell_sum_eok", 0.0),
+                "large_trade_net_sum_eok": persisted.get("large_trade_net_sum_eok", 0.0),
+            }
+            for key in ("program_net", "program_net_updated_at", "program_net_source", "program_net_status"):
+                if key in persisted:
+                    quote[key] = persisted.get(key)
+            self.quotes[code] = quote
+        return quote
+
+    def _apply_trade(self, event: dict[str, Any]) -> None:
+        values = merged_event_values(event)
+        raw = values.get("raw") if isinstance(values.get("raw"), dict) else values
+        code = normalize_code(
+            event.get("stock_code")
+            or event.get("received_code")
+            or values.get("stock_code")
+            or values.get("normalized_code")
+            or values.get("received_code")
+        )
+        if not code:
+            return
+        quote = self._quote(code)
+        price = normalized_price(
+            raw.get("price_raw")
+            or values.get("price")
+            or values.get("trade_price")
+            or values.get("realtime_price")
+        )
+        change_rate = normalized_rate(
+            raw.get("change_rate_raw")
+            or values.get("change_rate")
+            or values.get("realtime_change_rate")
+        )
+        trade_qty = to_int(raw.get("trade_qty_raw") or values.get("trade_qty"))
+        cumulative_volume = to_int(
+            raw.get("cumulative_volume_raw") or values.get("cumulative_volume")
+        )
+        trade_value_eok = None
+        if values.get("trade_value_eok") not in (None, ""):
+            trade_value_eok = to_number(values.get("trade_value_eok"))
+        if trade_value_eok is None:
+            trade_value_eok = normalized_trade_value_eok(
+                raw.get("cumulative_value_raw") or values.get("cumulative_value")
+            )
+        strength = to_number(
+            raw.get("execution_strength_raw") or values.get("execution_strength")
+        )
+        trade_time = normalize_trade_time(
+            raw.get("trade_time_raw") or values.get("trade_time") or values.get("fid20_trade_time")
+        )
+        received_at = (
+            event.get("ts")
+            or values.get("price_received_at")
+            or values.get("trade_received_at")
+            or values.get("received_at")
+            or now_text()
+        )
+        if price is not None:
+            quote["price"] = price
+            quote["trade_price"] = price
+        if change_rate is not None:
+            quote["change_rate"] = change_rate
+        if trade_qty is not None:
+            quote["trade_qty"] = trade_qty
+        if cumulative_volume is not None:
+            quote["cumulative_volume"] = cumulative_volume
+        if trade_value_eok is not None:
+            quote["trade_value_eok"] = round(float(trade_value_eok), 4)
+        if strength is not None:
+            quote["execution_strength"] = round(strength, 4)
+        quote["trade_time"] = trade_time
+        quote["received_at"] = received_at
+        quote["price_age_sec"] = event_age_sec(received_at)
+        quote["market_type_raw"] = raw.get("market_type_raw") or values.get("market_type")
+        quote["source_code"] = values.get("source_code") or values.get("registered_code")
+        self.status["trade_count"] += 1
+        if trade_qty and price:
+            trade_amount = abs(trade_qty) * price
+            if trade_amount >= LARGE_TRADE_THRESHOLD_KRW:
+                eok = trade_amount / 100_000_000
+                if trade_qty > 0:
+                    quote["large_trade_buy_count"] += 1
+                    quote["large_trade_buy_sum_eok"] = round(
+                        quote["large_trade_buy_sum_eok"] + eok, 4
+                    )
+                elif trade_qty < 0:
+                    quote["large_trade_sell_count"] += 1
+                    quote["large_trade_sell_sum_eok"] = round(
+                        quote["large_trade_sell_sum_eok"] + eok, 4
+                    )
+                quote["large_trade_net_count"] = (
+                    quote["large_trade_buy_count"] - quote["large_trade_sell_count"]
+                )
+                quote["large_trade_net_sum_eok"] = round(
+                    quote["large_trade_buy_sum_eok"] - quote["large_trade_sell_sum_eok"],
+                    4,
+                )
+                daily_entry = self.daily_values_by_code.setdefault(code, {})
+                for key in DAILY_PERSIST_KEYS:
+                    if key.startswith("large_trade_"):
+                        daily_entry[key] = quote.get(key)
+                self._mark_daily_dirty()
+
+    def _apply_orderbook(self, event: dict[str, Any]) -> None:
+        values = merged_event_values(event)
+        raw = values.get("raw") if isinstance(values.get("raw"), dict) else values
+        code = normalize_code(
+            event.get("stock_code")
+            or event.get("received_code")
+            or values.get("stock_code")
+            or values.get("normalized_code")
+            or values.get("received_code")
+        )
+        if not code:
+            return
+        quote = self._quote(code)
+        ask_volume = to_int(raw.get("ask_volume_raw") or values.get("ask_volume"))
+        bid_volume = to_int(raw.get("bid_volume_raw") or values.get("bid_volume"))
+        best_ask = normalized_price(raw.get("best_ask_price_raw") or values.get("best_ask"))
+        best_bid = normalized_price(raw.get("best_bid_price_raw") or values.get("best_bid"))
+        if ask_volume is not None:
+            quote["ask_volume"] = ask_volume
+        if bid_volume is not None:
+            quote["bid_volume"] = bid_volume
+        if best_ask is not None:
+            quote["best_ask_price"] = best_ask
+        if best_bid is not None:
+            quote["best_bid_price"] = best_bid
+        if ask_volume is not None and bid_volume is not None and (ask_volume + bid_volume) > 0:
+            quote["bid_pct"] = round(bid_volume / (ask_volume + bid_volume) * 100)
+            quote["ask_pct"] = 100 - quote["bid_pct"]
+            quote["bid_ask_ratio"] = round(bid_volume / ask_volume, 4) if ask_volume > 0 else None
+        quote["orderbook_received_at"] = event.get("ts") or now_text()
+        self.status["orderbook_count"] += 1
+
+    def _apply_close_metrics(self, event: dict[str, Any]) -> None:
+        values = merged_event_values(event)
+        code = normalize_code(event.get("stock_code") or values.get("stock_code"))
+        if not code:
+            return
+        self._quote(code).update(values)
+
+    def rows(self, limit: int = 300) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = [deepcopy(row) for row in self.quotes.values()]
+        for row in rows:
+            row["price_age_sec"] = event_age_sec(row.get("received_at"))
+        rows.sort(
+            key=lambda row: (
+                -(to_number(row.get("trade_value_eok")) or 0),
+                row.get("seed_rank") or 999999,
+                row.get("stock_code") or "",
+            )
+        )
+        for rank, row in enumerate(rows, start=1):
+            row["rank"] = rank
+            prev_rank = to_int(row.get("prev_rank"))
+            row["rank_change"] = (prev_rank - rank) if prev_rank is not None else None
+            previous_amount = to_number(row.get("prev_trade_value_eok"))
+            current_amount = to_number(row.get("trade_value_eok"))
+            if previous_amount is not None and previous_amount > 0 and current_amount is not None:
+                row["amount_ratio"] = round(current_amount / previous_amount, 4)
+            else:
+                row["amount_ratio"] = None
+        return rows[:limit]
+
+    def snapshot(self, limit: int = 300) -> dict[str, Any]:
+        with self.lock:
+            status = deepcopy(self.status)
+        status.update(self.logger_stats())
+        rows = self.rows(limit)
+        return {
+            "schema_version": 1,
+            "source": "stockboard_v2_worker64",
+            "ts": now_text(),
+            "trading_date": trading_date_text(),
+            "status": status,
+            "row_count": len(rows),
+            "rows": rows,
+        }
+
+
+class ProgramNetUpdater(threading.Thread):
+    def __init__(self, state: State, interval_sec: float = 60.0):
+        super().__init__(name="stockboard-v2-program-net", daemon=True)
+        self.state = state
+        self.interval_sec = max(15.0, float(interval_sec))
+        self.stop_event = threading.Event()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+
+    def run(self) -> None:
+        self._load_existing_snapshots()
+        while not self.stop_event.wait(self.interval_sec):
+            self._fetch_once()
+
+    def _load_existing_snapshots(self) -> None:
+        paths = [
+            ROOT / "docs" / "assets" / "program_net_snapshot.json",
+            ROOT / "data" / "runtime" / "program_net" / f"program_net_snapshot_{trading_date_text()}.json",
+        ]
+        for path in paths:
+            try:
+                if not path.is_file():
+                    continue
+                payload = json.loads(path.read_text(encoding="utf-8-sig"))
+                values = payload.get("values") if isinstance(payload, dict) else None
+                if isinstance(values, dict):
+                    self.state.apply_program_net_values(values, "program_net_snapshot_file", "cached")
+                    return
+            except (OSError, json.JSONDecodeError) as error:
+                self.state.set_program_net_error(str(error))
+
+    def _fetch_once(self) -> None:
+        try:
+            from kiwoom_data_provider import fetch_program_net, issue_access_token
+
+            token = issue_access_token()
+            result = fetch_program_net(token, trading_date_text())
+            values = result.get("values") if isinstance(result, dict) else None
+            if isinstance(values, dict):
+                status = "partial" if result.get("errors") or result.get("rate_limit") else "ok"
+                self.state.apply_program_net_values(values, "ka90004_v2_background", status)
+        except Exception as error:
+            self.state.set_program_net_error(str(error))
+
+
+class EventTCPHandler(socketserver.StreamRequestHandler):
+    def handle(self) -> None:
+        with self.server.state.lock:
+            self.server.state.status["tcp_clients"] += 1
+        try:
+            for raw_line in self.rfile:
+                try:
+                    event = json.loads(raw_line.decode("utf-8"))
+                    if isinstance(event, dict):
+                        self.server.state.apply_event(event)
+                        self.server.record_event(event)
+                except Exception as error:
+                    with self.server.state.lock:
+                        self.server.state.status["last_error"] = f"event parse failed: {error}"
+        finally:
+            with self.server.state.lock:
+                self.server.state.status["tcp_clients"] = max(
+                    0, self.server.state.status.get("tcp_clients", 1) - 1
+                )
+
+
+class EventTCPServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+
+    def __init__(self, server_address, handler_class, state: State, event_logger: AsyncEventLogger):
+        super().__init__(server_address, handler_class)
+        self.state = state
+        self.event_logger = event_logger
+
+    def record_event(self, event: dict[str, Any]) -> None:
+        self.event_logger.enqueue(event)
+
+
+class WebHandler(BaseHTTPRequestHandler):
+    server_version = "StockBoardV2/0.3"
+
+    def log_message(self, _format, *args):
+        return
+
+    def _json(self, payload: Any, status: int = 200) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _stream_snapshots(self, query: dict[str, list[str]]) -> None:
+        try:
+            limit = int(query.get("limit", ["300"])[0])
+        except (TypeError, ValueError):
+            limit = 300
+        try:
+            interval_ms = int(query.get("interval_ms", ["100"])[0])
+        except (TypeError, ValueError):
+            interval_ms = 100
+        limit = max(1, min(1000, limit))
+        interval_sec = max(0.05, min(2.0, interval_ms / 1000.0))
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        last_event_count = None
+        last_sent_at = 0.0
+        with self.server.state.lock:
+            self.server.state.status["stream_clients"] += 1
+        try:
+            while True:
+                snapshot = self.server.state.snapshot(limit=limit)
+                event_count = snapshot.get("status", {}).get("event_count")
+                now = time.monotonic()
+                should_send = event_count != last_event_count or (now - last_sent_at) >= 2.0
+                if should_send:
+                    body = safe_json_dumps(snapshot)
+                    self.wfile.write(f"event: snapshot\ndata: {body}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+                    last_event_count = event_count
+                    last_sent_at = now
+                time.sleep(interval_sec)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+        finally:
+            with self.server.state.lock:
+                self.server.state.status["stream_clients"] = max(
+                    0, self.server.state.status.get("stream_clients", 1) - 1
+                )
+
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        query = parse_qs(parsed.query)
+        if parsed.path in {"/", "/v2", "/stockboard_v2.html"}:
+            html_path = ROOT / "docs" / "stockboard_v2.html"
+            body = html_path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if parsed.path == "/api/v2/health":
+            self._json({"ok": True, "ts": now_text(), "pid": getattr(self.server, "pid", None)})
+            return
+        if parsed.path == "/api/v2/snapshot":
+            try:
+                limit = int(query.get("limit", ["300"])[0])
+            except (TypeError, ValueError):
+                limit = 300
+            self._json(self.server.state.snapshot(limit=max(1, min(1000, limit))))
+            return
+        if parsed.path == "/api/v2/stream":
+            self._stream_snapshots(query)
+            return
+        self._json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
+
+
+class WebServer(ThreadingHTTPServer):
+    def __init__(self, server_address, handler_class, state: State):
+        super().__init__(server_address, handler_class)
+        self.state = state
+        self.pid = __import__("os").getpid()
+
+
+def write_status_loop(state: State, output_path: Path, stop_event: threading.Event) -> None:
+    while not stop_event.wait(1.0):
+        try:
+            atomic_write_json(output_path, state.snapshot(limit=300))
+            state.persist_daily_state_if_needed()
+        except Exception:
+            pass
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="StockBoard v2 64-bit realtime worker/web")
+    parser.add_argument("--host", default=DEFAULT_HOST)
+    parser.add_argument("--event-port", type=int, default=DEFAULT_EVENT_PORT)
+    parser.add_argument("--web-port", type=int, default=DEFAULT_WEB_PORT)
+    parser.add_argument("--universe", default=str(RUNTIME_DIR / "universe.json"))
+    args = parser.parse_args()
+
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    state = State(Path(args.universe))
+    event_log = RUNTIME_DIR / f"events_{trading_date_text()}.jsonl"
+    event_logger = AsyncEventLogger(event_log)
+    state.attach_logger(event_logger)
+    event_logger.start()
+    program_net_updater = ProgramNetUpdater(state)
+    program_net_updater.start()
+    snapshot_file = RUNTIME_DIR / "snapshot.json"
+    stop_event = threading.Event()
+    tcp_server = EventTCPServer((args.host, args.event_port), EventTCPHandler, state, event_logger)
+    web_server = WebServer((args.host, args.web_port), WebHandler, state)
+    threading.Thread(target=tcp_server.serve_forever, name="stockboard-v2-event-tcp", daemon=True).start()
+    threading.Thread(
+        target=write_status_loop,
+        args=(state, snapshot_file, stop_event),
+        name="stockboard-v2-snapshot-writer",
+        daemon=True,
+    ).start()
+    print(
+        f"StockBoard v2 worker listening event={args.host}:{args.event_port} web=http://{args.host}:{args.web_port}/",
+        flush=True,
+    )
+    print(f"EVENT_LOG={event_log}", flush=True)
+    print(f"SNAPSHOT_FILE={snapshot_file}", flush=True)
+    try:
+        web_server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop_event.set()
+        program_net_updater.stop()
+        event_logger.stop()
+        state.persist_daily_state_if_needed(force=True)
+        tcp_server.shutdown()
+        web_server.server_close()
+        tcp_server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
