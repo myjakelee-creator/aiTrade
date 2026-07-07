@@ -11,10 +11,12 @@ if str(ROOT) not in sys.path:
 
 from kiwoom_data_provider import fetch_trade_value_top100, issue_access_token  # noqa: E402
 from realtime_v2.common import RUNTIME_DIR, atomic_write_json, normalize_code, now_text, trading_date_text  # noqa: E402
+from stockboard_store import _load_tradable_stock_codes  # noqa: E402
 
 
 def _name_map_from_csv() -> dict[str, str]:
     candidates = [
+        ROOT / "docs" / "tradable_stock_master.csv",
         ROOT / "tradable_stock_master.csv",
         ROOT / "data" / "tradable_stock_master.csv",
         ROOT / "data" / "stock_master.csv",
@@ -42,13 +44,21 @@ def build_universe(limit: int, rank_basis: str) -> dict:
     token = issue_access_token()
     rows, page_counts = fetch_trade_value_top100(token, rank_basis=rank_basis)
     name_map = _name_map_from_csv()
+    try:
+        tradable_codes = _load_tradable_stock_codes()
+    except Exception:
+        tradable_codes = set()
     items = []
     seen = set()
+    filtered_out = 0
     for raw_rank, row in enumerate(rows, start=1):
         if not isinstance(row, dict):
             continue
         code = normalize_code(row.get("stock_code") or row.get("code"))
         if not code or code in seen:
+            continue
+        if tradable_codes and code not in tradable_codes:
+            filtered_out += 1
             continue
         seen.add(code)
         name = str(row.get("stock_name") or row.get("name") or name_map.get(code) or code).strip()
@@ -67,13 +77,15 @@ def build_universe(limit: int, rank_basis: str) -> dict:
             break
     return {
         "schema_version": 1,
-        "source": "ka10032_seed_universe",
+        "source": "ka10032_seed_universe_filtered_by_tradable_master",
         "rank_basis": rank_basis,
         "built_at": now_text(),
         "trading_date": trading_date_text(),
         "limit": limit,
         "count": len(items),
         "page_counts": page_counts,
+        "filtered_out_not_tradable": filtered_out,
+        "tradable_filter_enabled": bool(tradable_codes),
         "items": items,
     }
 
@@ -93,6 +105,7 @@ def main() -> int:
     print(f"UNIVERSE_FILE={output}")
     print(f"CODES_FILE={codes_output}")
     print(f"UNIVERSE_COUNT={payload['count']}")
+    print(f"FILTERED_OUT_NOT_TRADABLE={payload['filtered_out_not_tradable']}")
     return 0
 
 
