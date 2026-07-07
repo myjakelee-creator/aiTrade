@@ -124,7 +124,7 @@ function Start-V2 {
     $collectorErr = Join-Path $RuntimeDir "collector32_$stamp.err.log"
 
     Write-Step "Starting 64-bit worker"
-    $worker = Start-Process -FilePath $Python64 -ArgumentList @("realtime_v2\worker64.py") -WorkingDirectory $ProjectRoot -RedirectStandardOutput $workerOut -RedirectStandardError $workerErr -PassThru
+    $worker = Start-Process -FilePath $Python64 -ArgumentList @("realtime_v2\worker64.py") -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $workerOut -RedirectStandardError $workerErr -PassThru
     Set-Content -LiteralPath $WorkerPidFile -Value $worker.Id -Encoding ASCII
     Write-Host "WORKER64_PID=$($worker.Id)"
     Write-Host "WORKER64_STDOUT=$workerOut"
@@ -143,7 +143,7 @@ function Start-V2 {
     if (-not (Test-Path -LiteralPath $Python32)) {
         throw "32-bit Python not found: $Python32"
     }
-    $collector = Start-Process -FilePath $Python32 -ArgumentList @("realtime_v2\collector32.py", "--limit", "300", "--suffix", "AL", "--orderbook") -WorkingDirectory $ProjectRoot -RedirectStandardOutput $collectorOut -RedirectStandardError $collectorErr -PassThru
+    $collector = Start-Process -FilePath $Python32 -ArgumentList @("realtime_v2\collector32.py", "--limit", "300", "--suffix", "AL", "--orderbook") -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $collectorOut -RedirectStandardError $collectorErr -PassThru
     Set-Content -LiteralPath $CollectorPidFile -Value $collector.Id -Encoding ASCII
     Write-Host "COLLECTOR32_PID=$($collector.Id)"
     Write-Host "COLLECTOR32_STDOUT=$collectorOut"
