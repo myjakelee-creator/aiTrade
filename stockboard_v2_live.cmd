@@ -123,8 +123,8 @@ function Start-V2 {
     $collectorOut = Join-Path $RuntimeDir "collector32_$stamp.out.log"
     $collectorErr = Join-Path $RuntimeDir "collector32_$stamp.err.log"
 
-    Write-Step "Starting 64-bit worker"
-    $worker = Start-Process -FilePath $Python64 -ArgumentList @("realtime_v2\worker64.py") -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $workerOut -RedirectStandardError $workerErr -PassThru
+    Write-Step "Starting 64-bit guarded worker"
+    $worker = Start-Process -FilePath $Python64 -ArgumentList @("realtime_v2\worker64_guarded.py") -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $workerOut -RedirectStandardError $workerErr -PassThru
     Set-Content -LiteralPath $WorkerPidFile -Value $worker.Id -Encoding ASCII
     Write-Host "WORKER64_PID=$($worker.Id)"
     Write-Host "WORKER64_STDOUT=$workerOut"
@@ -177,6 +177,8 @@ function Status-V2 {
         Write-Host "EVENT_COUNT=$($snapshot.status.event_count)"
         Write-Host "TRADE_COUNT=$($snapshot.status.trade_count)"
         Write-Host "ORDERBOOK_COUNT=$($snapshot.status.orderbook_count)"
+        Write-Host "DROPPED_TRADE_COUNT=$($snapshot.status.dropped_trade_count)"
+        Write-Host "LAST_DROPPED_TRADE=$($snapshot.status.last_dropped_trade | ConvertTo-Json -Compress)"
         Write-Host "LAST_EVENT_AT=$($snapshot.status.last_event_at)"
     } catch {
         Write-Host "WORKER_HEALTH=False"
