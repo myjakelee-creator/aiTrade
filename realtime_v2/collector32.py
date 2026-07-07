@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import json
+import os
 import queue
 import socket
 import sys
@@ -104,6 +104,9 @@ class PublishingStore:
     def one_min_bucket_diagnostics(self):
         return {}
 
+    def latest_only_diagnostics(self):
+        return {}
+
     def snapshot_latest_many(self, codes):
         return {"quotes": {}, "close_metrics": {}}
 
@@ -147,7 +150,18 @@ def main() -> int:
     parser.add_argument("--codes", default="")
     parser.add_argument("--limit", type=int, default=300)
     parser.add_argument("--suffix", default="AL")
+    parser.add_argument("--orderbook", action="store_true")
     args = parser.parse_args()
+
+    if args.orderbook:
+        os.environ.setdefault("STOCKBOARD_ENABLE_ORDERBOOK_REALTIME", "1")
+        os.environ.setdefault("STOCKBOARD_ORDERBOOK_MODE", "hybrid")
+        os.environ.setdefault("STOCKBOARD_ORDERBOOK_HOT_SOURCE", "top5")
+        os.environ.setdefault("STOCKBOARD_ORDERBOOK_HOT_LIMIT", "5")
+        os.environ.setdefault("STOCKBOARD_ORDERBOOK_ROTATE_BATCH", "20")
+        os.environ.setdefault("STOCKBOARD_ORDERBOOK_ROTATE_INTERVAL_SEC", "5")
+    os.environ.setdefault("STOCKBOARD_PRICE_FAST_MODE", "1")
+    os.environ.setdefault("STOCKBOARD_REALTIME_CODE_LIMIT", str(max(1, int(args.limit or 300))))
 
     events: "queue.SimpleQueue[dict[str, Any]]" = queue.SimpleQueue()
     sender = EventSender(args.host, args.event_port, events)
@@ -155,8 +169,16 @@ def main() -> int:
     store = PublishingStore(events)
     provider = KiwoomOpenApiRealtimeProvider(store=store)
     codes = load_codes(args.codes_file, args.codes, args.limit, args.suffix)
-    print(f"collector codes={len(codes)} suffix={args.suffix}", flush=True)
-    provider.start(codes)
+    print(f"collector codes={len(codes)} suffix={args.suffix} orderbook={args.orderbook}", flush=True)
+    started = provider.start()
+    print(f"provider_start={started}", flush=True)
+    if not started:
+        status = provider.status()
+        events.put({"type": "collector_status", "ts": now_text(), "status": status, "sender_sent_count": sender.sent_count, "sender_last_error": sender.last_error})
+        print(f"provider_status={status}", flush=True)
+        return 1
+    registered_count = provider.register_codes(codes)
+    print(f"registered_count={registered_count}", flush=True)
     try:
         while True:
             status = provider.status()
