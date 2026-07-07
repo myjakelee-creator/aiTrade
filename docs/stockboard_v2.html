@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>StockBoard v2 Realtime</title>
+  <style>
+    :root { --red:#d71920; --blue:#1266d6; --grid:#c7d1dc; --head:#eaf0f6; --text:#111827; }
+    body { margin:0; font-family: Malgun Gothic, Arial, sans-serif; font-size:12px; color:var(--text); background:#f8fafc; }
+    .topbar { position:sticky; top:0; z-index:5; display:flex; gap:12px; align-items:center; padding:6px 8px; border-bottom:1px solid #aab7c6; background:#dde7f1; }
+    .title { font-weight:800; }
+    .badge { padding:2px 6px; border:1px solid #9aa8b5; background:white; border-radius:3px; }
+    .ok { color:#067a2a; font-weight:800; }
+    .bad { color:var(--red); font-weight:800; }
+    table { width:100%; border-collapse:collapse; table-layout:fixed; background:white; }
+    th, td { border:1px solid var(--grid); padding:2px 4px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; height:20px; }
+    th { background:var(--head); font-weight:800; position:sticky; top:31px; z-index:4; }
+    td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+    td.center, th.center { text-align:center; }
+    .plus { color:var(--red); font-weight:700; }
+    .minus { color:var(--blue); font-weight:700; }
+    tr.stale { opacity:.55; }
+    tr.hot { background:#fff7d6; }
+    .small { color:#4b5563; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <span class="title">StockBoard v2 Realtime</span>
+    <span id="clock" class="badge">-</span>
+    <span id="status" class="badge bad">연결 대기</span>
+    <span id="counts" class="badge">rows 0 · events 0</span>
+    <span id="latency" class="badge">api - ms</span>
+    <span class="small">32bit 수집기 → 64bit worker → latest snapshot</span>
+  </div>
+  <table id="board">
+    <thead>
+      <tr>
+        <th class="center" style="width:42px">순위</th>
+        <th class="center" style="width:62px">코드</th>
+        <th style="width:150px">종목명</th>
+        <th class="num" style="width:90px">현재가</th>
+        <th class="num" style="width:72px">등락률</th>
+        <th class="num" style="width:100px">거래대금(억)</th>
+        <th class="num" style="width:96px">누적량</th>
+        <th class="num" style="width:72px">체결량</th>
+        <th class="num" style="width:72px">체결강도</th>
+        <th class="num" style="width:72px">잔량비</th>
+        <th class="num" style="width:72px">대량건</th>
+        <th style="width:120px">수신</th>
+      </tr>
+    </thead>
+    <tbody id="rows"><tr><td colspan="12" class="center">v2 worker 연결 대기 중입니다.</td></tr></tbody>
+  </table>
+  <script>
+    const rowsEl = document.getElementById('rows');
+    const statusEl = document.getElementById('status');
+    const countsEl = document.getElementById('counts');
+    const latencyEl = document.getElementById('latency');
+    const clockEl = document.getElementById('clock');
+    const rowByCode = new Map();
+
+    function fmtNum(v, digits=0) {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return '-';
+      return n.toLocaleString('en-US', { maximumFractionDigits: digits, minimumFractionDigits: digits });
+    }
+    function fmtSigned(v, suffix='') {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return '-';
+      return `${n > 0 ? '+' : ''}${n.toFixed(2)}${suffix}`;
+    }
+    function clsSigned(v) {
+      const n = Number(v);
+      return !Number.isFinite(n) ? '' : n > 0 ? 'plus' : n < 0 ? 'minus' : '';
+    }
+    function ensureRow(code) {
+      let tr = rowByCode.get(code);
+      if (tr) return tr;
+      tr = document.createElement('tr');
+      tr.innerHTML = Array.from({ length: 12 }, () => '<td></td>').join('');
+      rowByCode.set(code, tr);
+      return tr;
+    }
+    function setCell(tr, index, text, className='') {
+      const td = tr.children[index];
+      if (!td) return;
+      if (td.textContent !== String(text)) td.textContent = text;
+      td.className = className;
+    }
+    function render(payload, elapsedMs) {
+      const rows = Array.isArray(payload.rows) ? payload.rows : [];
+      statusEl.textContent = '연결 OK';
+      statusEl.className = 'badge ok';
+      countsEl.textContent = `rows ${payload.row_count || rows.length} · events ${payload.status?.event_count || 0} · trades ${payload.status?.trade_count || 0}`;
+      latencyEl.textContent = `api ${elapsedMs.toFixed(0)} ms`;
+      const seen = new Set();
+      if (!rows.length) {
+        rowsEl.innerHTML = '<tr><td colspan="12" class="center">실시간 수신 대기 중입니다.</td></tr>';
+        rowByCode.clear();
+        return;
+      }
+      if (rowsEl.children.length === 1 && rowsEl.children[0].children.length === 1) rowsEl.innerHTML = '';
+      rows.forEach((r, index) => {
+        const code = String(r.stock_code || '');
+        if (!code) return;
+        seen.add(code);
+        const tr = ensureRow(code);
+        const rate = Number(r.change_rate);
+        const age = Number(r.price_age_sec);
+        tr.className = `${age > 3 ? 'stale ' : ''}${index < 20 ? 'hot' : ''}`.trim();
+        setCell(tr, 0, r.rank ?? index + 1, 'center');
+        setCell(tr, 1, code, 'center');
+        setCell(tr, 2, r.stock_name || code);
+        setCell(tr, 3, fmtNum(r.price), 'num');
+        setCell(tr, 4, Number.isFinite(rate) ? `${rate > 0 ? '+' : ''}${rate.toFixed(2)}%` : '-', `num ${clsSigned(rate)}`);
+        setCell(tr, 5, fmtNum(r.trade_value_eok, 0), 'num');
+        setCell(tr, 6, fmtNum(r.cumulative_volume, 0), 'num');
+        setCell(tr, 7, fmtNum(r.trade_qty, 0), `num ${clsSigned(r.trade_qty)}`);
+        setCell(tr, 8, fmtNum(r.execution_strength, 2), 'num');
+        setCell(tr, 9, fmtNum(r.bid_ask_ratio, 2), 'num');
+        setCell(tr, 10, fmtNum(r.large_trade_net_count, 0), `num ${clsSigned(r.large_trade_net_count)}`);
+        setCell(tr, 11, `${r.trade_time || '-'} / ${Number.isFinite(age) ? age.toFixed(1) + 's' : '-'}`);
+        rowsEl.appendChild(tr);
+      });
+      for (const [code, tr] of rowByCode.entries()) {
+        if (!seen.has(code)) {
+          tr.remove();
+          rowByCode.delete(code);
+        }
+      }
+    }
+    async function tick() {
+      clockEl.textContent = new Date().toLocaleTimeString('ko-KR', { hour12:false });
+      const start = performance.now();
+      try {
+        const res = await fetch(`/api/v2/snapshot?limit=300&ts=${Date.now()}`, { cache:'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const payload = await res.json();
+        render(payload, performance.now() - start);
+      } catch (e) {
+        statusEl.textContent = `연결 실패: ${e.message}`;
+        statusEl.className = 'badge bad';
+      }
+    }
+    tick();
+    setInterval(tick, 250);
+  </script>
+</body>
+</html>
