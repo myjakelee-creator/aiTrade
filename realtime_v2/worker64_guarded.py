@@ -24,6 +24,7 @@ from realtime_v2.common import (
     to_int,
     to_number,
 )
+from realtime_v2.market_session import market_session_now
 
 STALE_LAG_WARN_SEC = 10.0
 
@@ -57,6 +58,44 @@ def _lag_seconds(trade_time_seconds: int | None) -> float | None:
     if lag < -12 * 3600:
         lag += 24 * 3600
     return round(max(0.0, float(lag)), 3)
+
+
+def _session_dict() -> dict[str, Any]:
+    try:
+        return market_session_now().to_dict()
+    except Exception as error:
+        return {
+            "phase": "unknown",
+            "phase_label": "장상태 알 수 없음",
+            "trading_date": "",
+            "calendar_date": "",
+            "accept_realtime": True,
+            "prefer_seed_when_no_realtime": True,
+            "freeze_realtime_missing": True,
+            "reason": str(error),
+            "windows": {},
+            "special_day": {},
+            "is_trading_day": False,
+        }
+
+
+def _update_market_session_status(state) -> dict[str, Any]:
+    session = _session_dict()
+    state.status["market_phase"] = session.get("phase")
+    state.status["market_phase_label"] = session.get("phase_label")
+    state.status["market_trading_date"] = session.get("trading_date")
+    state.status["market_accept_realtime"] = session.get("accept_realtime")
+    state.status["market_freeze_realtime_missing"] = session.get("freeze_realtime_missing")
+    previous_date = state.status.get("active_trading_date")
+    current_date = session.get("trading_date")
+    if current_date and previous_date and previous_date != current_date:
+        state.status["date_rollover_detected"] = True
+        state.status["date_rollover_from"] = previous_date
+        state.status["date_rollover_to"] = current_date
+        state.status["needs_universe_rebuild"] = True
+    elif current_date and not previous_date:
+        state.status["active_trading_date"] = current_date
+    return session
 
 
 def _drop_trade(state, quote: dict[str, Any], code: str, reason: str, event: dict[str, Any], values: dict[str, Any], trade_time: str, lag_sec: float | None) -> None:
@@ -122,6 +161,7 @@ def _guarded_load_universe(self) -> None:
                 "seed_trade_value_eok": item.get("seed_trade_value_eok"),
                 "seed_built_at": built_at,
             }
+        _update_market_session_status(self)
         for code in list(self.seed_rank_by_code):
             self._quote(code)
         self.status["universe_seed_quote_count"] = len(self.quotes)
@@ -175,6 +215,7 @@ def _guarded_quote(self, code: str) -> dict[str, Any]:
 
 def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
     with self.lock:
+        _update_market_session_status(self)
         for code in list(self.seed_rank_by_code):
             self._quote(code)
         rows = [deepcopy(row) for row in self.quotes.values()]
@@ -215,6 +256,7 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
     )
     if not code:
         return
+    session = _update_market_session_status(self)
     quote = self._quote(code)
     price = normalized_price(
         raw.get("price_raw")
@@ -264,7 +306,9 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
     previous_volume = to_int(quote.get("cumulative_volume"))
     has_accepted_realtime = quote.get("row_source") == "realtime"
     drop_reason = None
-    if has_accepted_realtime and trade_time_sec is not None and previous_time_sec is not None:
+    if session.get("accept_realtime") is False and has_accepted_realtime:
+        drop_reason = "market_session_closed"
+    if drop_reason is None and has_accepted_realtime and trade_time_sec is not None and previous_time_sec is not None:
         try:
             if int(trade_time_sec) < int(previous_time_sec):
                 drop_reason = "older_fid20_than_last_accepted"
@@ -339,10 +383,32 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
             self._mark_daily_dirty()
 
 
+_original_snapshot = base.State.snapshot
+
+
+def _guarded_snapshot(self, limit: int = 300) -> dict[str, Any]:
+    session = _update_market_session_status(self)
+    payload = _original_snapshot(self, limit)
+    payload["market_session"] = session
+    if isinstance(payload.get("status"), dict):
+        payload["status"].update(
+            {
+                "market_phase": session.get("phase"),
+                "market_phase_label": session.get("phase_label"),
+                "market_trading_date": session.get("trading_date"),
+                "market_accept_realtime": session.get("accept_realtime"),
+                "market_freeze_realtime_missing": session.get("freeze_realtime_missing"),
+                "market_session_reason": session.get("reason"),
+            }
+        )
+    return payload
+
+
 base.State._load_universe = _guarded_load_universe
 base.State._quote = _guarded_quote
 base.State.rows = _guarded_rows
 base.State._apply_trade = _guarded_apply_trade
+base.State.snapshot = _guarded_snapshot
 
 if __name__ == "__main__":
     raise SystemExit(base.main())
