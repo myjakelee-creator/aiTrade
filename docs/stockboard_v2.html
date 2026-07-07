@@ -12,11 +12,16 @@
     .badge { padding:2px 6px; border:1px solid #9aa8b5; background:white; border-radius:3px; }
     .ok { color:#067a2a; font-weight:800; }
     .bad { color:var(--red); font-weight:800; }
-    table { width:100%; border-collapse:collapse; table-layout:fixed; background:white; }
+    table { width:max-content; min-width:100%; border-collapse:collapse; table-layout:fixed; background:white; }
+    col { width: var(--col-width, 80px); }
     th, td { border:1px solid var(--grid); padding:2px 4px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; height:20px; }
     th { background:var(--head); font-weight:800; position:sticky; top:31px; z-index:4; user-select:none; cursor:pointer; }
-    th[data-sort-dir="asc"]::after { content:" ▲"; color:#1d4ed8; }
-    th[data-sort-dir="desc"]::after { content:" ▼"; color:#b91c1c; }
+    th[data-sort-dir="asc"] .header-label::after { content:" ▲"; color:#1d4ed8; }
+    th[data-sort-dir="desc"] .header-label::after { content:" ▼"; color:#b91c1c; }
+    .header-label { pointer-events:none; }
+    .column-resizer { position:absolute; top:0; right:-3px; width:7px; height:100%; cursor:col-resize; z-index:20; }
+    .column-resizer:hover { background:rgba(29,78,216,.18); }
+    body.resizing-column { cursor:col-resize; user-select:none; }
     td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
     td.center, th.center { text-align:center; }
     .plus { color:var(--red); font-weight:700; }
@@ -24,6 +29,8 @@
     .zero { color:#4b5563; }
     .ratio-hot { color:var(--red); font-weight:700; }
     .ratio-cold { color:var(--blue); font-weight:700; }
+    .stock-name-copy { cursor:copy; text-decoration: underline dotted rgba(31,41,55,.35); text-underline-offset:2px; }
+    .stock-name-copy.copied { background:#dcfce7 !important; color:#166534 !important; font-weight:800; }
     tr.stale { opacity:.55; }
     tr.hot { background:#fff7d6; }
     .small { color:#4b5563; }
@@ -39,34 +46,64 @@
     <span class="small">32bit 수집기 → 64bit worker → 100ms micro-batch stream</span>
   </div>
   <table id="board">
+    <colgroup id="cols">
+      <col data-key="rank" />
+      <col data-key="rank_change" />
+      <col data-key="stock_name" />
+      <col data-key="price" />
+      <col data-key="change_rate" />
+      <col data-key="trade_value_eok" />
+      <col data-key="amount_ratio" />
+      <col data-key="execution_strength" />
+      <col data-key="bid_ask_ratio" />
+      <col data-key="large_trade_net_count" />
+    </colgroup>
     <thead>
       <tr>
-        <th class="center" style="width:44px" data-sort-key="rank">순위</th>
-        <th class="center" style="width:58px" data-sort-key="rank_change">전일</th>
-        <th style="width:170px" data-sort-key="stock_name">종목명</th>
-        <th class="num" style="width:90px" data-sort-key="price">현재가</th>
-        <th class="num" style="width:72px" data-sort-key="change_rate">등락률</th>
-        <th class="num" style="width:105px" data-sort-key="trade_value_eok">거래대금</th>
-        <th class="num" style="width:70px" data-sort-key="amount_ratio">대금비</th>
-        <th class="num" style="width:76px" data-sort-key="execution_strength">체결강도</th>
-        <th class="num" style="width:70px" data-sort-key="bid_ask_ratio">잔량비</th>
-        <th class="num" style="width:70px" data-sort-key="large_trade_net_count">대량건</th>
+        <th class="center" data-sort-key="rank"><span class="header-label">순위</span></th>
+        <th class="center" data-sort-key="rank_change"><span class="header-label">전일</span></th>
+        <th data-sort-key="stock_name"><span class="header-label">종목명</span></th>
+        <th class="num" data-sort-key="price"><span class="header-label">현재가</span></th>
+        <th class="num" data-sort-key="change_rate"><span class="header-label">등락률</span></th>
+        <th class="num" data-sort-key="trade_value_eok"><span class="header-label">거래대금</span></th>
+        <th class="num" data-sort-key="amount_ratio"><span class="header-label">대금비</span></th>
+        <th class="num" data-sort-key="execution_strength"><span class="header-label">체결강도</span></th>
+        <th class="num" data-sort-key="bid_ask_ratio"><span class="header-label">잔량비</span></th>
+        <th class="num" data-sort-key="large_trade_net_count"><span class="header-label">대량건</span></th>
       </tr>
     </thead>
     <tbody id="rows"><tr><td colspan="10" class="center">v2 stream 연결 대기 중입니다.</td></tr></tbody>
   </table>
   <script>
+    const boardEl = document.getElementById('board');
+    const colsEl = document.getElementById('cols');
     const rowsEl = document.getElementById('rows');
     const statusEl = document.getElementById('status');
     const countsEl = document.getElementById('counts');
     const latencyEl = document.getElementById('latency');
     const clockEl = document.getElementById('clock');
     const rowByCode = new Map();
+    const columnDefs = [
+      { key:'rank', width:48, min:40, max:80 },
+      { key:'rank_change', width:58, min:48, max:90 },
+      { key:'stock_name', width:170, min:110, max:260 },
+      { key:'price', width:92, min:72, max:120 },
+      { key:'change_rate', width:76, min:62, max:100 },
+      { key:'trade_value_eok', width:106, min:82, max:140 },
+      { key:'amount_ratio', width:72, min:58, max:95 },
+      { key:'execution_strength', width:82, min:68, max:115 },
+      { key:'bid_ask_ratio', width:72, min:58, max:95 },
+      { key:'large_trade_net_count', width:72, min:58, max:100 }
+    ];
     let lastPayload = null;
     let lastStreamAt = 0;
     let fallbackTimer = null;
     let stream = null;
     let sortState = loadSortState();
+    let columnWidths = loadColumnWidths();
+    let autoFitQueued = false;
+    let lastAutoFitAt = 0;
+    let firstAutoFitDone = false;
 
     function loadSortState() {
       try {
@@ -78,6 +115,107 @@
     function saveSortState() {
       try { localStorage.setItem('stockboard.v2.sort', JSON.stringify(sortState)); } catch (_error) {}
     }
+    function loadColumnWidths() {
+      try {
+        const saved = JSON.parse(localStorage.getItem('stockboard.v2.columnWidths') || '{}');
+        return saved && typeof saved === 'object' ? saved : {};
+      } catch (_error) { return {}; }
+    }
+    function saveColumnWidths() {
+      try { localStorage.setItem('stockboard.v2.columnWidths', JSON.stringify(columnWidths)); } catch (_error) {}
+    }
+    function columnDef(index) { return columnDefs[index] || { key:String(index), width:80, min:40, max:240 }; }
+    function clampWidth(index, value) {
+      const def = columnDef(index);
+      return Math.max(def.min, Math.min(def.max, Math.round(value || def.width)));
+    }
+    function setColumnWidth(index, width, save=true) {
+      const def = columnDef(index);
+      const col = colsEl.children[index];
+      const px = clampWidth(index, width);
+      if (col) col.style.setProperty('--col-width', `${px}px`);
+      if (save) {
+        columnWidths[def.key] = px;
+        saveColumnWidths();
+      }
+    }
+    function applyColumnWidths() {
+      columnDefs.forEach((def, index) => {
+        const width = Number(columnWidths[def.key] || def.width);
+        setColumnWidth(index, width, false);
+      });
+    }
+    function measureText(text) {
+      if (!measureText.canvas) {
+        measureText.canvas = document.createElement('canvas');
+        measureText.ctx = measureText.canvas.getContext('2d');
+      }
+      const ctx = measureText.ctx;
+      ctx.font = getComputedStyle(boardEl).font || '12px Malgun Gothic';
+      return ctx.measureText(String(text || '')).width;
+    }
+    function autoFitColumn(index, save=true) {
+      const def = columnDef(index);
+      const th = boardEl.querySelectorAll('thead th')[index];
+      let width = measureText(th?.querySelector('.header-label')?.textContent || th?.textContent || '') + 26;
+      rowsEl.querySelectorAll('tr').forEach((row) => {
+        const cell = row.children[index];
+        if (!cell) return;
+        width = Math.max(width, measureText(cell.textContent || '') + 18);
+      });
+      setColumnWidth(index, width, save);
+      return width;
+    }
+    function autoFitColumns(save=false, includeManual=false) {
+      columnDefs.forEach((def, index) => {
+        if (!includeManual && columnWidths[def.key]) return;
+        autoFitColumn(index, save);
+      });
+    }
+    function scheduleAutoFit() {
+      const now = performance.now();
+      if (autoFitQueued || (firstAutoFitDone && now - lastAutoFitAt < 2500)) return;
+      autoFitQueued = true;
+      requestAnimationFrame(() => {
+        autoFitQueued = false;
+        lastAutoFitAt = performance.now();
+        autoFitColumns(false, false);
+        firstAutoFitDone = true;
+      });
+    }
+    function initColumnResizers() {
+      boardEl.querySelectorAll('thead th').forEach((th, index) => {
+        if (th.querySelector('.column-resizer')) return;
+        const handle = document.createElement('span');
+        handle.className = 'column-resizer';
+        handle.title = '드래그: 열 폭 조절 / 더블클릭: 자동 폭조절';
+        handle.addEventListener('click', (event) => event.stopPropagation());
+        handle.addEventListener('dblclick', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          autoFitColumn(index, true);
+        });
+        handle.addEventListener('mousedown', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const startX = event.clientX;
+          const col = colsEl.children[index];
+          const startWidth = col ? col.getBoundingClientRect().width : columnDef(index).width;
+          document.body.classList.add('resizing-column');
+          function onMove(moveEvent) { setColumnWidth(index, startWidth + moveEvent.clientX - startX, false); }
+          function onUp(upEvent) {
+            setColumnWidth(index, startWidth + upEvent.clientX - startX, true);
+            document.body.classList.remove('resizing-column');
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+          }
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        });
+        th.appendChild(handle);
+      });
+    }
+
     function numeric(v) {
       const n = Number(v);
       return Number.isFinite(n) ? n : null;
@@ -110,8 +248,14 @@
       });
     }
     document.addEventListener('click', (event) => {
+      const stockCell = event.target.closest('td.stock-name-copy');
+      if (stockCell) {
+        const code = stockCell.dataset.code || '';
+        if (code) copyStockCode(stockCell, code);
+        return;
+      }
       const th = event.target.closest('th[data-sort-key]');
-      if (!th) return;
+      if (!th || event.target.closest('.column-resizer')) return;
       const key = th.dataset.sortKey;
       const dir = sortState.key === key && sortState.dir === 'asc' ? 'desc' : 'asc';
       sortState = { key, dir };
@@ -119,6 +263,26 @@
       markSortHeaders();
       if (lastPayload) render(lastPayload, 'stream');
     });
+
+    async function copyStockCode(cell, code) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(code);
+        else {
+          const input = document.createElement('input');
+          input.value = code;
+          document.body.appendChild(input);
+          input.select();
+          document.execCommand('copy');
+          input.remove();
+        }
+        const original = cell.textContent;
+        cell.classList.add('copied');
+        cell.textContent = `${original} ✓ ${code}`;
+        setTimeout(() => { cell.classList.remove('copied'); cell.textContent = original; }, 650);
+      } catch (_error) {
+        cell.title = `클립보드 저장 실패: ${code}`;
+      }
+    }
 
     function fmtNum(v, digits=0) {
       const n = Number(v);
@@ -193,6 +357,7 @@
         tr.className = `${age > 3 ? 'stale ' : ''}${Number.isFinite(rank) && rank <= 20 ? 'hot' : ''}`.trim();
         tr.title = [
           `코드: ${code}`,
+          `종목명 클릭: 종목코드 클립보드 저장`,
           `수신: ${r.trade_time || '-'} / ${Number.isFinite(age) ? age.toFixed(1) + 's' : '-'}`,
           `전일 거래대금: ${fmtNum(r.prev_trade_value_eok, 0)}억`,
           `프로그램 순매수: ${fmtNum(r.program_net, 0)}억`,
@@ -202,7 +367,9 @@
         ].join('\n');
         setCell(tr, 0, r.rank ?? '-', 'center');
         setCell(tr, 1, fmtRankChange(r.rank_change), `center ${clsSigned(r.rank_change)}`);
-        setCell(tr, 2, r.stock_name || code);
+        setCell(tr, 2, r.stock_name || code, 'stock-name-copy');
+        tr.children[2].dataset.code = code;
+        tr.children[2].title = `${r.stock_name || code}\n클릭하면 ${code} 복사`;
         setCell(tr, 3, fmtNum(r.price), 'num');
         setCell(tr, 4, Number.isFinite(rate) ? `${rate > 0 ? '+' : ''}${rate.toFixed(2)}%` : '-', `num ${clsSigned(rate)}`);
         setCell(tr, 5, fmtNum(r.trade_value_eok, 0), 'num');
@@ -218,6 +385,7 @@
           rowByCode.delete(code);
         }
       }
+      scheduleAutoFit();
     }
     async function fallbackPoll() {
       try {
@@ -261,6 +429,8 @@
       if (lastPayload && (!lastStreamAt || performance.now() - lastStreamAt > 1000)) render(lastPayload, 'stream');
     }, 500);
     clockEl.textContent = new Date().toLocaleTimeString('ko-KR', { hour12:false });
+    applyColumnWidths();
+    initColumnResizers();
     markSortHeaders();
     connectStream();
   </script>
