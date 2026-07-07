@@ -6,21 +6,22 @@
   <title>StockBoard v2 Realtime</title>
   <style>
     :root { --red:#d71920; --blue:#1266d6; --grid:#c7d1dc; --head:#eaf0f6; --text:#111827; }
-    html { overflow-x:auto; }
-    body { margin:0; min-width:100vw; overflow-x:auto; font-family: Malgun Gothic, Arial, sans-serif; font-size:12px; color:var(--text); background:#f8fafc; }
-    .topbar { position:sticky; top:0; z-index:5; display:flex; gap:12px; align-items:center; padding:6px 8px; border-bottom:1px solid #aab7c6; background:#dde7f1; min-width:max-content; }
+    html, body { overflow-x:auto; }
+    body { margin:0; min-width:100vw; font-family: Malgun Gothic, Arial, sans-serif; font-size:12px; color:var(--text); background:#f8fafc; }
+    .topbar { position:sticky; top:0; z-index:5; display:flex; gap:10px; align-items:center; padding:6px 8px; border-bottom:1px solid #aab7c6; background:#dde7f1; min-width:max-content; }
     .title { font-weight:800; }
     .badge { padding:2px 6px; border:1px solid #9aa8b5; background:white; border-radius:3px; }
     .ok { color:#067a2a; font-weight:800; }
     .bad { color:var(--red); font-weight:800; }
-    table { width:max-content; min-width:max-content; border-collapse:collapse; table-layout:fixed; background:white; }
-    col { width: var(--col-width, 80px); }
-    th, td { border:1px solid var(--grid); padding:2px 4px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; height:20px; }
+    .copy-ok { color:#166534; border-color:#86efac; background:#dcfce7; font-weight:800; }
+    table { border-collapse:collapse; table-layout:fixed; background:white; }
+    col { width: var(--col-width, 80px); min-width:0 !important; }
+    th, td { box-sizing:border-box; border:1px solid var(--grid); padding:2px 4px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; height:20px; min-width:0 !important; max-width:none; }
     th { background:var(--head); font-weight:800; position:sticky; top:31px; z-index:4; user-select:none; cursor:pointer; }
     th[data-sort-dir="asc"] .header-label::after { content:" ▲"; color:#1d4ed8; }
     th[data-sort-dir="desc"] .header-label::after { content:" ▼"; color:#b91c1c; }
     .header-label { pointer-events:none; }
-    .column-resizer { position:absolute; top:0; right:-3px; width:7px; height:100%; cursor:col-resize; z-index:20; }
+    .column-resizer { position:absolute; top:0; right:-4px; width:9px; height:100%; cursor:col-resize; z-index:20; }
     .column-resizer:hover { background:rgba(29,78,216,.18); }
     body.resizing-column { cursor:col-resize; user-select:none; }
     td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
@@ -44,6 +45,7 @@
     <span id="status" class="badge bad">연결 대기</span>
     <span id="counts" class="badge">rows 0 · events 0</span>
     <span id="latency" class="badge">stream - ms</span>
+    <span id="copy-status" class="badge">종목명 클릭=코드복사</span>
     <span class="small">32bit 수집기 → 64bit worker → 100ms micro-batch stream</span>
   </div>
   <table id="board">
@@ -83,18 +85,19 @@
     const countsEl = document.getElementById('counts');
     const latencyEl = document.getElementById('latency');
     const clockEl = document.getElementById('clock');
+    const copyStatusEl = document.getElementById('copy-status');
     const rowByCode = new Map();
     const columnDefs = [
-      { key:'rank', width:48, min:18, max:260 },
-      { key:'rank_change', width:58, min:18, max:260 },
-      { key:'stock_name', width:170, min:22, max:520 },
-      { key:'price', width:92, min:22, max:360 },
-      { key:'change_rate', width:76, min:22, max:320 },
-      { key:'trade_value_eok', width:106, min:22, max:420 },
-      { key:'amount_ratio', width:72, min:18, max:260 },
-      { key:'execution_strength', width:82, min:22, max:320 },
-      { key:'bid_ask_ratio', width:72, min:18, max:260 },
-      { key:'large_trade_net_count', width:72, min:18, max:260 }
+      { key:'rank', width:48, min:8, max:1200 },
+      { key:'rank_change', width:58, min:8, max:1200 },
+      { key:'stock_name', width:170, min:8, max:1200 },
+      { key:'price', width:92, min:8, max:1200 },
+      { key:'change_rate', width:76, min:8, max:1200 },
+      { key:'trade_value_eok', width:106, min:8, max:1200 },
+      { key:'amount_ratio', width:72, min:8, max:1200 },
+      { key:'execution_strength', width:82, min:8, max:1200 },
+      { key:'bid_ask_ratio', width:72, min:8, max:1200 },
+      { key:'large_trade_net_count', width:72, min:8, max:1200 }
     ];
     let lastPayload = null;
     let lastStreamAt = 0;
@@ -105,6 +108,7 @@
     let autoFitQueued = false;
     let lastAutoFitAt = 0;
     let firstAutoFitDone = false;
+    let copyTimer = null;
 
     function loadSortState() {
       try {
@@ -125,27 +129,47 @@
     function saveColumnWidths() {
       try { localStorage.setItem('stockboard.v2.columnWidths', JSON.stringify(columnWidths)); } catch (_error) {}
     }
-    function columnDef(index) { return columnDefs[index] || { key:String(index), width:80, min:18, max:520 }; }
+    function columnDef(index) { return columnDefs[index] || { key:String(index), width:80, min:8, max:1200 }; }
     function clampWidth(index, value) {
       const def = columnDef(index);
-      const width = Math.round(Number(value) || def.width);
-      return Math.max(def.min, Math.min(def.max || 520, width));
+      const number = Math.round(Number(value));
+      const width = Number.isFinite(number) ? number : def.width;
+      return Math.max(def.min, Math.min(def.max || 1200, width));
+    }
+    function totalColumnWidth() {
+      return columnDefs.reduce((sum, def, index) => {
+        const col = colsEl.children[index];
+        const styleWidth = col ? parseFloat(col.style.getPropertyValue('--col-width')) : NaN;
+        const width = Number.isFinite(styleWidth) ? styleWidth : Number(columnWidths[def.key] || def.width);
+        return sum + clampWidth(index, width);
+      }, 0);
+    }
+    function updateBoardWidth() {
+      const width = Math.max(1, totalColumnWidth());
+      boardEl.style.width = `${width}px`;
+      boardEl.style.minWidth = `${width}px`;
     }
     function setColumnWidth(index, width, save=true) {
       const def = columnDef(index);
       const col = colsEl.children[index];
       const px = clampWidth(index, width);
-      if (col) col.style.setProperty('--col-width', `${px}px`);
+      if (col) {
+        col.style.width = `${px}px`;
+        col.style.minWidth = '0px';
+        col.style.setProperty('--col-width', `${px}px`);
+      }
       if (save) {
         columnWidths[def.key] = px;
         saveColumnWidths();
       }
+      updateBoardWidth();
     }
     function applyColumnWidths() {
       columnDefs.forEach((def, index) => {
         const width = Number(columnWidths[def.key] || def.width);
         setColumnWidth(index, width, false);
       });
+      updateBoardWidth();
     }
     function measureText(text) {
       if (!measureText.canvas) {
@@ -201,7 +225,8 @@
           event.stopPropagation();
           const startX = event.clientX;
           const col = colsEl.children[index];
-          const startWidth = col ? col.getBoundingClientRect().width : columnDef(index).width;
+          const parsed = col ? parseFloat(col.style.getPropertyValue('--col-width')) : NaN;
+          const startWidth = Number.isFinite(parsed) ? parsed : columnDef(index).width;
           document.body.classList.add('resizing-column');
           function onMove(moveEvent) { setColumnWidth(index, startWidth + moveEvent.clientX - startX, false); }
           function onUp(upEvent) {
@@ -251,8 +276,10 @@
     document.addEventListener('click', (event) => {
       const stockCell = event.target.closest('td.stock-name-copy');
       if (stockCell) {
-        const code = stockCell.dataset.code || '';
+        const code = stockCell.dataset.code || stockCell.closest('tr')?.dataset?.code || '';
         if (code) copyStockCode(stockCell, code);
+        event.preventDefault();
+        event.stopPropagation();
         return;
       }
       const th = event.target.closest('th[data-sort-key]');
@@ -266,22 +293,34 @@
     });
 
     async function copyStockCode(cell, code) {
+      const text = String(code || '').trim();
+      if (!text) return;
       try {
-        if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(code);
+        if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(text);
         else {
           const input = document.createElement('input');
-          input.value = code;
+          input.value = text;
+          input.setAttribute('readonly', 'readonly');
+          input.style.position = 'fixed';
+          input.style.left = '-9999px';
           document.body.appendChild(input);
+          input.focus();
           input.select();
           document.execCommand('copy');
           input.remove();
         }
-        const original = cell.textContent;
         cell.classList.add('copied');
-        cell.textContent = `${original} ✓ ${code}`;
-        setTimeout(() => { cell.classList.remove('copied'); cell.textContent = original; }, 650);
+        copyStatusEl.textContent = `복사됨 ${text}`;
+        copyStatusEl.className = 'badge copy-ok';
+        window.clearTimeout(copyTimer);
+        copyTimer = window.setTimeout(() => {
+          cell.classList.remove('copied');
+          copyStatusEl.textContent = '종목명 클릭=코드복사';
+          copyStatusEl.className = 'badge';
+        }, 700);
       } catch (_error) {
-        cell.title = `클립보드 저장 실패: ${code}`;
+        copyStatusEl.textContent = `복사 실패 ${text}`;
+        copyStatusEl.className = 'badge bad';
       }
     }
 
@@ -316,6 +355,7 @@
       if (tr) return tr;
       tr = document.createElement('tr');
       tr.innerHTML = Array.from({ length: 10 }, () => '<td></td>').join('');
+      tr.dataset.code = code;
       rowByCode.set(code, tr);
       return tr;
     }
@@ -336,7 +376,8 @@
       const rawRows = Array.isArray(payload.rows) ? payload.rows : [];
       const rows = sortedRows(rawRows);
       const lag = payloadLagMs(payload);
-      statusEl.textContent = mode === 'stream' ? '연결 OK' : 'polling fallback';
+      const phase = payload.market_session?.phase_label || payload.status?.market_phase_label || '';
+      statusEl.textContent = phase ? `연결 OK · ${phase}` : '연결 OK';
       statusEl.className = mode === 'stream' ? 'badge ok' : 'badge bad';
       countsEl.textContent = `rows ${payload.row_count || rawRows.length} · events ${payload.status?.event_count || 0} · trades ${payload.status?.trade_count || 0}`;
       latencyEl.textContent = `${mode} ${lag === null ? '-' : lag.toFixed(0)} ms · q ${payload.status?.event_log_queue_size ?? '-'} · sort ${sortState.key}/${sortState.dir}`;
@@ -352,6 +393,7 @@
         if (!code) return;
         seen.add(code);
         const tr = ensureRow(code);
+        tr.dataset.code = code;
         const rate = Number(r.change_rate);
         const age = Number(r.price_age_sec);
         const rank = Number(r.rank);
@@ -364,6 +406,7 @@
           `프로그램 순매수: ${fmtNum(r.program_net, 0)}억`,
           `누적량: ${fmtNum(r.cumulative_volume, 0)}`,
           `체결량: ${fmtNum(r.trade_qty, 0)}`,
+          `row_source: ${r.row_source || '-'}`,
           `source: ${r.source_code || '-'}`
         ].join('\n');
         setCell(tr, 0, r.rank ?? '-', 'center');
@@ -387,6 +430,7 @@
         }
       }
       scheduleAutoFit();
+      updateBoardWidth();
     }
     async function fallbackPoll() {
       try {
