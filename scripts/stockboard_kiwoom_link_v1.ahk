@@ -3,106 +3,139 @@
 #Persistent
 SendMode Input
 SetTitleMatchMode, 2
+DetectHiddenWindows, Off
+SetBatchLines, -1
 
-; StockBoard -> clipboard -> Kiwoom HTS bridge for AutoHotkey v1.
-; Valid clipboard values: 005930, 005930_AL, 005930_NX.
-; HTS Edit6 always receives the final 6-digit stock code only.
+; StockBoard v2 -> clipboard command -> Kiwoom HTS bridge for AutoHotkey v1.
+; Accepted clipboard commands:
+;   SBV2|<sequence>|005930
+;   SB|<sequence>|005930
+; Fallback accepted values:
+;   005930
+;   005930_AL
+;   005930_NX
+;
+; The bridge no longer ignores duplicate stock codes. Every new command sequence
+; is processed once, so clicking the same row repeatedly works. The bridge does
+; not activate or close HTS windows. It only writes the verified code to Edit6
+; and sends Enter to that exact control after readback succeeds.
 
 TargetControl := "Edit6"
-AllowDuplicate := false
 SendEnterAfterSet := true
-UseWinActivateFallback := false
 NotifySuccess := false
-LastCode := ""
 LastClipboard := Clipboard
+LastCommandId := ""
+LastSentCode := ""
+StatusFile := "C:\aiTrade\data\runtime\stockboard_v2\hts_link_status.txt"
 
-SetTimer, WatchClipboard, 250
-TrayTip, StockBoard Kiwoom Link v1, StockBoard link started, 1
+SetTimer, WatchClipboardCommand, 80
+WriteStatus("started", "", "bridge started")
+TrayTip, StockBoard Kiwoom Link v2, HTS link bridge started, 1
 return
 
-WatchClipboard:
-    if (Clipboard = LastClipboard)
+WatchClipboardCommand:
+    current := Clipboard
+    if (current = LastClipboard)
+        return
+    LastClipboard := current
+
+    if (!ParseStockCommand(current, commandId, code, parseMode))
         return
 
-    LastClipboard := Clipboard
-    rawCode := Trim(Clipboard)
-    code := NormalizeClipboardStockCode(rawCode)
-    if (code = "")
+    if (commandId != "" && commandId = LastCommandId)
         return
 
-    if (!AllowDuplicate && code = LastCode)
-        return
-
-    result := SendCodeToKiwoom(code, usedSpec)
+    result := SendCodeToKiwoom(code, usedSpec, message)
     if (result) {
-        LastCode := code
+        if (commandId != "")
+            LastCommandId := commandId
+        LastSentCode := code
+        WriteStatus("ok", code, "sent via " . usedSpec . " / " . parseMode)
+    } else {
+        WriteStatus("error", code, message)
     }
 return
 
-NormalizeClipboardStockCode(rawText) {
+ParseStockCommand(rawText, ByRef commandId, ByRef code, ByRef parseMode) {
     text := Trim(rawText)
-    if RegExMatch(text, "^\d{6}$")
-        return text
-    if RegExMatch(text, "^(\d{6})_(AL|NX)$", match)
-        return match1
-    return ""
+    commandId := ""
+    code := ""
+    parseMode := ""
+
+    if RegExMatch(text, "i)^SBV?2?\|(\d+)\|(\d{6})(?:_(?:AL|NX))?$", match) {
+        commandId := match1
+        code := match2
+        parseMode := "stockboard_command"
+        return true
+    }
+
+    if RegExMatch(text, "^\d{6}$") {
+        commandId := "raw-" . A_TickCount
+        code := text
+        parseMode := "raw_code"
+        return true
+    }
+
+    if RegExMatch(text, "^(\d{6})_(AL|NX)$", match) {
+        commandId := "raw-" . A_TickCount
+        code := match1
+        parseMode := "raw_suffix_code"
+        return true
+    }
+
+    return false
 }
 
-SendCodeToKiwoom(code, ByRef usedSpec) {
+SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
     global TargetControl
     global SendEnterAfterSet
-    global UseWinActivateFallback
     global NotifySuccess
 
     hwnd := FindTargetWindow(usedSpec, triedSpecs)
     if (!hwnd) {
-        TrayTip, StockBoard Kiwoom Link v1, HTS window not found: %triedSpecs%, 3
+        message := "HTS window not found: " . triedSpecs
+        TrayTip, StockBoard Kiwoom Link v2, %message%, 3
         return false
     }
 
-    ControlSetText, %TargetControl%, %code%, ahk_id %hwnd%
-    if (ErrorLevel) {
-        if (!UseWinActivateFallback) {
-            TrayTip, StockBoard Kiwoom Link v1, ControlSetText failed: %usedSpec% / %TargetControl%, 3
-            return false
-        }
-
-        WinActivate, ahk_id %hwnd%
-        WinWaitActive, ahk_id %hwnd%,, 1
-        if (ErrorLevel) {
-            TrayTip, StockBoard Kiwoom Link v1, WinActivate fallback failed: %usedSpec%, 3
-            return false
-        }
-
-        ControlFocus, %TargetControl%, ahk_id %hwnd%
-        ControlSetText, %TargetControl%, %code%, ahk_id %hwnd%
-        if (ErrorLevel) {
-            TrayTip, StockBoard Kiwoom Link v1, fallback ControlSetText failed: %usedSpec%, 3
-            return false
-        }
+    ControlGet, controlHwnd, Hwnd,, %TargetControl%, ahk_id %hwnd%
+    if (!controlHwnd) {
+        message := "Target control not found: " . TargetControl . " / " . usedSpec
+        TrayTip, StockBoard Kiwoom Link v2, %message%, 3
+        return false
     }
 
-    ControlGetText, readback, %TargetControl%, ahk_id %hwnd%
+    Loop, 3 {
+        ControlSetText,, %code%, ahk_id %controlHwnd%
+        Sleep, 35
+        ControlGetText, readback,, ahk_id %controlHwnd%
+        if (readback = code)
+            break
+        Sleep, 60
+    }
+
+    ControlGetText, readback,, ahk_id %controlHwnd%
     if (readback != code) {
-        TrayTip, StockBoard Kiwoom Link v1, Edit6 set failed. expected %code%, got %readback%, 3
+        message := "Edit6 set failed. expected " . code . ", got " . readback
+        TrayTip, StockBoard Kiwoom Link v2, %message%, 3
         return false
     }
 
     if (SendEnterAfterSet) {
-        ControlSend, %TargetControl%, {Enter}, ahk_id %hwnd%
+        ; Send Enter to the Edit6 control HWND directly. Do not activate HTS and
+        ; do not send keys to the foreground window.
+        ControlSend,, {Enter}, ahk_id %controlHwnd%
         if (ErrorLevel) {
-            TrayTip, StockBoard Kiwoom Link v1, Enter send failed: %usedSpec% / %TargetControl%, 3
+            message := "Enter send failed: " . usedSpec . " / " . TargetControl
+            TrayTip, StockBoard Kiwoom Link v2, %message%, 3
             return false
-        }
-        if (NotifySuccess) {
-            TrayTip, StockBoard Kiwoom Link v1, Edit6 set OK: %code% / %usedSpec%. Enter sent to Edit6., 1
-        }
-    } else {
-        if (NotifySuccess) {
-            TrayTip, StockBoard Kiwoom Link v1, Edit6 set OK: %code% / %usedSpec%, 1
         }
     }
 
+    message := "OK " . code . " / " . usedSpec
+    if (NotifySuccess) {
+        TrayTip, StockBoard Kiwoom Link v2, %message%, 1
+    }
     return true
 }
 
@@ -126,4 +159,13 @@ FindTargetWindow(ByRef usedSpec, ByRef triedSpecs) {
 
     usedSpec := ""
     return 0
+}
+
+WriteStatus(status, code, message) {
+    global StatusFile
+    FormatTime, nowText,, yyyy-MM-dd HH:mm:ss
+    line := nowText . "|" . status . "|" . code . "|" . message
+    FileCreateDir, C:\aiTrade\data\runtime\stockboard_v2
+    FileDelete, %StatusFile%
+    FileAppend, %line%, %StatusFile%, UTF-8
 }
