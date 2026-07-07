@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import queue
-import socket
 import socketserver
 import sys
 import threading
-import time
 from copy import deepcopy
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -34,11 +31,27 @@ from realtime_v2.common import (  # noqa: E402
     normalized_rate,
     normalized_trade_value_eok,
     now_text,
-    safe_json_dumps,
     to_int,
     to_number,
     trading_date_text,
 )
+
+
+def merged_event_values(event: dict[str, Any]) -> dict[str, Any]:
+    """Merge collector event payloads.
+
+    The v2 collector uses the existing KiwoomOpenApiRealtimeProvider adapter.
+    That provider calls store.update_trade(code, **fields), so the useful fields
+    arrive in event["kwargs"], while raw/direct adapters may use event["values"].
+    """
+    result: dict[str, Any] = {}
+    values = event.get("values")
+    if isinstance(values, dict):
+        result.update(values)
+    kwargs = event.get("kwargs")
+    if isinstance(kwargs, dict):
+        result.update(kwargs)
+    return result
 
 
 class State:
@@ -68,7 +81,9 @@ class State:
                 if not code:
                     continue
                 self.name_by_code[code] = str(item.get("stock_name") or code)
-                self.seed_rank_by_code[code] = int(item.get("seed_rank") or item.get("original_rank") or 999999)
+                self.seed_rank_by_code[code] = int(
+                    item.get("seed_rank") or item.get("original_rank") or 999999
+                )
         except Exception as error:
             self.status["last_error"] = f"universe load failed: {error}"
 
@@ -105,20 +120,53 @@ class State:
         return quote
 
     def _apply_trade(self, event: dict[str, Any]) -> None:
-        values = event.get("values") if isinstance(event.get("values"), dict) else {}
+        values = merged_event_values(event)
         raw = values.get("raw") if isinstance(values.get("raw"), dict) else values
-        code = normalize_code(event.get("stock_code") or event.get("received_code") or values.get("stock_code") or values.get("received_code"))
+        code = normalize_code(
+            event.get("stock_code")
+            or event.get("received_code")
+            or values.get("stock_code")
+            or values.get("normalized_code")
+            or values.get("received_code")
+        )
         if not code:
             return
         quote = self._quote(code)
-        price = normalized_price(raw.get("price_raw") or values.get("price") or values.get("trade_price"))
-        change_rate = normalized_rate(raw.get("change_rate_raw") or values.get("change_rate"))
+        price = normalized_price(
+            raw.get("price_raw")
+            or values.get("price")
+            or values.get("trade_price")
+            or values.get("realtime_price")
+        )
+        change_rate = normalized_rate(
+            raw.get("change_rate_raw")
+            or values.get("change_rate")
+            or values.get("realtime_change_rate")
+        )
         trade_qty = to_int(raw.get("trade_qty_raw") or values.get("trade_qty"))
-        cumulative_volume = to_int(raw.get("cumulative_volume_raw") or values.get("cumulative_volume"))
-        trade_value_eok = normalized_trade_value_eok(raw.get("cumulative_value_raw") or values.get("cumulative_value"))
-        strength = to_number(raw.get("execution_strength_raw") or values.get("execution_strength"))
-        trade_time = normalize_trade_time(raw.get("trade_time_raw") or values.get("trade_time"))
-        received_at = event.get("ts") or values.get("received_at") or now_text()
+        cumulative_volume = to_int(
+            raw.get("cumulative_volume_raw") or values.get("cumulative_volume")
+        )
+        trade_value_eok = None
+        if values.get("trade_value_eok") not in (None, ""):
+            trade_value_eok = to_number(values.get("trade_value_eok"))
+        if trade_value_eok is None:
+            trade_value_eok = normalized_trade_value_eok(
+                raw.get("cumulative_value_raw") or values.get("cumulative_value")
+            )
+        strength = to_number(
+            raw.get("execution_strength_raw") or values.get("execution_strength")
+        )
+        trade_time = normalize_trade_time(
+            raw.get("trade_time_raw") or values.get("trade_time") or values.get("fid20_trade_time")
+        )
+        received_at = (
+            event.get("ts")
+            or values.get("price_received_at")
+            or values.get("trade_received_at")
+            or values.get("received_at")
+            or now_text()
+        )
         if price is not None:
             quote["price"] = price
             quote["trade_price"] = price
@@ -129,13 +177,14 @@ class State:
         if cumulative_volume is not None:
             quote["cumulative_volume"] = cumulative_volume
         if trade_value_eok is not None:
-            quote["trade_value_eok"] = trade_value_eok
+            quote["trade_value_eok"] = round(float(trade_value_eok), 4)
         if strength is not None:
             quote["execution_strength"] = round(strength, 4)
         quote["trade_time"] = trade_time
         quote["received_at"] = received_at
         quote["price_age_sec"] = event_age_sec(received_at)
         quote["market_type_raw"] = raw.get("market_type_raw") or values.get("market_type")
+        quote["source_code"] = values.get("source_code") or values.get("registered_code")
         self.status["trade_count"] += 1
         if trade_qty and price:
             trade_amount = abs(trade_qty) * price
@@ -143,17 +192,32 @@ class State:
                 eok = trade_amount / 100_000_000
                 if trade_qty > 0:
                     quote["large_trade_buy_count"] += 1
-                    quote["large_trade_buy_sum_eok"] = round(quote["large_trade_buy_sum_eok"] + eok, 4)
+                    quote["large_trade_buy_sum_eok"] = round(
+                        quote["large_trade_buy_sum_eok"] + eok, 4
+                    )
                 elif trade_qty < 0:
                     quote["large_trade_sell_count"] += 1
-                    quote["large_trade_sell_sum_eok"] = round(quote["large_trade_sell_sum_eok"] + eok, 4)
-                quote["large_trade_net_count"] = quote["large_trade_buy_count"] - quote["large_trade_sell_count"]
-                quote["large_trade_net_sum_eok"] = round(quote["large_trade_buy_sum_eok"] - quote["large_trade_sell_sum_eok"], 4)
+                    quote["large_trade_sell_sum_eok"] = round(
+                        quote["large_trade_sell_sum_eok"] + eok, 4
+                    )
+                quote["large_trade_net_count"] = (
+                    quote["large_trade_buy_count"] - quote["large_trade_sell_count"]
+                )
+                quote["large_trade_net_sum_eok"] = round(
+                    quote["large_trade_buy_sum_eok"] - quote["large_trade_sell_sum_eok"],
+                    4,
+                )
 
     def _apply_orderbook(self, event: dict[str, Any]) -> None:
-        values = event.get("values") if isinstance(event.get("values"), dict) else {}
+        values = merged_event_values(event)
         raw = values.get("raw") if isinstance(values.get("raw"), dict) else values
-        code = normalize_code(event.get("stock_code") or event.get("received_code") or values.get("stock_code") or values.get("received_code"))
+        code = normalize_code(
+            event.get("stock_code")
+            or event.get("received_code")
+            or values.get("stock_code")
+            or values.get("normalized_code")
+            or values.get("received_code")
+        )
         if not code:
             return
         quote = self._quote(code)
@@ -177,7 +241,7 @@ class State:
         self.status["orderbook_count"] += 1
 
     def _apply_close_metrics(self, event: dict[str, Any]) -> None:
-        values = event.get("values") if isinstance(event.get("values"), dict) else {}
+        values = merged_event_values(event)
         code = normalize_code(event.get("stock_code") or values.get("stock_code"))
         if not code:
             return
@@ -227,7 +291,9 @@ class EventTCPHandler(socketserver.StreamRequestHandler):
                 except Exception as error:
                     self.server.state.status["last_error"] = f"event parse failed: {error}"
         finally:
-            self.server.state.status["tcp_clients"] = max(0, self.server.state.status.get("tcp_clients", 1) - 1)
+            self.server.state.status["tcp_clients"] = max(
+                0, self.server.state.status.get("tcp_clients", 1) - 1
+            )
 
 
 class EventTCPServer(socketserver.ThreadingTCPServer):
@@ -311,8 +377,16 @@ def main() -> int:
     tcp_server = EventTCPServer((args.host, args.event_port), EventTCPHandler, state, event_log)
     web_server = WebServer((args.host, args.web_port), WebHandler, state)
     threading.Thread(target=tcp_server.serve_forever, name="stockboard-v2-event-tcp", daemon=True).start()
-    threading.Thread(target=write_status_loop, args=(state, snapshot_file, stop_event), name="stockboard-v2-snapshot-writer", daemon=True).start()
-    print(f"StockBoard v2 worker listening event={args.host}:{args.event_port} web=http://{args.host}:{args.web_port}/", flush=True)
+    threading.Thread(
+        target=write_status_loop,
+        args=(state, snapshot_file, stop_event),
+        name="stockboard-v2-snapshot-writer",
+        daemon=True,
+    ).start()
+    print(
+        f"StockBoard v2 worker listening event={args.host}:{args.event_port} web=http://{args.host}:{args.web_port}/",
+        flush=True,
+    )
     print(f"EVENT_LOG={event_log}", flush=True)
     print(f"SNAPSHOT_FILE={snapshot_file}", flush=True)
     try:
