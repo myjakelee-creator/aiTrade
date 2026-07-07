@@ -51,7 +51,8 @@ cd C:\aiTrade
 | base worker | `realtime_v2/worker64.py` | 상태 저장, SSE stream, snapshot API, event log batch writer |
 | guarded worker | `realtime_v2/worker64_guarded.py` | seed fallback, 누적값 역행 방어, 장상태 정책 결합 |
 | 장상태 정책 | `realtime_v2/market_session.py` | 프리장, 동시호가, 정규장, 애프터장, 휴장일, 수능 지연 등 판단 |
-| UI | `docs/stockboard_v2.html` | 실시간 테이블, 정렬, 복사, 열 폭 조절, 가로 스크롤 |
+| UI | `docs/stockboard_v2.html` | 실시간 테이블, 정렬, HTS 연동, 코드 복사, 열 폭 조절, 가로 스크롤 |
+| HTS AHK bridge | `scripts/stockboard_kiwoom_link_v1.ahk` | StockBoard v2 clipboard command를 읽어 Kiwoom HTS Edit6에 종목코드 전달 |
 | 달력 설정 | `config/stockboard_market_calendar.json` | 공휴일, 특별일, 수능 지연 개장 설정 |
 
 ## 4. 현재 UI 열
@@ -66,9 +67,48 @@ cd C:\aiTrade
 종목코드, 누적량, 체결량, 프로그램 순매수, 전일 거래대금, row_source, source_code, FID20 lag, 장상태
 ```
 
-종목명 클릭 시 종목코드가 클립보드에 복사된다. 열 제목 클릭 시 정렬/역정렬되며, 정렬 상태는 localStorage에 저장된다. 열 경계 드래그로 폭 조절, 더블클릭으로 자동 폭 조절된다.
+종목명 클릭 시 Kiwoom HTS 연동 명령을 보낸다. Shift+종목명 클릭 시 종목코드만 클립보드에 복사한다. 열 제목 클릭 시 정렬/역정렬되며, 정렬 상태는 localStorage에 저장된다. 열 경계 드래그로 폭 조절, 더블클릭으로 자동 폭 조절된다.
 
-## 5. 장상태 정책
+## 5. HTS 연동 정책
+
+v2의 종목명 클릭은 단순 종목코드 복사가 아니라 HTS 연동 명령이다.
+
+```text
+브라우저 종목명 클릭
+→ clipboard에 SBV2|sequence|005930 형태의 고유 명령 기록
+→ AutoHotkey bridge가 command sequence를 감지
+→ Kiwoom HTS Main/Edit6에 6자리 코드 입력
+→ readback 검증 후 해당 Edit6 control에만 Enter 전송
+```
+
+중요 원칙:
+
+| 항목 | 정책 |
+|---|---|
+| 중복 클릭 | 같은 종목을 다시 클릭해도 sequence가 다르므로 매번 처리 |
+| 일반 clipboard 6자리 | fallback으로 허용 |
+| HTS 창 제어 | WinActivate 금지. foreground window에 키 전송 금지 |
+| Enter 전송 | readback이 성공한 Edit6 control HWND에만 전송 |
+| 상태 파일 | `data/runtime/stockboard_v2/hts_link_status.txt` |
+| bridge 시작 | `stockboard_v2_live.cmd start`가 AHK bridge도 함께 시작 |
+| bridge 단독 시작 | `stockboard_v2_live.cmd ahk` 또는 메뉴 5 |
+
+HTS가 연동되지 않으면 먼저 아래를 확인한다.
+
+```powershell
+cd C:\aiTrade
+.\stockboard_v2_live.cmd status
+```
+
+확인할 항목:
+
+```text
+AHK_RUNNING
+AHK_PIDS
+AHK_LAST_STATUS
+```
+
+## 6. 장상태 정책
 
 기본 시간대:
 
@@ -101,7 +141,7 @@ cd C:\aiTrade
 
 공휴일은 `holidays`에 `YYYYMMDD`로 추가한다.
 
-## 6. 데이터 정책
+## 7. 데이터 정책
 
 | 값 | 정책 |
 |---|---|
@@ -114,7 +154,7 @@ cd C:\aiTrade
 | 대량건 | 5천만원 이상 체결 누적 net count |
 | 프로그램 순매수 | worker background updater에서 수집, 화면에는 tooltip/내부값 중심 |
 
-## 7. 전일 거래대금 2원화 정책
+## 8. 전일 거래대금 2원화 정책
 
 전일 거래대금은 아래 순서로 붙인다.
 
@@ -126,7 +166,7 @@ cd C:\aiTrade
 
 NXT에 없는 종목이나 AL 조회가 실패하는 종목은 정규장 기본 코드로 fallback한다.
 
-## 8. 재접속/복원
+## 9. 재접속/복원
 
 대량건과 프로그램 순매수는 아래 파일에 일중 상태로 저장된다.
 
@@ -136,7 +176,7 @@ data/runtime/stockboard_v2/daily_state_YYYYMMDD.json
 
 재시작 시 같은 날짜이면 복원한다. 단, `data/runtime/`은 Git 추적 대상이 아니다.
 
-## 9. 성능 정책
+## 10. 성능 정책
 
 | 항목 | 정책 |
 |---|---|
@@ -146,7 +186,7 @@ data/runtime/stockboard_v2/daily_state_YYYYMMDD.json
 | event log | 매 이벤트 직접 쓰기 금지. AsyncEventLogger가 batch write |
 | UI | EventSource stream 기반. 끊기면 1초 polling fallback |
 
-## 10. 진단값
+## 11. 진단값
 
 상단 또는 status에서 확인할 값:
 
@@ -162,6 +202,8 @@ market_phase
 market_phase_label
 row_source
 source_code
+AHK_RUNNING
+AHK_LAST_STATUS
 ```
 
 장개시 정상 기준:
@@ -173,9 +215,10 @@ trades가 빠르게 증가
 삼성전자, SK하이닉스, 삼성전기 가격/등락률/거래대금이 HTS 0186과 일치 또는 거의 근접
 거래대금이 장중 비정상적으로 감소하지 않음
 상위 20개가 지속적으로 흐려지지 않음
+종목명 1회 클릭으로 HTS가 해당 종목으로 전환
 ```
 
-## 11. 현재 남은 리스크
+## 12. 현재 남은 리스크
 
 | 리스크 | 설명 | 대응 |
 |---|---|---|
@@ -183,8 +226,9 @@ trades가 빠르게 증가
 | AL/NX/일반 코드 차이 | 일부 종목은 NXT/정규장 등록 기준이 다를 수 있음 | source_code 확인 후 등록 정책 조정 |
 | 장개시 폭탄 | 09:00~09:05 이벤트 폭주 | stream/q/trades 확인 |
 | 휴장일/특별일 누락 | 공휴일/수능일은 config 갱신 필요 | `config/stockboard_market_calendar.json` 관리 |
+| HTS control 변경 | Kiwoom 화면/버전에 따라 Edit6가 달라질 수 있음 | `AHK_LAST_STATUS`와 AHK script TargetControl 확인 |
 
-## 12. 삭제/정리된 구 v1 sidecar 파일
+## 13. 삭제/정리된 구 v1 sidecar 파일
 
 v2가 프로그램 순매수와 속도 진단을 자체 구조로 흡수했으므로 아래 v1 임시 sidecar/recorder 파일은 제거했다.
 
@@ -199,9 +243,9 @@ scripts/stockboard_speed_recorder.py
 scripts/run_stockboard_speed_recorder.cmd
 ```
 
-## 13. 내일 장개시 운영 원칙
+## 14. 내일 장개시 운영 원칙
 
-내일 장개시 전에는 UI 장식 추가 금지. 가격 정합성, 속도, 장상태 정책 안정성만 본다.
+내일 장개시 전에는 UI 장식 추가 금지. 가격 정합성, 속도, 장상태 정책 안정성, HTS 1회 클릭 연동만 본다.
 
 검증 절차:
 
@@ -229,4 +273,5 @@ Ctrl+F5
 4. trades 증가 속도
 5. 거래대금 감소 여부
 6. row_source가 seed에서 realtime으로 정상 전환되는지
+7. 종목명 클릭 한 번으로 HTS가 정확히 해당 종목으로 전환되는지
 ```
