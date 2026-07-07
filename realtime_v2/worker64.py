@@ -38,6 +38,19 @@ from realtime_v2.common import (  # noqa: E402
     trading_date_text,
 )
 
+DAILY_PERSIST_KEYS = (
+    "large_trade_buy_count",
+    "large_trade_sell_count",
+    "large_trade_net_count",
+    "large_trade_buy_sum_eok",
+    "large_trade_sell_sum_eok",
+    "large_trade_net_sum_eok",
+    "program_net",
+    "program_net_updated_at",
+    "program_net_source",
+    "program_net_status",
+)
+
 
 def merged_event_values(event: dict[str, Any]) -> dict[str, Any]:
     """Merge collector event payloads.
@@ -131,8 +144,13 @@ class State:
         self.universe_file = universe_file
         self.name_by_code: dict[str, str] = {}
         self.seed_rank_by_code: dict[str, int] = {}
+        self.prev_rank_by_code: dict[str, int] = {}
+        self.prev_trade_value_by_code: dict[str, float] = {}
         self.quotes: dict[str, dict[str, Any]] = {}
         self.logger: AsyncEventLogger | None = None
+        self.daily_state_path = RUNTIME_DIR / f"daily_state_{trading_date_text()}.json"
+        self.daily_values_by_code = self._load_daily_state()
+        self.daily_dirty = False
         self.status: dict[str, Any] = {
             "started_at": now_text(),
             "event_count": 0,
@@ -143,11 +161,34 @@ class State:
             "last_error": None,
             "tcp_clients": 0,
             "stream_clients": 0,
+            "program_net_count": 0,
+            "program_net_last_at": None,
+            "program_net_last_error": None,
+            "daily_state_path": str(self.daily_state_path),
+            "daily_state_loaded_count": len(self.daily_values_by_code),
+            "daily_state_last_saved_at": None,
         }
         self._load_universe()
 
     def attach_logger(self, logger: AsyncEventLogger) -> None:
         self.logger = logger
+
+    def _load_daily_state(self) -> dict[str, dict[str, Any]]:
+        try:
+            if not self.daily_state_path.is_file():
+                return {}
+            payload = json.loads(self.daily_state_path.read_text(encoding="utf-8-sig"))
+            codes = payload.get("codes") if isinstance(payload, dict) else None
+            if not isinstance(codes, dict):
+                return {}
+            result = {}
+            for raw_code, values in codes.items():
+                code = normalize_code(raw_code)
+                if code and isinstance(values, dict):
+                    result[code] = dict(values)
+            return result
+        except (OSError, json.JSONDecodeError):
+            return {}
 
     def _load_universe(self) -> None:
         try:
@@ -160,12 +201,86 @@ class State:
                 self.seed_rank_by_code[code] = int(
                     item.get("seed_rank") or item.get("original_rank") or 999999
                 )
+                previous_rank = to_int(item.get("prev_rank"))
+                previous_value = to_number(item.get("prev_trade_value_eok"))
+                if previous_rank is not None and previous_rank > 0:
+                    self.prev_rank_by_code[code] = previous_rank
+                if previous_value is not None and previous_value > 0:
+                    self.prev_trade_value_by_code[code] = float(previous_value)
         except Exception as error:
             self.status["last_error"] = f"universe load failed: {error}"
 
     def logger_stats(self) -> dict[str, Any]:
         logger = self.logger
         return logger.stats() if logger is not None else {}
+
+    def _mark_daily_dirty(self) -> None:
+        self.daily_dirty = True
+
+    def export_daily_state(self) -> dict[str, Any]:
+        with self.lock:
+            codes = deepcopy(self.daily_values_by_code)
+            for code, quote in self.quotes.items():
+                entry = codes.setdefault(code, {})
+                for key in DAILY_PERSIST_KEYS:
+                    value = quote.get(key)
+                    if value not in (None, ""):
+                        entry[key] = value
+            return {
+                "schema_version": 1,
+                "source": "stockboard_v2_daily_state",
+                "trading_date": trading_date_text(),
+                "updated_at": now_text(),
+                "codes": codes,
+            }
+
+    def persist_daily_state_if_needed(self, force: bool = False) -> bool:
+        with self.lock:
+            should_save = force or self.daily_dirty
+            if not should_save:
+                return False
+            self.daily_dirty = False
+        payload = self.export_daily_state()
+        atomic_write_json(self.daily_state_path, payload)
+        with self.lock:
+            self.status["daily_state_last_saved_at"] = payload.get("updated_at")
+        return True
+
+    def apply_program_net_values(self, values: dict[str, Any], source: str, status: str) -> int:
+        updated = 0
+        updated_at = now_text()
+        with self.lock:
+            for raw_code, raw_value in (values or {}).items():
+                code = normalize_code(raw_code)
+                value = to_number(
+                    raw_value.get("program_net") if isinstance(raw_value, dict) else raw_value
+                )
+                if not code or value is None:
+                    continue
+                value = round(float(value), 4)
+                entry = self.daily_values_by_code.setdefault(code, {})
+                entry.update(
+                    {
+                        "program_net": value,
+                        "program_net_updated_at": updated_at,
+                        "program_net_source": source,
+                        "program_net_status": status,
+                    }
+                )
+                quote = self.quotes.get(code)
+                if quote is not None:
+                    quote.update(entry)
+                updated += 1
+            if updated:
+                self.status["program_net_count"] = updated
+                self.status["program_net_last_at"] = updated_at
+                self.status["program_net_last_error"] = None
+                self._mark_daily_dirty()
+        return updated
+
+    def set_program_net_error(self, message: str) -> None:
+        with self.lock:
+            self.status["program_net_last_error"] = message
 
     def apply_event(self, event: dict[str, Any]) -> None:
         event_type = event.get("type")
@@ -185,17 +300,23 @@ class State:
     def _quote(self, code: str) -> dict[str, Any]:
         quote = self.quotes.get(code)
         if quote is None:
+            persisted = self.daily_values_by_code.get(code) or {}
             quote = {
                 "stock_code": code,
                 "stock_name": self.name_by_code.get(code, code),
                 "seed_rank": self.seed_rank_by_code.get(code, 999999),
-                "large_trade_buy_count": 0,
-                "large_trade_sell_count": 0,
-                "large_trade_net_count": 0,
-                "large_trade_buy_sum_eok": 0.0,
-                "large_trade_sell_sum_eok": 0.0,
-                "large_trade_net_sum_eok": 0.0,
+                "prev_rank": self.prev_rank_by_code.get(code),
+                "prev_trade_value_eok": self.prev_trade_value_by_code.get(code),
+                "large_trade_buy_count": persisted.get("large_trade_buy_count", 0),
+                "large_trade_sell_count": persisted.get("large_trade_sell_count", 0),
+                "large_trade_net_count": persisted.get("large_trade_net_count", 0),
+                "large_trade_buy_sum_eok": persisted.get("large_trade_buy_sum_eok", 0.0),
+                "large_trade_sell_sum_eok": persisted.get("large_trade_sell_sum_eok", 0.0),
+                "large_trade_net_sum_eok": persisted.get("large_trade_net_sum_eok", 0.0),
             }
+            for key in ("program_net", "program_net_updated_at", "program_net_source", "program_net_status"):
+                if key in persisted:
+                    quote[key] = persisted.get(key)
             self.quotes[code] = quote
         return quote
 
@@ -287,6 +408,11 @@ class State:
                     quote["large_trade_buy_sum_eok"] - quote["large_trade_sell_sum_eok"],
                     4,
                 )
+                daily_entry = self.daily_values_by_code.setdefault(code, {})
+                for key in DAILY_PERSIST_KEYS:
+                    if key.startswith("large_trade_"):
+                        daily_entry[key] = quote.get(key)
+                self._mark_daily_dirty()
 
     def _apply_orderbook(self, event: dict[str, Any]) -> None:
         values = merged_event_values(event)
@@ -341,6 +467,14 @@ class State:
         )
         for rank, row in enumerate(rows, start=1):
             row["rank"] = rank
+            prev_rank = to_int(row.get("prev_rank"))
+            row["rank_change"] = (prev_rank - rank) if prev_rank is not None else None
+            previous_amount = to_number(row.get("prev_trade_value_eok"))
+            current_amount = to_number(row.get("trade_value_eok"))
+            if previous_amount is not None and previous_amount > 0 and current_amount is not None:
+                row["amount_ratio"] = round(current_amount / previous_amount, 4)
+            else:
+                row["amount_ratio"] = None
         return rows[:limit]
 
     def snapshot(self, limit: int = 300) -> dict[str, Any]:
@@ -357,6 +491,52 @@ class State:
             "row_count": len(rows),
             "rows": rows,
         }
+
+
+class ProgramNetUpdater(threading.Thread):
+    def __init__(self, state: State, interval_sec: float = 60.0):
+        super().__init__(name="stockboard-v2-program-net", daemon=True)
+        self.state = state
+        self.interval_sec = max(15.0, float(interval_sec))
+        self.stop_event = threading.Event()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+
+    def run(self) -> None:
+        self._load_existing_snapshots()
+        while not self.stop_event.wait(self.interval_sec):
+            self._fetch_once()
+
+    def _load_existing_snapshots(self) -> None:
+        paths = [
+            ROOT / "docs" / "assets" / "program_net_snapshot.json",
+            ROOT / "data" / "runtime" / "program_net" / f"program_net_snapshot_{trading_date_text()}.json",
+        ]
+        for path in paths:
+            try:
+                if not path.is_file():
+                    continue
+                payload = json.loads(path.read_text(encoding="utf-8-sig"))
+                values = payload.get("values") if isinstance(payload, dict) else None
+                if isinstance(values, dict):
+                    self.state.apply_program_net_values(values, "program_net_snapshot_file", "cached")
+                    return
+            except (OSError, json.JSONDecodeError) as error:
+                self.state.set_program_net_error(str(error))
+
+    def _fetch_once(self) -> None:
+        try:
+            from kiwoom_data_provider import fetch_program_net, issue_access_token
+
+            token = issue_access_token()
+            result = fetch_program_net(token, trading_date_text())
+            values = result.get("values") if isinstance(result, dict) else None
+            if isinstance(values, dict):
+                status = "partial" if result.get("errors") or result.get("rate_limit") else "ok"
+                self.state.apply_program_net_values(values, "ka90004_v2_background", status)
+        except Exception as error:
+            self.state.set_program_net_error(str(error))
 
 
 class EventTCPHandler(socketserver.StreamRequestHandler):
@@ -393,7 +573,7 @@ class EventTCPServer(socketserver.ThreadingTCPServer):
 
 
 class WebHandler(BaseHTTPRequestHandler):
-    server_version = "StockBoardV2/0.2"
+    server_version = "StockBoardV2/0.3"
 
     def log_message(self, _format, *args):
         return
@@ -488,6 +668,7 @@ def write_status_loop(state: State, output_path: Path, stop_event: threading.Eve
     while not stop_event.wait(1.0):
         try:
             atomic_write_json(output_path, state.snapshot(limit=300))
+            state.persist_daily_state_if_needed()
         except Exception:
             pass
 
@@ -506,6 +687,8 @@ def main() -> int:
     event_logger = AsyncEventLogger(event_log)
     state.attach_logger(event_logger)
     event_logger.start()
+    program_net_updater = ProgramNetUpdater(state)
+    program_net_updater.start()
     snapshot_file = RUNTIME_DIR / "snapshot.json"
     stop_event = threading.Event()
     tcp_server = EventTCPServer((args.host, args.event_port), EventTCPHandler, state, event_logger)
@@ -529,7 +712,9 @@ def main() -> int:
         pass
     finally:
         stop_event.set()
+        program_net_updater.stop()
         event_logger.stop()
+        state.persist_daily_state_if_needed(force=True)
         tcp_server.shutdown()
         web_server.server_close()
         tcp_server.server_close()
