@@ -23,7 +23,7 @@ from realtime_v2.common import (
     to_number,
 )
 
-MAX_ACCEPT_LAG_SEC = 10.0
+STALE_LAG_WARN_SEC = 10.0
 
 
 def _time_seconds(value: Any) -> int | None:
@@ -71,7 +71,20 @@ def _drop_trade(state, quote: dict[str, Any], code: str, reason: str, event: dic
     quote["last_dropped_trade_at"] = now_text()
     if lag_sec is not None:
         quote["fid20_lag_sec"] = lag_sec
-        quote["price_age_sec"] = max(to_number(quote.get("price_age_sec")) or 0, lag_sec)
+
+
+def _mark_lag_warning(state, quote: dict[str, Any], code: str, values: dict[str, Any], trade_time: str, lag_sec: float | None) -> None:
+    if lag_sec is None or lag_sec <= STALE_LAG_WARN_SEC:
+        return
+    state.status["lagged_trade_warning_count"] = int(state.status.get("lagged_trade_warning_count") or 0) + 1
+    state.status["last_lagged_trade_warning"] = {
+        "stock_code": code,
+        "trade_time": trade_time,
+        "fid20_lag_sec": lag_sec,
+        "source_code": values.get("source_code") or values.get("registered_code"),
+    }
+    quote["fid20_lag_sec"] = lag_sec
+    quote["last_lagged_trade_warning_at"] = now_text()
 
 
 def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
@@ -133,27 +146,29 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
     previous_time_sec = quote.get("_trade_time_seconds")
     previous_value = to_number(quote.get("trade_value_eok"))
     previous_volume = to_int(quote.get("cumulative_volume"))
+    has_accepted_price = to_number(quote.get("price")) is not None
     drop_reason = None
-    if trade_time_sec is not None and previous_time_sec is not None:
+    if has_accepted_price and trade_time_sec is not None and previous_time_sec is not None:
         try:
             if int(trade_time_sec) < int(previous_time_sec):
                 drop_reason = "older_fid20_than_last_accepted"
         except (TypeError, ValueError):
             pass
-    if drop_reason is None and trade_value_eok is not None and previous_value is not None:
+    if drop_reason is None and has_accepted_price and trade_value_eok is not None and previous_value is not None:
         if float(trade_value_eok) + 1.0 < float(previous_value):
             drop_reason = "cumulative_trade_value_decreased"
-    if drop_reason is None and cumulative_volume is not None and previous_volume is not None:
+    if drop_reason is None and has_accepted_price and cumulative_volume is not None and previous_volume is not None:
         if int(cumulative_volume) < int(previous_volume):
             drop_reason = "cumulative_volume_decreased"
-    if drop_reason is None and fid20_lag_sec is not None and fid20_lag_sec > MAX_ACCEPT_LAG_SEC:
-        # After halts/circuit breakers Kiwoom can deliver delayed backlog events.
-        # They may have a fresh receive time but an old FID20 trade time. Do not
-        # let those stale events overwrite the latest accepted quote.
-        drop_reason = "fid20_lag_exceeds_guard"
+    # Do NOT drop by absolute FID20 lag alone. During halts and closing phases,
+    # Kiwoom can send delayed-but-monotonic events. Dropping every delayed first
+    # event leaves price/rate/value blank. We warn on lag but accept monotonic
+    # events; decreasing cumulative value/volume and older trade-time events are
+    # still rejected.
     if drop_reason is not None:
         _drop_trade(self, quote, code, drop_reason, event, values, trade_time, fid20_lag_sec)
         return
+    _mark_lag_warning(self, quote, code, values, trade_time, fid20_lag_sec)
 
     if price is not None:
         quote["price"] = price
@@ -173,8 +188,9 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
         quote["_trade_time_seconds"] = trade_time_sec
     quote["fid20_lag_sec"] = fid20_lag_sec
     quote["received_at"] = received_at
-    receive_age = event_age_sec(received_at) or 0
-    quote["price_age_sec"] = max(receive_age, fid20_lag_sec or 0)
+    # UI freshness should be based on receive/update time. FID20 lag is exposed
+    # separately for diagnostics and should not by itself gray out all rows.
+    quote["price_age_sec"] = event_age_sec(received_at)
     quote["market_type_raw"] = raw.get("market_type_raw") or values.get("market_type")
     quote["source_code"] = values.get("source_code") or values.get("registered_code")
     quote.pop("last_dropped_trade_reason", None)
