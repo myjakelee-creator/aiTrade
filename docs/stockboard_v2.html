@@ -30,8 +30,8 @@
     <span id="clock" class="badge">-</span>
     <span id="status" class="badge bad">연결 대기</span>
     <span id="counts" class="badge">rows 0 · events 0</span>
-    <span id="latency" class="badge">api - ms</span>
-    <span class="small">32bit 수집기 → 64bit worker → latest snapshot</span>
+    <span id="latency" class="badge">stream - ms</span>
+    <span class="small">32bit 수집기 → 64bit worker → 100ms micro-batch stream</span>
   </div>
   <table id="board">
     <thead>
@@ -50,7 +50,7 @@
         <th style="width:120px">수신</th>
       </tr>
     </thead>
-    <tbody id="rows"><tr><td colspan="12" class="center">v2 worker 연결 대기 중입니다.</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="12" class="center">v2 stream 연결 대기 중입니다.</td></tr></tbody>
   </table>
   <script>
     const rowsEl = document.getElementById('rows');
@@ -59,16 +59,15 @@
     const latencyEl = document.getElementById('latency');
     const clockEl = document.getElementById('clock');
     const rowByCode = new Map();
+    let lastPayload = null;
+    let lastStreamAt = 0;
+    let fallbackTimer = null;
+    let stream = null;
 
     function fmtNum(v, digits=0) {
       const n = Number(v);
       if (!Number.isFinite(n)) return '-';
       return n.toLocaleString('en-US', { maximumFractionDigits: digits, minimumFractionDigits: digits });
-    }
-    function fmtSigned(v, suffix='') {
-      const n = Number(v);
-      if (!Number.isFinite(n)) return '-';
-      return `${n > 0 ? '+' : ''}${n.toFixed(2)}${suffix}`;
     }
     function clsSigned(v) {
       const n = Number(v);
@@ -88,12 +87,19 @@
       if (td.textContent !== String(text)) td.textContent = text;
       td.className = className;
     }
-    function render(payload, elapsedMs) {
+    function payloadLagMs(payload) {
+      const sentAt = Date.parse(payload && payload.ts ? payload.ts : '');
+      if (!Number.isFinite(sentAt)) return null;
+      return Math.max(0, Date.now() - sentAt);
+    }
+    function render(payload, mode='stream') {
+      lastPayload = payload;
       const rows = Array.isArray(payload.rows) ? payload.rows : [];
-      statusEl.textContent = '연결 OK';
-      statusEl.className = 'badge ok';
+      const lag = payloadLagMs(payload);
+      statusEl.textContent = mode === 'stream' ? '연결 OK' : 'polling fallback';
+      statusEl.className = mode === 'stream' ? 'badge ok' : 'badge bad';
       countsEl.textContent = `rows ${payload.row_count || rows.length} · events ${payload.status?.event_count || 0} · trades ${payload.status?.trade_count || 0}`;
-      latencyEl.textContent = `api ${elapsedMs.toFixed(0)} ms`;
+      latencyEl.textContent = `${mode} ${lag === null ? '-' : lag.toFixed(0)} ms · q ${payload.status?.event_log_queue_size ?? '-'}`;
       const seen = new Set();
       if (!rows.length) {
         rowsEl.innerHTML = '<tr><td colspan="12" class="center">실시간 수신 대기 중입니다.</td></tr>';
@@ -130,21 +136,49 @@
         }
       }
     }
-    async function tick() {
-      clockEl.textContent = new Date().toLocaleTimeString('ko-KR', { hour12:false });
-      const start = performance.now();
+    async function fallbackPoll() {
       try {
         const res = await fetch(`/api/v2/snapshot?limit=300&ts=${Date.now()}`, { cache:'no-store' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const payload = await res.json();
-        render(payload, performance.now() - start);
+        render(payload, 'poll');
       } catch (e) {
         statusEl.textContent = `연결 실패: ${e.message}`;
         statusEl.className = 'badge bad';
       }
     }
-    tick();
-    setInterval(tick, 250);
+    function startFallback() {
+      if (fallbackTimer) return;
+      fallbackTimer = setInterval(() => {
+        if (!lastStreamAt || performance.now() - lastStreamAt > 4000) fallbackPoll();
+      }, 1000);
+    }
+    function connectStream() {
+      if (!window.EventSource) {
+        startFallback();
+        return;
+      }
+      stream = new EventSource(`/api/v2/stream?limit=300&interval_ms=100&ts=${Date.now()}`);
+      stream.addEventListener('snapshot', (event) => {
+        try {
+          lastStreamAt = performance.now();
+          render(JSON.parse(event.data), 'stream');
+        } catch (error) {
+          console.warn(error);
+        }
+      });
+      stream.onerror = () => {
+        statusEl.textContent = 'stream 재연결 중';
+        statusEl.className = 'badge bad';
+        startFallback();
+      };
+    }
+    setInterval(() => {
+      clockEl.textContent = new Date().toLocaleTimeString('ko-KR', { hour12:false });
+      if (lastPayload && (!lastStreamAt || performance.now() - lastStreamAt > 1000)) render(lastPayload, 'stream');
+    }, 500);
+    clockEl.textContent = new Date().toLocaleTimeString('ko-KR', { hour12:false });
+    connectStream();
   </script>
 </body>
 </html>
