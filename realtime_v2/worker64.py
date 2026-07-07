@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import queue
 import socketserver
 import sys
 import threading
+import time
 from copy import deepcopy
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,7 +24,6 @@ from realtime_v2.common import (  # noqa: E402
     DEFAULT_WEB_PORT,
     LARGE_TRADE_THRESHOLD_KRW,
     RUNTIME_DIR,
-    append_jsonl,
     atomic_write_json,
     event_age_sec,
     normalize_code,
@@ -31,6 +32,7 @@ from realtime_v2.common import (  # noqa: E402
     normalized_rate,
     normalized_trade_value_eok,
     now_text,
+    safe_json_dumps,
     to_int,
     to_number,
     trading_date_text,
@@ -54,6 +56,75 @@ def merged_event_values(event: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+class AsyncEventLogger(threading.Thread):
+    """Buffered JSONL event logger.
+
+    Event logging must never block the TCP receive path during the market-open
+    burst. The worker enqueues event objects quickly; this logger serializes and
+    writes them in large batches from a separate thread.
+    """
+
+    def __init__(self, path: Path, max_queue: int = 200_000, flush_count: int = 3000, flush_sec: float = 0.25):
+        super().__init__(name="stockboard-v2-event-logger", daemon=True)
+        self.path = path
+        self.queue: "queue.Queue[dict[str, Any]]" = queue.Queue(maxsize=max_queue)
+        self.flush_count = max(1, int(flush_count))
+        self.flush_sec = max(0.05, float(flush_sec))
+        self.stop_event = threading.Event()
+        self.written_count = 0
+        self.dropped_count = 0
+        self.last_flush_at = None
+        self.last_error = None
+
+    def enqueue(self, event: dict[str, Any]) -> None:
+        try:
+            self.queue.put_nowait(event)
+        except queue.Full:
+            self.dropped_count += 1
+
+    def stop(self) -> None:
+        self.stop_event.set()
+
+    def run(self) -> None:
+        batch: list[str] = []
+        last_flush = time.monotonic()
+        while not self.stop_event.is_set() or not self.queue.empty() or batch:
+            timeout = max(0.01, self.flush_sec - (time.monotonic() - last_flush))
+            try:
+                event = self.queue.get(timeout=timeout)
+                batch.append(safe_json_dumps(event))
+            except queue.Empty:
+                pass
+            now = time.monotonic()
+            if batch and (len(batch) >= self.flush_count or now - last_flush >= self.flush_sec or self.stop_event.is_set()):
+                self._flush(batch)
+                batch = []
+                last_flush = now
+
+    def _flush(self, batch: list[str]) -> None:
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write("\n".join(batch))
+                handle.write("\n")
+            self.written_count += len(batch)
+            self.last_flush_at = now_text()
+            self.last_error = None
+        except OSError as error:
+            self.last_error = str(error)
+            self.dropped_count += len(batch)
+
+    def stats(self) -> dict[str, Any]:
+        return {
+            "event_log_queue_size": self.queue.qsize(),
+            "event_log_written_count": self.written_count,
+            "event_log_dropped_count": self.dropped_count,
+            "event_log_last_flush_at": self.last_flush_at,
+            "event_log_last_error": self.last_error,
+            "event_log_path": str(self.path),
+        }
+
+
 class State:
     def __init__(self, universe_file: Path):
         self.lock = threading.RLock()
@@ -61,6 +132,7 @@ class State:
         self.name_by_code: dict[str, str] = {}
         self.seed_rank_by_code: dict[str, int] = {}
         self.quotes: dict[str, dict[str, Any]] = {}
+        self.logger: AsyncEventLogger | None = None
         self.status: dict[str, Any] = {
             "started_at": now_text(),
             "event_count": 0,
@@ -70,8 +142,12 @@ class State:
             "last_event_at": None,
             "last_error": None,
             "tcp_clients": 0,
+            "stream_clients": 0,
         }
         self._load_universe()
+
+    def attach_logger(self, logger: AsyncEventLogger) -> None:
+        self.logger = logger
 
     def _load_universe(self) -> None:
         try:
@@ -86,6 +162,10 @@ class State:
                 )
         except Exception as error:
             self.status["last_error"] = f"universe load failed: {error}"
+
+    def logger_stats(self) -> dict[str, Any]:
+        logger = self.logger
+        return logger.stats() if logger is not None else {}
 
     def apply_event(self, event: dict[str, Any]) -> None:
         event_type = event.get("type")
@@ -266,6 +346,7 @@ class State:
     def snapshot(self, limit: int = 300) -> dict[str, Any]:
         with self.lock:
             status = deepcopy(self.status)
+        status.update(self.logger_stats())
         rows = self.rows(limit)
         return {
             "schema_version": 1,
@@ -280,7 +361,8 @@ class State:
 
 class EventTCPHandler(socketserver.StreamRequestHandler):
     def handle(self) -> None:
-        self.server.state.status["tcp_clients"] += 1
+        with self.server.state.lock:
+            self.server.state.status["tcp_clients"] += 1
         try:
             for raw_line in self.rfile:
                 try:
@@ -289,27 +371,32 @@ class EventTCPHandler(socketserver.StreamRequestHandler):
                         self.server.state.apply_event(event)
                         self.server.record_event(event)
                 except Exception as error:
-                    self.server.state.status["last_error"] = f"event parse failed: {error}"
+                    with self.server.state.lock:
+                        self.server.state.status["last_error"] = f"event parse failed: {error}"
         finally:
-            self.server.state.status["tcp_clients"] = max(
-                0, self.server.state.status.get("tcp_clients", 1) - 1
-            )
+            with self.server.state.lock:
+                self.server.state.status["tcp_clients"] = max(
+                    0, self.server.state.status.get("tcp_clients", 1) - 1
+                )
 
 
 class EventTCPServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
 
-    def __init__(self, server_address, handler_class, state: State, event_log: Path):
+    def __init__(self, server_address, handler_class, state: State, event_logger: AsyncEventLogger):
         super().__init__(server_address, handler_class)
         self.state = state
-        self.event_log = event_log
+        self.event_logger = event_logger
 
     def record_event(self, event: dict[str, Any]) -> None:
-        append_jsonl(self.event_log, event)
+        self.event_logger.enqueue(event)
 
 
 class WebHandler(BaseHTTPRequestHandler):
-    server_version = "StockBoardV2/0.1"
+    server_version = "StockBoardV2/0.2"
+
+    def log_message(self, _format, *args):
+        return
 
     def _json(self, payload: Any, status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -319,6 +406,47 @@ class WebHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def _stream_snapshots(self, query: dict[str, list[str]]) -> None:
+        try:
+            limit = int(query.get("limit", ["300"])[0])
+        except (TypeError, ValueError):
+            limit = 300
+        try:
+            interval_ms = int(query.get("interval_ms", ["100"])[0])
+        except (TypeError, ValueError):
+            interval_ms = 100
+        limit = max(1, min(1000, limit))
+        interval_sec = max(0.05, min(2.0, interval_ms / 1000.0))
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        last_event_count = None
+        last_sent_at = 0.0
+        with self.server.state.lock:
+            self.server.state.status["stream_clients"] += 1
+        try:
+            while True:
+                snapshot = self.server.state.snapshot(limit=limit)
+                event_count = snapshot.get("status", {}).get("event_count")
+                now = time.monotonic()
+                should_send = event_count != last_event_count or (now - last_sent_at) >= 2.0
+                if should_send:
+                    body = safe_json_dumps(snapshot)
+                    self.wfile.write(f"event: snapshot\ndata: {body}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+                    last_event_count = event_count
+                    last_sent_at = now
+                time.sleep(interval_sec)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+        finally:
+            with self.server.state.lock:
+                self.server.state.status["stream_clients"] = max(
+                    0, self.server.state.status.get("stream_clients", 1) - 1
+                )
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -342,6 +470,9 @@ class WebHandler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 limit = 300
             self._json(self.server.state.snapshot(limit=max(1, min(1000, limit))))
+            return
+        if parsed.path == "/api/v2/stream":
+            self._stream_snapshots(query)
             return
         self._json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
@@ -372,9 +503,12 @@ def main() -> int:
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     state = State(Path(args.universe))
     event_log = RUNTIME_DIR / f"events_{trading_date_text()}.jsonl"
+    event_logger = AsyncEventLogger(event_log)
+    state.attach_logger(event_logger)
+    event_logger.start()
     snapshot_file = RUNTIME_DIR / "snapshot.json"
     stop_event = threading.Event()
-    tcp_server = EventTCPServer((args.host, args.event_port), EventTCPHandler, state, event_log)
+    tcp_server = EventTCPServer((args.host, args.event_port), EventTCPHandler, state, event_logger)
     web_server = WebServer((args.host, args.web_port), WebHandler, state)
     threading.Thread(target=tcp_server.serve_forever, name="stockboard-v2-event-tcp", daemon=True).start()
     threading.Thread(
@@ -395,6 +529,7 @@ def main() -> int:
         pass
     finally:
         stop_event.set()
+        event_logger.stop()
         tcp_server.shutdown()
         web_server.server_close()
         tcp_server.server_close()
