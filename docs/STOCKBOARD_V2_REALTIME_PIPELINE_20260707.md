@@ -49,7 +49,7 @@ cd C:\aiTrade
 | universe builder | `realtime_v2/build_universe.py` | ka10032 기준 종목 universe 생성, ETF/우선주 등 tradable master 필터, 전일 거래대금 seed 결합 |
 | 32bit collector | `realtime_v2/collector32.py` | Kiwoom OpenAPI 32bit 실시간 이벤트 수집, 계산하지 않고 worker로 전달 |
 | base worker | `realtime_v2/worker64.py` | 상태 저장, SSE stream, snapshot API, event log batch writer |
-| guarded worker | `realtime_v2/worker64_guarded.py` | seed fallback, 누적값 역행 방어, 장상태 정책 결합 |
+| guarded worker | `realtime_v2/worker64_guarded.py` | seed fallback, 누적값 역행 방어, 장상태 정책 결합, 체결강도/잔량비 일중 복원 |
 | 장상태 정책 | `realtime_v2/market_session.py` | 프리장, 동시호가, 정규장, 애프터장, 휴장일, 수능 지연 등 판단 |
 | UI | `docs/stockboard_v2.html` | 실시간 테이블, 정렬, HTS 연동, 코드 복사, 열 폭 조절, 가로 스크롤 |
 | HTS AHK bridge | `scripts/stockboard_kiwoom_link_v1.ahk` | StockBoard v2 clipboard command를 읽어 Kiwoom HTS Edit6에 종목코드 전달 |
@@ -151,14 +151,16 @@ AHK_LAST_STATUS
 | FID20 지연 | 지연 자체만으로는 버리지 않고 warning으로 기록. 과거 시간 역행 또는 누적값 역행 시 버림 |
 | 대금비 | 당일 거래대금 / 전일 정규장 장마감 거래대금 |
 | 전일 | 전일 정규장 장마감 거래대금 순위 대비 당일 순위 변화 |
+| 체결강도 | 마지막 실시간 값을 `daily_state_YYYYMMDD.json`에 저장하고 재접속 시 복원 |
+| 잔량비 | 마지막 호가/잔량 값을 `daily_state_YYYYMMDD.json`에 저장하고 재접속 시 복원 |
 | 대량건 | 5천만원 이상 체결 누적 net count |
 | 프로그램 순매수 | worker background updater에서 수집, 화면에는 tooltip/내부값 중심 |
 
 ## 8. 전일 거래대금 정책
 
-전일 거래대금은 **정규장 장마감 원천 데이터**를 분모로 사용한다. 이유는 현재 확인된 화면 비교상 NXT 거래 종목의 전일 통합 거래대금까지 정확히 제공하는 확실한 원천이 없고, 정규장 장마감 데이터가 가장 안정적이기 때문이다.
+전일 통합 거래대금은 현재 코드 기준으로 **확정 원천이 아직 없다**. `ka10032` 당일 거래대금상위는 현재 당일 universe/seed 생성에 쓰고, 전일값은 `ka10086` 일봉 row의 전일 거래대금에서 가져온다. `ka10086`은 개별 종목 일봉 성격이라 정규장 장마감 기준으로 해석한다.
 
-현재 정책:
+현재 전일 거래대금 우선순위:
 
 ```text
 1. data/runtime/previous_trade_value_YYYYMMDD.json cache
@@ -173,19 +175,36 @@ NXT 미거래 종목: 정규장 장마감 전일값과 실제 전일값이 거�
 NXT 거래 종목: 프리/애프터/NXT 거래분이 전일 분모에서 빠질 수 있으므로 대금비가 과대 표시될 수 있다.
 ```
 
-이 과대 표시는 현재는 허용한다. NXT 장에서 거래 가능한 종목만 애프터장 판단 대상이므로, 전일 정규장 분모 기준의 대금비는 “정규장 대비 현재 장중/애프터장 거래대금 증가율”로 해석한다.
+전일 통합 거래대금 조회가 Kiwoom OpenAPI에서 확인되면 정책은 바꿀 수 있다. 그 경우 우선순위는 다음이 맞다.
+
+```text
+1. 검증된 전일 통합 거래대금 원천
+2. ka10086 기본 6자리 종목코드 정규장 장마감 값
+3. ka10086 _AL fallback
+```
 
 당일 거래대금을 저장해서 다음날 전일값으로 쓰는 방식은 보조 후보로 보류한다. 저장 실패, 휴장/날짜 전환, universe 변경, NXT/정규장 코드 변동, 장중 재시작에 취약하므로 현재는 1차 원천으로 쓰지 않는다.
 
 ## 9. 재접속/복원
 
-대량건과 프로그램 순매수는 아래 파일에 일중 상태로 저장된다.
+아래 값은 일중 상태 파일에 저장된다.
 
 ```text
 data/runtime/stockboard_v2/daily_state_YYYYMMDD.json
 ```
 
-재시작 시 같은 날짜이면 복원된다. 단, `data/runtime/`은 Git 추적 대상이 아니다.
+복원 대상:
+
+```text
+대량건
+프로그램 순매수
+체결강도
+잔량비
+매수/매도 잔량
+최우선 매수/매도 호가
+```
+
+재시작 시 같은 날짜이면 복원된다. NXT 거래가 없는 종목은 정규장 마감 후 마지막 정규장 값이 유지되고, NXT/애프터장 거래가 있는 종목은 애프터장 중 들어온 마지막 값이 덮어쓴다. 단, `data/runtime/`은 Git 추적 대상이 아니다.
 
 ## 10. 성능 정책
 
@@ -238,7 +257,7 @@ trades가 빠르게 증가
 | 장개시 폭탄 | 09:00~09:05 이벤트 폭주 | stream/q/trades 확인 |
 | 휴장일/특별일 누락 | 공휴일/수능일은 config 갱신 필요 | `config/stockboard_market_calendar.json` 관리 |
 | HTS control 변경 | Kiwoom 화면/버전에 따라 Edit6가 달라질 수 있음 | `AHK_LAST_STATUS`와 AHK script TargetControl 확인 |
-| NXT 전일분 미반영 | 전일 분모가 정규장 장마감 기준이므로 NXT 거래종목 대금비가 과대 가능 | 현재 허용. 필요 시 별도 통합 전일 원천 확보 후 전환 |
+| NXT 전일분 미반영 | 전일 분모가 정규장 장마감 기준이므로 NXT 거래종목 대금비가 과대 가능 | 현재 허용. 검증된 통합 전일 원천 확보 시 전환 |
 
 ## 13. 삭제/정리된 구 v1 sidecar 파일
 
@@ -287,4 +306,5 @@ Ctrl+F5
 6. row_source가 seed에서 realtime으로 정상 전환되는지
 7. 종목명 클릭 한 번으로 HTS가 정확히 해당 종목으로 전환되는지
 8. 대금비는 전일 정규장 장마감 분모 기준으로 해석한다
+9. 재접속 후 체결강도/잔량비가 당일 마지막 값으로 유지되는지
 ```
