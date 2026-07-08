@@ -25,7 +25,9 @@ OHLC_SNAPSHOT_FILE = OUTPUT_DIR / "ohlc_snapshot.json"
 STATUS_FILE = OUTPUT_DIR / "context_snapshot_status.json"
 
 YAHOO_SYMBOLS = {
-    "NASDAQ": "^IXIC",
+    "NQ=F": "NQ=F",
+    "ES=F": "ES=F",
+    "YM=F": "YM=F",
     "QQQ": "QQQ",
     "SOXL": "SOXL",
     "SMH": "SMH",
@@ -61,30 +63,43 @@ def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
     atomic_write_json(path, payload)
 
 
+
 def fetch_yahoo_snapshot(timeout: float = 5.0) -> dict[str, Any]:
-    symbols = list(YAHOO_SYMBOLS.values())
-    url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" + quote(",".join(symbols), safe=",^")
-    with urlopen(url, timeout=timeout) as response:
-        payload = json.loads(response.read().decode("utf-8"))
-    results = payload.get("quoteResponse", {}).get("result", [])
-    by_symbol = {row.get("symbol"): row for row in results if isinstance(row, dict)}
+    """Use the old StockBoard Yahoo chart implementation path.
+
+    v0.3.x already works through stockboard_server._fetch_yahoo_chart_quote().
+    This wrapper only adapts that stable result shape to v2 context JSON.
+    """
+    from stockboard_server import _fetch_yahoo_chart_quote  # proven old-board path
+
     values: dict[str, Any] = {}
+    errors: list[dict[str, str]] = []
+
     for label, symbol in YAHOO_SYMBOLS.items():
-        row = by_symbol.get(symbol, {})
-        values[label] = {
-            "symbol": symbol,
-            "price": row.get("regularMarketPrice"),
-            "change": row.get("regularMarketChange"),
-            "change_rate": row.get("regularMarketChangePercent"),
-            "market_time": row.get("regularMarketTime"),
-            "source": "yahoo_quote",
-        }
+        try:
+            quote_payload = _fetch_yahoo_chart_quote(symbol)
+            values[label] = {
+                "symbol": symbol,
+                "price": quote_payload.get("price"),
+                "change_rate": quote_payload.get("change_rate"),
+                "as_of": quote_payload.get("as_of"),
+                "age_sec": quote_payload.get("age_sec"),
+                "freshness": quote_payload.get("freshness"),
+                "source": "stockboard_server_yahoo_chart",
+            }
+        except Exception as error:
+            errors.append({"symbol": symbol, "error": str(error)})
+
+    if not values:
+        raise RuntimeError(f"Yahoo chart unavailable: {errors[-3:]}")
+
     return {
         "schema_version": 1,
-        "source": "yahoo_quote",
+        "source": "stockboard_server_yahoo_chart",
         "ts": now_text(),
         "values": values,
         **values,
+        "errors": errors,
     }
 
 
