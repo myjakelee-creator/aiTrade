@@ -18,9 +18,7 @@
     .warn { color:#a16207; border-color:#facc15; background:#fef9c3; font-weight:800; }
     .copy-ok { color:#166534; border-color:#86efac; background:#dcfce7; font-weight:800; }
     .small { color:#4b5563; }
-    .control, .nav-btn { height:22px; font-family:inherit; font-size:12px; border:1px solid #9aa8b5; background:white; border-radius:3px; }
-    .nav-btn { padding:1px 6px; cursor:pointer; }
-    .nav-btn:hover { background:#fef3c7; }
+    .control { height:22px; font-family:inherit; font-size:12px; border:1px solid #9aa8b5; background:white; border-radius:3px; }
     .section { display:flex; align-items:center; gap:8px; padding:3px 6px; font-weight:800; border-top:1px solid #9aa8b5; border-bottom:1px solid #b8c3cf; background:#eef4fb; }
     .section.orange { color:#b45309; background:#fff7ed; }
     .section.blue { color:#1d4ed8; background:#eff6ff; }
@@ -41,10 +39,11 @@
     .zero { color:#4b5563; }
     .ratio-hot { color:var(--red); font-weight:700; }
     .ratio-cold { color:var(--blue); font-weight:700; }
+    tr.data-row { cursor:pointer; }
+    tr.data-row:hover { background:#fff7d6; }
+    tr.data-row:focus { outline:2px solid #f59e0b; outline-offset:-2px; }
     .stock-name-copy { cursor:pointer; text-decoration: underline dotted rgba(31,41,55,.35); text-underline-offset:2px; }
-    .stock-name-copy:hover { background:#fff7d6; }
-    .selected-row { background:#fff3c4; }
-    tr.hot { background:#fff7d6; }
+    .selected-row { background:#ffe8a3 !important; }
     tr.stale { opacity:.55; }
     .grade { display:inline-block; min-width:32px; padding:0 3px; border-radius:3px; background:#e5e7eb; font-weight:800; }
     .grade.a { background:#fee2e2; color:#b91c1c; }
@@ -67,9 +66,7 @@
       <span id="clock" class="badge">-</span>
       <span id="status" class="badge bad">연결 대기</span>
       <label class="badge">선발기준 <select id="candidate-model-selector" class="control" disabled><option value="">모델 설정 로딩</option></select></label>
-      <button type="button" class="nav-btn" id="prev-stock-button" title="현재 정렬 기준에서 이전 종목 선택 및 HTS 연동">▲ 이전</button>
-      <button type="button" class="nav-btn" id="next-stock-button" title="현재 정렬 기준에서 다음 종목 선택 및 HTS 연동">▼ 다음</button>
-      <span id="copy-status" class="badge">종목명 클릭=HTS연동</span>
+      <span id="copy-status" class="badge">종목 클릭=HTS/S1 연동 · 포커스 후 ↑/↓ 이동</span>
     </div>
     <div class="metric-row">
       <span id="counts" class="badge">rows 0 · events 0 · trades 0</span>
@@ -114,8 +111,6 @@
   const clockEl = document.getElementById('clock');
   const copyStatusEl = document.getElementById('copy-status');
   const candidateModelSelector = document.getElementById('candidate-model-selector');
-  const prevStockButton = document.getElementById('prev-stock-button');
-  const nextStockButton = document.getElementById('next-stock-button');
 
   const STORAGE_KEYS = {
     sort: 'stockboard.v2.sort',
@@ -147,6 +142,7 @@
   let htsLinkSeq = 0;
   let rateSample = null;
   let selectedCode = localStorage.getItem(STORAGE_KEYS.selectedCode) || '';
+  let navigationActive = false;
   let lastPoolRenderAt = 0;
   let sortState = loadSortState();
   let columnWidths = loadColumnWidths();
@@ -292,32 +288,40 @@
   function markSortHeaders() {
     document.querySelectorAll('th[data-sort-key]').forEach((th) => {
       if (th.dataset.sortKey === sortState.key) th.dataset.sortDir = sortState.dir;
-      else delete th.dataset.sortDir;
+      else delete th.datasetSortDir;
+      if (th.dataset.sortKey !== sortState.key) delete th.dataset.sortDir;
     });
   }
 
   document.addEventListener('click', (event) => {
     if (event.target.closest('.column-resizer')) return;
-    const stockCell = event.target.closest('td.stock-name-copy');
-    if (stockCell) {
-      const code = stockCell.dataset.code || stockCell.closest('tr')?.dataset?.code || '';
-      if (code) selectCodeAndLink(code, event.shiftKey);
-      event.preventDefault();
-      event.stopPropagation();
+    const th = event.target.closest('th[data-sort-key]');
+    if (th) {
+      const key = th.dataset.sortKey;
+      const dir = sortState.key === key && sortState.dir === 'asc' ? 'desc' : 'asc';
+      sortState = { key, dir };
+      saveSortState();
+      markSortHeaders();
+      if (lastPayload) render(lastPayload, 'stream', { forcePool:true });
       return;
     }
-    const th = event.target.closest('th[data-sort-key]');
-    if (!th) return;
-    const key = th.dataset.sortKey;
-    const dir = sortState.key === key && sortState.dir === 'asc' ? 'desc' : 'asc';
-    sortState = { key, dir };
-    saveSortState();
-    markSortHeaders();
-    if (lastPayload) render(lastPayload, 'stream', { forcePool:true });
+    const dataRow = event.target.closest('tr[data-code]');
+    if (dataRow) {
+      const code = dataRow.dataset.code || '';
+      if (code) selectCodeAndLink(code, event.shiftKey, { focus:true });
+      event.preventDefault();
+      event.stopPropagation();
+    }
   });
 
-  prevStockButton.addEventListener('click', () => moveSelection(-1));
-  nextStockButton.addEventListener('click', () => moveSelection(1));
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    const active = document.activeElement;
+    const rowFocused = active && active.closest && active.closest('tr[data-code]');
+    if (!rowFocused && !navigationActive) return;
+    event.preventDefault();
+    moveSelection(event.key === 'ArrowDown' ? 1 : -1);
+  });
 
   candidateModelSelector.addEventListener('change', () => {
     localStorage.setItem(STORAGE_KEYS.candidateModel, candidateModelSelector.value || '');
@@ -438,7 +442,8 @@
   function rowTitle(row) {
     return [
       `코드: ${row.stock_code || '-'}`,
-      `종목명 클릭: HTS 연동 / Shift+클릭: 코드만 복사`,
+      `행 클릭: S1 + HTS 연동 / Shift+클릭: 코드 복사`,
+      `포커스 후 ↑/↓: 이전/다음 종목 이동`,
       `전일 거래대금: ${fmtNum(row.prev_trade_value_eok, 0)}억`,
       `대금비: ${fmtRatio(row.amount_ratio)}`,
       `row_source: ${row.row_source || '-'}`,
@@ -449,14 +454,13 @@
     const code = String(row.stock_code || '');
     const rate = Number(row.change_rate);
     const age = Number(row.price_age_sec);
-    const rank = Number(row.rank);
     const selected = code && code === selectedCode;
-    const rowClass = `${selected ? 'selected-row ' : ''}${age > 3 ? 'stale ' : ''}${Number.isFinite(rank) && rank <= 20 ? 'hot' : ''}`.trim();
-    return `<tr data-code="${escapeHtml(code)}" class="${rowClass}" title="${escapeHtml(rowTitle(row))}">
+    const rowClass = `data-row ${selected ? 'selected-row ' : ''}${age > 3 ? 'stale ' : ''}`.trim();
+    return `<tr tabindex="0" data-code="${escapeHtml(code)}" class="${rowClass}" title="${escapeHtml(rowTitle(row))}">
       <td class="center">${escapeHtml(row.rank ?? '-')}</td>
       <td class="center ${clsSigned(row.rank_change)}">${fmtRankChange(row.rank_change)}</td>
       <td class="center">${gradeHtml(row)}</td>
-      <td class="stock-name-copy" data-code="${escapeHtml(code)}" title="${escapeHtml((row.stock_name || code) + '\n클릭하면 HTS 연동\nShift+클릭하면 ' + code + ' 복사')}">${escapeHtml(row.stock_name || code)}</td>
+      <td class="stock-name-copy" data-code="${escapeHtml(code)}">${escapeHtml(row.stock_name || code)}</td>
       <td class="num">${fmtNum(row.price)}</td>
       <td class="num ${clsSigned(rate)}">${Number.isFinite(rate) ? `${rate > 0 ? '+' : ''}${rate.toFixed(2)}%` : '-'}</td>
       <td class="num" title="전일 ${fmtNum(row.prev_trade_value_eok, 0)}억">${fmtNum(row.trade_value_eok, 0)}</td>
@@ -495,12 +499,13 @@
     document.execCommand('copy');
     input.remove();
   }
-  function selectCodeAndLink(code, copyOnly=false) {
+  function selectCodeAndLink(code, copyOnly=false, options={}) {
     const text = String(code || '').trim();
     if (!/^\d{6}$/.test(text)) return;
     selectedCode = text;
+    navigationActive = true;
     localStorage.setItem(STORAGE_KEYS.selectedCode, text);
-    if (lastPayload) render(lastPayload, 'stream', { forcePool:true });
+    if (lastPayload) render(lastPayload, 'stream', { forcePool:true, focusSelected: options.focus !== false });
     if (copyOnly) {
       writeClipboardText(text).then(() => {
         copyStatusEl.textContent = `코드 복사 ${text}`;
@@ -512,6 +517,12 @@
       return;
     }
     enqueueHtsCommand(text);
+  }
+  function focusSelectedRow(preventScroll=true) {
+    if (!selectedCode) return;
+    const escaped = CSS && CSS.escape ? CSS.escape(selectedCode) : selectedCode;
+    const row = document.querySelector(`tr[data-code="${escaped}"]`);
+    if (row && typeof row.focus === 'function') row.focus({ preventScroll });
   }
   function enqueueHtsCommand(code) {
     htsQueue.push(String(code));
@@ -536,7 +547,7 @@
     } finally {
       window.setTimeout(() => {
         if (!htsQueue.length) {
-          copyStatusEl.textContent = '종목명 클릭=HTS연동';
+          copyStatusEl.textContent = '종목 클릭=HTS/S1 연동 · 포커스 후 ↑/↓ 이동';
           copyStatusEl.className = 'badge';
         }
       }, 900);
@@ -554,7 +565,7 @@
     if (index < 0) index = delta > 0 ? -1 : 0;
     const nextIndex = (index + delta + rows.length) % rows.length;
     const code = String(rows[nextIndex]?.stock_code || '');
-    if (code) selectCodeAndLink(code, false);
+    if (code) selectCodeAndLink(code, false, { focus:true });
   }
 
   function payloadLagMs(payload) {
@@ -606,6 +617,7 @@
 
   function render(payload, mode='stream', options={}) {
     const renderStart = performance.now();
+    const refocusAfterRender = options.focusSelected || (navigationActive && document.activeElement && document.activeElement.closest && document.activeElement.closest('tr[data-code]'));
     lastPayload = payload;
     markSortHeaders();
     const rawRows = Array.isArray(payload.rows) ? payload.rows : [];
@@ -634,7 +646,7 @@
     lagMetricsEl.textContent = `top20 lag ${top20.maxLag === null ? '-' : top20.maxLag.toFixed(1) + 's'} · stale ${top20.stale} · rt ${top20.realtimeRows}`;
     lagMetricsEl.className = (top20.maxLag !== null && top20.maxLag > 3) || top20.stale > 0 ? 'badge warn' : 'badge';
 
-    renderTable(selectedBoardEl, selectedRows, '종목명을 클릭하면 S1 선택 종목으로 고정됩니다.');
+    renderTable(selectedBoardEl, selectedRows, '종목을 클릭하면 S1 선택 종목으로 고정됩니다.');
     selectedRowCountEl.textContent = `${selectedRows.length}종목`;
     renderTable(focusBoardEl, focusRows, '집중 후보 수신 대기 중입니다.');
     focusRowCountEl.textContent = `${focusRows.length}종목`;
@@ -645,6 +657,7 @@
     }
     maybeInitialAutoFit();
     updateTopbarHeight();
+    if (refocusAfterRender) requestAnimationFrame(() => focusSelectedRow(true));
     const renderMs = performance.now() - renderStart;
     renderMetricsEl.textContent = `render ${renderMs.toFixed(1)} ms`;
     renderMetricsEl.className = renderMs > 70 ? 'badge warn' : 'badge';
