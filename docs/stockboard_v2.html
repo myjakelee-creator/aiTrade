@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>StockBoard v2 Realtime</title>
   <style>
-    :root { --red:#d71920; --blue:#1266d6; --grid:#c7d1dc; --head:#eaf0f6; --text:#111827; --topbar-height:82px; }
+    :root { --red:#d71920; --blue:#1266d6; --grid:#c7d1dc; --head:#eaf0f6; --text:#111827; --topbar-height:82px; --board-width:1048px; }
     html, body { overflow-x:auto; }
     body { margin:0; min-width:100vw; font-family: Malgun Gothic, Arial, sans-serif; font-size:12px; color:var(--text); background:#f8fafc; }
     .window { min-width:max-content; }
@@ -18,16 +18,21 @@
     .warn { color:#a16207; border-color:#facc15; background:#fef9c3; font-weight:800; }
     .copy-ok { color:#166534; border-color:#86efac; background:#dcfce7; font-weight:800; }
     .small { color:#4b5563; }
-    .control { height:22px; font-family:inherit; font-size:12px; border:1px solid #9aa8b5; background:white; border-radius:3px; }
-    .section { padding:3px 6px; font-weight:800; border-top:1px solid #9aa8b5; border-bottom:1px solid #b8c3cf; background:#eef4fb; }
+    .control, .nav-btn { height:22px; font-family:inherit; font-size:12px; border:1px solid #9aa8b5; background:white; border-radius:3px; }
+    .nav-btn { padding:1px 6px; cursor:pointer; }
+    .nav-btn:hover { background:#fef3c7; }
+    .section { display:flex; align-items:center; gap:8px; padding:3px 6px; font-weight:800; border-top:1px solid #9aa8b5; border-bottom:1px solid #b8c3cf; background:#eef4fb; }
     .section.orange { color:#b45309; background:#fff7ed; }
     .section.blue { color:#1d4ed8; background:#eff6ff; }
-    .section .lane { margin-left:8px; color:#6b7280; font-weight:600; }
-    table { border-collapse:collapse; table-layout:fixed; background:white; width:1048px; min-width:1048px; }
+    .section .lane { color:#6b7280; font-weight:600; }
+    table { border-collapse:collapse; table-layout:fixed; background:white; width:var(--board-width); min-width:var(--board-width); }
     th, td { box-sizing:border-box; border:1px solid var(--grid); padding:2px 4px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; height:20px; min-width:0 !important; max-width:none; }
-    th { background:var(--head); font-weight:800; user-select:none; cursor:pointer; }
+    th { position:relative; background:var(--head); font-weight:800; user-select:none; cursor:pointer; }
     th[data-sort-dir="asc"] .header-label::after { content:" ▲"; color:#1d4ed8; }
     th[data-sort-dir="desc"] .header-label::after { content:" ▼"; color:#b91c1c; }
+    .column-resizer { position:absolute; top:0; right:-4px; z-index:20; width:9px; height:100%; cursor:col-resize; touch-action:none; user-select:none; }
+    .column-resizer:hover { background:rgba(29,78,216,.18); }
+    body.resizing-column { cursor:col-resize; user-select:none; }
     .board { margin:0; }
     .num { text-align:right; font-variant-numeric:tabular-nums; }
     .center { text-align:center; }
@@ -37,6 +42,7 @@
     .ratio-hot { color:var(--red); font-weight:700; }
     .ratio-cold { color:var(--blue); font-weight:700; }
     .stock-name-copy { cursor:pointer; text-decoration: underline dotted rgba(31,41,55,.35); text-underline-offset:2px; }
+    .stock-name-copy:hover { background:#fff7d6; }
     .selected-row { background:#fff3c4; }
     tr.hot { background:#fff7d6; }
     tr.stale { opacity:.55; }
@@ -51,10 +57,6 @@
     .mini-candle .body { position:absolute; left:var(--body-left); width:var(--body-width); top:3px; height:8px; min-width:2px; background:#ef4444; }
     .mini-candle.down .body { background:#3b82f6; }
     .mini-candle.flat .body { background:#6b7280; }
-    col.rank { width:46px; } col.prev { width:52px; } col.grade { width:50px; } col.name { width:132px; }
-    col.price { width:78px; } col.rate { width:68px; } col.value { width:78px; } col.amount-ratio { width:62px; }
-    col.candle { width:86px; } col.balance { width:66px; } col.strength { width:70px; } col.minstrength { width:70px; }
-    col.program { width:68px; } col.large { width:70px; }
   </style>
 </head>
 <body>
@@ -65,6 +67,8 @@
       <span id="clock" class="badge">-</span>
       <span id="status" class="badge bad">연결 대기</span>
       <label class="badge">선발기준 <select id="candidate-model-selector" class="control" disabled><option value="">모델 설정 로딩</option></select></label>
+      <button type="button" class="nav-btn" id="prev-stock-button" title="현재 정렬 기준에서 이전 종목 선택 및 HTS 연동">▲ 이전</button>
+      <button type="button" class="nav-btn" id="next-stock-button" title="현재 정렬 기준에서 다음 종목 선택 및 HTS 연동">▼ 다음</button>
       <span id="copy-status" class="badge">종목명 클릭=HTS연동</span>
     </div>
     <div class="metric-row">
@@ -110,39 +114,48 @@
   const clockEl = document.getElementById('clock');
   const copyStatusEl = document.getElementById('copy-status');
   const candidateModelSelector = document.getElementById('candidate-model-selector');
+  const prevStockButton = document.getElementById('prev-stock-button');
+  const nextStockButton = document.getElementById('next-stock-button');
 
   const STORAGE_KEYS = {
     sort: 'stockboard.v2.sort',
     selectedCode: 'stockboard.v2.selectedCode',
-    candidateModel: 'stockboard.candidateModel.v1'
+    candidateModel: 'stockboard.candidateModel.v1',
+    columnWidths: 'stockboard.v2.columnWidths.v2'
   };
   const columns = [
-    { key:'rank', label:'순위', className:'center', colClass:'rank', sort:'rank' },
-    { key:'rank_change', label:'전일', className:'center', colClass:'prev', sort:'rank_change' },
-    { key:'grade', label:'등급', className:'center', colClass:'grade', sort:'grade_score' },
-    { key:'stock_name', label:'종목명', className:'', colClass:'name', sort:'stock_name' },
-    { key:'price', label:'현재가', className:'num', colClass:'price', sort:'price' },
-    { key:'change_rate', label:'등락률', className:'num', colClass:'rate', sort:'change_rate' },
-    { key:'trade_value_eok', label:'금액(억)', className:'num', colClass:'value', sort:'trade_value_eok' },
-    { key:'amount_ratio', label:'대금비', className:'num', colClass:'amount-ratio', sort:'amount_ratio' },
-    { key:'daily_candle', label:'일봉', className:'center', colClass:'candle', sort:null },
-    { key:'bid_ask_ratio', label:'잔량비', className:'num', colClass:'balance', sort:'bid_ask_ratio' },
-    { key:'execution_strength', label:'순간강도', className:'num', colClass:'strength', sort:'execution_strength' },
-    { key:'strength_1m', label:'1분강도', className:'num', colClass:'minstrength', sort:'strength_1m' },
-    { key:'program_net', label:'프로(억)', className:'num', colClass:'program', sort:'program_net' },
-    { key:'large_trade_net_count', label:'대량체결', className:'num', colClass:'large', sort:'large_trade_net_count' }
+    { key:'rank', label:'순위', className:'center', sort:'rank', width:46, min:34 },
+    { key:'rank_change', label:'전일', className:'center', sort:'rank_change', width:52, min:40 },
+    { key:'grade', label:'등급', className:'center', sort:'grade_score', width:50, min:40 },
+    { key:'stock_name', label:'종목명', className:'', sort:'stock_name', width:132, min:78 },
+    { key:'price', label:'현재가', className:'num', sort:'price', width:78, min:58 },
+    { key:'change_rate', label:'등락률', className:'num', sort:'change_rate', width:68, min:52 },
+    { key:'trade_value_eok', label:'금액(억)', className:'num', sort:'trade_value_eok', width:78, min:58 },
+    { key:'amount_ratio', label:'대금비', className:'num', sort:'amount_ratio', width:62, min:48 },
+    { key:'daily_candle', label:'일봉', className:'center', sort:null, width:86, min:48 },
+    { key:'bid_ask_ratio', label:'잔량비', className:'num', sort:'bid_ask_ratio', width:66, min:48 },
+    { key:'execution_strength', label:'순간강도', className:'num', sort:'execution_strength', width:70, min:54 },
+    { key:'strength_1m', label:'1분강도', className:'num', sort:'strength_1m', width:70, min:54 },
+    { key:'program_net', label:'프로(억)', className:'num', sort:'program_net', width:68, min:54 },
+    { key:'large_trade_net_count', label:'대량체결', className:'num', sort:'large_trade_net_count', width:70, min:54 }
   ];
 
   let lastPayload = null;
   let lastStreamAt = 0;
   let fallbackTimer = null;
   let stream = null;
-  let copyTimer = null;
   let htsLinkSeq = 0;
   let rateSample = null;
   let selectedCode = localStorage.getItem(STORAGE_KEYS.selectedCode) || '';
   let lastPoolRenderAt = 0;
   let sortState = loadSortState();
+  let columnWidths = loadColumnWidths();
+  let firstAutoFitDone = false;
+  let resizeState = null;
+  let htsQueue = [];
+  let htsBusy = false;
+  let lastHtsCommandAt = 0;
+  const HTS_COMMAND_GAP_MS = 650;
 
   function updateTopbarHeight() {
     const height = Math.ceil(topbarEl.getBoundingClientRect().height || 82);
@@ -151,11 +164,13 @@
   window.addEventListener('resize', updateTopbarHeight);
 
   function tableSkeleton() {
-    return `<colgroup>${columns.map(col => `<col class="${col.colClass}">`).join('')}</colgroup><thead><tr>${columns.map(col => `<th class="${col.className}" ${col.sort ? `data-sort-key="${col.sort}"` : ''}><span class="header-label">${col.label}</span></th>`).join('')}</tr></thead><tbody></tbody>`;
+    return `<colgroup>${columns.map((col, index) => `<col data-col-index="${index}" data-key="${col.key}">`).join('')}</colgroup><thead><tr>${columns.map((col, index) => `<th class="${col.className}" data-col-index="${index}" ${col.sort ? `data-sort-key="${col.sort}"` : ''}><span class="header-label">${col.label}</span><span class="column-resizer" title="드래그: 폭 조절 / 더블클릭: 자동 폭맞춤"></span></th>`).join('')}</tr></thead><tbody></tbody>`;
   }
   selectedBoardEl.innerHTML = tableSkeleton();
   focusBoardEl.innerHTML = tableSkeleton();
   poolBoardEl.innerHTML = tableSkeleton();
+  applyColumnWidths();
+  initColumnResizers();
 
   function loadSortState() {
     try {
@@ -167,6 +182,113 @@
   function saveSortState() {
     try { localStorage.setItem(STORAGE_KEYS.sort, JSON.stringify(sortState)); } catch (_error) {}
   }
+  function loadColumnWidths() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEYS.columnWidths) || '{}');
+      return saved && typeof saved === 'object' ? saved : {};
+    } catch (_error) { return {}; }
+  }
+  function saveColumnWidths() {
+    try { localStorage.setItem(STORAGE_KEYS.columnWidths, JSON.stringify(columnWidths)); } catch (_error) {}
+  }
+  function columnWidth(index) {
+    const col = columns[index] || {};
+    const saved = Number(columnWidths[col.key]);
+    return Number.isFinite(saved) && saved > 0 ? saved : Number(col.width || 70);
+  }
+  function clampWidth(index, value) {
+    const col = columns[index] || {};
+    const min = Number(col.min || 36);
+    const max = Number(col.max || 420);
+    const parsed = Math.round(Number(value));
+    const width = Number.isFinite(parsed) ? parsed : columnWidth(index);
+    return Math.max(min, Math.min(max, width));
+  }
+  function applyColumnWidths() {
+    columns.forEach((_col, index) => setColumnWidth(index, columnWidth(index), false));
+    updateBoardWidth();
+  }
+  function updateBoardWidth() {
+    const total = columns.reduce((sum, _col, index) => sum + columnWidth(index), 0);
+    document.documentElement.style.setProperty('--board-width', `${total}px`);
+  }
+  function setColumnWidth(index, width, save=true) {
+    const col = columns[index];
+    if (!col) return;
+    const px = clampWidth(index, width);
+    document.querySelectorAll(`col[data-col-index="${index}"]`).forEach((node) => {
+      node.style.width = `${px}px`;
+    });
+    if (save) {
+      columnWidths[col.key] = px;
+      saveColumnWidths();
+    }
+    updateBoardWidth();
+  }
+  function measureText(text) {
+    if (!measureText.canvas) {
+      measureText.canvas = document.createElement('canvas');
+      measureText.ctx = measureText.canvas.getContext('2d');
+    }
+    const ctx = measureText.ctx;
+    ctx.font = getComputedStyle(document.body).font || '12px Malgun Gothic';
+    return ctx.measureText(String(text || '')).width;
+  }
+  function autoFitColumn(index, save=true) {
+    const col = columns[index];
+    if (!col) return;
+    let width = measureText(col.label) + 28;
+    document.querySelectorAll(`tbody tr td:nth-child(${index + 1})`).forEach((cell) => {
+      width = Math.max(width, measureText(cell.textContent || '') + 18);
+    });
+    if (col.key === 'daily_candle') width = Math.max(width, 86);
+    setColumnWidth(index, width, save);
+  }
+  function autoFitColumns(save=false, includeManual=false) {
+    columns.forEach((col, index) => {
+      if (!includeManual && columnWidths[col.key]) return;
+      autoFitColumn(index, save);
+    });
+  }
+  function maybeInitialAutoFit() {
+    if (firstAutoFitDone) return;
+    firstAutoFitDone = true;
+    requestAnimationFrame(() => {
+      autoFitColumns(false, false);
+      updateTopbarHeight();
+    });
+  }
+  function initColumnResizers() {
+    document.querySelectorAll('.column-resizer').forEach((handle) => {
+      handle.addEventListener('click', (event) => event.stopPropagation());
+      handle.addEventListener('dblclick', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const index = Number(handle.closest('th')?.dataset?.colIndex);
+        if (Number.isFinite(index)) autoFitColumn(index, true);
+      });
+      handle.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const index = Number(handle.closest('th')?.dataset?.colIndex);
+        if (!Number.isFinite(index)) return;
+        resizeState = { index, startX:event.clientX, startWidth:columnWidth(index) };
+        document.body.classList.add('resizing-column');
+      });
+    });
+    document.addEventListener('mousemove', (event) => {
+      if (!resizeState) return;
+      const nextWidth = resizeState.startWidth + event.clientX - resizeState.startX;
+      setColumnWidth(resizeState.index, nextWidth, false);
+    });
+    document.addEventListener('mouseup', (event) => {
+      if (!resizeState) return;
+      const nextWidth = resizeState.startWidth + event.clientX - resizeState.startX;
+      setColumnWidth(resizeState.index, nextWidth, true);
+      resizeState = null;
+      document.body.classList.remove('resizing-column');
+    });
+  }
   function markSortHeaders() {
     document.querySelectorAll('th[data-sort-key]').forEach((th) => {
       if (th.dataset.sortKey === sortState.key) th.dataset.sortDir = sortState.dir;
@@ -175,15 +297,11 @@
   }
 
   document.addEventListener('click', (event) => {
+    if (event.target.closest('.column-resizer')) return;
     const stockCell = event.target.closest('td.stock-name-copy');
     if (stockCell) {
       const code = stockCell.dataset.code || stockCell.closest('tr')?.dataset?.code || '';
-      if (code) {
-        selectedCode = code;
-        localStorage.setItem(STORAGE_KEYS.selectedCode, code);
-        linkStockToHts(stockCell, code, event.shiftKey);
-        if (lastPayload) render(lastPayload, 'stream', { forcePool:true });
-      }
+      if (code) selectCodeAndLink(code, event.shiftKey);
       event.preventDefault();
       event.stopPropagation();
       return;
@@ -197,6 +315,9 @@
     markSortHeaders();
     if (lastPayload) render(lastPayload, 'stream', { forcePool:true });
   });
+
+  prevStockButton.addEventListener('click', () => moveSelection(-1));
+  nextStockButton.addEventListener('click', () => moveSelection(1));
 
   candidateModelSelector.addEventListener('change', () => {
     localStorage.setItem(STORAGE_KEYS.candidateModel, candidateModelSelector.value || '');
@@ -374,25 +495,68 @@
     document.execCommand('copy');
     input.remove();
   }
-  async function linkStockToHts(cell, code, copyOnly=false) {
+  function selectCodeAndLink(code, copyOnly=false) {
     const text = String(code || '').trim();
     if (!/^\d{6}$/.test(text)) return;
+    selectedCode = text;
+    localStorage.setItem(STORAGE_KEYS.selectedCode, text);
+    if (lastPayload) render(lastPayload, 'stream', { forcePool:true });
+    if (copyOnly) {
+      writeClipboardText(text).then(() => {
+        copyStatusEl.textContent = `코드 복사 ${text}`;
+        copyStatusEl.className = 'badge copy-ok';
+      }).catch(() => {
+        copyStatusEl.textContent = `코드 복사 실패 ${text}`;
+        copyStatusEl.className = 'badge bad';
+      });
+      return;
+    }
+    enqueueHtsCommand(text);
+  }
+  function enqueueHtsCommand(code) {
+    htsQueue.push(String(code));
+    processHtsQueue();
+  }
+  async function processHtsQueue() {
+    if (htsBusy || !htsQueue.length) return;
+    htsBusy = true;
+    const code = htsQueue.shift();
+    const now = performance.now();
+    const waitMs = Math.max(0, HTS_COMMAND_GAP_MS - (now - lastHtsCommandAt));
+    if (waitMs > 0) await new Promise(resolve => setTimeout(resolve, waitMs));
     try {
       const commandSeq = `${Date.now()}${++htsLinkSeq}`;
-      const payload = copyOnly ? text : `SBV2|${commandSeq}|${text}`;
-      await writeClipboardText(payload);
-      copyStatusEl.textContent = copyOnly ? `코드 복사 ${text}` : `HTS 연동 ${text}`;
+      await writeClipboardText(`SBV2|${commandSeq}|${code}`);
+      lastHtsCommandAt = performance.now();
+      copyStatusEl.textContent = `HTS 연동 ${code}`;
       copyStatusEl.className = 'badge copy-ok';
-      window.clearTimeout(copyTimer);
-      copyTimer = window.setTimeout(() => {
-        copyStatusEl.textContent = '종목명 클릭=HTS연동';
-        copyStatusEl.className = 'badge';
-      }, 900);
     } catch (_error) {
-      copyStatusEl.textContent = `HTS 요청 실패 ${text}`;
+      copyStatusEl.textContent = `HTS 요청 실패 ${code}`;
       copyStatusEl.className = 'badge bad';
+    } finally {
+      window.setTimeout(() => {
+        if (!htsQueue.length) {
+          copyStatusEl.textContent = '종목명 클릭=HTS연동';
+          copyStatusEl.className = 'badge';
+        }
+      }, 900);
+      htsBusy = false;
+      if (htsQueue.length) processHtsQueue();
     }
   }
+  function navigationRows() {
+    return lastPayload && Array.isArray(lastPayload.rows) ? sortedRows(lastPayload.rows) : [];
+  }
+  function moveSelection(delta) {
+    const rows = navigationRows();
+    if (!rows.length) return;
+    let index = rows.findIndex(row => String(row.stock_code || '') === selectedCode);
+    if (index < 0) index = delta > 0 ? -1 : 0;
+    const nextIndex = (index + delta + rows.length) % rows.length;
+    const code = String(rows[nextIndex]?.stock_code || '');
+    if (code) selectCodeAndLink(code, false);
+  }
+
   function payloadLagMs(payload) {
     const sentAt = Date.parse(payload && payload.ts ? payload.ts : '');
     if (!Number.isFinite(sentAt)) return null;
@@ -446,9 +610,11 @@
     markSortHeaders();
     const rawRows = Array.isArray(payload.rows) ? payload.rows : [];
     const rankedRows = byRank(rawRows);
-    const sortedPoolRows = sortedRows(rawRows);
+    const focusBase = rankedRows.slice(0, 20);
+    const poolBase = rankedRows.slice(20);
+    const focusRows = sortedRows(focusBase);
+    const poolRows = sortedRows(poolBase);
     const selectedRows = selectedCode ? rawRows.filter(row => String(row.stock_code || '') === selectedCode) : [];
-    const focusRows = rankedRows.slice(0, 20);
     const now = performance.now();
     const shouldRenderPool = options.forcePool || now - lastPoolRenderAt >= 250;
     const lag = payloadLagMs(payload);
@@ -473,10 +639,11 @@
     renderTable(focusBoardEl, focusRows, '집중 후보 수신 대기 중입니다.');
     focusRowCountEl.textContent = `${focusRows.length}종목`;
     if (shouldRenderPool) {
-      renderTable(poolBoardEl, sortedPoolRows, 'Top300 Pool 수신 대기 중입니다.');
-      poolRowCountEl.textContent = `${sortedPoolRows.length}종목`;
+      renderTable(poolBoardEl, poolRows, 'Top300 Pool 수신 대기 중입니다.');
+      poolRowCountEl.textContent = `21~${rankedRows.length} · ${poolRows.length}종목`;
       lastPoolRenderAt = now;
     }
+    maybeInitialAutoFit();
     updateTopbarHeight();
     const renderMs = performance.now() - renderStart;
     renderMetricsEl.textContent = `render ${renderMs.toFixed(1)} ms`;
