@@ -303,6 +303,37 @@
   }
 </style>
 
+
+<style id="stockboard-v2-daily-candle-runtime-lock">
+  table.board th[data-key="daily_candle"],
+  table.board tbody tr td:nth-child(9) {
+    width: 69px !important;
+    min-width: 69px !important;
+    max-width: 69px !important;
+    padding-left: 1px !important;
+    padding-right: 1px !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+  }
+
+  table.board tbody tr td:nth-child(9) .mini-candle {
+    width: 54px !important;
+    height: 18px !important;
+    margin: 0 auto !important;
+  }
+
+  table.board tbody tr td:nth-child(9) .mini-candle .wick {
+    top: 8px !important;
+    height: 2px !important;
+  }
+
+  table.board tbody tr td:nth-child(9) .mini-candle .body {
+    top: 2px !important;
+    height: 14px !important;
+    min-width: 4px !important;
+  }
+</style>
+
 </head>
 <body>
 <div class="window">
@@ -676,7 +707,66 @@ function loadSortState(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KE
   function connectStream(){if(!window.EventSource){startFallback();return;}stream=new EventSource(`/api/v2/stream?limit=300&interval_ms=100&ts=${Date.now()}`);stream.addEventListener('snapshot',e=>{try{lastStreamAt=performance.now();render(JSON.parse(e.data),'stream');}catch(err){console.warn(err);}});stream.onerror=()=>{statusEl.textContent='stream 재연결 중';statusEl.className='badge bad';startFallback();};}
   setInterval(()=>{clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});if(lastPayload&&(!lastStreamAt||performance.now()-lastStreamAt>1000))render(lastPayload,'stream');},500);
   setInterval(loadContext,15000);
-  clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();
+  
+  function lockDailyCandleRuntime(){
+    const idx = columns.findIndex(c => c.key === 'daily_candle');
+    if(idx < 0) return;
+
+    const px = 69;
+    const c = columns[idx];
+    c.width = px;
+    c.min = px;
+    c.max = px;
+
+    if(columnWidths.daily_candle !== px){
+      columnWidths.daily_candle = px;
+      saveColumnWidths();
+    }
+
+    document.querySelectorAll(`table.board col[data-col-index="${idx}"], table.board col[data-key="daily_candle"]`).forEach(col => {
+      col.style.width = `${px}px`;
+    });
+
+    updateBoardWidth();
+  }
+
+  const __originalColumnWidth = columnWidth;
+  columnWidth = function(i){
+    const c = columns[i] || {};
+    if(c.key === 'daily_candle') return 69;
+    return __originalColumnWidth(i);
+  };
+
+  const __originalSetColumnWidth = setColumnWidth;
+  setColumnWidth = function(i, w, save=true){
+    const c = columns[i];
+    if(c && c.key === 'daily_candle'){
+      return __originalSetColumnWidth(i, 69, true);
+    }
+    return __originalSetColumnWidth(i, w, save);
+  };
+
+  const __originalAutoFitColumn = autoFitColumn;
+  autoFitColumn = function(i, save=true){
+    const c = columns[i];
+    if(c && c.key === 'daily_candle'){
+      lockDailyCandleRuntime();
+      return;
+    }
+    return __originalAutoFitColumn(i, save);
+  };
+
+  const __originalRender = render;
+  render = function(...args){
+    const result = __originalRender.apply(this, args);
+    lockDailyCandleRuntime();
+    requestAnimationFrame(lockDailyCandleRuntime);
+    return result;
+  };
+
+  lockDailyCandleRuntime();
+
+clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();
 </script>
 </body>
 </html>
