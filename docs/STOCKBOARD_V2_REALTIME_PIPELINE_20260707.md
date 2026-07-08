@@ -308,3 +308,27 @@ Ctrl+F5
 8. 대금비는 전일 정규장 장마감 분모 기준으로 해석한다
 9. 재접속 후 체결강도/잔량비가 당일 마지막 값으로 유지되는지
 ```
+
+---
+
+## 15. 2026-07-09 야간 갱신 내용
+
+- 상단 시장 영역, 미국시장 행, 시장수급 그래프/표 간격, 일봉 열 폭, 종목표 bold, 색상바 여백, 폭 최소화 버튼을 조정했다.
+- 장마감/애프터장 이후 잔량비, 강도, 대량체결 값이 0이나 빈칸으로 떨어지지 않도록 daily_state 및 이전 daily_state fallback 복원 정책을 보강했다.
+- 선발기준 드롭다운은 configs/candidate_models/_registry.json 모델 목록을 사용한다.
+- 모델별 기준은 configs/candidate_models/*.json의 score_structure, grade_policy, funnel을 사용한다.
+- 점수/등급/랭킹 계산은 HTML이 아니라 stockboard_ranking_engine.py에서 수행한다.
+- HTML은 candidate_model 선택값을 stream/snapshot API에 전달하고 표시만 한다.
+- 오늘 추가한 UI 조정은 대부분 CSS/localStorage/DOM 표시 수준이라 실시간 수집 속도에는 직접 부담이 작다.
+- Ranking Engine 모델별 계산은 약 180개 row 기준 점수 계산과 정렬이므로 현재 구조에서는 허용 가능한 수준으로 판단한다.
+
+### 15.1 2026-07-09 장개시 점검 항목
+
+1. 08:55 이전 stockboard_v2_live.cmd restart-fast
+2. 09:00~09:05 stream latency 100~1000ms 중심인지 확인
+3. worker_q / event_log_queue_size가 지속 증가하지 않는지 확인
+4. rows 180 유지 및 top20 stale 증가 여부 확인
+5. SK하이닉스, 삼성전자, 삼성전기 등 상위 종목의 현재가/등락률/거래대금 HTS 0186 대조
+6. 잔량비/순간강도/1분강도 색상바가 장개시 후 정상 갱신되는지 확인
+7. 선발기준 변경 시 Top20/Top300 순위가 모델 기준으로 바뀌는지 확인
+8. 종목명 클릭 1회로 HTS S1 연동되는지 확인
