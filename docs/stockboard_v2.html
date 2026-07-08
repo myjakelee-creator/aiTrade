@@ -465,7 +465,6 @@
   let metricModes = loadMetricModes();
   const clientOhlc = new Map();
   const strengthSamples = new Map();
-  let candidateModelConfigs = {};
 
   function tableSkeleton() { return `<colgroup>${columns.map((col, i) => `<col data-col-index="${i}" data-key="${col.key}">`).join('')}</colgroup><thead><tr>${columns.map((col, i) => `<th class="${col.className}" data-col-index="${i}" data-key="${col.key}" ${col.sort ? `data-sort-key="${col.sort}"` : ''}><span class="header-label">${col.label}</span><span class="column-resizer"></span></th>`).join('')}</tr></thead><tbody></tbody>`; }
   selectedBoardEl.innerHTML = tableSkeleton(); focusBoardEl.innerHTML = tableSkeleton(); poolBoardEl.innerHTML = tableSkeleton();
@@ -586,9 +585,9 @@ function loadSortState(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KE
   function handleRowPointerDown(event){ if(event.button!==undefined && event.button!==0) return; if(event.target.closest('th,.column-resizer,select,button,input')) return; const metricCell=event.target.closest('td[data-metric-key]'); if(metricCell){ toggleMetricMode(metricCell.dataset.metricKey); event.preventDefault(); event.stopPropagation(); return; } const row=event.target.closest('tr[data-code]'); if(!row)return; const table=row.closest('table'); if(table!==focusBoardEl&&table!==poolBoardEl&&table!==selectedBoardEl)return; const code=row.dataset.code||''; if(!/^\d{6}$/.test(code))return; event.preventDefault(); event.stopPropagation(); row.focus({preventScroll:true}); selectCodeAndLink(code,event.shiftKey,{focus:true}); }
   document.addEventListener('click',e=>{ const th=e.target.closest('th[data-sort-key]'); if(!th||e.target.closest('.column-resizer'))return; const key=th.dataset.sortKey; sortState={key,dir:sortState.key===key&&sortState.dir==='asc'?'desc':'asc'}; saveSortState(); markSortHeaders(); if(lastPayload)render(lastPayload,'stream',{forcePool:true}); }, true);
   document.addEventListener('keydown',e=>{ if(e.key!=='ArrowUp'&&e.key!=='ArrowDown')return; const active=document.activeElement; const rowFocused=active&&active.closest&&active.closest('tr[data-code]'); if(!rowFocused&&!navigationActive)return; e.preventDefault(); moveSelection(e.key==='ArrowDown'?1:-1); });
-  candidateModelSelector.addEventListener('change',()=>{localStorage.setItem(STORAGE_KEYS.candidateModel,candidateModelSelector.value||''); if(lastPayload)render(lastPayload,'stream',{forcePool:true});});
+  candidateModelSelector.addEventListener('change',()=>localStorage.setItem(STORAGE_KEYS.candidateModel,candidateModelSelector.value||''));
 
-  async function loadCandidateModels(){ try{ const res=await fetch(`/api/v2/candidate_models?ts=${Date.now()}`,{cache:'no-store'}); if(!res.ok)throw new Error(); const p=await res.json(); candidateModelConfigs=(p&&p.configs&&typeof p.configs==='object')?p.configs:{}; const models=Array.isArray(p.models)?p.models:[]; if(!models.length)throw new Error(); candidateModelSelector.innerHTML=models.map(m=>`<option value="${escapeHtml(String(m.id||''))}">${escapeHtml(String(m.label||m.id||''))}</option>`).join(''); candidateModelSelector.value=localStorage.getItem(STORAGE_KEYS.candidateModel)||p.default_model_id||models[0].id; candidateModelSelector.disabled=false; if(lastPayload)render(lastPayload,'stream',{forcePool:true}); }catch(_e){ candidateModelSelector.innerHTML='<option value="">선발기준 설정 미연결</option>'; candidateModelSelector.disabled=true; } }
+  async function loadCandidateModels(){ try{ const res=await fetch(`/api/v2/candidate_models?ts=${Date.now()}`,{cache:'no-store'}); if(!res.ok)throw new Error(); const p=await res.json(); const models=Array.isArray(p.models)?p.models:[]; if(!models.length)throw new Error(); candidateModelSelector.innerHTML=models.map(m=>`<option value="${escapeHtml(String(m.id||''))}">${escapeHtml(String(m.label||m.id||''))}</option>`).join(''); candidateModelSelector.value=localStorage.getItem(STORAGE_KEYS.candidateModel)||p.default_model_id||models[0].id; candidateModelSelector.disabled=false; }catch(_e){ candidateModelSelector.innerHTML='<option value="">선발기준 설정 미연결</option>'; candidateModelSelector.disabled=true; } }
   async function loadContext(){ try{ const res=await fetch(`/api/v2/context?ts=${Date.now()}`,{cache:'no-store'}); if(!res.ok)throw new Error(); renderContext(await res.json()); }catch(_e){} }
   function first(obj, keys){ for(const k of keys){ if(obj&&obj[k]!==undefined&&obj[k]!==null&&obj[k]!=='')return obj[k]; } return null; }
   function contextNum(v,d=2){ if(v===undefined||v===null||v==='')return'-'; const n=Number(v); return Number.isFinite(n)?`${n>0?'+':''}${n.toLocaleString('en-US',{maximumFractionDigits:d})}`:'-'; }
@@ -700,233 +699,6 @@ function loadSortState(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KE
 
   function escapeHtml(v){return String(v??'').replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));}
   function numeric(v){const n=Number(v);return Number.isFinite(n)?n:null;}
-
-  function activeCandidateModelId(){
-    return candidateModelSelector.value || localStorage.getItem(STORAGE_KEYS.candidateModel) || '';
-  }
-
-  function activeCandidateModelConfig(){
-    const id = activeCandidateModelId();
-    return id && candidateModelConfigs ? candidateModelConfigs[id] : null;
-  }
-
-  function clampScore(v){
-    const n=Number(v);
-    return Number.isFinite(n)?Math.max(0,Math.min(100,n)):0;
-  }
-
-  function rankPositionScore(position,total){
-    const p=Number(position),t=Number(total);
-    if(!Number.isFinite(p)||!Number.isFinite(t)||t<=1)return Number.isFinite(p)?100:0;
-    return clampScore(100*(t-p)/(t-1));
-  }
-
-  function modelGradeText(score,config){
-    const n=Math.round(clampScore(score));
-    const bands=(config&&config.grade_policy&&config.grade_policy.base_bands)||{};
-    const A=Number(bands.A??90),B=Number(bands.B??80),C=Number(bands.C??70),D=Number(bands.D??60);
-    const letter=n>=A?'A':n>=B?'B':n>=C?'C':n>=D?'D':'F';
-    return `${letter}${n}`;
-  }
-
-  function linearScore(v,min,max){
-    const n=Number(v);
-    if(!Number.isFinite(n))return 0;
-    return clampScore((n-min)/(max-min)*100);
-  }
-
-  function amountRatioValue(r){
-    const a=numeric(r.amount_ratio);
-    if(a!==null&&a>0)return a;
-    const cur=numeric(r.trade_value_eok),prev=numeric(r.prev_trade_value_eok);
-    return cur!==null&&prev!==null&&prev>0?cur/prev:null;
-  }
-
-  function rankMap(rows,getValue,descending=true){
-    const values=[];
-    rows.forEach((r,i)=>{
-      const v=getValue(r,i);
-      if(v!==null&&v!==undefined&&Number.isFinite(Number(v)))values.push([i,Number(v)]);
-    });
-    values.sort((a,b)=>descending?(b[1]-a[1]||a[0]-b[0]):(a[1]-b[1]||a[0]-b[0]));
-    const result=new Map();
-    const total=Math.max(1,rows.length);
-    let lastValue=null,lastPosition=null;
-    values.forEach(([i,v],idx)=>{
-      const pos=(lastValue!==null&&v===lastValue&&lastPosition!==null)?lastPosition:idx+1;
-      lastValue=v; lastPosition=pos;
-      result.set(i,rankPositionScore(pos,total));
-    });
-    return result;
-  }
-
-  function buildCandidateModelContext(rows){
-    return {
-      amountRatioScores:rankMap(rows,r=>amountRatioValue(r),true),
-      programScores:rankMap(rows,r=>{
-        const p=numeric(r.program_net),tv=numeric(r.trade_value_eok);
-        if(p===null||p<=0)return null;
-        return tv!==null&&tv>0?p/tv:p;
-      },true),
-      netBuyScores:rankMap(rows,r=>{
-        const p=numeric(r.program_net)||0;
-        const l=numeric(r.large_trade_net_count)||0;
-        return p>0||l>0?p+l*0.1:null;
-      },true)
-    };
-  }
-
-  function strengthModelScore(v){
-    const n=numeric(v);
-    if(n===null||n<=0)return 0;
-    if(n>=200)return 100;
-    if(n>=100)return 60+(n-100)/100*40;
-    return n/100*50;
-  }
-
-  function sellWallScore(r){
-    const ratio=numeric(r.bid_ask_ratio);
-    if(ratio===null||ratio<=0)return 0;
-    if(ratio<=0.2)return 100;
-    if(ratio<=0.4)return 90;
-    if(ratio<=0.6)return 80;
-    if(ratio<=0.8)return 70;
-    if(ratio<=1.0)return 60;
-    if(ratio<=1.2)return 30;
-    return 0;
-  }
-
-  function aboveOpenScore(r){
-    const price=numeric(r.price);
-    const o=pickOhlc(r);
-    const open=numeric(o&&o.open);
-    if(price===null||open===null||open<=0)return 0;
-    return price>=open?100:0;
-  }
-
-  function safeChangeRateScore(r){
-    const rate=numeric(r.change_rate);
-    if(rate===null)return 0;
-    if(rate<0)return 0;
-    if(rate<=12)return 100;
-    if(rate<=20)return 70;
-    if(rate<=30)return 30;
-    return 0;
-  }
-
-  function spikeReversalPenalty(r){
-    const rate=numeric(r.change_rate);
-    const strength=numeric(r.execution_strength);
-    const price=numeric(r.price);
-    const o=pickOhlc(r);
-    const open=numeric(o&&o.open);
-    if(rate!==null&&rate>20&&(strength===null||strength<100))return 100;
-    if(rate!==null&&rate>12&&price!==null&&open!==null&&price<open)return 100;
-    return 0;
-  }
-
-  function scoreModelKey(row,index,ctx,key,total){
-    const rank=numeric(row._source_rank)||numeric(row.rank)||index+1;
-    const prev=numeric(row.prev_rank);
-    switch(String(key||'')){
-      case 'trade_value_rank':
-        return rankPositionScore(rank,total);
-      case 'rank_gap':
-      case 'rank_gap_continuation':
-        return prev!==null?linearScore(prev-rank,0,100):0;
-      case 'trade_value_growth':
-      case 'one_min_trade_value_growth':
-        return ctx.amountRatioScores.get(index)||0;
-      case 'program_net':
-        return ctx.programScores.get(index)||0;
-      case 'one_min_net_buy_value_growth':
-      case 'one_min_net_buy_value_continuation':
-        return ctx.netBuyScores.get(index)||0;
-      case 'realtime_strength':
-      case 'realtime_strength_hold_100':
-        return strengthModelScore(row.execution_strength);
-      case 'one_min_strength_growth':
-        return strengthModelScore(row.strength_1m);
-      case 'sell_wall_absorption':
-        return sellWallScore(row);
-      case 'above_open':
-      case 'above_vwap_or_open':
-        return aboveOpenScore(row);
-      case 'safe_change_rate_band':
-        return safeChangeRateScore(row);
-      case 'spike_reversal_penalty':
-        return spikeReversalPenalty(row);
-      default:
-        return 0;
-    }
-  }
-
-  function scoreModelGroup(row,index,ctx,items,total){
-    if(!Array.isArray(items)||!items.length)return 0;
-    let weighted=0,positiveWeightTotal=0;
-    items.forEach(item=>{
-      const weight=Number(item&&item.weight);
-      if(!Number.isFinite(weight)||weight===0)return;
-      const score=scoreModelKey(row,index,ctx,item.key,total);
-      weighted+=score*weight;
-      if(weight>0)positiveWeightTotal+=weight;
-    });
-    return positiveWeightTotal>0?clampScore(weighted/positiveWeightTotal):0;
-  }
-
-  function applyCandidateModelToRows(rows){
-    const config=activeCandidateModelConfig();
-    const modelId=activeCandidateModelId();
-
-    if(!config||!config.score_structure||modelId==='TVRANK_A_V03_TEMP'){
-      return rows;
-    }
-
-    const copied=rows.map((row,i)=>({...row,_source_rank:numeric(row.rank)||i+1}));
-    const ctx=buildCandidateModelContext(copied);
-    const total=copied.length||1;
-    const ss=config.score_structure||{};
-    const gw=ss.grade_score_weights||{entry_score:0.3333333333,confirmation_score:0.3333333333,focus_score:0.3333333334};
-
-    copied.forEach((row,index)=>{
-      const entry=scoreModelGroup(row,index,ctx,ss.entry_score,total);
-      const confirmation=scoreModelGroup(row,index,ctx,ss.confirmation_score,total);
-      const focus=scoreModelGroup(row,index,ctx,ss.focus_score,total);
-      const score=clampScore(entry*Number(gw.entry_score??0.3333333333)+confirmation*Number(gw.confirmation_score??0.3333333333)+focus*Number(gw.focus_score??0.3333333334));
-      const gradeText=modelGradeText(score,config);
-
-      row.entry_score=Number(entry.toFixed(2));
-      row.confirmation_score=Number(confirmation.toFixed(2));
-      row.focus_score=Number(focus.toFixed(2));
-      row.grade_score=Number(score.toFixed(2));
-      row.candidate_score=Number(score.toFixed(2));
-      row.score_percent=Number(score.toFixed(2));
-      row.candidate_grade_text=gradeText;
-      row.candidate_grade=gradeText.slice(0,1);
-      row.candidate_model_id=modelId;
-      row.candidate_model_name=config.label||config.name||modelId;
-    });
-
-    const ordered=[...copied].sort((a,b)=>
-      (numeric(b.candidate_score)||0)-(numeric(a.candidate_score)||0) ||
-      (numeric(a._source_rank)||999999)-(numeric(b._source_rank)||999999) ||
-      String(a.stock_code||'').localeCompare(String(b.stock_code||''))
-    );
-
-    ordered.forEach((row,idx)=>{
-      const rank=idx+1;
-      row.model_rank=rank;
-      row.rank=rank;
-      const prev=numeric(row.prev_rank);
-      row.rank_change=prev!==null?prev-rank:null;
-      row.funnel_rank=rank;
-      row.pool_rank=rank;
-      row.pool_stage=rank<=5?'top5':rank<=20?'top20':rank<=50?'top50':'top300';
-    });
-
-    return copied;
-  }
-
   function sortValue(r,k){if(k==='stock_name')return String(r.stock_name||'').toLowerCase();return numeric(r[k]);}
   function sortedRows(rows){const k=sortState.key||'rank',d=sortState.dir==='asc'?'asc':'desc';return[...rows].sort((a,b)=>{const av=sortValue(a,k),bv=sortValue(b,k);let r=0;if(av===null&&bv===null)r=(numeric(a.rank)||999999)-(numeric(b.rank)||999999);else if(av===null)r=1;else if(bv===null)r=-1;else if(typeof av==='number'&&typeof bv==='number')r=av-bv;else r=String(av).localeCompare(String(bv),'ko-KR',{numeric:true});if(r===0)r=(numeric(a.rank)||999999)-(numeric(b.rank)||999999);return d==='asc'?r:-r;});}
   function byRank(rows){return[...rows].sort((a,b)=>(numeric(a.rank)||999999)-(numeric(b.rank)||999999));}
@@ -980,7 +752,7 @@ function loadSortState(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KE
   function senderStats(p){return p?.status?.collector_status?.sender_stats||{};}
   function computeRates(p,s){const now=performance.now(),st=p.status||{},cur={ts:now,events:Number(st.event_count)||0,trades:Number(st.trade_count)||0,sent:Number(s.sent_count)||0};if(!rateSample){rateSample=cur;return{recvPerSec:null,tradePerSec:null,sentPerSec:Number(s.sent_per_sec)||null};}const sec=Math.max(0.001,(cur.ts-rateSample.ts)/1000);const rates={recvPerSec:Math.max(0,(cur.events-rateSample.events)/sec),tradePerSec:Math.max(0,(cur.trades-rateSample.trades)/sec),sentPerSec:Number(s.sent_per_sec)||Math.max(0,(cur.sent-rateSample.sent)/sec)};rateSample=cur;return rates;}
   function top20Diagnostics(rows){const top=byRank(rows).slice(0,20);let maxLag=null,stale=0;top.forEach(r=>{const lag=numeric(r.fid20_lag_sec),age=numeric(r.price_age_sec);if(lag!==null)maxLag=maxLag===null?lag:Math.max(maxLag,lag);if(age!==null&&age>3)stale++;});return{maxLag,stale,realtimeRows:rows.filter(r=>r.row_source==='realtime').length};}
-  function render(payload,mode='stream',opt={}){const start=performance.now();const refocus=opt.focusSelected||(navigationActive&&document.activeElement&&document.activeElement.closest&&document.activeElement.closest('tr[data-code]'));lastPayload=payload;markSortHeaders();const raw=applyCandidateModelToRows(Array.isArray(payload.rows)?payload.rows:[]),ranked=byRank(raw),focusRows=sortedRows(ranked.slice(0,20)),poolRows=sortedRows(ranked.slice(20)),selectedRows=selectedCode?raw.filter(r=>String(r.stock_code||'')===selectedCode):[];const now=performance.now(),shouldPool=opt.forcePool||now-lastPoolRenderAt>=250,lag=payloadLagMs(payload),phase=payload.market_session?.phase_label||payload.status?.market_phase_label||'',sender=senderStats(payload),rates=computeRates(payload,sender),top20=top20Diagnostics(raw);statusEl.textContent=phase?`연결 OK · ${phase}`:'연결 OK';statusEl.className=mode==='stream'?'badge ok':'badge bad';countsEl.textContent=`rows ${payload.row_count||raw.length} · events ${payload.status?.event_count||0} · trades ${payload.status?.trade_count||0}`;latencyEl.textContent=`${mode} ${lag===null?'-':lag.toFixed(0)} ms · sort ${sortState.key}/${sortState.dir}`;throughputEl.textContent=`recv/s ${rates.recvPerSec===null?'-':fmtRate(rates.recvPerSec)} · trade/s ${rates.tradePerSec===null?'-':fmtRate(rates.tradePerSec)}`;collectorMetricsEl.textContent=`collector_q ${sender.pending_total_count??'-'} · sent/s ${rates.sentPerSec===null?'-':fmtRate(rates.sentPerSec)} · cxl ${sender.coalesced_trade_overwrite_count??'-'}`;workerMetricsEl.textContent=`worker_q ${payload.status?.event_log_queue_size??'-'} · drop ${payload.status?.dropped_trade_count??0} · logdrop ${payload.status?.event_log_dropped_count??0}`;lagMetricsEl.textContent=`top20 lag ${top20.maxLag===null?'-':top20.maxLag.toFixed(1)+'s'} · stale ${top20.stale} · rt ${top20.realtimeRows}`;renderTable(selectedBoardEl,selectedRows,'행을 클릭하면 S1 선택 종목으로 고정됩니다.');selectedRowCountEl.textContent=`${selectedRows.length}종목`;renderTable(focusBoardEl,focusRows,'집중 후보 수신 대기 중입니다.');focusRowCountEl.textContent=`${focusRows.length}종목`;if(shouldPool){renderTable(poolBoardEl,poolRows,'Top300 Pool 수신 대기 중입니다.');poolRowCountEl.textContent=`21~${ranked.length} · ${poolRows.length}종목`;lastPoolRenderAt=now;}maybeInitialAutoFit();if(refocus)requestAnimationFrame(()=>focusSelectedRow(true));const ms=performance.now()-start;renderMetricsEl.textContent=`render ${ms.toFixed(1)} ms`;renderMetricsEl.className=ms>70?'badge warn':'badge';}
+  function render(payload,mode='stream',opt={}){const start=performance.now();const refocus=opt.focusSelected||(navigationActive&&document.activeElement&&document.activeElement.closest&&document.activeElement.closest('tr[data-code]'));lastPayload=payload;markSortHeaders();const raw=Array.isArray(payload.rows)?payload.rows:[],ranked=byRank(raw),focusRows=sortedRows(ranked.slice(0,20)),poolRows=sortedRows(ranked.slice(20)),selectedRows=selectedCode?raw.filter(r=>String(r.stock_code||'')===selectedCode):[];const now=performance.now(),shouldPool=opt.forcePool||now-lastPoolRenderAt>=250,lag=payloadLagMs(payload),phase=payload.market_session?.phase_label||payload.status?.market_phase_label||'',sender=senderStats(payload),rates=computeRates(payload,sender),top20=top20Diagnostics(raw);statusEl.textContent=phase?`연결 OK · ${phase}`:'연결 OK';statusEl.className=mode==='stream'?'badge ok':'badge bad';countsEl.textContent=`rows ${payload.row_count||raw.length} · events ${payload.status?.event_count||0} · trades ${payload.status?.trade_count||0}`;latencyEl.textContent=`${mode} ${lag===null?'-':lag.toFixed(0)} ms · sort ${sortState.key}/${sortState.dir}`;throughputEl.textContent=`recv/s ${rates.recvPerSec===null?'-':fmtRate(rates.recvPerSec)} · trade/s ${rates.tradePerSec===null?'-':fmtRate(rates.tradePerSec)}`;collectorMetricsEl.textContent=`collector_q ${sender.pending_total_count??'-'} · sent/s ${rates.sentPerSec===null?'-':fmtRate(rates.sentPerSec)} · cxl ${sender.coalesced_trade_overwrite_count??'-'}`;workerMetricsEl.textContent=`worker_q ${payload.status?.event_log_queue_size??'-'} · drop ${payload.status?.dropped_trade_count??0} · logdrop ${payload.status?.event_log_dropped_count??0}`;lagMetricsEl.textContent=`top20 lag ${top20.maxLag===null?'-':top20.maxLag.toFixed(1)+'s'} · stale ${top20.stale} · rt ${top20.realtimeRows}`;renderTable(selectedBoardEl,selectedRows,'행을 클릭하면 S1 선택 종목으로 고정됩니다.');selectedRowCountEl.textContent=`${selectedRows.length}종목`;renderTable(focusBoardEl,focusRows,'집중 후보 수신 대기 중입니다.');focusRowCountEl.textContent=`${focusRows.length}종목`;if(shouldPool){renderTable(poolBoardEl,poolRows,'Top300 Pool 수신 대기 중입니다.');poolRowCountEl.textContent=`21~${ranked.length} · ${poolRows.length}종목`;lastPoolRenderAt=now;}maybeInitialAutoFit();if(refocus)requestAnimationFrame(()=>focusSelectedRow(true));const ms=performance.now()-start;renderMetricsEl.textContent=`render ${ms.toFixed(1)} ms`;renderMetricsEl.className=ms>70?'badge warn':'badge';}
   async function fallbackPoll(){try{const res=await fetch(`/api/v2/snapshot?limit=300&ts=${Date.now()}`,{cache:'no-store'});if(!res.ok)throw new Error(`HTTP ${res.status}`);render(await res.json(),'poll',{forcePool:true});}catch(e){statusEl.textContent=`연결 실패: ${e.message}`;statusEl.className='badge bad';}}
   function startFallback(){if(fallbackTimer)return;fallbackTimer=setInterval(()=>{if(!lastStreamAt||performance.now()-lastStreamAt>4000)fallbackPoll();},1000);}
   function connectStream(){if(!window.EventSource){startFallback();return;}stream=new EventSource(`/api/v2/stream?limit=300&interval_ms=100&ts=${Date.now()}`);stream.addEventListener('snapshot',e=>{try{lastStreamAt=performance.now();render(JSON.parse(e.data),'stream');}catch(err){console.warn(err);}});stream.onerror=()=>{statusEl.textContent='stream 재연결 중';statusEl.className='badge bad';startFallback();};}

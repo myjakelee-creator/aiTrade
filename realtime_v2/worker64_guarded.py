@@ -982,29 +982,8 @@ def _candidate_models_payload() -> dict[str, Any]:
     payload = _load_json_first([registry_path]) or {"models": []}
     payload.setdefault("schema_version", 1)
     payload.setdefault("source", str(registry_path))
-
-    configs: dict[str, Any] = {}
-    models = payload.get("models")
-    if isinstance(models, list):
-        for model in models:
-            if not isinstance(model, dict):
-                continue
-
-            model_id = str(model.get("id") or "")
-            file_name = str(model.get("file") or "")
-            if not model_id or not file_name:
-                continue
-
-            config_path = registry_path.parent / file_name
-            config = _load_json_first([config_path])
-            if isinstance(config, dict):
-                config.setdefault("id", model_id)
-                config.setdefault("label", model.get("label") or config.get("name") or model_id)
-                config.setdefault("source_file", str(config_path))
-                configs[model_id] = config
-
-    payload["configs"] = configs
     return payload
+
 
 def _guarded_load_universe(self) -> None:
     self.seed_by_code = {}
