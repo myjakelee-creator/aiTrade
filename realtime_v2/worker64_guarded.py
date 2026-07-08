@@ -59,6 +59,14 @@ PERSISTED_LIVE_KEYS = (
     "one_min_buy_qty",
     "one_min_sell_qty",
     "one_min_strength_updated_at",
+    "regular_close_strength_1m",
+    "strength_5m",
+    "strength_20m",
+    "strength_60m",
+    "strength_source",
+    "strength_snapshot_at",
+    "strength_status",
+    "strength_display_basis",
 )
 base.DAILY_PERSIST_KEYS = tuple(dict.fromkeys((*base.DAILY_PERSIST_KEYS, *PERSISTED_LIVE_KEYS)))
 
@@ -362,6 +370,125 @@ def _update_one_min_strength_flow(quote: dict[str, Any], *, buy_qty: int = 0, se
     quote["one_min_strength_formula"] = "recent_60s_buy_qty/recent_60s_sell_qty*100"
 
 
+
+def _strength_snapshot_paths() -> list[Path]:
+    return [
+        ROOT / "data" / "runtime" / "stockboard_close_metrics_snapshots.json",
+        ROOT / "data" / "runtime" / "stockboard_v2" / "strength_snapshot.json",
+    ]
+
+
+def _load_strength_snapshot_if_needed(state, force: bool = False) -> None:
+    now_mono = time.monotonic()
+    last_check = float(getattr(state, "strength_snapshot_last_check", 0.0) or 0.0)
+    if not force and now_mono - last_check < 5.0:
+        return
+    state.strength_snapshot_last_check = now_mono
+
+    latest_path = None
+    latest_mtime = None
+    for path in _strength_snapshot_paths():
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if latest_mtime is None or mtime > latest_mtime:
+            latest_path = path
+            latest_mtime = mtime
+
+    if latest_path is None:
+        return
+    if not force and latest_mtime == getattr(state, "strength_snapshot_mtime", None):
+        return
+
+    payload = _json_file(latest_path) or {}
+    raw_values = payload.get("snapshots") if isinstance(payload.get("snapshots"), dict) else payload.get("values")
+    if not isinstance(raw_values, dict):
+        return
+
+    today = trading_date_text()
+    values: dict[str, dict[str, Any]] = {}
+
+    for raw_code, raw_snapshot in raw_values.items():
+        if not isinstance(raw_snapshot, dict):
+            continue
+        code = normalize_code(raw_snapshot.get("stock_code") or raw_code)
+        if not code:
+            continue
+
+        trading_date = str(raw_snapshot.get("trading_date") or today)
+        digits = "".join(ch for ch in trading_date if ch.isdigit())
+        if len(digits) >= 8 and digits[:8] != today:
+            continue
+
+        strength_5m = to_number(raw_snapshot.get("strength_5m"))
+        if strength_5m is None:
+            continue
+
+        values[code] = {
+            "strength_5m": round(float(strength_5m), 4),
+            "strength_20m": to_number(raw_snapshot.get("strength_20m")),
+            "strength_60m": to_number(raw_snapshot.get("strength_60m")),
+            "strength_source": raw_snapshot.get("strength_source") or payload.get("source") or "opt10046_cached",
+            "strength_snapshot_at": raw_snapshot.get("strength_snapshot_at") or raw_snapshot.get("updated_at") or payload.get("ts"),
+            "strength_status": raw_snapshot.get("strength_status") or "cached",
+        }
+
+    state.strength_snapshot_by_code = values
+    state.strength_snapshot_mtime = latest_mtime
+    state.status["strength_snapshot_count"] = len(values)
+    state.status["strength_snapshot_loaded_at"] = now_text()
+    state.status["strength_snapshot_source"] = str(latest_path)
+
+
+def _apply_strength_snapshot_to_quote(state, code: str, quote: dict[str, Any]) -> None:
+    code = normalize_code(code)
+    snapshot = getattr(state, "strength_snapshot_by_code", {}).get(code)
+    if not isinstance(snapshot, dict):
+        return
+    if to_number(snapshot.get("strength_5m")) is None:
+        return
+    for key in ("strength_5m", "strength_20m", "strength_60m", "strength_source", "strength_snapshot_at", "strength_status"):
+        if snapshot.get(key) not in (None, ""):
+            quote[key] = snapshot.get(key)
+
+
+def _is_aftermarket_session(session: dict[str, Any] | None) -> bool:
+    session = session or {}
+    phase = str(session.get("phase") or "").lower()
+    label = str(session.get("phase_label") or "")
+    return "after" in phase or "???" in label
+
+
+def _is_regular_session(session: dict[str, Any] | None) -> bool:
+    session = session or {}
+    phase = str(session.get("phase") or "").lower()
+    label = str(session.get("phase_label") or "")
+    return "regular" in phase or "???" in label
+
+
+def _apply_aftermarket_strength_display_policy(quote: dict[str, Any], session: dict[str, Any] | None) -> None:
+    if not _is_aftermarket_session(session):
+        return
+
+    strength_5m = to_number(quote.get("strength_5m"))
+    if strength_5m is not None:
+        value = round(max(0.0, min(ONE_MIN_STRENGTH_CAP, float(strength_5m))), 4)
+        quote["strength_1m"] = value
+        quote["one_min_strength"] = value
+        quote["one_min_strength_status"] = "aftermarket_5m"
+        quote["strength_display_basis"] = "5? ???? ??"
+        return
+
+    held = to_number(quote.get("regular_close_strength_1m") or quote.get("strength_1m") or quote.get("one_min_strength"))
+    if held is not None:
+        value = round(max(0.0, min(ONE_MIN_STRENGTH_CAP, float(held))), 4)
+        quote["strength_1m"] = value
+        quote["one_min_strength"] = value
+        quote["one_min_strength_status"] = "regular_close_hold"
+        quote["strength_display_basis"] = "??? ??? ??"
+
+
 def _runtime_context_payload() -> dict[str, Any]:
     market_supply = _load_json_first([RUNTIME_DIR / "market_supply.json", ROOT / "data" / "runtime" / "market_supply.json", ROOT / "docs" / "assets" / "market_supply_snapshot.json", ROOT / "docs" / "assets" / "stockboard_market_supply.json"])
     us_market = _load_json_first([RUNTIME_DIR / "us_market.json", ROOT / "data" / "runtime" / "us_market.json", ROOT / "docs" / "assets" / "us_market_snapshot.json", ROOT / "docs" / "assets" / "stockboard_us_market.json"])
@@ -424,6 +551,7 @@ def _guarded_quote(self, code: str) -> dict[str, Any]:
     if quote is not None:
         _copy_previous_fields(self, code, quote, getattr(self, "seed_by_code", {}).get(code, {}) or {})
         _apply_ohlc_snapshot_to_quote(self, code, quote)
+        _apply_strength_snapshot_to_quote(self, code, quote)
         return quote
     persisted = self.daily_values_by_code.get(code) or {}
     seed = getattr(self, "seed_by_code", {}).get(code, {}) or {}
@@ -448,6 +576,7 @@ def _guarded_quote(self, code: str) -> dict[str, Any]:
             quote[key] = persisted.get(key)
     _restore_persisted_live_metrics(quote, persisted)
     _apply_ohlc_snapshot_to_quote(self, code, quote)
+    _apply_strength_snapshot_to_quote(self, code, quote)
     if quote.get("ohlc") is None and seed_price is not None:
         _update_intraday_ohlc(quote, seed_price)
     self.quotes[code] = quote
@@ -456,8 +585,9 @@ def _guarded_quote(self, code: str) -> dict[str, Any]:
 
 def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
     with self.lock:
-        _update_market_session_status(self)
+        session = _update_market_session_status(self)
         _load_ohlc_snapshot_if_needed(self)
+        _load_strength_snapshot_if_needed(self)
         for code in list(self.seed_rank_by_code):
             self._quote(code)
         rows = [deepcopy(row) for row in self.quotes.values()]
@@ -467,6 +597,7 @@ def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
         elif row.get("price") is not None:
             row["price_age_sec"] = None
         _copy_previous_fields(self, row.get("stock_code"), row, getattr(self, "seed_by_code", {}).get(row.get("stock_code"), {}) or {})
+        _apply_aftermarket_strength_display_policy(row, session)
     rows.sort(key=lambda row: (-(to_number(row.get("trade_value_eok")) or 0), row.get("seed_rank") or 999999, row.get("stock_code") or ""))
     amount_ratio_ready_count = 0
     amount_ratio_missing_count = 0
@@ -565,10 +696,17 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
         quote["change_rate"] = change_rate
     if trade_qty is not None:
         quote["trade_qty"] = trade_qty
-    if flow_buy_qty is not None or flow_sell_qty is not None:
-        _update_one_min_strength_flow(quote, buy_qty=flow_buy_qty or 0, sell_qty=flow_sell_qty or 0)
-    elif trade_qty is not None:
-        _update_one_min_strength_flow(quote, buy_qty=max(0, trade_qty), sell_qty=abs(min(0, trade_qty)))
+    _apply_strength_snapshot_to_quote(self, code, quote)
+    if _is_aftermarket_session(session):
+        _apply_aftermarket_strength_display_policy(quote, session)
+    else:
+        if flow_buy_qty is not None or flow_sell_qty is not None:
+            _update_one_min_strength_flow(quote, buy_qty=flow_buy_qty or 0, sell_qty=flow_sell_qty or 0)
+        elif trade_qty is not None:
+            _update_one_min_strength_flow(quote, buy_qty=max(0, trade_qty), sell_qty=abs(min(0, trade_qty)))
+        if _is_regular_session(session) and to_number(quote.get("strength_1m")) is not None:
+            quote["regular_close_strength_1m"] = quote.get("strength_1m")
+            quote["strength_display_basis"] = "1??? ??"
     if cumulative_volume is not None:
         quote["cumulative_volume"] = cumulative_volume
     if trade_value_eok is not None:
@@ -576,7 +714,7 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
     if strength is not None:
         quote["execution_strength"] = round(strength, 4)
         quote["execution_strength_updated_at"] = received_at
-    _persist_live_metrics(self, code, quote, "execution_strength", "execution_strength_updated_at", "strength_1m", "one_min_buy_qty", "one_min_sell_qty", "one_min_strength_updated_at")
+    _persist_live_metrics(self, code, quote, "execution_strength", "execution_strength_updated_at", "strength_1m", "one_min_buy_qty", "one_min_sell_qty", "one_min_strength_updated_at", "regular_close_strength_1m", "strength_5m", "strength_20m", "strength_60m", "strength_source", "strength_snapshot_at", "strength_status", "strength_display_basis")
     if price is not None:
         _persist_live_metrics(self, code, quote, "day_open", "day_high", "day_low", "day_close", "ohlc")
     quote["trade_time"] = trade_time
