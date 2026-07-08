@@ -257,6 +257,236 @@ def _persist_live_metrics(state, code: str, quote: dict[str, Any], *keys: str) -
     if changed and hasattr(state, "_mark_daily_dirty"):
         state._mark_daily_dirty()
 
+
+DISPLAY_FALLBACK_KEYS = tuple(dict.fromkeys((
+    "bid_ask_ratio",
+    "bid_pct",
+    "ask_pct",
+    "bid_volume",
+    "ask_volume",
+    "regular_close_bid_ask_ratio",
+    "regular_close_bid_pct",
+    "regular_close_ask_pct",
+    "regular_close_bid_volume",
+    "regular_close_ask_volume",
+    "last_valid_bid_ask_ratio",
+    "last_valid_bid_pct",
+    "last_valid_ask_pct",
+    "last_valid_bid_volume",
+    "last_valid_ask_volume",
+    "strength_1m",
+    "one_min_strength",
+    "regular_close_strength_1m",
+    "strength_5m",
+    "strength_20m",
+    "strength_60m",
+    "execution_strength",
+    "one_min_strength_status",
+    "strength_display_basis",
+    "strength_source",
+    "strength_snapshot_at",
+    "strength_status",
+    "last_valid_strength_1m",
+    "last_valid_strength_5m",
+    "last_valid_execution_strength",
+    "last_valid_strength_at",
+    "large_trade_buy_count",
+    "large_trade_sell_count",
+    "large_trade_net_count",
+    "large_trade_buy_sum_eok",
+    "large_trade_sell_sum_eok",
+    "large_trade_net_sum_eok",
+)))
+
+
+def _previous_daily_state_paths() -> list[Path]:
+    current = str(trading_date_text())
+    paths = []
+    try:
+        for path in RUNTIME_DIR.glob("daily_state_*.json"):
+            if current and current in path.stem:
+                continue
+            paths.append(path)
+    except OSError:
+        return []
+    return sorted(paths, key=lambda item: item.stat().st_mtime if item.exists() else 0, reverse=True)
+
+
+def _load_previous_daily_display_values_if_needed(state) -> dict[str, dict[str, Any]]:
+    loaded = getattr(state, "previous_daily_display_values_by_code", None)
+    if isinstance(loaded, dict):
+        return loaded
+
+    result: dict[str, dict[str, Any]] = {}
+    source_path = None
+
+    for path in _previous_daily_state_paths():
+        payload = _json_file(path) or {}
+        codes = payload.get("codes") if isinstance(payload, dict) else None
+        if not isinstance(codes, dict):
+            continue
+
+        for raw_code, values in codes.items():
+            code = normalize_code(raw_code)
+            if code and isinstance(values, dict):
+                result[code] = dict(values)
+
+        if result:
+            source_path = path
+            break
+
+    state.previous_daily_display_values_by_code = result
+    state.status["previous_daily_display_count"] = len(result)
+    if source_path is not None:
+        state.status["previous_daily_display_source"] = str(source_path)
+    return result
+
+
+def _should_use_previous_daily_display(session: dict[str, Any] | None) -> bool:
+    session = session or {}
+    phase = str(session.get("phase") or "").lower()
+    label = str(session.get("phase_label") or "")
+
+    # ????? ?? display fallback? ?? ???.
+    if "regular" in phase or "???" in label:
+        return False
+
+    return True
+
+
+def _fallback_number(value: Any) -> float | None:
+    number = to_number(value)
+    if number is None:
+        return None
+    return float(number)
+
+
+def _fallback_value_is_usable(key: str, value: Any) -> bool:
+    if value in (None, ""):
+        return False
+
+    number = _fallback_number(value)
+
+    if key in {
+        "bid_ask_ratio",
+        "regular_close_bid_ask_ratio",
+        "last_valid_bid_ask_ratio",
+        "strength_1m",
+        "one_min_strength",
+        "regular_close_strength_1m",
+        "strength_5m",
+        "strength_20m",
+        "strength_60m",
+        "execution_strength",
+        "last_valid_strength_1m",
+        "last_valid_strength_5m",
+        "last_valid_execution_strength",
+    }:
+        return number is not None and number > 0
+
+    if key in {
+        "bid_pct",
+        "ask_pct",
+        "bid_volume",
+        "ask_volume",
+        "regular_close_bid_pct",
+        "regular_close_ask_pct",
+        "regular_close_bid_volume",
+        "regular_close_ask_volume",
+        "last_valid_bid_pct",
+        "last_valid_ask_pct",
+        "last_valid_bid_volume",
+        "last_valid_ask_volume",
+        "large_trade_buy_count",
+        "large_trade_sell_count",
+        "large_trade_buy_sum_eok",
+        "large_trade_sell_sum_eok",
+    }:
+        return number is not None and number > 0
+
+    if key in {
+        "large_trade_net_count",
+        "large_trade_net_sum_eok",
+    }:
+        return number is not None and number != 0
+
+    return True
+
+
+def _current_value_is_missing_for_display(key: str, value: Any) -> bool:
+    if value in (None, ""):
+        return True
+
+    number = _fallback_number(value)
+
+    if key in {
+        "bid_ask_ratio",
+        "regular_close_bid_ask_ratio",
+        "last_valid_bid_ask_ratio",
+        "strength_1m",
+        "one_min_strength",
+        "regular_close_strength_1m",
+        "strength_5m",
+        "strength_20m",
+        "strength_60m",
+        "execution_strength",
+        "last_valid_strength_1m",
+        "last_valid_strength_5m",
+        "last_valid_execution_strength",
+        "bid_pct",
+        "ask_pct",
+        "bid_volume",
+        "ask_volume",
+        "regular_close_bid_pct",
+        "regular_close_ask_pct",
+        "regular_close_bid_volume",
+        "regular_close_ask_volume",
+        "last_valid_bid_pct",
+        "last_valid_ask_pct",
+        "last_valid_bid_volume",
+        "last_valid_ask_volume",
+        "large_trade_buy_count",
+        "large_trade_sell_count",
+        "large_trade_buy_sum_eok",
+        "large_trade_sell_sum_eok",
+    }:
+        return number is None or number <= 0
+
+    if key in {
+        "large_trade_net_count",
+        "large_trade_net_sum_eok",
+    }:
+        return number is None or number == 0
+
+    return False
+
+
+def _apply_previous_daily_display_fallback(state, row: dict[str, Any], session: dict[str, Any] | None) -> None:
+    if not _should_use_previous_daily_display(session):
+        return
+
+    code = normalize_code(row.get("stock_code"))
+    if not code:
+        return
+
+    previous_values = _load_previous_daily_display_values_if_needed(state).get(code)
+    if not isinstance(previous_values, dict):
+        return
+
+    applied = 0
+    for key in DISPLAY_FALLBACK_KEYS:
+        if key not in previous_values:
+            continue
+        previous_value = previous_values.get(key)
+        if not _fallback_value_is_usable(key, previous_value):
+            continue
+        if _current_value_is_missing_for_display(key, row.get(key)):
+            row[key] = deepcopy(previous_value)
+            applied += 1
+
+    if applied:
+        row["previous_daily_display_fallback"] = True
+
 def _ohlc_snapshot_path() -> Path:
     return RUNTIME_DIR / "ohlc_snapshot.json"
 
@@ -802,6 +1032,7 @@ def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
         elif row.get("price") is not None:
             row["price_age_sec"] = None
         _copy_previous_fields(self, row.get("stock_code"), row, getattr(self, "seed_by_code", {}).get(row.get("stock_code"), {}) or {})
+        _apply_previous_daily_display_fallback(self, row, session)
         _apply_aftermarket_strength_display_policy(row, session)
         _apply_aftermarket_orderbook_display_policy(row, session)
     rows.sort(key=lambda row: (-(to_number(row.get("trade_value_eok")) or 0), row.get("seed_rank") or 999999, row.get("stock_code") or ""))
