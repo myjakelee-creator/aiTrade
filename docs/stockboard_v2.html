@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>StockBoard v2 Realtime</title>
   <style>
-    :root { --red:#d71920; --blue:#1266d6; --grid:#c7d1dc; --head:#eaf0f6; --text:#111827; --topbar-height:82px; --board-width:1048px; }
+    :root { --red:#d71920; --blue:#1266d6; --grid:#c7d1dc; --head:#eaf0f6; --text:#111827; --board-width:1048px; }
     html, body { overflow-x:auto; }
     body { margin:0; min-width:100vw; font-family: Malgun Gothic, Arial, sans-serif; font-size:12px; color:var(--text); background:#f8fafc; }
     .window { min-width:max-content; }
-    .topbar { position:sticky; top:0; z-index:8; display:flex; flex-wrap:wrap; gap:4px 8px; align-items:flex-start; padding:5px 8px; border-bottom:1px solid #aab7c6; background:#dde7f1; min-width:0; white-space:normal; }
+    .topbar { position:sticky; top:0; z-index:8; display:flex; flex-wrap:wrap; gap:4px 8px; align-items:flex-start; padding:5px 8px; border-bottom:1px solid #aab7c6; background:#dde7f1; white-space:normal; }
     .metric-row { display:flex; flex-wrap:wrap; gap:4px 6px; align-items:center; width:100%; min-width:0; }
     .title { font-weight:800; }
     .badge { padding:2px 6px; border:1px solid #9aa8b5; background:white; border-radius:3px; white-space:nowrap; }
@@ -19,7 +19,7 @@
     .copy-ok { color:#166534; border-color:#86efac; background:#dcfce7; font-weight:800; }
     .small { color:#4b5563; }
     .control { height:22px; font-family:inherit; font-size:12px; border:1px solid #9aa8b5; background:white; border-radius:3px; }
-    .section { display:flex; align-items:center; gap:8px; padding:3px 6px; font-weight:800; border-top:1px solid #9aa8b5; border-bottom:1px solid #b8c3cf; background:#eef4fb; }
+    .section { display:flex; align-items:center; gap:8px; padding:3px 6px; font-weight:800; border-top:1px solid #9aa8b5; border-bottom:1px solid #b8c3cf; }
     .section.orange { color:#b45309; background:#fff7ed; }
     .section.blue { color:#1d4ed8; background:#eff6ff; }
     .section .lane { color:#6b7280; font-weight:600; }
@@ -31,7 +31,6 @@
     .column-resizer { position:absolute; top:0; right:-4px; z-index:20; width:9px; height:100%; cursor:col-resize; touch-action:none; user-select:none; }
     .column-resizer:hover { background:rgba(29,78,216,.18); }
     body.resizing-column { cursor:col-resize; user-select:none; }
-    .board { margin:0; }
     .num { text-align:right; font-variant-numeric:tabular-nums; }
     .center { text-align:center; }
     .plus { color:var(--red); font-weight:700; }
@@ -39,11 +38,11 @@
     .zero { color:#4b5563; }
     .ratio-hot { color:var(--red); font-weight:700; }
     .ratio-cold { color:var(--blue); font-weight:700; }
-    tr.data-row { cursor:pointer; }
-    tr.data-row:hover { background:#fff7d6; }
+    tr.data-row { cursor:pointer; background:#fff8dc; }
+    tr.data-row:hover { background:#fff0b8; }
     tr.data-row:focus { outline:2px solid #f59e0b; outline-offset:-2px; }
     .stock-name-copy { cursor:pointer; text-decoration: underline dotted rgba(31,41,55,.35); text-underline-offset:2px; }
-    .selected-row { background:#ffe8a3 !important; }
+    .selected-row { background:#ffd782 !important; }
     tr.stale { opacity:.55; }
     .grade { display:inline-block; min-width:32px; padding:0 3px; border-radius:3px; background:#e5e7eb; font-weight:800; }
     .grade.a { background:#fee2e2; color:#b91c1c; }
@@ -66,7 +65,7 @@
       <span id="clock" class="badge">-</span>
       <span id="status" class="badge bad">연결 대기</span>
       <label class="badge">선발기준 <select id="candidate-model-selector" class="control" disabled><option value="">모델 설정 로딩</option></select></label>
-      <span id="copy-status" class="badge">종목 클릭=HTS/S1 연동 · 포커스 후 ↑/↓ 이동</span>
+      <span id="copy-status" class="badge">행 클릭=HTS/S1 즉시 연동 · 포커스 후 ↑/↓ 이동</span>
     </div>
     <div class="metric-row">
       <span id="counts" class="badge">rows 0 · events 0 · trades 0</span>
@@ -78,7 +77,7 @@
     <div class="metric-row">
       <span id="lag-metrics" class="badge">top20 lag - · stale - · rt -</span>
       <span id="render-metrics" class="badge">render - ms</span>
-      <span class="small">fast-open: 체결 우선 · orderbook OFF 가능 · 일봉은 기존 OHLC가 있을 때만 CSS 미니캔들</span>
+      <span class="small">Top20 마우스는 pointerdown 즉시 처리 · click 대기 없음</span>
     </div>
   </div>
 
@@ -151,13 +150,8 @@
   let htsQueue = [];
   let htsBusy = false;
   let lastHtsCommandAt = 0;
+  let pointerHandledAt = 0;
   const HTS_COMMAND_GAP_MS = 650;
-
-  function updateTopbarHeight() {
-    const height = Math.ceil(topbarEl.getBoundingClientRect().height || 82);
-    document.documentElement.style.setProperty('--topbar-height', `${height}px`);
-  }
-  window.addEventListener('resize', updateTopbarHeight);
 
   function tableSkeleton() {
     return `<colgroup>${columns.map((col, index) => `<col data-col-index="${index}" data-key="${col.key}">`).join('')}</colgroup><thead><tr>${columns.map((col, index) => `<th class="${col.className}" data-col-index="${index}" ${col.sort ? `data-sort-key="${col.sort}"` : ''}><span class="header-label">${col.label}</span><span class="column-resizer" title="드래그: 폭 조절 / 더블클릭: 자동 폭맞춤"></span></th>`).join('')}</tr></thead><tbody></tbody>`;
@@ -167,7 +161,11 @@
   poolBoardEl.innerHTML = tableSkeleton();
   applyColumnWidths();
   initColumnResizers();
+  bindImmediateRowSelection(focusBoardEl);
+  bindImmediateRowSelection(poolBoardEl);
+  bindImmediateRowSelection(selectedBoardEl);
 
+  function updateTopbarHeight() {}
   function loadSortState() {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEYS.sort) || '{}');
@@ -175,144 +173,76 @@
     } catch (_error) {}
     return { key: 'rank', dir: 'asc' };
   }
-  function saveSortState() {
-    try { localStorage.setItem(STORAGE_KEYS.sort, JSON.stringify(sortState)); } catch (_error) {}
-  }
+  function saveSortState() { try { localStorage.setItem(STORAGE_KEYS.sort, JSON.stringify(sortState)); } catch (_error) {} }
   function loadColumnWidths() {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEYS.columnWidths) || '{}');
-      return saved && typeof saved === 'object' ? saved : {};
-    } catch (_error) { return {}; }
+    try { const saved = JSON.parse(localStorage.getItem(STORAGE_KEYS.columnWidths) || '{}'); return saved && typeof saved === 'object' ? saved : {}; } catch (_error) { return {}; }
   }
-  function saveColumnWidths() {
-    try { localStorage.setItem(STORAGE_KEYS.columnWidths, JSON.stringify(columnWidths)); } catch (_error) {}
-  }
-  function columnWidth(index) {
-    const col = columns[index] || {};
-    const saved = Number(columnWidths[col.key]);
-    return Number.isFinite(saved) && saved > 0 ? saved : Number(col.width || 70);
-  }
-  function clampWidth(index, value) {
-    const col = columns[index] || {};
-    const min = Number(col.min || 36);
-    const max = Number(col.max || 420);
-    const parsed = Math.round(Number(value));
-    const width = Number.isFinite(parsed) ? parsed : columnWidth(index);
-    return Math.max(min, Math.min(max, width));
-  }
-  function applyColumnWidths() {
-    columns.forEach((_col, index) => setColumnWidth(index, columnWidth(index), false));
-    updateBoardWidth();
-  }
-  function updateBoardWidth() {
-    const total = columns.reduce((sum, _col, index) => sum + columnWidth(index), 0);
-    document.documentElement.style.setProperty('--board-width', `${total}px`);
-  }
+  function saveColumnWidths() { try { localStorage.setItem(STORAGE_KEYS.columnWidths, JSON.stringify(columnWidths)); } catch (_error) {} }
+  function columnWidth(index) { const col = columns[index] || {}; const saved = Number(columnWidths[col.key]); return Number.isFinite(saved) && saved > 0 ? saved : Number(col.width || 70); }
+  function clampWidth(index, value) { const col = columns[index] || {}; const min = Number(col.min || 36); const max = Number(col.max || 420); const parsed = Math.round(Number(value)); const width = Number.isFinite(parsed) ? parsed : columnWidth(index); return Math.max(min, Math.min(max, width)); }
+  function applyColumnWidths() { columns.forEach((_col, index) => setColumnWidth(index, columnWidth(index), false)); updateBoardWidth(); }
+  function updateBoardWidth() { const total = columns.reduce((sum, _col, index) => sum + columnWidth(index), 0); document.documentElement.style.setProperty('--board-width', `${total}px`); }
   function setColumnWidth(index, width, save=true) {
-    const col = columns[index];
-    if (!col) return;
+    const col = columns[index]; if (!col) return;
     const px = clampWidth(index, width);
-    document.querySelectorAll(`col[data-col-index="${index}"]`).forEach((node) => {
-      node.style.width = `${px}px`;
-    });
-    if (save) {
-      columnWidths[col.key] = px;
-      saveColumnWidths();
-    }
+    document.querySelectorAll(`col[data-col-index="${index}"]`).forEach((node) => { node.style.width = `${px}px`; });
+    if (save) { columnWidths[col.key] = px; saveColumnWidths(); }
     updateBoardWidth();
   }
   function measureText(text) {
-    if (!measureText.canvas) {
-      measureText.canvas = document.createElement('canvas');
-      measureText.ctx = measureText.canvas.getContext('2d');
-    }
-    const ctx = measureText.ctx;
-    ctx.font = getComputedStyle(document.body).font || '12px Malgun Gothic';
-    return ctx.measureText(String(text || '')).width;
+    if (!measureText.canvas) { measureText.canvas = document.createElement('canvas'); measureText.ctx = measureText.canvas.getContext('2d'); }
+    const ctx = measureText.ctx; ctx.font = getComputedStyle(document.body).font || '12px Malgun Gothic'; return ctx.measureText(String(text || '')).width;
   }
   function autoFitColumn(index, save=true) {
-    const col = columns[index];
-    if (!col) return;
+    const col = columns[index]; if (!col) return;
     let width = measureText(col.label) + 28;
-    document.querySelectorAll(`tbody tr td:nth-child(${index + 1})`).forEach((cell) => {
-      width = Math.max(width, measureText(cell.textContent || '') + 18);
-    });
+    document.querySelectorAll(`tbody tr td:nth-child(${index + 1})`).forEach((cell) => { width = Math.max(width, measureText(cell.textContent || '') + 18); });
     if (col.key === 'daily_candle') width = Math.max(width, 86);
     setColumnWidth(index, width, save);
   }
-  function autoFitColumns(save=false, includeManual=false) {
-    columns.forEach((col, index) => {
-      if (!includeManual && columnWidths[col.key]) return;
-      autoFitColumn(index, save);
-    });
-  }
-  function maybeInitialAutoFit() {
-    if (firstAutoFitDone) return;
-    firstAutoFitDone = true;
-    requestAnimationFrame(() => {
-      autoFitColumns(false, false);
-      updateTopbarHeight();
-    });
-  }
+  function autoFitColumns(save=false, includeManual=false) { columns.forEach((col, index) => { if (!includeManual && columnWidths[col.key]) return; autoFitColumn(index, save); }); }
+  function maybeInitialAutoFit() { if (firstAutoFitDone) return; firstAutoFitDone = true; requestAnimationFrame(() => autoFitColumns(false, false)); }
   function initColumnResizers() {
     document.querySelectorAll('.column-resizer').forEach((handle) => {
-      handle.addEventListener('click', (event) => event.stopPropagation());
-      handle.addEventListener('dblclick', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const index = Number(handle.closest('th')?.dataset?.colIndex);
-        if (Number.isFinite(index)) autoFitColumn(index, true);
-      });
-      handle.addEventListener('mousedown', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const index = Number(handle.closest('th')?.dataset?.colIndex);
-        if (!Number.isFinite(index)) return;
-        resizeState = { index, startX:event.clientX, startWidth:columnWidth(index) };
-        document.body.classList.add('resizing-column');
-      });
+      handle.addEventListener('click', event => event.stopPropagation());
+      handle.addEventListener('dblclick', (event) => { event.preventDefault(); event.stopPropagation(); const index = Number(handle.closest('th')?.dataset?.colIndex); if (Number.isFinite(index)) autoFitColumn(index, true); });
+      handle.addEventListener('mousedown', (event) => { event.preventDefault(); event.stopPropagation(); const index = Number(handle.closest('th')?.dataset?.colIndex); if (!Number.isFinite(index)) return; resizeState = { index, startX:event.clientX, startWidth:columnWidth(index) }; document.body.classList.add('resizing-column'); });
     });
-    document.addEventListener('mousemove', (event) => {
-      if (!resizeState) return;
-      const nextWidth = resizeState.startWidth + event.clientX - resizeState.startX;
-      setColumnWidth(resizeState.index, nextWidth, false);
-    });
-    document.addEventListener('mouseup', (event) => {
-      if (!resizeState) return;
-      const nextWidth = resizeState.startWidth + event.clientX - resizeState.startX;
-      setColumnWidth(resizeState.index, nextWidth, true);
-      resizeState = null;
-      document.body.classList.remove('resizing-column');
-    });
+    document.addEventListener('mousemove', (event) => { if (!resizeState) return; setColumnWidth(resizeState.index, resizeState.startWidth + event.clientX - resizeState.startX, false); });
+    document.addEventListener('mouseup', (event) => { if (!resizeState) return; setColumnWidth(resizeState.index, resizeState.startWidth + event.clientX - resizeState.startX, true); resizeState = null; document.body.classList.remove('resizing-column'); });
   }
   function markSortHeaders() {
-    document.querySelectorAll('th[data-sort-key]').forEach((th) => {
-      if (th.dataset.sortKey === sortState.key) th.dataset.sortDir = sortState.dir;
-      else delete th.datasetSortDir;
-      if (th.dataset.sortKey !== sortState.key) delete th.dataset.sortDir;
-    });
+    document.querySelectorAll('th[data-sort-key]').forEach((th) => { if (th.dataset.sortKey === sortState.key) th.dataset.sortDir = sortState.dir; else delete th.dataset.sortDir; });
+  }
+
+  function bindImmediateRowSelection(table) {
+    table.addEventListener('pointerdown', handleRowPointerDown, true);
+    table.addEventListener('mousedown', handleRowPointerDown, true);
+  }
+  function handleRowPointerDown(event) {
+    if (event.button !== undefined && event.button !== 0) return;
+    if (event.target.closest('th,.column-resizer')) return;
+    const row = event.target.closest('tr[data-code]');
+    if (!row) return;
+    const code = row.dataset.code || '';
+    if (!code) return;
+    pointerHandledAt = performance.now();
+    row.focus({ preventScroll:true });
+    selectCodeAndLink(code, event.shiftKey, { focus:true, source:'pointerdown' });
+    event.preventDefault();
+    event.stopPropagation();
   }
 
   document.addEventListener('click', (event) => {
+    if (performance.now() - pointerHandledAt < 900) { event.preventDefault(); event.stopPropagation(); return; }
     if (event.target.closest('.column-resizer')) return;
     const th = event.target.closest('th[data-sort-key]');
-    if (th) {
-      const key = th.dataset.sortKey;
-      const dir = sortState.key === key && sortState.dir === 'asc' ? 'desc' : 'asc';
-      sortState = { key, dir };
-      saveSortState();
-      markSortHeaders();
-      if (lastPayload) render(lastPayload, 'stream', { forcePool:true });
-      return;
-    }
-    const dataRow = event.target.closest('tr[data-code]');
-    if (dataRow) {
-      const code = dataRow.dataset.code || '';
-      if (code) selectCodeAndLink(code, event.shiftKey, { focus:true });
-      event.preventDefault();
-      event.stopPropagation();
-    }
-  });
+    if (!th) return;
+    const key = th.dataset.sortKey;
+    const dir = sortState.key === key && sortState.dir === 'asc' ? 'desc' : 'asc';
+    sortState = { key, dir }; saveSortState(); markSortHeaders();
+    if (lastPayload) render(lastPayload, 'stream', { forcePool:true });
+  }, true);
 
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
@@ -323,392 +253,82 @@
     moveSelection(event.key === 'ArrowDown' ? 1 : -1);
   });
 
-  candidateModelSelector.addEventListener('change', () => {
-    localStorage.setItem(STORAGE_KEYS.candidateModel, candidateModelSelector.value || '');
-    candidateModelSelector.title = `선택된 선발기준: ${candidateModelSelector.value || '-'}`;
-  });
-
+  candidateModelSelector.addEventListener('change', () => { localStorage.setItem(STORAGE_KEYS.candidateModel, candidateModelSelector.value || ''); });
   async function loadCandidateModels() {
     try {
       const res = await fetch(`/api/v2/candidate_models?ts=${Date.now()}`, { cache:'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const payload = await res.json();
-      const models = Array.isArray(payload.models) ? payload.models : [];
+      const payload = await res.json(); const models = Array.isArray(payload.models) ? payload.models : [];
       if (!models.length) throw new Error('empty model registry');
-      candidateModelSelector.innerHTML = models.map(model => {
-        const id = String(model.id || '').trim();
-        const label = String(model.label || model.id || '').trim();
-        return `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`;
-      }).join('');
-      const saved = localStorage.getItem(STORAGE_KEYS.candidateModel) || payload.default_model_id || models[0].id;
-      candidateModelSelector.value = saved;
+      candidateModelSelector.innerHTML = models.map(model => `<option value="${escapeHtml(String(model.id || ''))}">${escapeHtml(String(model.label || model.id || ''))}</option>`).join('');
+      candidateModelSelector.value = localStorage.getItem(STORAGE_KEYS.candidateModel) || payload.default_model_id || models[0].id;
       candidateModelSelector.disabled = false;
-      candidateModelSelector.title = 'configs/candidate_models/_registry.json 기준';
     } catch (_error) {
-      candidateModelSelector.innerHTML = '<option value="">선발기준 설정 미연결</option>';
-      candidateModelSelector.disabled = true;
-      candidateModelSelector.title = 'worker에 /api/v2/candidate_models 연결 후 활성화';
+      candidateModelSelector.innerHTML = '<option value="">선발기준 설정 미연결</option>'; candidateModelSelector.disabled = true;
     }
   }
 
-  function escapeHtml(value) {
-    return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[char]));
-  }
-  function numeric(v) {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
-  }
-  function sortValue(row, key) {
-    if (key === 'stock_name') return String(row.stock_name || '').toLowerCase();
-    const value = numeric(row[key]);
-    return value === null ? null : value;
-  }
+  function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[char])); }
+  function numeric(v) { const n = Number(v); return Number.isFinite(n) ? n : null; }
+  function sortValue(row, key) { if (key === 'stock_name') return String(row.stock_name || '').toLowerCase(); const value = numeric(row[key]); return value === null ? null : value; }
   function sortedRows(rows) {
-    const key = sortState.key || 'rank';
-    const dir = sortState.dir === 'asc' ? 'asc' : 'desc';
-    return [...rows].sort((a, b) => {
-      const av = sortValue(a, key);
-      const bv = sortValue(b, key);
-      let result = 0;
-      if (av === null && bv === null) result = (numeric(a.rank) || 999999) - (numeric(b.rank) || 999999);
-      else if (av === null) result = 1;
-      else if (bv === null) result = -1;
-      else if (typeof av === 'number' && typeof bv === 'number') result = av - bv;
-      else result = String(av).localeCompare(String(bv), 'ko-KR', { numeric:true });
-      if (result === 0) result = (numeric(a.rank) || 999999) - (numeric(b.rank) || 999999);
-      return dir === 'asc' ? result : -result;
-    });
+    const key = sortState.key || 'rank'; const dir = sortState.dir === 'asc' ? 'asc' : 'desc';
+    return [...rows].sort((a, b) => { const av = sortValue(a, key); const bv = sortValue(b, key); let result = 0; if (av === null && bv === null) result = (numeric(a.rank) || 999999) - (numeric(b.rank) || 999999); else if (av === null) result = 1; else if (bv === null) result = -1; else if (typeof av === 'number' && typeof bv === 'number') result = av - bv; else result = String(av).localeCompare(String(bv), 'ko-KR', { numeric:true }); if (result === 0) result = (numeric(a.rank) || 999999) - (numeric(b.rank) || 999999); return dir === 'asc' ? result : -result; });
   }
-  function byRank(rows) {
-    return [...rows].sort((a, b) => (numeric(a.rank) || 999999) - (numeric(b.rank) || 999999));
-  }
-  function fmtNum(v, digits=0) {
-    const n = Number(v);
-    if (!Number.isFinite(n)) return '-';
-    return n.toLocaleString('en-US', { maximumFractionDigits: digits, minimumFractionDigits: digits });
-  }
-  function fmtRate(v) {
-    const n = Number(v);
-    if (!Number.isFinite(n)) return '-';
-    return n >= 1000 ? `${Math.round(n).toLocaleString('en-US')}` : n.toFixed(n >= 100 ? 0 : 1);
-  }
-  function fmtRatio(v) {
-    const n = Number(v);
-    if (!Number.isFinite(n) || n <= 0) return '-';
-    return n >= 10 ? '10x+' : `${n.toFixed(n >= 3 ? 1 : 2)}x`;
-  }
-  function fmtRankChange(v) {
-    const n = Number(v);
-    if (!Number.isFinite(n)) return '-';
-    if (n > 0) return `↑${Math.round(n)}`;
-    if (n < 0) return `↓${Math.abs(Math.round(n))}`;
-    return '0';
-  }
-  function clsSigned(v) {
-    const n = Number(v);
-    return !Number.isFinite(n) ? '' : n > 0 ? 'plus' : n < 0 ? 'minus' : 'zero';
-  }
-  function clsRatio(v) {
-    const n = Number(v);
-    if (!Number.isFinite(n) || n <= 0) return 'zero';
-    return n >= 1 ? 'ratio-hot' : 'ratio-cold';
-  }
-  function gradeHtml(row) {
-    const text = row.grade_text || row.grade || row.candidate_grade || '-';
-    const lower = String(text || '').slice(0, 1).toLowerCase();
-    return `<span class="grade ${['a','b','c','d','f'].includes(lower) ? lower : ''}">${escapeHtml(text)}</span>`;
-  }
-  function pickOhlc(row) {
-    const ohlc = row.ohlc || row.realtime_ohlc || row.display_ohlc || null;
-    const open = numeric(ohlc?.open ?? row.open ?? row.open_price ?? row.day_open);
-    const high = numeric(ohlc?.high ?? row.high ?? row.high_price ?? row.day_high);
-    const low = numeric(ohlc?.low ?? row.low ?? row.low_price ?? row.day_low);
-    const close = numeric(ohlc?.close ?? ohlc?.current ?? row.close ?? row.price ?? row.trade_price);
-    if ([open, high, low, close].some(value => value === null) || high <= low) return null;
-    return { open, high, low, close };
-  }
-  function candleHtml(row) {
-    const o = pickOhlc(row);
-    if (!o) return '-';
-    const span = Math.max(1, o.high - o.low);
-    const left = value => Math.max(0, Math.min(100, (value - o.low) / span * 100));
-    const bodyStart = Math.min(left(o.open), left(o.close));
-    const bodyEnd = Math.max(left(o.open), left(o.close));
-    const bodyWidth = Math.max(2, bodyEnd - bodyStart);
-    const cls = o.close > o.open ? 'up' : o.close < o.open ? 'down' : 'flat';
-    const title = `O ${fmtNum(o.open)} / H ${fmtNum(o.high)} / L ${fmtNum(o.low)} / C ${fmtNum(o.close)}`;
-    return `<div class="mini-candle ${cls}" title="${title}" style="--wick-left:0%;--wick-width:100%;--body-left:${bodyStart.toFixed(2)}%;--body-width:${bodyWidth.toFixed(2)}%"><span class="wick"></span><span class="body"></span></div>`;
-  }
-  function rowTitle(row) {
-    return [
-      `코드: ${row.stock_code || '-'}`,
-      `행 클릭: S1 + HTS 연동 / Shift+클릭: 코드 복사`,
-      `포커스 후 ↑/↓: 이전/다음 종목 이동`,
-      `전일 거래대금: ${fmtNum(row.prev_trade_value_eok, 0)}억`,
-      `대금비: ${fmtRatio(row.amount_ratio)}`,
-      `row_source: ${row.row_source || '-'}`,
-      `source: ${row.source_code || '-'}`
-    ].join('\n');
-  }
+  function byRank(rows) { return [...rows].sort((a, b) => (numeric(a.rank) || 999999) - (numeric(b.rank) || 999999)); }
+  function fmtNum(v, digits=0) { const n = Number(v); if (!Number.isFinite(n)) return '-'; return n.toLocaleString('en-US', { maximumFractionDigits: digits, minimumFractionDigits: digits }); }
+  function fmtRate(v) { const n = Number(v); if (!Number.isFinite(n)) return '-'; return n >= 1000 ? `${Math.round(n).toLocaleString('en-US')}` : n.toFixed(n >= 100 ? 0 : 1); }
+  function fmtRatio(v) { const n = Number(v); if (!Number.isFinite(n) || n <= 0) return '-'; return n >= 10 ? '10x+' : `${n.toFixed(n >= 3 ? 1 : 2)}x`; }
+  function fmtRankChange(v) { const n = Number(v); if (!Number.isFinite(n)) return '-'; if (n > 0) return `↑${Math.round(n)}`; if (n < 0) return `↓${Math.abs(Math.round(n))}`; return '0'; }
+  function clsSigned(v) { const n = Number(v); return !Number.isFinite(n) ? '' : n > 0 ? 'plus' : n < 0 ? 'minus' : 'zero'; }
+  function clsRatio(v) { const n = Number(v); if (!Number.isFinite(n) || n <= 0) return 'zero'; return n >= 1 ? 'ratio-hot' : 'ratio-cold'; }
+  function gradeHtml(row) { const text = row.grade_text || row.grade || row.candidate_grade || '-'; const lower = String(text || '').slice(0, 1).toLowerCase(); return `<span class="grade ${['a','b','c','d','f'].includes(lower) ? lower : ''}">${escapeHtml(text)}</span>`; }
+  function pickOhlc(row) { const ohlc = row.ohlc || row.realtime_ohlc || row.display_ohlc || null; const open = numeric(ohlc?.open ?? row.open ?? row.open_price ?? row.day_open); const high = numeric(ohlc?.high ?? row.high ?? row.high_price ?? row.day_high); const low = numeric(ohlc?.low ?? row.low ?? row.low_price ?? row.day_low); const close = numeric(ohlc?.close ?? ohlc?.current ?? row.close ?? row.price ?? row.trade_price); if ([open, high, low, close].some(value => value === null) || high <= low) return null; return { open, high, low, close }; }
+  function candleHtml(row) { const o = pickOhlc(row); if (!o) return '-'; const span = Math.max(1, o.high - o.low); const left = value => Math.max(0, Math.min(100, (value - o.low) / span * 100)); const bodyStart = Math.min(left(o.open), left(o.close)); const bodyEnd = Math.max(left(o.open), left(o.close)); const bodyWidth = Math.max(2, bodyEnd - bodyStart); const cls = o.close > o.open ? 'up' : o.close < o.open ? 'down' : 'flat'; return `<div class="mini-candle ${cls}" style="--wick-left:0%;--wick-width:100%;--body-left:${bodyStart.toFixed(2)}%;--body-width:${bodyWidth.toFixed(2)}%"><span class="wick"></span><span class="body"></span></div>`; }
+  function rowTitle(row) { return [`코드: ${row.stock_code || '-'}`, `행 클릭 즉시 S1 + HTS 연동`, `포커스 후 ↑/↓ 이동`, `전일 거래대금: ${fmtNum(row.prev_trade_value_eok, 0)}억`, `대금비: ${fmtRatio(row.amount_ratio)}`].join('\n'); }
   function rowHtml(row) {
-    const code = String(row.stock_code || '');
-    const rate = Number(row.change_rate);
-    const age = Number(row.price_age_sec);
-    const selected = code && code === selectedCode;
-    const rowClass = `data-row ${selected ? 'selected-row ' : ''}${age > 3 ? 'stale ' : ''}`.trim();
-    return `<tr tabindex="0" data-code="${escapeHtml(code)}" class="${rowClass}" title="${escapeHtml(rowTitle(row))}">
-      <td class="center">${escapeHtml(row.rank ?? '-')}</td>
-      <td class="center ${clsSigned(row.rank_change)}">${fmtRankChange(row.rank_change)}</td>
-      <td class="center">${gradeHtml(row)}</td>
-      <td class="stock-name-copy" data-code="${escapeHtml(code)}">${escapeHtml(row.stock_name || code)}</td>
-      <td class="num">${fmtNum(row.price)}</td>
-      <td class="num ${clsSigned(rate)}">${Number.isFinite(rate) ? `${rate > 0 ? '+' : ''}${rate.toFixed(2)}%` : '-'}</td>
-      <td class="num" title="전일 ${fmtNum(row.prev_trade_value_eok, 0)}억">${fmtNum(row.trade_value_eok, 0)}</td>
-      <td class="num ${clsRatio(row.amount_ratio)}">${fmtRatio(row.amount_ratio)}</td>
-      <td class="center">${candleHtml(row)}</td>
-      <td class="num">${fmtNum(row.bid_ask_ratio, 2)}</td>
-      <td class="num">${fmtNum(row.execution_strength, 2)}</td>
-      <td class="num">${fmtNum(row.strength_1m ?? row.one_min_strength ?? row.one_min_strength_growth_rate, 2)}</td>
-      <td class="num ${clsSigned(row.program_net)}">${fmtNum(row.program_net, 0)}</td>
-      <td class="num ${clsSigned(row.large_trade_net_count)}">${fmtNum(row.large_trade_net_count, 0)}</td>
-    </tr>`;
+    const code = String(row.stock_code || ''); const rate = Number(row.change_rate); const age = Number(row.price_age_sec); const selected = code && code === selectedCode; const rowClass = `data-row ${selected ? 'selected-row ' : ''}${age > 3 ? 'stale ' : ''}`.trim();
+    return `<tr tabindex="0" data-code="${escapeHtml(code)}" class="${rowClass}" title="${escapeHtml(rowTitle(row))}"><td class="center">${escapeHtml(row.rank ?? '-')}</td><td class="center ${clsSigned(row.rank_change)}">${fmtRankChange(row.rank_change)}</td><td class="center">${gradeHtml(row)}</td><td class="stock-name-copy" data-code="${escapeHtml(code)}">${escapeHtml(row.stock_name || code)}</td><td class="num">${fmtNum(row.price)}</td><td class="num ${clsSigned(rate)}">${Number.isFinite(rate) ? `${rate > 0 ? '+' : ''}${rate.toFixed(2)}%` : '-'}</td><td class="num" title="전일 ${fmtNum(row.prev_trade_value_eok, 0)}억">${fmtNum(row.trade_value_eok, 0)}</td><td class="num ${clsRatio(row.amount_ratio)}">${fmtRatio(row.amount_ratio)}</td><td class="center">${candleHtml(row)}</td><td class="num">${fmtNum(row.bid_ask_ratio, 2)}</td><td class="num">${fmtNum(row.execution_strength, 2)}</td><td class="num">${fmtNum(row.strength_1m ?? row.one_min_strength ?? row.one_min_strength_growth_rate, 2)}</td><td class="num ${clsSigned(row.program_net)}">${fmtNum(row.program_net, 0)}</td><td class="num ${clsSigned(row.large_trade_net_count)}">${fmtNum(row.large_trade_net_count, 0)}</td></tr>`;
   }
-  function renderTable(table, rows, emptyText) {
-    const tbody = table.tBodies[0];
-    if (!tbody) return;
-    if (!rows.length) {
-      tbody.innerHTML = `<tr><td colspan="${columns.length}" class="center">${escapeHtml(emptyText)}</td></tr>`;
-      return;
-    }
-    tbody.innerHTML = rows.map(rowHtml).join('');
-  }
+  function renderTable(table, rows, emptyText) { const tbody = table.tBodies[0]; if (!tbody) return; tbody.innerHTML = rows.length ? rows.map(rowHtml).join('') : `<tr><td colspan="${columns.length}" class="center">${escapeHtml(emptyText)}</td></tr>`; }
 
-  async function writeClipboardText(text) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(text);
-      return;
-    }
-    const input = document.createElement('input');
-    input.value = text;
-    input.setAttribute('readonly', 'readonly');
-    input.style.position = 'fixed';
-    input.style.left = '-9999px';
-    document.body.appendChild(input);
-    input.focus();
-    input.select();
-    document.execCommand('copy');
-    input.remove();
-  }
-  function selectCodeAndLink(code, copyOnly=false, options={}) {
-    const text = String(code || '').trim();
-    if (!/^\d{6}$/.test(text)) return;
-    selectedCode = text;
-    navigationActive = true;
-    localStorage.setItem(STORAGE_KEYS.selectedCode, text);
-    if (lastPayload) render(lastPayload, 'stream', { forcePool:true, focusSelected: options.focus !== false });
-    if (copyOnly) {
-      writeClipboardText(text).then(() => {
-        copyStatusEl.textContent = `코드 복사 ${text}`;
-        copyStatusEl.className = 'badge copy-ok';
-      }).catch(() => {
-        copyStatusEl.textContent = `코드 복사 실패 ${text}`;
-        copyStatusEl.className = 'badge bad';
-      });
-      return;
-    }
-    enqueueHtsCommand(text);
-  }
-  function focusSelectedRow(preventScroll=true) {
-    if (!selectedCode) return;
-    const escaped = CSS && CSS.escape ? CSS.escape(selectedCode) : selectedCode;
-    const row = document.querySelector(`tr[data-code="${escaped}"]`);
-    if (row && typeof row.focus === 'function') row.focus({ preventScroll });
-  }
-  function enqueueHtsCommand(code) {
-    htsQueue.push(String(code));
-    processHtsQueue();
-  }
-  async function processHtsQueue() {
-    if (htsBusy || !htsQueue.length) return;
-    htsBusy = true;
-    const code = htsQueue.shift();
-    const now = performance.now();
-    const waitMs = Math.max(0, HTS_COMMAND_GAP_MS - (now - lastHtsCommandAt));
-    if (waitMs > 0) await new Promise(resolve => setTimeout(resolve, waitMs));
-    try {
-      const commandSeq = `${Date.now()}${++htsLinkSeq}`;
-      await writeClipboardText(`SBV2|${commandSeq}|${code}`);
-      lastHtsCommandAt = performance.now();
-      copyStatusEl.textContent = `HTS 연동 ${code}`;
-      copyStatusEl.className = 'badge copy-ok';
-    } catch (_error) {
-      copyStatusEl.textContent = `HTS 요청 실패 ${code}`;
-      copyStatusEl.className = 'badge bad';
-    } finally {
-      window.setTimeout(() => {
-        if (!htsQueue.length) {
-          copyStatusEl.textContent = '종목 클릭=HTS/S1 연동 · 포커스 후 ↑/↓ 이동';
-          copyStatusEl.className = 'badge';
-        }
-      }, 900);
-      htsBusy = false;
-      if (htsQueue.length) processHtsQueue();
-    }
-  }
-  function navigationRows() {
-    return lastPayload && Array.isArray(lastPayload.rows) ? sortedRows(lastPayload.rows) : [];
-  }
-  function moveSelection(delta) {
-    const rows = navigationRows();
-    if (!rows.length) return;
-    let index = rows.findIndex(row => String(row.stock_code || '') === selectedCode);
-    if (index < 0) index = delta > 0 ? -1 : 0;
-    const nextIndex = (index + delta + rows.length) % rows.length;
-    const code = String(rows[nextIndex]?.stock_code || '');
-    if (code) selectCodeAndLink(code, false, { focus:true });
-  }
+  async function writeClipboardText(text) { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); return; } const input = document.createElement('input'); input.value = text; input.setAttribute('readonly', 'readonly'); input.style.position = 'fixed'; input.style.left = '-9999px'; document.body.appendChild(input); input.focus(); input.select(); document.execCommand('copy'); input.remove(); }
+  function selectCodeAndLink(code, copyOnly=false, options={}) { const text = String(code || '').trim(); if (!/^\d{6}$/.test(text)) return; selectedCode = text; navigationActive = true; localStorage.setItem(STORAGE_KEYS.selectedCode, text); if (lastPayload) render(lastPayload, 'stream', { forcePool:true, focusSelected: options.focus !== false }); if (copyOnly) { writeClipboardText(text); return; } enqueueHtsCommand(text); }
+  function focusSelectedRow(preventScroll=true) { if (!selectedCode) return; const row = document.querySelector(`tr[data-code="${selectedCode}"]`); if (row && typeof row.focus === 'function') row.focus({ preventScroll }); }
+  function enqueueHtsCommand(code) { htsQueue.push(String(code)); processHtsQueue(); }
+  async function processHtsQueue() { if (htsBusy || !htsQueue.length) return; htsBusy = true; const code = htsQueue.shift(); const now = performance.now(); const waitMs = Math.max(0, HTS_COMMAND_GAP_MS - (now - lastHtsCommandAt)); if (waitMs > 0) await new Promise(resolve => setTimeout(resolve, waitMs)); try { const commandSeq = `${Date.now()}${++htsLinkSeq}`; await writeClipboardText(`SBV2|${commandSeq}|${code}`); lastHtsCommandAt = performance.now(); copyStatusEl.textContent = `HTS 연동 ${code}`; copyStatusEl.className = 'badge copy-ok'; } catch (_error) { copyStatusEl.textContent = `HTS 요청 실패 ${code}`; copyStatusEl.className = 'badge bad'; } finally { window.setTimeout(() => { if (!htsQueue.length) { copyStatusEl.textContent = '행 클릭=HTS/S1 즉시 연동 · 포커스 후 ↑/↓ 이동'; copyStatusEl.className = 'badge'; } }, 900); htsBusy = false; if (htsQueue.length) processHtsQueue(); } }
+  function navigationRows() { return lastPayload && Array.isArray(lastPayload.rows) ? sortedRows(lastPayload.rows) : []; }
+  function moveSelection(delta) { const rows = navigationRows(); if (!rows.length) return; let index = rows.findIndex(row => String(row.stock_code || '') === selectedCode); if (index < 0) index = delta > 0 ? -1 : 0; const nextIndex = (index + delta + rows.length) % rows.length; const code = String(rows[nextIndex]?.stock_code || ''); if (code) selectCodeAndLink(code, false, { focus:true }); }
 
-  function payloadLagMs(payload) {
-    const sentAt = Date.parse(payload && payload.ts ? payload.ts : '');
-    if (!Number.isFinite(sentAt)) return null;
-    return Math.max(0, Date.now() - sentAt);
-  }
-  function senderStats(payload) {
-    return payload?.status?.collector_status?.sender_stats || {};
-  }
-  function computeRates(payload, sender) {
-    const now = performance.now();
-    const status = payload.status || {};
-    const current = {
-      ts: now,
-      events: Number(status.event_count) || 0,
-      trades: Number(status.trade_count) || 0,
-      sent: Number(sender.sent_count) || 0
-    };
-    if (!rateSample) {
-      rateSample = current;
-      return { recvPerSec:null, tradePerSec:null, sentPerSec:Number(sender.sent_per_sec) || null };
-    }
-    const seconds = Math.max(0.001, (current.ts - rateSample.ts) / 1000);
-    const rates = {
-      recvPerSec: Math.max(0, (current.events - rateSample.events) / seconds),
-      tradePerSec: Math.max(0, (current.trades - rateSample.trades) / seconds),
-      sentPerSec: Number(sender.sent_per_sec) || Math.max(0, (current.sent - rateSample.sent) / seconds)
-    };
-    rateSample = current;
-    return rates;
-  }
-  function top20Diagnostics(rows) {
-    const top = byRank(rows).slice(0, 20);
-    let maxLag = null;
-    let stale = 0;
-    top.forEach((row) => {
-      const lag = numeric(row.fid20_lag_sec);
-      const age = numeric(row.price_age_sec);
-      if (lag !== null) maxLag = maxLag === null ? lag : Math.max(maxLag, lag);
-      if (age !== null && age > 3) stale += 1;
-    });
-    return {
-      maxLag,
-      stale,
-      realtimeRows: rows.filter((row) => row.row_source === 'realtime').length
-    };
-  }
+  function payloadLagMs(payload) { const sentAt = Date.parse(payload && payload.ts ? payload.ts : ''); return Number.isFinite(sentAt) ? Math.max(0, Date.now() - sentAt) : null; }
+  function senderStats(payload) { return payload?.status?.collector_status?.sender_stats || {}; }
+  function computeRates(payload, sender) { const now = performance.now(); const status = payload.status || {}; const current = { ts: now, events: Number(status.event_count) || 0, trades: Number(status.trade_count) || 0, sent: Number(sender.sent_count) || 0 }; if (!rateSample) { rateSample = current; return { recvPerSec:null, tradePerSec:null, sentPerSec:Number(sender.sent_per_sec) || null }; } const seconds = Math.max(0.001, (current.ts - rateSample.ts) / 1000); const rates = { recvPerSec: Math.max(0, (current.events - rateSample.events) / seconds), tradePerSec: Math.max(0, (current.trades - rateSample.trades) / seconds), sentPerSec: Number(sender.sent_per_sec) || Math.max(0, (current.sent - rateSample.sent) / seconds) }; rateSample = current; return rates; }
+  function top20Diagnostics(rows) { const top = byRank(rows).slice(0, 20); let maxLag = null; let stale = 0; top.forEach((row) => { const lag = numeric(row.fid20_lag_sec); const age = numeric(row.price_age_sec); if (lag !== null) maxLag = maxLag === null ? lag : Math.max(maxLag, lag); if (age !== null && age > 3) stale += 1; }); return { maxLag, stale, realtimeRows: rows.filter(row => row.row_source === 'realtime').length }; }
 
   function render(payload, mode='stream', options={}) {
-    const renderStart = performance.now();
-    const refocusAfterRender = options.focusSelected || (navigationActive && document.activeElement && document.activeElement.closest && document.activeElement.closest('tr[data-code]'));
-    lastPayload = payload;
-    markSortHeaders();
-    const rawRows = Array.isArray(payload.rows) ? payload.rows : [];
-    const rankedRows = byRank(rawRows);
-    const focusBase = rankedRows.slice(0, 20);
-    const poolBase = rankedRows.slice(20);
-    const focusRows = sortedRows(focusBase);
-    const poolRows = sortedRows(poolBase);
-    const selectedRows = selectedCode ? rawRows.filter(row => String(row.stock_code || '') === selectedCode) : [];
-    const now = performance.now();
-    const shouldRenderPool = options.forcePool || now - lastPoolRenderAt >= 250;
-    const lag = payloadLagMs(payload);
-    const phase = payload.market_session?.phase_label || payload.status?.market_phase_label || '';
-    const sender = senderStats(payload);
-    const rates = computeRates(payload, sender);
-    const top20 = top20Diagnostics(rawRows);
-    statusEl.textContent = phase ? `연결 OK · ${phase}` : '연결 OK';
-    statusEl.className = mode === 'stream' ? 'badge ok' : 'badge bad';
+    const renderStart = performance.now(); const refocusAfterRender = options.focusSelected || (navigationActive && document.activeElement && document.activeElement.closest && document.activeElement.closest('tr[data-code]'));
+    lastPayload = payload; markSortHeaders(); const rawRows = Array.isArray(payload.rows) ? payload.rows : [];
+    const rankedRows = byRank(rawRows); const focusRows = sortedRows(rankedRows.slice(0, 20)); const poolRows = sortedRows(rankedRows.slice(20)); const selectedRows = selectedCode ? rawRows.filter(row => String(row.stock_code || '') === selectedCode) : [];
+    const now = performance.now(); const shouldRenderPool = options.forcePool || now - lastPoolRenderAt >= 250; const lag = payloadLagMs(payload); const phase = payload.market_session?.phase_label || payload.status?.market_phase_label || ''; const sender = senderStats(payload); const rates = computeRates(payload, sender); const top20 = top20Diagnostics(rawRows);
+    statusEl.textContent = phase ? `연결 OK · ${phase}` : '연결 OK'; statusEl.className = mode === 'stream' ? 'badge ok' : 'badge bad';
     countsEl.textContent = `rows ${payload.row_count || rawRows.length} · events ${payload.status?.event_count || 0} · trades ${payload.status?.trade_count || 0}`;
     latencyEl.textContent = `${mode} ${lag === null ? '-' : lag.toFixed(0)} ms · sort ${sortState.key}/${sortState.dir}`;
     throughputEl.textContent = `recv/s ${rates.recvPerSec === null ? '-' : fmtRate(rates.recvPerSec)} · trade/s ${rates.tradePerSec === null ? '-' : fmtRate(rates.tradePerSec)}`;
     collectorMetricsEl.textContent = `collector_q ${sender.pending_total_count ?? '-'} · sent/s ${rates.sentPerSec === null ? '-' : fmtRate(rates.sentPerSec)} · cxl ${sender.coalesced_trade_overwrite_count ?? '-'}`;
-    collectorMetricsEl.className = Number(sender.pending_total_count) > 100 ? 'badge warn' : 'badge';
     workerMetricsEl.textContent = `worker_q ${payload.status?.event_log_queue_size ?? '-'} · drop ${payload.status?.dropped_trade_count ?? 0} · logdrop ${payload.status?.event_log_dropped_count ?? 0}`;
-    workerMetricsEl.className = Number(payload.status?.event_log_queue_size) > 10000 ? 'badge warn' : 'badge';
     lagMetricsEl.textContent = `top20 lag ${top20.maxLag === null ? '-' : top20.maxLag.toFixed(1) + 's'} · stale ${top20.stale} · rt ${top20.realtimeRows}`;
-    lagMetricsEl.className = (top20.maxLag !== null && top20.maxLag > 3) || top20.stale > 0 ? 'badge warn' : 'badge';
-
-    renderTable(selectedBoardEl, selectedRows, '종목을 클릭하면 S1 선택 종목으로 고정됩니다.');
-    selectedRowCountEl.textContent = `${selectedRows.length}종목`;
-    renderTable(focusBoardEl, focusRows, '집중 후보 수신 대기 중입니다.');
-    focusRowCountEl.textContent = `${focusRows.length}종목`;
-    if (shouldRenderPool) {
-      renderTable(poolBoardEl, poolRows, 'Top300 Pool 수신 대기 중입니다.');
-      poolRowCountEl.textContent = `21~${rankedRows.length} · ${poolRows.length}종목`;
-      lastPoolRenderAt = now;
-    }
-    maybeInitialAutoFit();
-    updateTopbarHeight();
-    if (refocusAfterRender) requestAnimationFrame(() => focusSelectedRow(true));
-    const renderMs = performance.now() - renderStart;
-    renderMetricsEl.textContent = `render ${renderMs.toFixed(1)} ms`;
-    renderMetricsEl.className = renderMs > 70 ? 'badge warn' : 'badge';
+    renderTable(selectedBoardEl, selectedRows, '행을 클릭하면 S1 선택 종목으로 고정됩니다.'); selectedRowCountEl.textContent = `${selectedRows.length}종목`;
+    renderTable(focusBoardEl, focusRows, '집중 후보 수신 대기 중입니다.'); focusRowCountEl.textContent = `${focusRows.length}종목`;
+    if (shouldRenderPool) { renderTable(poolBoardEl, poolRows, 'Top300 Pool 수신 대기 중입니다.'); poolRowCountEl.textContent = `21~${rankedRows.length} · ${poolRows.length}종목`; lastPoolRenderAt = now; }
+    maybeInitialAutoFit(); if (refocusAfterRender) requestAnimationFrame(() => focusSelectedRow(true));
+    const renderMs = performance.now() - renderStart; renderMetricsEl.textContent = `render ${renderMs.toFixed(1)} ms`; renderMetricsEl.className = renderMs > 70 ? 'badge warn' : 'badge';
   }
 
-  async function fallbackPoll() {
-    try {
-      const res = await fetch(`/api/v2/snapshot?limit=300&ts=${Date.now()}`, { cache:'no-store' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const payload = await res.json();
-      render(payload, 'poll', { forcePool:true });
-    } catch (e) {
-      statusEl.textContent = `연결 실패: ${e.message}`;
-      statusEl.className = 'badge bad';
-    }
-  }
-  function startFallback() {
-    if (fallbackTimer) return;
-    fallbackTimer = setInterval(() => {
-      if (!lastStreamAt || performance.now() - lastStreamAt > 4000) fallbackPoll();
-    }, 1000);
-  }
-  function connectStream() {
-    if (!window.EventSource) {
-      startFallback();
-      return;
-    }
-    stream = new EventSource(`/api/v2/stream?limit=300&interval_ms=100&ts=${Date.now()}`);
-    stream.addEventListener('snapshot', (event) => {
-      try {
-        lastStreamAt = performance.now();
-        render(JSON.parse(event.data), 'stream');
-      } catch (error) {
-        console.warn(error);
-      }
-    });
-    stream.onerror = () => {
-      statusEl.textContent = 'stream 재연결 중';
-      statusEl.className = 'badge bad';
-      startFallback();
-    };
-  }
-  setInterval(() => {
-    clockEl.textContent = new Date().toLocaleTimeString('ko-KR', { hour12:false });
-    if (lastPayload && (!lastStreamAt || performance.now() - lastStreamAt > 1000)) render(lastPayload, 'stream');
-  }, 500);
-  clockEl.textContent = new Date().toLocaleTimeString('ko-KR', { hour12:false });
-  loadCandidateModels();
-  markSortHeaders();
-  updateTopbarHeight();
-  connectStream();
+  async function fallbackPoll() { try { const res = await fetch(`/api/v2/snapshot?limit=300&ts=${Date.now()}`, { cache:'no-store' }); if (!res.ok) throw new Error(`HTTP ${res.status}`); render(await res.json(), 'poll', { forcePool:true }); } catch (e) { statusEl.textContent = `연결 실패: ${e.message}`; statusEl.className = 'badge bad'; } }
+  function startFallback() { if (fallbackTimer) return; fallbackTimer = setInterval(() => { if (!lastStreamAt || performance.now() - lastStreamAt > 4000) fallbackPoll(); }, 1000); }
+  function connectStream() { if (!window.EventSource) { startFallback(); return; } stream = new EventSource(`/api/v2/stream?limit=300&interval_ms=100&ts=${Date.now()}`); stream.addEventListener('snapshot', (event) => { try { lastStreamAt = performance.now(); render(JSON.parse(event.data), 'stream'); } catch (error) { console.warn(error); } }); stream.onerror = () => { statusEl.textContent = 'stream 재연결 중'; statusEl.className = 'badge bad'; startFallback(); }; }
+  setInterval(() => { clockEl.textContent = new Date().toLocaleTimeString('ko-KR', { hour12:false }); if (lastPayload && (!lastStreamAt || performance.now() - lastStreamAt > 1000)) render(lastPayload, 'stream'); }, 500);
+  clockEl.textContent = new Date().toLocaleTimeString('ko-KR', { hour12:false }); loadCandidateModels(); markSortHeaders(); connectStream();
 </script>
 </body>
 </html>
