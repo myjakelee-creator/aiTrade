@@ -296,16 +296,38 @@ def _apply_ohlc_snapshot_to_quote(state, code: str, quote: dict[str, Any]) -> No
     snapshot = getattr(state, "ohlc_by_code", {}).get(code)
     if not isinstance(snapshot, dict):
         return
+
     current = quote.get("ohlc") if isinstance(quote.get("ohlc"), dict) else {}
     current_source = str(current.get("source") or "")
-    if current_source.startswith("ka10086") or current_source == "ohlc_snapshot":
+    snapshot_source = str(snapshot.get("source") or "")
+
+    def same_ohlc(left: dict[str, Any], right: dict[str, Any]) -> bool:
+        for key in ("open", "high", "low", "close"):
+            left_value = to_number(left.get(key))
+            right_value = to_number(right.get(key))
+            if left_value is None or right_value is None:
+                return False
+            if abs(float(left_value) - float(right_value)) > 0.0001:
+                return False
+        return True
+
+    # AL ??? snapshot? ?? regular/old ka10086 ?? ??? ? ??? ??.
+    # ??? ?? AL ?? ?? ???? regular fallback ??? downgrade?? ???.
+    if current_source.startswith("ka10086_AL") and not snapshot_source.startswith("ka10086_AL"):
         return
+
+    # ?? ??? ???? rewrite? ???.
+    if current_source == snapshot_source and same_ohlc(current, snapshot):
+        return
+
     quote["ohlc"] = deepcopy(snapshot)
     quote["day_open"] = snapshot.get("open")
     quote["day_high"] = snapshot.get("high")
     quote["day_low"] = snapshot.get("low")
     quote["day_close"] = snapshot.get("close")
     quote["ohlc_snapshot_applied_at"] = now_text()
+    if current_source and current_source != snapshot_source:
+        quote["ohlc_snapshot_replaced_source"] = current_source
 
 
 def _update_intraday_ohlc(quote: dict[str, Any], price: float | int | None) -> None:

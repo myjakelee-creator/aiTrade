@@ -168,48 +168,105 @@ def fetch_ohlc_bootstrap(codes_file: Path, limit: int = 300, sleep_sec: float = 
     from kiwoom_data_provider import _post_json, issue_access_token  # local import: optional path only
 
     if not codes_file.is_file():
-        return {"schema_version": 1, "source": "ka10086_ohlc_bootstrap", "ts": now_text(), "values": {}, "error": f"codes file not found: {codes_file}"}
-    codes = [normalize_code(line.strip()) for line in codes_file.read_text(encoding="utf-8-sig").splitlines() if normalize_code(line.strip())]
+        return {
+            "schema_version": 1,
+            "source": "ka10086_ohlc_bootstrap_AL_first",
+            "ts": now_text(),
+            "values": {},
+            "error": f"codes file not found: {codes_file}",
+        }
+
+    codes = [
+        normalize_code(line.strip())
+        for line in codes_file.read_text(encoding="utf-8-sig").splitlines()
+        if normalize_code(line.strip())
+    ]
     codes = codes[: max(1, int(limit or 300))]
     token = issue_access_token()
     today = trading_date_text()
     values: dict[str, Any] = {}
     errors: list[dict[str, str]] = []
+    source_counts = {
+        "ka10086_AL_current_row": 0,
+        "ka10086_regular_current_row": 0,
+    }
+
     for code in codes:
-        try:
-            response = _post_json(
-                "/api/dostk/mrkcond",
-                {"stk_cd": code, "qry_dt": today, "indc_tp": "1"},
-                {"Authorization": f"Bearer {token}", "api-id": "ka10086", "cont-yn": "N", "next-key": ""},
-            )
-            rows = _first(response, "daly_stkpc", "daily_stock_price", "output")
-            if not isinstance(rows, list):
-                continue
-            candidates = [row for row in rows if isinstance(row, dict)]
-            candidates.sort(key=lambda row: _row_date(row), reverse=True)
-            for row in candidates:
-                row_date = _row_date(row)
-                if row_date and row_date > today:
+        found = False
+
+        # ???(_AL) ??:
+        # - ????/NXT ??? ?? ??? ??? ?? OHLC? ?? ??
+        # - _AL ?? ?? ?? ? ???? 6?? ??? ???? fallback
+        for query_code, source_name in (
+            (f"{code}_AL", "ka10086_AL_current_row"),
+            (code, "ka10086_regular_current_row"),
+        ):
+            try:
+                response = _post_json(
+                    "/api/dostk/mrkcond",
+                    {"stk_cd": query_code, "qry_dt": today, "indc_tp": "1"},
+                    {
+                        "Authorization": f"Bearer {token}",
+                        "api-id": "ka10086",
+                        "cont-yn": "N",
+                        "next-key": "",
+                    },
+                )
+                rows = _first(response, "daly_stkpc", "daily_stock_price", "output")
+                if not isinstance(rows, list):
                     continue
-                ohlc = _row_ohlc(row)
-                if ohlc is not None:
+
+                candidates = [row for row in rows if isinstance(row, dict)]
+                candidates.sort(key=lambda row: _row_date(row), reverse=True)
+
+                for row in candidates:
+                    row_date = _row_date(row)
+                    if row_date and row_date > today:
+                        continue
+
+                    ohlc = _row_ohlc(row)
+                    if ohlc is None:
+                        continue
+
+                    ohlc["source"] = source_name
+                    ohlc["query_code"] = query_code
+                    ohlc["stock_code"] = code
                     values[code] = ohlc
+                    source_counts[source_name] = source_counts.get(source_name, 0) + 1
+                    found = True
                     break
-        except Exception as error:
-            if len(errors) < 20:
-                errors.append({"stock_code": code, "error": str(error)})
+
+                if found:
+                    break
+
+            except Exception as error:
+                if len(errors) < 20:
+                    errors.append(
+                        {
+                            "stock_code": code,
+                            "query_code": query_code,
+                            "error": str(error),
+                        }
+                    )
+
+            if sleep_sec > 0:
+                time.sleep(sleep_sec)
+
         if sleep_sec > 0:
             time.sleep(sleep_sec)
+
     return {
         "schema_version": 1,
-        "source": "ka10086_ohlc_bootstrap",
+        "source": "ka10086_ohlc_bootstrap_AL_first",
         "ts": now_text(),
         "trading_date": today,
         "count": len(values),
+        "source_counts": source_counts,
         "error_count": len(errors),
         "errors": errors,
         "values": values,
     }
+
 
 
 def write_status(status: dict[str, Any]) -> None:
