@@ -31,6 +31,7 @@ from realtime_v2.market_session import market_session_now
 from stockboard_ranking_engine import enrich_net_buy_strength_v02_fields
 
 STALE_LAG_WARN_SEC = 10.0
+ONE_MIN_STRENGTH_CAP = 999.99
 PREVIOUS_VALUE_KEYS = (
     "prev_trade_value_eok",
     "prev_trade_value_source",
@@ -55,8 +56,9 @@ PERSISTED_LIVE_KEYS = (
     "day_close",
     "ohlc",
     "strength_1m",
-    "one_min_strength_delta",
-    "one_min_strength_growth_rate",
+    "one_min_buy_qty",
+    "one_min_sell_qty",
+    "one_min_strength_updated_at",
 )
 base.DAILY_PERSIST_KEYS = tuple(dict.fromkeys((*base.DAILY_PERSIST_KEYS, *PERSISTED_LIVE_KEYS)))
 
@@ -92,6 +94,25 @@ def _lag_seconds(trade_time_seconds: int | None) -> float | None:
     return round(max(0.0, float(lag)), 3)
 
 
+def _json_file(path: Path) -> dict[str, Any] | None:
+    try:
+        if path.is_file():
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+            if isinstance(payload, dict):
+                return payload
+    except (OSError, json.JSONDecodeError):
+        return None
+    return None
+
+
+def _load_json_first(paths: list[Path]) -> dict[str, Any] | None:
+    for path in paths:
+        payload = _json_file(path)
+        if payload is not None:
+            return payload
+    return None
+
+
 def _previous_trade_value_cache_paths() -> list[Path]:
     date_text = trading_date_text()
     return [
@@ -102,24 +123,19 @@ def _previous_trade_value_cache_paths() -> list[Path]:
 
 def _load_previous_trade_value_cache() -> dict[str, dict[str, Any]]:
     for path in _previous_trade_value_cache_paths():
-        try:
-            if not path.is_file():
-                continue
-            payload = json.loads(path.read_text(encoding="utf-8-sig"))
-            entries = payload.get("entries") if isinstance(payload, dict) else None
-            if not isinstance(entries, dict):
-                continue
-            result: dict[str, dict[str, Any]] = {}
-            for raw_code, raw_entry in entries.items():
-                code = normalize_code(raw_code)
-                if not code or not isinstance(raw_entry, dict):
-                    continue
-                value = to_number(raw_entry.get("prev_trade_value_eok"))
-                if value is not None and value > 0:
-                    result[code] = dict(raw_entry)
-            return result
-        except (OSError, json.JSONDecodeError):
+        payload = _json_file(path)
+        entries = payload.get("entries") if isinstance(payload, dict) else None
+        if not isinstance(entries, dict):
             continue
+        result: dict[str, dict[str, Any]] = {}
+        for raw_code, raw_entry in entries.items():
+            code = normalize_code(raw_code)
+            if not code or not isinstance(raw_entry, dict):
+                continue
+            value = to_number(raw_entry.get("prev_trade_value_eok"))
+            if value is not None and value > 0:
+                result[code] = dict(raw_entry)
+        return result
     return {}
 
 
@@ -204,10 +220,9 @@ def _persist_live_metrics(state, code: str, quote: dict[str, Any], *keys: str) -
     changed = False
     for key in keys:
         value = quote.get(key)
-        if value not in (None, ""):
-            if entry.get(key) != value:
-                entry[key] = deepcopy(value)
-                changed = True
+        if value not in (None, "") and entry.get(key) != value:
+            entry[key] = deepcopy(value)
+            changed = True
     if changed:
         state._mark_daily_dirty()
 
@@ -256,6 +271,72 @@ def _copy_previous_fields(state, code: str, target: dict[str, Any], seed: dict[s
                 target[key] = value
 
 
+def _ohlc_snapshot_path() -> Path:
+    return RUNTIME_DIR / "ohlc_snapshot.json"
+
+
+def _load_ohlc_snapshot_if_needed(state, force: bool = False) -> None:
+    path = _ohlc_snapshot_path()
+    now_mono = time.monotonic()
+    last_check = float(getattr(state, "ohlc_snapshot_last_check", 0.0) or 0.0)
+    if not force and now_mono - last_check < 5.0:
+        return
+    state.ohlc_snapshot_last_check = now_mono
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return
+    if not force and mtime == getattr(state, "ohlc_snapshot_mtime", None):
+        return
+    payload = _json_file(path) or {}
+    raw_values = payload.get("values") if isinstance(payload, dict) else None
+    if not isinstance(raw_values, dict):
+        return
+    values: dict[str, dict[str, Any]] = {}
+    for raw_code, raw_ohlc in raw_values.items():
+        code = normalize_code(raw_code)
+        if not code or not isinstance(raw_ohlc, dict):
+            continue
+        open_price = to_number(raw_ohlc.get("open"))
+        high_price = to_number(raw_ohlc.get("high"))
+        low_price = to_number(raw_ohlc.get("low"))
+        close_price = to_number(raw_ohlc.get("close"))
+        if any(value is None or value <= 0 for value in (open_price, high_price, low_price, close_price)):
+            continue
+        values[code] = {
+            "open": round(float(open_price), 4),
+            "high": round(float(high_price), 4),
+            "low": round(float(low_price), 4),
+            "close": round(float(close_price), 4),
+            "source": raw_ohlc.get("source") or payload.get("source") or "ohlc_snapshot",
+            "date": raw_ohlc.get("date") or payload.get("trading_date"),
+        }
+    state.ohlc_by_code = values
+    state.ohlc_snapshot_mtime = mtime
+    state.status["ohlc_snapshot_count"] = len(values)
+    state.status["ohlc_snapshot_loaded_at"] = now_text()
+    state.status["ohlc_snapshot_source"] = str(path)
+
+
+def _apply_ohlc_snapshot_to_quote(state, code: str, quote: dict[str, Any]) -> None:
+    code = normalize_code(code)
+    if not code:
+        return
+    snapshot = getattr(state, "ohlc_by_code", {}).get(code)
+    if not isinstance(snapshot, dict):
+        return
+    current = quote.get("ohlc") if isinstance(quote.get("ohlc"), dict) else {}
+    current_source = str(current.get("source") or "")
+    if current_source.startswith("ka10086") or current_source == "ohlc_snapshot":
+        return
+    quote["ohlc"] = deepcopy(snapshot)
+    quote["day_open"] = snapshot.get("open")
+    quote["day_high"] = snapshot.get("high")
+    quote["day_low"] = snapshot.get("low")
+    quote["day_close"] = snapshot.get("close")
+    quote["ohlc_snapshot_applied_at"] = now_text()
+
+
 def _update_intraday_ohlc(quote: dict[str, Any], price: float | int | None) -> None:
     value = to_number(price)
     if value is None or value <= 0:
@@ -269,7 +350,8 @@ def _update_intraday_ohlc(quote: dict[str, Any], price: float | int | None) -> N
         "high": round(high_price, 4),
         "low": round(low_price, 4),
         "close": round(float(value), 4),
-        "source": "realtime_intraday",
+        "source": current.get("source") or "realtime_intraday",
+        "date": current.get("date"),
     }
     quote["ohlc"] = ohlc
     quote["day_open"] = ohlc["open"]
@@ -278,45 +360,47 @@ def _update_intraday_ohlc(quote: dict[str, Any], price: float | int | None) -> N
     quote["day_close"] = ohlc["close"]
 
 
-def _update_one_min_strength(quote: dict[str, Any], strength: float | int | None) -> None:
-    value = to_number(strength)
-    if value is None:
+def _update_one_min_strength_from_qty(quote: dict[str, Any], trade_qty: int | None) -> None:
+    qty = to_int(trade_qty)
+    if qty is None or qty == 0:
         return
-    now_monotonic = time.monotonic()
-    raw_samples = quote.get("_strength_samples") if isinstance(quote.get("_strength_samples"), list) else []
-    samples: list[list[float]] = []
-    for item in raw_samples:
+    now_sec = int(time.monotonic())
+    raw_buckets = quote.get("_one_min_qty_buckets") if isinstance(quote.get("_one_min_qty_buckets"), list) else []
+    buckets: list[list[int]] = []
+    for item in raw_buckets:
         try:
-            ts = float(item[0])
-            sample_value = float(item[1])
+            sec = int(item[0])
+            buy = int(item[1])
+            sell = int(item[2])
         except (TypeError, ValueError, IndexError):
             continue
-        if now_monotonic - ts <= 60.0:
-            samples.append([ts, sample_value])
-    if samples and now_monotonic - samples[-1][0] < 1.0:
-        samples[-1] = [now_monotonic, float(value)]
+        if now_sec - sec <= 60:
+            buckets.append([sec, buy, sell])
+    if buckets and buckets[-1][0] == now_sec:
+        bucket = buckets[-1]
     else:
-        samples.append([now_monotonic, float(value)])
-    samples = samples[-70:]
-    quote["_strength_samples"] = samples
-    baseline = samples[0][1] if samples else float(value)
-    delta = round(float(value) - float(baseline), 4)
-    quote["strength_1m"] = delta
-    quote["one_min_strength_delta"] = delta
-    quote["one_min_strength_growth_rate"] = delta
-    quote["strength_1m_updated_at"] = now_text()
-
-
-def _load_json_first(paths: list[Path]) -> dict[str, Any] | None:
-    for path in paths:
-        try:
-            if path.is_file():
-                payload = json.loads(path.read_text(encoding="utf-8-sig"))
-                if isinstance(payload, dict):
-                    return payload
-        except (OSError, json.JSONDecodeError):
-            continue
-    return None
+        bucket = [now_sec, 0, 0]
+        buckets.append(bucket)
+    if qty > 0:
+        bucket[1] += int(qty)
+    else:
+        bucket[2] += abs(int(qty))
+    buckets = buckets[-61:]
+    buy_qty = sum(item[1] for item in buckets)
+    sell_qty = sum(item[2] for item in buckets)
+    if sell_qty > 0:
+        strength = round(min(ONE_MIN_STRENGTH_CAP, buy_qty / sell_qty * 100.0), 4)
+    elif buy_qty > 0:
+        strength = ONE_MIN_STRENGTH_CAP
+    else:
+        strength = None
+    quote["_one_min_qty_buckets"] = buckets
+    quote["one_min_buy_qty"] = buy_qty
+    quote["one_min_sell_qty"] = sell_qty
+    quote["strength_1m"] = strength
+    quote["one_min_strength"] = strength
+    quote["one_min_strength_updated_at"] = now_text()
+    quote["one_min_strength_formula"] = "recent_60s_buy_qty/recent_60s_sell_qty*100"
 
 
 def _runtime_context_payload() -> dict[str, Any]:
@@ -336,11 +420,17 @@ def _runtime_context_payload() -> dict[str, Any]:
             ROOT / "docs" / "assets" / "stockboard_us_market.json",
         ]
     )
+    ohlc_snapshot = _load_json_first([_ohlc_snapshot_path()])
     return {
         "schema_version": 1,
         "ts": now_text(),
         "market_supply": market_supply or {},
         "us_market": us_market or {},
+        "ohlc_snapshot_status": {
+            "count": (ohlc_snapshot or {}).get("count"),
+            "ts": (ohlc_snapshot or {}).get("ts"),
+            "source": (ohlc_snapshot or {}).get("source"),
+        },
         "source_policy": "read_only_snapshot_files_no_realtime_pipeline_work",
     }
 
@@ -356,6 +446,10 @@ def _candidate_models_payload() -> dict[str, Any]:
 def _guarded_load_universe(self) -> None:
     self.seed_by_code: dict[str, dict[str, Any]] = {}
     self.prev_trade_value_cache_by_code = _load_previous_trade_value_cache()
+    self.ohlc_by_code = {}
+    self.ohlc_snapshot_mtime = None
+    self.ohlc_snapshot_last_check = 0.0
+    _load_ohlc_snapshot_if_needed(self, force=True)
     try:
         payload = json.loads(self.universe_file.read_text(encoding="utf-8-sig"))
         built_at = payload.get("built_at") if isinstance(payload, dict) else None
@@ -405,6 +499,7 @@ def _guarded_quote(self, code: str) -> dict[str, Any]:
     quote = self.quotes.get(code)
     if quote is not None:
         _copy_previous_fields(self, code, quote, getattr(self, "seed_by_code", {}).get(code, {}) or {})
+        _apply_ohlc_snapshot_to_quote(self, code, quote)
         return quote
     persisted = self.daily_values_by_code.get(code) or {}
     seed = getattr(self, "seed_by_code", {}).get(code, {}) or {}
@@ -429,7 +524,6 @@ def _guarded_quote(self, code: str) -> dict[str, Any]:
     if seed_price is not None:
         quote["price"] = seed_price
         quote["seed_price"] = seed_price
-        _update_intraday_ohlc(quote, seed_price)
     if seed_rate is not None:
         quote["change_rate"] = seed_rate
         quote["seed_change_rate"] = seed_rate
@@ -442,6 +536,9 @@ def _guarded_quote(self, code: str) -> dict[str, Any]:
         if key in persisted:
             quote[key] = persisted.get(key)
     _restore_persisted_live_metrics(quote, persisted)
+    _apply_ohlc_snapshot_to_quote(self, code, quote)
+    if quote.get("ohlc") is None and seed_price is not None:
+        _update_intraday_ohlc(quote, seed_price)
     self.quotes[code] = quote
     return quote
 
@@ -449,6 +546,7 @@ def _guarded_quote(self, code: str) -> dict[str, Any]:
 def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
     with self.lock:
         _update_market_session_status(self)
+        _load_ohlc_snapshot_if_needed(self)
         for code in list(self.seed_rank_by_code):
             self._quote(code)
         rows = [deepcopy(row) for row in self.quotes.values()]
@@ -540,6 +638,7 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
         quote["change_rate"] = change_rate
     if trade_qty is not None:
         quote["trade_qty"] = trade_qty
+        _update_one_min_strength_from_qty(quote, trade_qty)
     if cumulative_volume is not None:
         quote["cumulative_volume"] = cumulative_volume
     if trade_value_eok is not None:
@@ -547,8 +646,7 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
     if strength is not None:
         quote["execution_strength"] = round(strength, 4)
         quote["execution_strength_updated_at"] = received_at
-        _update_one_min_strength(quote, strength)
-        _persist_live_metrics(self, code, quote, "execution_strength", "execution_strength_updated_at", "strength_1m", "one_min_strength_delta", "one_min_strength_growth_rate")
+    _persist_live_metrics(self, code, quote, "execution_strength", "execution_strength_updated_at", "strength_1m", "one_min_buy_qty", "one_min_sell_qty", "one_min_strength_updated_at")
     if price is not None:
         _persist_live_metrics(self, code, quote, "day_open", "day_high", "day_low", "day_close", "ohlc")
     quote["trade_time"] = trade_time
