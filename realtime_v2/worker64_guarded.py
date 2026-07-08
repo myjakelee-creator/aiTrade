@@ -67,6 +67,19 @@ PERSISTED_LIVE_KEYS = (
     "strength_snapshot_at",
     "strength_status",
     "strength_display_basis",
+    "regular_close_bid_ask_ratio",
+    "regular_close_bid_pct",
+    "regular_close_ask_pct",
+    "regular_close_bid_volume",
+    "regular_close_ask_volume",
+    "regular_close_orderbook_at",
+    "orderbook_display_basis",
+    "last_valid_bid_ask_ratio",
+    "last_valid_bid_pct",
+    "last_valid_ask_pct",
+    "last_valid_bid_volume",
+    "last_valid_ask_volume",
+    "last_valid_orderbook_at",
 )
 base.DAILY_PERSIST_KEYS = tuple(dict.fromkeys((*base.DAILY_PERSIST_KEYS, *PERSISTED_LIVE_KEYS)))
 
@@ -494,6 +507,166 @@ def _is_regular_session(session: dict[str, Any] | None) -> bool:
     return "regular" in phase or "???" in label
 
 
+
+def _valid_ratio_value(value: Any) -> float | None:
+    number = to_number(value)
+    if number is None:
+        return None
+    if float(number) <= 0:
+        return None
+    return float(number)
+
+
+def _orderbook_snapshot_from_fields(
+    quote: dict[str, Any],
+    *,
+    ratio_key: str,
+    bid_pct_key: str,
+    ask_pct_key: str,
+    bid_volume_key: str,
+    ask_volume_key: str,
+    at_key: str,
+    basis: str,
+) -> dict[str, Any] | None:
+    ratio = _valid_ratio_value(quote.get(ratio_key))
+    bid_volume = to_number(quote.get(bid_volume_key))
+    ask_volume = to_number(quote.get(ask_volume_key))
+    bid_pct = to_number(quote.get(bid_pct_key))
+    ask_pct = to_number(quote.get(ask_pct_key))
+
+    if ratio is None and bid_volume is not None and ask_volume is not None:
+        bid_volume = float(bid_volume)
+        ask_volume = float(ask_volume)
+        if bid_volume > 0 and ask_volume > 0:
+            ratio = bid_volume / ask_volume
+        elif bid_volume > 0 and ask_volume == 0:
+            ratio = 20.0
+        elif bid_volume == 0 and ask_volume > 0:
+            ratio = 0.05
+
+    if ratio is None and bid_pct is not None and ask_pct is not None:
+        bid_pct = float(bid_pct)
+        ask_pct = float(ask_pct)
+        if bid_pct > 0 and ask_pct > 0:
+            ratio = bid_pct / ask_pct
+        elif bid_pct > 0 and ask_pct == 0:
+            ratio = 20.0
+        elif bid_pct == 0 and ask_pct > 0:
+            ratio = 0.05
+
+    if ratio is None:
+        return None
+
+    ratio = round(max(0.01, min(20.0, float(ratio))), 4)
+    return {
+        "bid_ask_ratio": ratio,
+        "bid_pct": quote.get(bid_pct_key),
+        "ask_pct": quote.get(ask_pct_key),
+        "bid_volume": quote.get(bid_volume_key),
+        "ask_volume": quote.get(ask_volume_key),
+        "at": quote.get(at_key),
+        "basis": basis,
+    }
+
+
+def _current_orderbook_snapshot(quote: dict[str, Any], basis: str = "?? ??? ??") -> dict[str, Any] | None:
+    return _orderbook_snapshot_from_fields(
+        quote,
+        ratio_key="bid_ask_ratio",
+        bid_pct_key="bid_pct",
+        ask_pct_key="ask_pct",
+        bid_volume_key="bid_volume",
+        ask_volume_key="ask_volume",
+        at_key="orderbook_received_at",
+        basis=basis,
+    )
+
+
+def _regular_close_orderbook_snapshot(quote: dict[str, Any]) -> dict[str, Any] | None:
+    return _orderbook_snapshot_from_fields(
+        quote,
+        ratio_key="regular_close_bid_ask_ratio",
+        bid_pct_key="regular_close_bid_pct",
+        ask_pct_key="regular_close_ask_pct",
+        bid_volume_key="regular_close_bid_volume",
+        ask_volume_key="regular_close_ask_volume",
+        at_key="regular_close_orderbook_at",
+        basis="??? ?? ??? ??",
+    )
+
+
+def _last_valid_orderbook_snapshot(quote: dict[str, Any]) -> dict[str, Any] | None:
+    return _orderbook_snapshot_from_fields(
+        quote,
+        ratio_key="last_valid_bid_ask_ratio",
+        bid_pct_key="last_valid_bid_pct",
+        ask_pct_key="last_valid_ask_pct",
+        bid_volume_key="last_valid_bid_volume",
+        ask_volume_key="last_valid_ask_volume",
+        at_key="last_valid_orderbook_at",
+        basis="??? ?? ??? ??",
+    )
+
+
+def _apply_orderbook_snapshot(quote: dict[str, Any], snapshot: dict[str, Any]) -> None:
+    quote["bid_ask_ratio"] = snapshot.get("bid_ask_ratio")
+    if snapshot.get("bid_pct") not in (None, ""):
+        quote["bid_pct"] = snapshot.get("bid_pct")
+    if snapshot.get("ask_pct") not in (None, ""):
+        quote["ask_pct"] = snapshot.get("ask_pct")
+    if snapshot.get("bid_volume") not in (None, ""):
+        quote["bid_volume"] = snapshot.get("bid_volume")
+    if snapshot.get("ask_volume") not in (None, ""):
+        quote["ask_volume"] = snapshot.get("ask_volume")
+    quote["orderbook_display_basis"] = snapshot.get("basis")
+
+
+def _remember_last_valid_orderbook_display(quote: dict[str, Any]) -> None:
+    snapshot = _current_orderbook_snapshot(quote, "??? ?? ??? ??")
+    if snapshot is None:
+        return
+    quote["last_valid_bid_ask_ratio"] = snapshot.get("bid_ask_ratio")
+    quote["last_valid_bid_pct"] = snapshot.get("bid_pct")
+    quote["last_valid_ask_pct"] = snapshot.get("ask_pct")
+    quote["last_valid_bid_volume"] = snapshot.get("bid_volume")
+    quote["last_valid_ask_volume"] = snapshot.get("ask_volume")
+    quote["last_valid_orderbook_at"] = snapshot.get("at") or now_text()
+
+
+def _remember_regular_orderbook_display(quote: dict[str, Any], session: dict[str, Any] | None) -> None:
+    if not _is_regular_session(session):
+        return
+    snapshot = _current_orderbook_snapshot(quote, "??? ??? ??")
+    if snapshot is None:
+        return
+    quote["regular_close_bid_ask_ratio"] = snapshot.get("bid_ask_ratio")
+    quote["regular_close_bid_pct"] = snapshot.get("bid_pct")
+    quote["regular_close_ask_pct"] = snapshot.get("ask_pct")
+    quote["regular_close_bid_volume"] = snapshot.get("bid_volume")
+    quote["regular_close_ask_volume"] = snapshot.get("ask_volume")
+    quote["regular_close_orderbook_at"] = snapshot.get("at") or now_text()
+    quote["orderbook_display_basis"] = "??? ??? ??"
+
+
+def _apply_aftermarket_orderbook_display_policy(quote: dict[str, Any], session: dict[str, Any] | None) -> None:
+    if not _is_aftermarket_session(session):
+        return
+
+    current = _current_orderbook_snapshot(quote, "???? ??? ??")
+    if current is not None:
+        _apply_orderbook_snapshot(quote, current)
+        return
+
+    fallback = _regular_close_orderbook_snapshot(quote) or _last_valid_orderbook_snapshot(quote)
+    if fallback is not None:
+        _apply_orderbook_snapshot(quote, fallback)
+        return
+
+    # ??? ? ?? ?? ?? ??? 0?? ????? ???.
+    quote["bid_ask_ratio"] = None
+    quote["orderbook_display_basis"] = "??? ??? ??"
+
+
 def _apply_aftermarket_strength_display_policy(quote: dict[str, Any], session: dict[str, Any] | None) -> None:
     if not _is_aftermarket_session(session):
         return
@@ -630,6 +803,7 @@ def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
             row["price_age_sec"] = None
         _copy_previous_fields(self, row.get("stock_code"), row, getattr(self, "seed_by_code", {}).get(row.get("stock_code"), {}) or {})
         _apply_aftermarket_strength_display_policy(row, session)
+        _apply_aftermarket_orderbook_display_policy(row, session)
     rows.sort(key=lambda row: (-(to_number(row.get("trade_value_eok")) or 0), row.get("seed_rank") or 999999, row.get("stock_code") or ""))
     amount_ratio_ready_count = 0
     amount_ratio_missing_count = 0
@@ -791,7 +965,11 @@ def _guarded_apply_orderbook(self, event: dict[str, Any]) -> None:
     quote = self.quotes.get(code)
     if not isinstance(quote, dict):
         return
-    _persist_live_metrics(self, code, quote, "ask_volume", "bid_volume", "ask_pct", "bid_pct", "bid_ask_ratio", "best_ask_price", "best_bid_price", "orderbook_received_at")
+    session = _update_market_session_status(self)
+    _remember_last_valid_orderbook_display(quote)
+    _remember_regular_orderbook_display(quote, session)
+    _apply_aftermarket_orderbook_display_policy(quote, session)
+    _persist_live_metrics(self, code, quote, "ask_volume", "bid_volume", "ask_pct", "bid_pct", "bid_ask_ratio", "best_ask_price", "best_bid_price", "orderbook_received_at", "regular_close_bid_ask_ratio", "regular_close_bid_pct", "regular_close_ask_pct", "regular_close_bid_volume", "regular_close_ask_volume", "regular_close_orderbook_at", "orderbook_display_basis", "last_valid_bid_ask_ratio", "last_valid_bid_pct", "last_valid_ask_pct", "last_valid_bid_volume", "last_valid_ask_volume", "last_valid_orderbook_at")
 
 
 _original_snapshot = base.State.snapshot
