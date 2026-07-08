@@ -5,19 +5,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>StockBoard v2 Realtime</title>
   <style>
-    :root { --red:#d71920; --blue:#1266d6; --grid:#c7d1dc; --head:#eaf0f6; --text:#111827; }
+    :root { --red:#d71920; --blue:#1266d6; --grid:#c7d1dc; --head:#eaf0f6; --text:#111827; --topbar-height:62px; }
     html, body { overflow-x:auto; }
     body { margin:0; min-width:100vw; font-family: Malgun Gothic, Arial, sans-serif; font-size:12px; color:var(--text); background:#f8fafc; }
-    .topbar { position:sticky; top:0; z-index:5; display:flex; gap:10px; align-items:center; padding:6px 8px; border-bottom:1px solid #aab7c6; background:#dde7f1; min-width:max-content; }
+    .topbar { position:sticky; top:0; z-index:5; display:flex; flex-wrap:wrap; gap:4px 8px; align-items:flex-start; padding:5px 8px; border-bottom:1px solid #aab7c6; background:#dde7f1; min-width:0; white-space:normal; }
+    .metric-row { display:flex; flex-wrap:wrap; gap:4px 6px; align-items:center; width:100%; min-width:0; }
     .title { font-weight:800; }
-    .badge { padding:2px 6px; border:1px solid #9aa8b5; background:white; border-radius:3px; }
+    .badge { padding:2px 6px; border:1px solid #9aa8b5; background:white; border-radius:3px; white-space:nowrap; }
     .ok { color:#067a2a; font-weight:800; }
     .bad { color:var(--red); font-weight:800; }
+    .warn { color:#a16207; border-color:#facc15; background:#fef9c3; font-weight:800; }
     .copy-ok { color:#166534; border-color:#86efac; background:#dcfce7; font-weight:800; }
     table { border-collapse:collapse; table-layout:fixed; background:white; }
     col { width: var(--col-width, 80px); min-width:0 !important; }
     th, td { box-sizing:border-box; border:1px solid var(--grid); padding:2px 4px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; height:20px; min-width:0 !important; max-width:none; }
-    th { background:var(--head); font-weight:800; position:sticky; top:31px; z-index:4; user-select:none; cursor:pointer; }
+    th { background:var(--head); font-weight:800; position:sticky; top:var(--topbar-height); z-index:4; user-select:none; cursor:pointer; }
     th[data-sort-dir="asc"] .header-label::after { content:" ▲"; color:#1d4ed8; }
     th[data-sort-dir="desc"] .header-label::after { content:" ▼"; color:#b91c1c; }
     .header-label { pointer-events:none; }
@@ -39,14 +41,25 @@
   </style>
 </head>
 <body>
-  <div class="topbar">
-    <span class="title">StockBoard v2 Realtime</span>
-    <span id="clock" class="badge">-</span>
-    <span id="status" class="badge bad">연결 대기</span>
-    <span id="counts" class="badge">rows 0 · events 0</span>
-    <span id="latency" class="badge">stream - ms</span>
-    <span id="copy-status" class="badge">종목명 클릭=HTS연동</span>
-    <span class="small">32bit 수집기 → 64bit worker → 100ms micro-batch stream</span>
+  <div id="topbar" class="topbar">
+    <div class="metric-row">
+      <span class="title">StockBoard v2 Realtime</span>
+      <span id="clock" class="badge">-</span>
+      <span id="status" class="badge bad">연결 대기</span>
+      <span id="copy-status" class="badge">종목명 클릭=HTS연동</span>
+    </div>
+    <div class="metric-row">
+      <span id="counts" class="badge">rows 0 · events 0 · trades 0</span>
+      <span id="latency" class="badge">stream - ms</span>
+      <span id="throughput" class="badge">recv/s - · trade/s -</span>
+      <span id="collector-metrics" class="badge">collector_q - · sent/s -</span>
+      <span id="worker-metrics" class="badge">worker_q - · drop -</span>
+    </div>
+    <div class="metric-row">
+      <span id="lag-metrics" class="badge">top20 lag - · stale - · rt -</span>
+      <span id="render-metrics" class="badge">render - ms</span>
+      <span class="small">fast-open 권장: 09:00~09:05 체결 우선, orderbook OFF, latest quote coalescing</span>
+    </div>
   </div>
   <table id="board">
     <colgroup id="cols">
@@ -78,12 +91,18 @@
     <tbody id="rows"><tr><td colspan="10" class="center">v2 stream 연결 대기 중입니다.</td></tr></tbody>
   </table>
   <script>
+    const topbarEl = document.getElementById('topbar');
     const boardEl = document.getElementById('board');
     const colsEl = document.getElementById('cols');
     const rowsEl = document.getElementById('rows');
     const statusEl = document.getElementById('status');
     const countsEl = document.getElementById('counts');
     const latencyEl = document.getElementById('latency');
+    const throughputEl = document.getElementById('throughput');
+    const collectorMetricsEl = document.getElementById('collector-metrics');
+    const workerMetricsEl = document.getElementById('worker-metrics');
+    const lagMetricsEl = document.getElementById('lag-metrics');
+    const renderMetricsEl = document.getElementById('render-metrics');
     const clockEl = document.getElementById('clock');
     const copyStatusEl = document.getElementById('copy-status');
     const rowByCode = new Map();
@@ -106,10 +125,16 @@
     let sortState = loadSortState();
     let columnWidths = loadColumnWidths();
     let autoFitQueued = false;
-    let lastAutoFitAt = 0;
     let firstAutoFitDone = false;
     let copyTimer = null;
     let htsLinkSeq = 0;
+    let rateSample = null;
+
+    function updateTopbarHeight() {
+      const height = Math.ceil(topbarEl.getBoundingClientRect().height || 62);
+      document.documentElement.style.setProperty('--topbar-height', `${height}px`);
+    }
+    window.addEventListener('resize', updateTopbarHeight);
 
     function loadSortState() {
       try {
@@ -199,14 +224,13 @@
       });
     }
     function scheduleAutoFit() {
-      const now = performance.now();
-      if (autoFitQueued || (firstAutoFitDone && now - lastAutoFitAt < 2500)) return;
+      if (autoFitQueued || firstAutoFitDone) return;
       autoFitQueued = true;
       requestAnimationFrame(() => {
         autoFitQueued = false;
-        lastAutoFitAt = performance.now();
         autoFitColumns(false, false);
         firstAutoFitDone = true;
+        updateTopbarHeight();
       });
     }
     function initColumnResizers() {
@@ -337,6 +361,11 @@
       if (!Number.isFinite(n)) return '-';
       return n.toLocaleString('en-US', { maximumFractionDigits: digits, minimumFractionDigits: digits });
     }
+    function fmtRate(v) {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return '-';
+      return n >= 1000 ? `${Math.round(n).toLocaleString('en-US')}` : n.toFixed(n >= 100 ? 0 : 1);
+    }
     function fmtRatio(v) {
       const n = Number(v);
       if (!Number.isFinite(n) || n <= 0) return '-';
@@ -378,21 +407,75 @@
       if (!Number.isFinite(sentAt)) return null;
       return Math.max(0, Date.now() - sentAt);
     }
+    function senderStats(payload) {
+      return payload?.status?.collector_status?.sender_stats || {};
+    }
+    function computeRates(payload, sender) {
+      const now = performance.now();
+      const status = payload.status || {};
+      const current = {
+        ts: now,
+        events: Number(status.event_count) || 0,
+        trades: Number(status.trade_count) || 0,
+        sent: Number(sender.sent_count) || 0
+      };
+      if (!rateSample) {
+        rateSample = current;
+        return { recvPerSec:null, tradePerSec:null, sentPerSec:Number(sender.sent_per_sec) || null };
+      }
+      const seconds = Math.max(0.001, (current.ts - rateSample.ts) / 1000);
+      const rates = {
+        recvPerSec: Math.max(0, (current.events - rateSample.events) / seconds),
+        tradePerSec: Math.max(0, (current.trades - rateSample.trades) / seconds),
+        sentPerSec: Number(sender.sent_per_sec) || Math.max(0, (current.sent - rateSample.sent) / seconds)
+      };
+      rateSample = current;
+      return rates;
+    }
+    function top20Diagnostics(rows) {
+      const top = [...rows].sort((a, b) => (numeric(a.rank) || 999999) - (numeric(b.rank) || 999999)).slice(0, 20);
+      let maxLag = null;
+      let stale = 0;
+      top.forEach((row) => {
+        const lag = numeric(row.fid20_lag_sec);
+        const age = numeric(row.price_age_sec);
+        if (lag !== null) maxLag = maxLag === null ? lag : Math.max(maxLag, lag);
+        if (age !== null && age > 3) stale += 1;
+      });
+      return {
+        maxLag,
+        stale,
+        realtimeRows: rows.filter((row) => row.row_source === 'realtime').length
+      };
+    }
+
     function render(payload, mode='stream') {
+      const renderStart = performance.now();
       lastPayload = payload;
       markSortHeaders();
       const rawRows = Array.isArray(payload.rows) ? payload.rows : [];
       const rows = sortedRows(rawRows);
       const lag = payloadLagMs(payload);
       const phase = payload.market_session?.phase_label || payload.status?.market_phase_label || '';
+      const sender = senderStats(payload);
+      const rates = computeRates(payload, sender);
+      const top20 = top20Diagnostics(rawRows);
       statusEl.textContent = phase ? `연결 OK · ${phase}` : '연결 OK';
       statusEl.className = mode === 'stream' ? 'badge ok' : 'badge bad';
       countsEl.textContent = `rows ${payload.row_count || rawRows.length} · events ${payload.status?.event_count || 0} · trades ${payload.status?.trade_count || 0}`;
-      latencyEl.textContent = `${mode} ${lag === null ? '-' : lag.toFixed(0)} ms · q ${payload.status?.event_log_queue_size ?? '-'} · sort ${sortState.key}/${sortState.dir}`;
+      latencyEl.textContent = `${mode} ${lag === null ? '-' : lag.toFixed(0)} ms · sort ${sortState.key}/${sortState.dir}`;
+      throughputEl.textContent = `recv/s ${rates.recvPerSec === null ? '-' : fmtRate(rates.recvPerSec)} · trade/s ${rates.tradePerSec === null ? '-' : fmtRate(rates.tradePerSec)}`;
+      collectorMetricsEl.textContent = `collector_q ${sender.pending_total_count ?? '-'} · sent/s ${rates.sentPerSec === null ? '-' : fmtRate(rates.sentPerSec)} · cxl ${sender.coalesced_trade_overwrite_count ?? '-'}`;
+      collectorMetricsEl.className = Number(sender.pending_total_count) > 100 ? 'badge warn' : 'badge';
+      workerMetricsEl.textContent = `worker_q ${payload.status?.event_log_queue_size ?? '-'} · drop ${payload.status?.dropped_trade_count ?? 0} · logdrop ${payload.status?.event_log_dropped_count ?? 0}`;
+      workerMetricsEl.className = Number(payload.status?.event_log_queue_size) > 10000 ? 'badge warn' : 'badge';
+      lagMetricsEl.textContent = `top20 lag ${top20.maxLag === null ? '-' : top20.maxLag.toFixed(1) + 's'} · stale ${top20.stale} · rt ${top20.realtimeRows}`;
+      lagMetricsEl.className = (top20.maxLag !== null && top20.maxLag > 3) || top20.stale > 0 ? 'badge warn' : 'badge';
       const seen = new Set();
       if (!rows.length) {
         rowsEl.innerHTML = '<tr><td colspan="10" class="center">실시간 수신 대기 중입니다.</td></tr>';
         rowByCode.clear();
+        updateTopbarHeight();
         return;
       }
       if (rowsEl.children.length === 1 && rowsEl.children[0].children.length === 1) rowsEl.innerHTML = '';
@@ -410,6 +493,7 @@
           `코드: ${code}`,
           `종목명 클릭: HTS 연동 / Shift+클릭: 코드만 복사`,
           `수신: ${r.trade_time || '-'} / ${Number.isFinite(age) ? age.toFixed(1) + 's' : '-'}`,
+          `FID20 lag: ${Number.isFinite(Number(r.fid20_lag_sec)) ? Number(r.fid20_lag_sec).toFixed(1) + 's' : '-'}`,
           `전일 거래대금: ${fmtNum(r.prev_trade_value_eok, 0)}억`,
           `프로그램 순매수: ${fmtNum(r.program_net, 0)}억`,
           `누적량: ${fmtNum(r.cumulative_volume, 0)}`,
@@ -439,6 +523,10 @@
       }
       scheduleAutoFit();
       updateBoardWidth();
+      updateTopbarHeight();
+      const renderMs = performance.now() - renderStart;
+      renderMetricsEl.textContent = `render ${renderMs.toFixed(1)} ms`;
+      renderMetricsEl.className = renderMs > 50 ? 'badge warn' : 'badge';
     }
     async function fallbackPoll() {
       try {
@@ -485,6 +573,7 @@
     applyColumnWidths();
     initColumnResizers();
     markSortHeaders();
+    updateTopbarHeight();
     connectStream();
   </script>
 </body>
