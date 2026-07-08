@@ -10,11 +10,13 @@ goto run
 echo.
 echo StockBoard v2 Realtime
 echo.
-echo   1 Start v2
+echo   1 Start v2 normal
 echo   2 Stop v2
-echo   3 Restart v2
+echo   3 Restart v2 normal
 echo   4 Status v2
 echo   5 Start HTS Bridge only
+echo   6 Start v2 fast-open ^(trade only, no orderbook^)
+echo   7 Restart v2 fast-open
 echo   0 Exit
 echo.
 set /p "CHOICE=Select: "
@@ -23,6 +25,8 @@ if "%CHOICE%"=="2" set "ACTION=stop"
 if "%CHOICE%"=="3" set "ACTION=restart"
 if "%CHOICE%"=="4" set "ACTION=status"
 if "%CHOICE%"=="5" set "ACTION=ahk"
+if "%CHOICE%"=="6" set "ACTION=start-fast"
+if "%CHOICE%"=="7" set "ACTION=restart-fast"
 if "%CHOICE%"=="0" exit /b 0
 if "%ACTION%"=="" (
   echo Invalid selection.
@@ -198,7 +202,7 @@ function Test-WorkerReady {
     }
 }
 
-function Start-V2 {
+function Start-V2([bool]$FastOpen = $false) {
     Ensure-RuntimeDir
     Write-Step "Stopping old v2 processes"
     Stop-PidFile $CollectorPidFile "collector32"
@@ -236,7 +240,16 @@ function Start-V2 {
     if (-not (Test-Path -LiteralPath $Python32)) {
         throw "32-bit Python not found: $Python32"
     }
-    $collector = Start-Process -FilePath $Python32 -ArgumentList @("realtime_v2\collector32.py", "--limit", "300", "--suffix", "AL", "--orderbook") -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $collectorOut -RedirectStandardError $collectorErr -PassThru
+    $collectorArgs = @("realtime_v2\collector32.py", "--limit", "300", "--suffix", "AL", "--flush-ms", "50")
+    if ($FastOpen) {
+        Write-Host "FAST_OPEN=True"
+        Write-Host "ORDERBOOK=False during fast-open mode"
+    } else {
+        $collectorArgs += "--orderbook"
+        Write-Host "FAST_OPEN=False"
+        Write-Host "ORDERBOOK=True"
+    }
+    $collector = Start-Process -FilePath $Python32 -ArgumentList $collectorArgs -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $collectorOut -RedirectStandardError $collectorErr -PassThru
     Set-Content -LiteralPath $CollectorPidFile -Value $collector.Id -Encoding ASCII
     Write-Host "COLLECTOR32_PID=$($collector.Id)"
     Write-Host "COLLECTOR32_STDOUT=$collectorOut"
@@ -281,15 +294,26 @@ function Status-V2 {
         Write-Host "DROPPED_TRADE_COUNT=$($snapshot.status.dropped_trade_count)"
         Write-Host "LAST_DROPPED_TRADE=$($snapshot.status.last_dropped_trade | ConvertTo-Json -Compress)"
         Write-Host "LAST_EVENT_AT=$($snapshot.status.last_event_at)"
+        $collectorStatus = $snapshot.status.collector_status
+        if ($collectorStatus -and $collectorStatus.sender_stats) {
+            $sender = $collectorStatus.sender_stats
+            Write-Host "COLLECTOR_CONNECTED=$($sender.connected)"
+            Write-Host "COLLECTOR_PENDING_TOTAL=$($sender.pending_total_count)"
+            Write-Host "COLLECTOR_SENT_PER_SEC=$($sender.sent_per_sec)"
+            Write-Host "COLLECTOR_COALESCED_TRADE=$($sender.coalesced_trade_overwrite_count)"
+            Write-Host "COLLECTOR_LAST_ERROR=$($sender.last_error)"
+        }
     } catch {
         Write-Host "WORKER_HEALTH=False"
         Write-Host "ERROR=$($_.Exception.Message)"
     }
 }
 
-if ($Action -eq "start") { Start-V2; exit 0 }
+if ($Action -eq "start") { Start-V2 $false; exit 0 }
+if ($Action -eq "start-fast") { Start-V2 $true; exit 0 }
 if ($Action -eq "stop") { Stop-V2; exit 0 }
-if ($Action -eq "restart") { Stop-V2; Start-V2; exit 0 }
+if ($Action -eq "restart") { Stop-V2; Start-V2 $false; exit 0 }
+if ($Action -eq "restart-fast") { Stop-V2; Start-V2 $true; exit 0 }
 if ($Action -eq "status") { Status-V2; exit 0 }
 if ($Action -eq "ahk") { [void](Start-HtsBridge); exit 0 }
 throw "unknown action: $Action"

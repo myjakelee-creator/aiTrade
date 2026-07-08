@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import argparse
 import os
-import queue
 import socket
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -19,14 +19,113 @@ from realtime_v2.common import DEFAULT_EVENT_PORT, DEFAULT_HOST, normalize_code,
 
 
 class EventSender(threading.Thread):
-    def __init__(self, host: str, port: int, events: "queue.SimpleQueue[dict[str, Any]]"):
+    """Send display events to the 64-bit worker without replaying every tick.
+
+    Kiwoom's 09:00 burst can produce many trade events for the same symbol within
+    a few milliseconds.  The board only needs the latest quote for display, while
+    raw/replay logging can be handled elsewhere.  This sender therefore keeps one
+    pending trade and one pending orderbook event per symbol, then flushes the
+    latest values in short micro-batches.  Direct events such as collector_status
+    are still sent in FIFO order.
+    """
+
+    def __init__(self, host: str, port: int, flush_ms: int = 50):
         super().__init__(daemon=True)
         self.host = host
         self.port = port
-        self.events = events
+        self.flush_sec = max(0.01, min(1.0, float(flush_ms) / 1000.0))
         self.stop_event = threading.Event()
+        self.lock = threading.Lock()
+        self.latest_trade_by_code: dict[str, dict[str, Any]] = {}
+        self.latest_orderbook_by_code: dict[str, dict[str, Any]] = {}
+        self.direct_events: deque[dict[str, Any]] = deque()
         self.sent_count = 0
+        self.sent_per_sec = 0.0
+        self.received_trade_count = 0
+        self.received_orderbook_count = 0
+        self.received_direct_count = 0
+        self.coalesced_trade_overwrite_count = 0
+        self.coalesced_orderbook_overwrite_count = 0
+        self.last_flush_count = 0
+        self.last_flush_at = None
         self.last_error = None
+        self.connected = False
+        self._rate_at = time.monotonic()
+        self._rate_sent_count = 0
+
+    def publish_trade(self, event: dict[str, Any]) -> None:
+        code = normalize_code(event.get("stock_code"))
+        with self.lock:
+            self.received_trade_count += 1
+            if code:
+                if code in self.latest_trade_by_code:
+                    self.coalesced_trade_overwrite_count += 1
+                self.latest_trade_by_code[code] = event
+            else:
+                self.direct_events.append(event)
+
+    def publish_orderbook(self, event: dict[str, Any]) -> None:
+        code = normalize_code(event.get("stock_code"))
+        with self.lock:
+            self.received_orderbook_count += 1
+            if code:
+                if code in self.latest_orderbook_by_code:
+                    self.coalesced_orderbook_overwrite_count += 1
+                self.latest_orderbook_by_code[code] = event
+            else:
+                self.direct_events.append(event)
+
+    def publish_direct(self, event: dict[str, Any]) -> None:
+        with self.lock:
+            self.received_direct_count += 1
+            self.direct_events.append(event)
+
+    def _drain(self) -> list[dict[str, Any]]:
+        with self.lock:
+            direct = list(self.direct_events)
+            trades = list(self.latest_trade_by_code.values())
+            orderbooks = list(self.latest_orderbook_by_code.values())
+            self.direct_events.clear()
+            self.latest_trade_by_code.clear()
+            self.latest_orderbook_by_code.clear()
+        return [*direct, *trades, *orderbooks]
+
+    def _requeue_unsent(self, events: list[dict[str, Any]]) -> None:
+        with self.lock:
+            for event in events:
+                event_type = event.get("type")
+                code = normalize_code(event.get("stock_code"))
+                if event_type == "trade" and code:
+                    self.latest_trade_by_code[code] = event
+                elif event_type == "orderbook" and code:
+                    self.latest_orderbook_by_code[code] = event
+                else:
+                    self.direct_events.appendleft(event)
+
+    def _update_rate(self) -> None:
+        now = time.monotonic()
+        elapsed = now - self._rate_at
+        if elapsed < 1.0:
+            return
+        sent_delta = self.sent_count - self._rate_sent_count
+        self.sent_per_sec = round(sent_delta / elapsed, 2) if elapsed > 0 else 0.0
+        self._rate_at = now
+        self._rate_sent_count = self.sent_count
+
+    def _send_batch(self, sock, events: list[dict[str, Any]]) -> bool:
+        for index, event in enumerate(events):
+            try:
+                sock.sendall(safe_json_dumps(event).encode("utf-8") + b"\n")
+                self.sent_count += 1
+            except OSError as error:
+                self.last_error = str(error)
+                self._requeue_unsent(events[index:])
+                return False
+        if events:
+            self.last_flush_count = len(events)
+            self.last_flush_at = now_text()
+        self._update_rate()
+        return True
 
     def run(self) -> None:
         sock = None
@@ -35,36 +134,65 @@ class EventSender(threading.Thread):
                 try:
                     sock = socket.create_connection((self.host, self.port), timeout=1.0)
                     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    self.connected = True
                     self.last_error = None
                 except OSError as error:
+                    self.connected = False
                     self.last_error = str(error)
-                    time.sleep(0.5)
+                    time.sleep(0.2)
                     continue
-            try:
-                event = self.events.get(timeout=0.2)
-            except Exception:
+            time.sleep(self.flush_sec)
+            events = self._drain()
+            if not events:
+                self._update_rate()
                 continue
-            try:
-                sock.sendall(safe_json_dumps(event).encode("utf-8") + b"\n")
-                self.sent_count += 1
-            except OSError as error:
-                self.last_error = str(error)
+            if not self._send_batch(sock, events):
                 try:
                     sock.close()
                 except OSError:
                     pass
                 sock = None
+                self.connected = False
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+    def stats(self) -> dict[str, Any]:
+        with self.lock:
+            pending_trade = len(self.latest_trade_by_code)
+            pending_orderbook = len(self.latest_orderbook_by_code)
+            pending_direct = len(self.direct_events)
+        return {
+            "connected": self.connected,
+            "flush_ms": int(self.flush_sec * 1000),
+            "pending_trade_count": pending_trade,
+            "pending_orderbook_count": pending_orderbook,
+            "pending_direct_count": pending_direct,
+            "pending_total_count": pending_trade + pending_orderbook + pending_direct,
+            "received_trade_count": self.received_trade_count,
+            "received_orderbook_count": self.received_orderbook_count,
+            "received_direct_count": self.received_direct_count,
+            "coalesced_trade_overwrite_count": self.coalesced_trade_overwrite_count,
+            "coalesced_orderbook_overwrite_count": self.coalesced_orderbook_overwrite_count,
+            "sent_count": self.sent_count,
+            "sent_per_sec": self.sent_per_sec,
+            "last_flush_count": self.last_flush_count,
+            "last_flush_at": self.last_flush_at,
+            "last_error": self.last_error,
+        }
 
     def stop(self) -> None:
         self.stop_event.set()
 
 
 class PublishingStore:
-    def __init__(self, events: "queue.SimpleQueue[dict[str, Any]]"):
-        self.events = events
+    def __init__(self, sender: EventSender):
+        self.sender = sender
 
     def update_trade(self, stock_code, values=None, **kwargs):
-        self.events.put(
+        self.sender.publish_trade(
             {
                 "type": "trade",
                 "ts": now_text(),
@@ -76,7 +204,7 @@ class PublishingStore:
         return values if isinstance(values, dict) else {}
 
     def update_orderbook(self, stock_code, orderbook=None, **kwargs):
-        self.events.put(
+        self.sender.publish_orderbook(
             {
                 "type": "orderbook",
                 "ts": now_text(),
@@ -88,7 +216,7 @@ class PublishingStore:
         return orderbook if isinstance(orderbook, dict) else {}
 
     def update_close_metrics(self, stock_code, metrics):
-        self.events.put(
+        self.sender.publish_direct(
             {
                 "type": "close_metrics",
                 "ts": now_text(),
@@ -142,6 +270,25 @@ def load_codes(path_text: str, codes_text: str, limit: int, suffix: str) -> list
     return result
 
 
+def publish_collector_status(sender: EventSender, provider, extra: dict[str, Any] | None = None) -> None:
+    try:
+        provider_status = provider.status()
+    except Exception as error:
+        provider_status = {"error": str(error)}
+    sender_stats = sender.stats()
+    payload = {
+        "type": "collector_status",
+        "ts": now_text(),
+        "status": provider_status,
+        "sender_stats": sender_stats,
+        "sender_sent_count": sender_stats.get("sent_count"),
+        "sender_last_error": sender_stats.get("last_error"),
+    }
+    if extra:
+        payload.update(extra)
+    sender.publish_direct(payload)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="StockBoard v2 32-bit collector adapter")
     parser.add_argument("--host", default=DEFAULT_HOST)
@@ -151,6 +298,7 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=300)
     parser.add_argument("--suffix", default="AL")
     parser.add_argument("--orderbook", action="store_true")
+    parser.add_argument("--flush-ms", type=int, default=int(os.getenv("STOCKBOARD_V2_COLLECTOR_FLUSH_MS", "50")))
     args = parser.parse_args()
 
     if args.orderbook:
@@ -163,26 +311,24 @@ def main() -> int:
     os.environ.setdefault("STOCKBOARD_PRICE_FAST_MODE", "1")
     os.environ.setdefault("STOCKBOARD_REALTIME_CODE_LIMIT", str(max(1, int(args.limit or 300))))
 
-    events: "queue.SimpleQueue[dict[str, Any]]" = queue.SimpleQueue()
-    sender = EventSender(args.host, args.event_port, events)
+    sender = EventSender(args.host, args.event_port, flush_ms=args.flush_ms)
     sender.start()
-    store = PublishingStore(events)
+    store = PublishingStore(sender)
     provider = KiwoomOpenApiRealtimeProvider(store=store)
     codes = load_codes(args.codes_file, args.codes, args.limit, args.suffix)
-    print(f"collector codes={len(codes)} suffix={args.suffix} orderbook={args.orderbook}", flush=True)
+    print(f"collector codes={len(codes)} suffix={args.suffix} orderbook={args.orderbook} flush_ms={args.flush_ms}", flush=True)
     started = provider.start()
     print(f"provider_start={started}", flush=True)
     if not started:
-        status = provider.status()
-        events.put({"type": "collector_status", "ts": now_text(), "status": status, "sender_sent_count": sender.sent_count, "sender_last_error": sender.last_error})
-        print(f"provider_status={status}", flush=True)
+        publish_collector_status(sender, provider, {"provider_started": False})
+        print(f"provider_status={provider.status()}", flush=True)
+        time.sleep(0.2)
         return 1
     registered_count = provider.register_codes(codes)
     print(f"registered_count={registered_count}", flush=True)
     try:
         while True:
-            status = provider.status()
-            events.put({"type": "collector_status", "ts": now_text(), "status": status, "sender_sent_count": sender.sent_count, "sender_last_error": sender.last_error})
+            publish_collector_status(sender, provider, {"provider_started": True, "registered_count": registered_count})
             time.sleep(1.0)
     except KeyboardInterrupt:
         return 0
