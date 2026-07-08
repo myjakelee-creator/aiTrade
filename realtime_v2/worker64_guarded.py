@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +28,7 @@ from realtime_v2.common import (
     trading_date_text,
 )
 from realtime_v2.market_session import market_session_now
+from stockboard_ranking_engine import enrich_net_buy_strength_v02_fields
 
 STALE_LAG_WARN_SEC = 10.0
 PREVIOUS_VALUE_KEYS = (
@@ -47,6 +49,14 @@ PERSISTED_LIVE_KEYS = (
     "best_ask_price",
     "best_bid_price",
     "orderbook_received_at",
+    "day_open",
+    "day_high",
+    "day_low",
+    "day_close",
+    "ohlc",
+    "strength_1m",
+    "one_min_strength_delta",
+    "one_min_strength_growth_rate",
 )
 base.DAILY_PERSIST_KEYS = tuple(dict.fromkeys((*base.DAILY_PERSIST_KEYS, *PERSISTED_LIVE_KEYS)))
 
@@ -184,7 +194,7 @@ def _mark_lag_warning(state, quote: dict[str, Any], code: str, values: dict[str,
 def _restore_persisted_live_metrics(quote: dict[str, Any], persisted: dict[str, Any]) -> None:
     for key in PERSISTED_LIVE_KEYS:
         if key in persisted:
-            quote[key] = persisted.get(key)
+            quote[key] = deepcopy(persisted.get(key))
 
 
 def _persist_live_metrics(state, code: str, quote: dict[str, Any], *keys: str) -> None:
@@ -196,7 +206,7 @@ def _persist_live_metrics(state, code: str, quote: dict[str, Any], *keys: str) -
         value = quote.get(key)
         if value not in (None, ""):
             if entry.get(key) != value:
-                entry[key] = value
+                entry[key] = deepcopy(value)
                 changed = True
     if changed:
         state._mark_daily_dirty()
@@ -246,8 +256,104 @@ def _copy_previous_fields(state, code: str, target: dict[str, Any], seed: dict[s
                 target[key] = value
 
 
+def _update_intraday_ohlc(quote: dict[str, Any], price: float | int | None) -> None:
+    value = to_number(price)
+    if value is None or value <= 0:
+        return
+    current = quote.get("ohlc") if isinstance(quote.get("ohlc"), dict) else {}
+    open_price = to_number(current.get("open") or quote.get("day_open")) or float(value)
+    high_price = max(to_number(current.get("high") or quote.get("day_high")) or float(value), float(value))
+    low_price = min(to_number(current.get("low") or quote.get("day_low")) or float(value), float(value))
+    ohlc = {
+        "open": round(open_price, 4),
+        "high": round(high_price, 4),
+        "low": round(low_price, 4),
+        "close": round(float(value), 4),
+        "source": "realtime_intraday",
+    }
+    quote["ohlc"] = ohlc
+    quote["day_open"] = ohlc["open"]
+    quote["day_high"] = ohlc["high"]
+    quote["day_low"] = ohlc["low"]
+    quote["day_close"] = ohlc["close"]
+
+
+def _update_one_min_strength(quote: dict[str, Any], strength: float | int | None) -> None:
+    value = to_number(strength)
+    if value is None:
+        return
+    now_monotonic = time.monotonic()
+    raw_samples = quote.get("_strength_samples") if isinstance(quote.get("_strength_samples"), list) else []
+    samples: list[list[float]] = []
+    for item in raw_samples:
+        try:
+            ts = float(item[0])
+            sample_value = float(item[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if now_monotonic - ts <= 60.0:
+            samples.append([ts, sample_value])
+    if samples and now_monotonic - samples[-1][0] < 1.0:
+        samples[-1] = [now_monotonic, float(value)]
+    else:
+        samples.append([now_monotonic, float(value)])
+    samples = samples[-70:]
+    quote["_strength_samples"] = samples
+    baseline = samples[0][1] if samples else float(value)
+    delta = round(float(value) - float(baseline), 4)
+    quote["strength_1m"] = delta
+    quote["one_min_strength_delta"] = delta
+    quote["one_min_strength_growth_rate"] = delta
+    quote["strength_1m_updated_at"] = now_text()
+
+
+def _load_json_first(paths: list[Path]) -> dict[str, Any] | None:
+    for path in paths:
+        try:
+            if path.is_file():
+                payload = json.loads(path.read_text(encoding="utf-8-sig"))
+                if isinstance(payload, dict):
+                    return payload
+        except (OSError, json.JSONDecodeError):
+            continue
+    return None
+
+
+def _runtime_context_payload() -> dict[str, Any]:
+    market_supply = _load_json_first(
+        [
+            RUNTIME_DIR / "market_supply.json",
+            ROOT / "data" / "runtime" / "market_supply.json",
+            ROOT / "docs" / "assets" / "market_supply_snapshot.json",
+            ROOT / "docs" / "assets" / "stockboard_market_supply.json",
+        ]
+    )
+    us_market = _load_json_first(
+        [
+            RUNTIME_DIR / "us_market.json",
+            ROOT / "data" / "runtime" / "us_market.json",
+            ROOT / "docs" / "assets" / "us_market_snapshot.json",
+            ROOT / "docs" / "assets" / "stockboard_us_market.json",
+        ]
+    )
+    return {
+        "schema_version": 1,
+        "ts": now_text(),
+        "market_supply": market_supply or {},
+        "us_market": us_market or {},
+        "source_policy": "read_only_snapshot_files_no_realtime_pipeline_work",
+    }
+
+
+def _candidate_models_payload() -> dict[str, Any]:
+    registry_path = ROOT / "configs" / "candidate_models" / "_registry.json"
+    payload = _load_json_first([registry_path]) or {"models": []}
+    payload.setdefault("schema_version", 1)
+    payload.setdefault("source", str(registry_path))
+    return payload
+
+
 def _guarded_load_universe(self) -> None:
-    """Load seed rows and create base quotes for the whole universe."""
     self.seed_by_code: dict[str, dict[str, Any]] = {}
     self.prev_trade_value_cache_by_code = _load_previous_trade_value_cache()
     try:
@@ -261,15 +367,11 @@ def _guarded_load_universe(self) -> None:
                 continue
             universe_count += 1
             self.name_by_code[code] = str(item.get("stock_name") or code)
-            self.seed_rank_by_code[code] = int(
-                item.get("seed_rank") or item.get("original_rank") or 999999
-            )
+            self.seed_rank_by_code[code] = int(item.get("seed_rank") or item.get("original_rank") or 999999)
             previous_rank = to_int(item.get("prev_rank"))
             previous_value = to_number(item.get("prev_trade_value_eok"))
             if previous_value is None or previous_value <= 0:
-                previous_value = to_number(
-                    self.prev_trade_value_cache_by_code.get(code, {}).get("prev_trade_value_eok")
-                )
+                previous_value = to_number(self.prev_trade_value_cache_by_code.get(code, {}).get("prev_trade_value_eok"))
             if previous_rank is not None and previous_rank > 0:
                 self.prev_rank_by_code[code] = previous_rank
             if previous_value is not None and previous_value > 0:
@@ -327,6 +429,7 @@ def _guarded_quote(self, code: str) -> dict[str, Any]:
     if seed_price is not None:
         quote["price"] = seed_price
         quote["seed_price"] = seed_price
+        _update_intraday_ohlc(quote, seed_price)
     if seed_rate is not None:
         quote["change_rate"] = seed_rate
         quote["seed_change_rate"] = seed_rate
@@ -355,13 +458,7 @@ def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
         elif row.get("price") is not None:
             row["price_age_sec"] = None
         _copy_previous_fields(self, row.get("stock_code"), row, getattr(self, "seed_by_code", {}).get(row.get("stock_code"), {}) or {})
-    rows.sort(
-        key=lambda row: (
-            -(to_number(row.get("trade_value_eok")) or 0),
-            row.get("seed_rank") or 999999,
-            row.get("stock_code") or "",
-        )
-    )
+    rows.sort(key=lambda row: (-(to_number(row.get("trade_value_eok")) or 0), row.get("seed_rank") or 999999, row.get("stock_code") or ""))
     amount_ratio_ready_count = 0
     amount_ratio_missing_count = 0
     for rank, row in enumerate(rows, start=1):
@@ -376,9 +473,14 @@ def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
         else:
             row["amount_ratio"] = None
             amount_ratio_missing_count += 1
-            row["amount_ratio_missing_reason"] = (
-                "prev_trade_value_missing" if previous_amount is None or previous_amount <= 0 else "current_trade_value_missing"
-            )
+            row["amount_ratio_missing_reason"] = "prev_trade_value_missing" if previous_amount is None or previous_amount <= 0 else "current_trade_value_missing"
+    try:
+        rows = enrich_net_buy_strength_v02_fields(rows)
+        self.status["candidate_model_id"] = "NET_BUY_STRENGTH_V02"
+        self.status["candidate_grade_count"] = len(rows)
+        self.status["candidate_grade_last_error"] = None
+    except Exception as error:
+        self.status["candidate_grade_last_error"] = str(error)
     self.status["amount_ratio_ready_count"] = amount_ratio_ready_count
     self.status["amount_ratio_missing_count"] = amount_ratio_missing_count
     return rows[:limit]
@@ -387,60 +489,26 @@ def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
 def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
     values = base.merged_event_values(event)
     raw = values.get("raw") if isinstance(values.get("raw"), dict) else values
-    code = normalize_code(
-        event.get("stock_code")
-        or event.get("received_code")
-        or values.get("stock_code")
-        or values.get("normalized_code")
-        or values.get("received_code")
-    )
+    code = normalize_code(event.get("stock_code") or event.get("received_code") or values.get("stock_code") or values.get("normalized_code") or values.get("received_code"))
     if not code:
         return
     session = _update_market_session_status(self)
     quote = self._quote(code)
-    price = normalized_price(
-        raw.get("price_raw")
-        or values.get("price")
-        or values.get("trade_price")
-        or values.get("realtime_price")
-    )
-    change_rate = normalized_rate(
-        raw.get("change_rate_raw")
-        or values.get("change_rate")
-        or values.get("realtime_change_rate")
-    )
+    price = normalized_price(raw.get("price_raw") or values.get("price") or values.get("trade_price") or values.get("realtime_price"))
+    change_rate = normalized_rate(raw.get("change_rate_raw") or values.get("change_rate") or values.get("realtime_change_rate"))
     trade_qty = to_int(raw.get("trade_qty_raw") or values.get("trade_qty"))
-    cumulative_volume = to_int(
-        raw.get("cumulative_volume_raw") or values.get("cumulative_volume")
-    )
-    trade_value_eok = None
-    if values.get("trade_value_eok") not in (None, ""):
-        trade_value_eok = to_number(values.get("trade_value_eok"))
+    cumulative_volume = to_int(raw.get("cumulative_volume_raw") or values.get("cumulative_volume"))
+    trade_value_eok = to_number(values.get("trade_value_eok")) if values.get("trade_value_eok") not in (None, "") else None
     if trade_value_eok is None:
-        trade_value_eok = normalized_trade_value_eok(
-            raw.get("cumulative_value_raw") or values.get("cumulative_value")
-        )
+        trade_value_eok = normalized_trade_value_eok(raw.get("cumulative_value_raw") or values.get("cumulative_value"))
     if trade_value_eok is not None:
         trade_value_eok = round(float(trade_value_eok), 4)
-    strength = to_number(
-        raw.get("execution_strength_raw") or values.get("execution_strength")
-    )
-    trade_time_raw = (
-        raw.get("trade_time_raw")
-        or values.get("fid20_trade_time")
-        or values.get("trade_time")
-    )
+    strength = to_number(raw.get("execution_strength_raw") or values.get("execution_strength"))
+    trade_time_raw = raw.get("trade_time_raw") or values.get("fid20_trade_time") or values.get("trade_time")
     trade_time = normalize_trade_time(trade_time_raw) or str(trade_time_raw or "")
     trade_time_sec = _time_seconds(trade_time_raw)
     fid20_lag_sec = _lag_seconds(trade_time_sec)
-    received_at = (
-        event.get("ts")
-        or values.get("price_received_at")
-        or values.get("trade_received_at")
-        or values.get("received_at")
-        or now_text()
-    )
-
+    received_at = event.get("ts") or values.get("price_received_at") or values.get("trade_received_at") or values.get("received_at") or now_text()
     previous_time_sec = quote.get("_trade_time_seconds")
     previous_value = to_number(quote.get("trade_value_eok"))
     previous_volume = to_int(quote.get("cumulative_volume"))
@@ -460,19 +528,14 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
     if drop_reason is None and has_accepted_realtime and cumulative_volume is not None and previous_volume is not None:
         if int(cumulative_volume) < int(previous_volume):
             drop_reason = "cumulative_volume_decreased"
-    # Do NOT drop by absolute FID20 lag alone. During halts and closing phases,
-    # Kiwoom can send delayed-but-monotonic events. Dropping every delayed first
-    # event leaves price/rate/value blank. We warn on lag but accept monotonic
-    # events; decreasing cumulative value/volume and older trade-time events are
-    # still rejected after a realtime event has already been accepted.
     if drop_reason is not None:
         _drop_trade(self, quote, code, drop_reason, event, values, trade_time, fid20_lag_sec)
         return
     _mark_lag_warning(self, quote, code, values, trade_time, fid20_lag_sec)
-
     if price is not None:
         quote["price"] = price
         quote["trade_price"] = price
+        _update_intraday_ohlc(quote, price)
     if change_rate is not None:
         quote["change_rate"] = change_rate
     if trade_qty is not None:
@@ -484,7 +547,10 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
     if strength is not None:
         quote["execution_strength"] = round(strength, 4)
         quote["execution_strength_updated_at"] = received_at
-        _persist_live_metrics(self, code, quote, "execution_strength", "execution_strength_updated_at")
+        _update_one_min_strength(quote, strength)
+        _persist_live_metrics(self, code, quote, "execution_strength", "execution_strength_updated_at", "strength_1m", "one_min_strength_delta", "one_min_strength_growth_rate")
+    if price is not None:
+        _persist_live_metrics(self, code, quote, "day_open", "day_high", "day_low", "day_close", "ohlc")
     quote["trade_time"] = trade_time
     if trade_time_sec is not None:
         quote["_trade_time_seconds"] = trade_time_sec
@@ -496,28 +562,18 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
     quote["row_source"] = "realtime"
     quote.pop("last_dropped_trade_reason", None)
     self.status["trade_count"] += 1
-
     if trade_qty and price:
         trade_amount = abs(trade_qty) * price
         if trade_amount >= LARGE_TRADE_THRESHOLD_KRW:
             eok = trade_amount / 100_000_000
             if trade_qty > 0:
                 quote["large_trade_buy_count"] += 1
-                quote["large_trade_buy_sum_eok"] = round(
-                    quote["large_trade_buy_sum_eok"] + eok, 4
-                )
+                quote["large_trade_buy_sum_eok"] = round(quote["large_trade_buy_sum_eok"] + eok, 4)
             elif trade_qty < 0:
                 quote["large_trade_sell_count"] += 1
-                quote["large_trade_sell_sum_eok"] = round(
-                    quote["large_trade_sell_sum_eok"] + eok, 4
-                )
-            quote["large_trade_net_count"] = (
-                quote["large_trade_buy_count"] - quote["large_trade_sell_count"]
-            )
-            quote["large_trade_net_sum_eok"] = round(
-                quote["large_trade_buy_sum_eok"] - quote["large_trade_sell_sum_eok"],
-                4,
-            )
+                quote["large_trade_sell_sum_eok"] = round(quote["large_trade_sell_sum_eok"] + eok, 4)
+            quote["large_trade_net_count"] = quote["large_trade_buy_count"] - quote["large_trade_sell_count"]
+            quote["large_trade_net_sum_eok"] = round(quote["large_trade_buy_sum_eok"] - quote["large_trade_sell_sum_eok"], 4)
             daily_entry = self.daily_values_by_code.setdefault(code, {})
             for key in base.DAILY_PERSIST_KEYS:
                 if key.startswith("large_trade_"):
@@ -531,31 +587,13 @@ _original_apply_orderbook = base.State._apply_orderbook
 def _guarded_apply_orderbook(self, event: dict[str, Any]) -> None:
     _original_apply_orderbook(self, event)
     values = base.merged_event_values(event)
-    code = normalize_code(
-        event.get("stock_code")
-        or event.get("received_code")
-        or values.get("stock_code")
-        or values.get("normalized_code")
-        or values.get("received_code")
-    )
+    code = normalize_code(event.get("stock_code") or event.get("received_code") or values.get("stock_code") or values.get("normalized_code") or values.get("received_code"))
     if not code:
         return
     quote = self.quotes.get(code)
     if not isinstance(quote, dict):
         return
-    _persist_live_metrics(
-        self,
-        code,
-        quote,
-        "ask_volume",
-        "bid_volume",
-        "ask_pct",
-        "bid_pct",
-        "bid_ask_ratio",
-        "best_ask_price",
-        "best_bid_price",
-        "orderbook_received_at",
-    )
+    _persist_live_metrics(self, code, quote, "ask_volume", "bid_volume", "ask_pct", "bid_pct", "bid_ask_ratio", "best_ask_price", "best_bid_price", "orderbook_received_at")
 
 
 _original_snapshot = base.State.snapshot
@@ -566,17 +604,22 @@ def _guarded_snapshot(self, limit: int = 300) -> dict[str, Any]:
     payload = _original_snapshot(self, limit)
     payload["market_session"] = session
     if isinstance(payload.get("status"), dict):
-        payload["status"].update(
-            {
-                "market_phase": session.get("phase"),
-                "market_phase_label": session.get("phase_label"),
-                "market_trading_date": session.get("trading_date"),
-                "market_accept_realtime": session.get("accept_realtime"),
-                "market_freeze_realtime_missing": session.get("freeze_realtime_missing"),
-                "market_session_reason": session.get("reason"),
-            }
-        )
+        payload["status"].update({"market_phase": session.get("phase"), "market_phase_label": session.get("phase_label"), "market_trading_date": session.get("trading_date"), "market_accept_realtime": session.get("accept_realtime"), "market_freeze_realtime_missing": session.get("freeze_realtime_missing"), "market_session_reason": session.get("reason")})
     return payload
+
+
+_original_do_get = base.WebHandler.do_GET
+
+
+def _guarded_do_GET(self) -> None:
+    parsed = base.urlparse(self.path)
+    if parsed.path == "/api/v2/candidate_models":
+        self._json(_candidate_models_payload())
+        return
+    if parsed.path == "/api/v2/context":
+        self._json(_runtime_context_payload())
+        return
+    _original_do_get(self)
 
 
 base.State._load_universe = _guarded_load_universe
@@ -585,6 +628,7 @@ base.State.rows = _guarded_rows
 base.State._apply_trade = _guarded_apply_trade
 base.State._apply_orderbook = _guarded_apply_orderbook
 base.State.snapshot = _guarded_snapshot
+base.WebHandler.do_GET = _guarded_do_GET
 
 if __name__ == "__main__":
     raise SystemExit(base.main())
