@@ -18,6 +18,27 @@ from kiwoom_data_provider import KiwoomOpenApiRealtimeProvider  # noqa: E402
 from realtime_v2.common import DEFAULT_EVENT_PORT, DEFAULT_HOST, normalize_code, now_text, safe_json_dumps  # noqa: E402
 
 
+def hide_console_after_login_if_requested() -> bool:
+    if os.name != "nt":
+        return False
+
+    flag = str(os.getenv("STOCKBOARD_HIDE_COLLECTOR_CONSOLE_AFTER_LOGIN", "")).strip().lower()
+    if flag not in {"1", "true", "yes", "on"}:
+        return False
+
+    try:
+        import ctypes
+
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+            return True
+    except Exception:
+        return False
+
+    return False
+
+
 def _to_int(value: Any) -> int | None:
     if value in (None, ""):
         return None
@@ -384,6 +405,8 @@ def main() -> int:
         return 1
     registered_count = provider.register_codes(codes)
     print(f"registered_count={registered_count}", flush=True)
+    if hide_console_after_login_if_requested():
+        print("collector_console_hidden_after_login=True", flush=True)
     try:
         while True:
             publish_collector_status(sender, provider, {"provider_started": True, "registered_count": registered_count})

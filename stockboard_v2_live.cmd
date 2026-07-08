@@ -261,7 +261,8 @@ function Start-V2([bool]$FastOpen = $false) {
         Write-Host "FAST_OPEN=False"
         Write-Host "ORDERBOOK=True"
     }
-    $collector = Start-Process -FilePath $Python32 -ArgumentList $collectorArgs -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $collectorOut -RedirectStandardError $collectorErr -PassThru
+    $env:STOCKBOARD_HIDE_COLLECTOR_CONSOLE_AFTER_LOGIN = "1"
+    $collector = Start-Process -FilePath $Python32 -ArgumentList $collectorArgs -WorkingDirectory $ProjectRoot -WindowStyle Normal -RedirectStandardOutput $collectorOut -RedirectStandardError $collectorErr -PassThru
     Set-Content -LiteralPath $CollectorPidFile -Value $collector.Id -Encoding ASCII
     Write-Host "COLLECTOR32_PID=$($collector.Id)"
     Write-Host "COLLECTOR32_STDOUT=$collectorOut"
