@@ -479,7 +479,12 @@ def _is_aftermarket_session(session: dict[str, Any] | None) -> bool:
     session = session or {}
     phase = str(session.get("phase") or "").lower()
     label = str(session.get("phase_label") or "")
-    return "after" in phase or "???" in label
+
+    # 15:30~15:40 after_wait, 15:40~20:00 aftermarket, 20:00 ?? closed ??
+    # ??? ??? ?? ???? 5??? ?? ??? ????.
+    if phase in {"after_wait", "aftermarket", "closed"}:
+        return True
+    return "after" in phase or "???" in label or "???" in label
 
 
 def _is_regular_session(session: dict[str, Any] | None) -> bool:
@@ -502,7 +507,12 @@ def _apply_aftermarket_strength_display_policy(quote: dict[str, Any], session: d
         quote["strength_display_basis"] = "5? ???? ??"
         return
 
-    held = to_number(quote.get("regular_close_strength_1m") or quote.get("strength_1m") or quote.get("one_min_strength"))
+    held = to_number(
+        quote.get("regular_close_strength_1m")
+        or quote.get("strength_1m")
+        or quote.get("one_min_strength")
+        or quote.get("execution_strength")
+    )
     if held is not None:
         value = round(max(0.0, min(ONE_MIN_STRENGTH_CAP, float(held))), 4)
         quote["strength_1m"] = value

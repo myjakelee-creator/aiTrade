@@ -275,7 +275,29 @@
   function clsSigned(v){const n=Number(v);return!Number.isFinite(n)?'':n>0?'plus':n<0?'minus':'zero';}
   function clsRatio(v){const n=Number(v);return!Number.isFinite(n)||n<=0?'zero':n>=1?'ratio-hot':'ratio-cold';}
   function clsStrength(v){const n=Number(v);return!Number.isFinite(n)?'':n>=100?'strength-hot':'strength-cold';}
-  function barGradient(key, raw){ const n=Number(raw); if(!Number.isFinite(n)||n<=0)return ''; let redPct=50; if(key==='bid_ask_ratio'){ const value=Math.min(20,Math.max(0,n)); redPct=value/(value+1)*100; } else { const value=Math.min(500,Math.max(0,n)); redPct=value/(value+100)*100; } const split=Math.max(0,Math.min(100,100-redPct)); return `background:linear-gradient(90deg, rgba(18,102,214,.72) 0%, rgba(18,102,214,.72) ${split.toFixed(1)}%, rgba(215,25,32,.72) ${split.toFixed(1)}%, rgba(215,25,32,.72) 100%)`; }
+  function visualStrengthValue(raw){
+    const n=Number(raw);
+    if(!Number.isFinite(n)) return null;
+    const diff=n-100;
+    const boost=1.4*Math.exp(-Math.abs(diff)/35);
+    const visual=100+diff*(1+boost);
+    return Math.max(0,Math.min(500,visual));
+  }
+  function barGradient(key, raw){
+    const n=Number(raw);
+    if(!Number.isFinite(n)||n<=0)return '';
+    let redPct=50;
+    if(key==='bid_ask_ratio'){
+      const value=Math.min(20,Math.max(0,n));
+      redPct=value/(value+1)*100;
+    } else {
+      const value=visualStrengthValue(n);
+      if(value===null)return '';
+      redPct=value/(value+100)*100;
+    }
+    const split=Math.max(0,Math.min(100,100-redPct));
+    return `background:linear-gradient(90deg, rgba(18,102,214,.72) 0%, rgba(18,102,214,.72) ${split.toFixed(1)}%, rgba(215,25,32,.72) ${split.toFixed(1)}%, rgba(215,25,32,.72) 100%)`;
+  }
   function metricCell(key, rawValue, displayText, numberClass, title){ const mode=metricModes[key]||'number'; const barStyle=mode==='bar'?barGradient(key, rawValue):''; const cls=`num metric-toggle-cell ${numberClass||''} ${mode==='bar'?'metric-bar-cell':''}`.trim(); const text=mode==='bar'?'':displayText; const fullTitle=`${title || ''}\n클릭: ${mode==='bar'?'숫자':'배경색'} 표시로 전환`; return `<td class="${cls}" data-metric-key="${key}" title="${escapeHtml(fullTitle)}" style="${barStyle}">${escapeHtml(text)}</td>`; }
   function gradeHtml(r){const t=r.candidate_grade_text||r.grade_text||r.grade||r.candidate_grade||'-';const l=String(t).slice(0,1).toLowerCase();return`<span class="grade ${['a','b','c','d','f'].includes(l)?l:''}" title="score ${r.grade_score??'-'}">${escapeHtml(t)}</span>`;}
   function deriveClientFields(row){ const r={...row}; const code=String(r.stock_code||''); const price=numeric(r.price); if(code&&price!==null){ const o=clientOhlc.get(code)||{open:price,high:price,low:price,close:price}; o.high=Math.max(o.high,price); o.low=Math.min(o.low,price); o.close=price; clientOhlc.set(code,o); if(!r.ohlc)r.ohlc=o; } const s=numeric(r.execution_strength); if(code&&s!==null&&r.strength_1m===undefined){ const now=performance.now(); const arr=(strengthSamples.get(code)||[]).filter(x=>now-x.t<=60000); if(!arr.length||now-arr[arr.length-1].t>=1000)arr.push({t:now,v:s}); else arr[arr.length-1]={t:now,v:s}; strengthSamples.set(code,arr.slice(-70)); r.strength_1m=s-(arr[0]?.v??s); } return r; }
