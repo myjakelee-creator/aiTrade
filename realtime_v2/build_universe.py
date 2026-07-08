@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,7 +17,6 @@ if str(ROOT) not in sys.path:
 from kiwoom_data_provider import (  # noqa: E402
     _first,
     _post_json,
-    _select_daily_rows,
     fetch_trade_value_top100,
     issue_access_token,
 )
@@ -58,12 +58,15 @@ def _name_map_from_csv() -> dict[str, str]:
     return result
 
 
-def _load_previous_trade_value_entries(query_date: str) -> dict[str, dict[str, Any]]:
-    candidates = [
+def _previous_trade_value_cache_paths(query_date: str) -> list[Path]:
+    return [
         ROOT / "data" / "runtime" / f"previous_trade_value_{query_date}.json",
         RUNTIME_DIR / f"previous_trade_value_{query_date}.json",
     ]
-    for path in candidates:
+
+
+def _load_previous_trade_value_entries(query_date: str) -> dict[str, dict[str, Any]]:
+    for path in _previous_trade_value_cache_paths(query_date):
         try:
             if not path.is_file():
                 continue
@@ -81,37 +84,98 @@ def _load_previous_trade_value_entries(query_date: str) -> dict[str, dict[str, A
     return {}
 
 
-def _request_previous_value_one(access_token: str, code: str, query_date: str, registered_code: str) -> dict[str, Any] | None:
+def _save_previous_trade_value_entries(query_date: str, entries: dict[str, dict[str, Any]]) -> None:
+    if not entries:
+        return
+    payload = {
+        "schema_version": 1,
+        "source": "stockboard_v2_build_universe_ka10086_previous_daily_row",
+        "query_date": query_date,
+        "updated_at": now_text(),
+        "entries": entries,
+    }
     try:
-        response = _post_json(
-            "/api/dostk/mrkcond",
-            {
-                "stk_cd": registered_code,
-                "qry_dt": query_date,
-                "indc_tp": "1",
-            },
-            {
-                "Authorization": f"Bearer {access_token}",
-                "api-id": "ka10086",
-                "cont-yn": "N",
-                "next-key": "",
-            },
-        )
-        daily_rows = _first(response, "daly_stkpc", "daily_stock_price", "output")
-        if not isinstance(daily_rows, list):
-            return None
-        _current_row, previous_row = _select_daily_rows(daily_rows, query_date)
-        value_data = previous_trade_value_from_daily_row(previous_row)
-        value = to_number(value_data.get("prev_trade_value_eok"))
-        if value is None or value <= 0:
-            return None
-        return {
-            **value_data,
-            "prev_trade_value_lookup_source": f"ka10086:{registered_code}",
-            "stock_code": code,
-        }
+        atomic_write_json(_previous_trade_value_cache_paths(query_date)[0], payload)
     except Exception:
+        pass
+
+
+def _row_date_text(row: dict[str, Any] | None) -> str:
+    if not isinstance(row, dict):
+        return ""
+    value = _first(row, "date", "dt", "일자", "trd_dd", "bas_dt", "stck_bsop_date")
+    digits = "".join(character for character in str(value or "") if character.isdigit())
+    return digits[:8] if len(digits) >= 8 else ""
+
+
+def _select_previous_trade_value_row(daily_rows: list[Any], query_date: str) -> dict[str, Any] | None:
+    """Pick the latest daily row strictly before query_date.
+
+    ka10086 does not always return a usable current-day row for every stock during
+    the session.  The previous implementation depended on a current/previous pair;
+    when the current row was missing, the previous trade value stayed blank.  For
+    the amount-ratio denominator we only need the most recent completed daily row
+    before today's trading date, so choose it directly by date when possible.
+    """
+    rows = [row for row in daily_rows if isinstance(row, dict)]
+    if not rows:
         return None
+    query_digits = "".join(character for character in str(query_date or "") if character.isdigit())[:8]
+    dated_rows: list[tuple[str, dict[str, Any]]] = []
+    for row in rows:
+        row_date = _row_date_text(row)
+        if row_date:
+            dated_rows.append((row_date, row))
+    if query_digits and dated_rows:
+        older_rows = [item for item in dated_rows if item[0] < query_digits]
+        if older_rows:
+            return sorted(older_rows, key=lambda item: item[0], reverse=True)[0][1]
+        not_future_rows = [item for item in dated_rows if item[0] <= query_digits]
+        if not_future_rows:
+            return sorted(not_future_rows, key=lambda item: item[0], reverse=True)[0][1]
+    # Last-resort fallback for undocumented/no-date responses.  Prefer the second
+    # row because Kiwoom daily rows usually arrive latest-first with current first.
+    if len(rows) >= 2:
+        return rows[1]
+    return rows[0]
+
+
+def _request_previous_value_one(access_token: str, code: str, query_date: str, registered_code: str) -> dict[str, Any] | None:
+    for attempt in range(2):
+        try:
+            response = _post_json(
+                "/api/dostk/mrkcond",
+                {
+                    "stk_cd": registered_code,
+                    "qry_dt": query_date,
+                    "indc_tp": "1",
+                },
+                {
+                    "Authorization": f"Bearer {access_token}",
+                    "api-id": "ka10086",
+                    "cont-yn": "N",
+                    "next-key": "",
+                },
+            )
+            daily_rows = _first(response, "daly_stkpc", "daily_stock_price", "output")
+            if not isinstance(daily_rows, list):
+                return None
+            previous_row = _select_previous_trade_value_row(daily_rows, query_date)
+            value_data = previous_trade_value_from_daily_row(previous_row)
+            value = to_number(value_data.get("prev_trade_value_eok"))
+            if value is None or value <= 0:
+                return None
+            return {
+                **value_data,
+                "prev_trade_value_lookup_source": f"ka10086:{registered_code}",
+                "stock_code": code,
+            }
+        except Exception:
+            if attempt == 0:
+                time.sleep(0.15)
+                continue
+            return None
+    return None
 
 
 def _fetch_previous_value_regular_first(access_token: str, code: str, query_date: str) -> dict[str, Any] | None:
@@ -129,7 +193,7 @@ def _fetch_previous_value_regular_first(access_token: str, code: str, query_date
         value_data = _request_previous_value_one(access_token, code, query_date, registered_code)
         if value_data is not None:
             return value_data
-        time.sleep(0.02)
+        time.sleep(0.05)
     return None
 
 
@@ -142,7 +206,11 @@ def _attach_direct_previous_values(items: list[dict[str, Any]], query_date: str,
     if not missing:
         return 0
     attached = 0
-    max_workers = min(4, max(1, len(missing)))
+    try:
+        configured_workers = int(os.getenv("STOCKBOARD_V2_PREV_VALUE_WORKERS", "2"))
+    except ValueError:
+        configured_workers = 2
+    max_workers = min(max(1, configured_workers), max(1, len(missing)))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
@@ -162,6 +230,8 @@ def _attach_direct_previous_values(items: list[dict[str, Any]], query_date: str,
                 value_data = None
             value = to_number(value_data.get("prev_trade_value_eok")) if isinstance(value_data, dict) else None
             if value is None or value <= 0:
+                item.setdefault("prev_trade_value_status", "missing")
+                item.setdefault("prev_trade_value_lookup_source", "ka10086_missing")
                 continue
             item["prev_trade_value_eok"] = round(float(value), 4)
             item["prev_trade_value_source"] = value_data.get("prev_trade_value_source")
@@ -170,6 +240,22 @@ def _attach_direct_previous_values(items: list[dict[str, Any]], query_date: str,
             item["prev_trade_value_lookup_source"] = value_data.get("prev_trade_value_lookup_source")
             attached += 1
     return attached
+
+
+def _entry_from_item(item: dict[str, Any]) -> dict[str, Any] | None:
+    value = to_number(item.get("prev_trade_value_eok"))
+    code = normalize_code(item.get("stock_code"))
+    if not code or value is None or value <= 0:
+        return None
+    return {
+        "prev_trade_value_eok": round(float(value), 4),
+        "prev_trade_value_source": item.get("prev_trade_value_source"),
+        "prev_trade_value_status": item.get("prev_trade_value_status"),
+        "prev_trade_value_date": item.get("prev_trade_value_date"),
+        "prev_trade_value_lookup_source": item.get("prev_trade_value_lookup_source"),
+        "stock_code": code,
+        "updated_at": now_text(),
+    }
 
 
 def _attach_previous_ranks(items: list[dict[str, Any]], query_date: str, access_token: str) -> tuple[int, int]:
@@ -188,6 +274,12 @@ def _attach_previous_ranks(items: list[dict[str, Any]], query_date: str, access_
         item["prev_trade_value_lookup_source"] = "previous_trade_value_cache"
         cached_attached += 1
     direct_attached = _attach_direct_previous_values(items, query_date, access_token)
+    cache_entries = dict(entries)
+    for item in items:
+        entry = _entry_from_item(item)
+        if entry is not None:
+            cache_entries[str(entry["stock_code"])] = entry
+    _save_previous_trade_value_entries(query_date, cache_entries)
     ranked = sorted(
         [item for item in items if to_number(item.get("prev_trade_value_eok")) is not None],
         key=lambda item: (-(to_number(item.get("prev_trade_value_eok")) or 0), item.get("seed_rank") or 999999),
@@ -234,6 +326,9 @@ def build_universe(limit: int, rank_basis: str) -> dict:
         if len(items) >= limit:
             break
     cached_previous_count, direct_previous_count = _attach_previous_ranks(items, query_date, token)
+    missing_previous_count = len(
+        [item for item in items if to_number(item.get("prev_trade_value_eok")) is None]
+    )
     return {
         "schema_version": 1,
         "source": "ka10032_seed_universe_filtered_by_tradable_master",
@@ -248,7 +343,8 @@ def build_universe(limit: int, rank_basis: str) -> dict:
         "previous_trade_value_attached_count": cached_previous_count + direct_previous_count,
         "previous_trade_value_cached_count": cached_previous_count,
         "previous_trade_value_direct_regular_count": direct_previous_count,
-        "previous_trade_value_policy": "cache first; ka10086 regular base-code first; _AL fallback only",
+        "previous_trade_value_missing_count": missing_previous_count,
+        "previous_trade_value_policy": "cache first; ka10086 latest completed daily row before trading date; base-code first; _AL fallback only",
         "items": items,
     }
 
@@ -272,6 +368,7 @@ def main() -> int:
     print(f"PREVIOUS_TRADE_VALUE_ATTACHED={payload['previous_trade_value_attached_count']}")
     print(f"PREVIOUS_TRADE_VALUE_CACHED={payload['previous_trade_value_cached_count']}")
     print(f"PREVIOUS_TRADE_VALUE_DIRECT_REGULAR={payload['previous_trade_value_direct_regular_count']}")
+    print(f"PREVIOUS_TRADE_VALUE_MISSING={payload['previous_trade_value_missing_count']}")
     return 0
 
 
