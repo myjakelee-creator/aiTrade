@@ -18,15 +18,38 @@ from kiwoom_data_provider import KiwoomOpenApiRealtimeProvider  # noqa: E402
 from realtime_v2.common import DEFAULT_EVENT_PORT, DEFAULT_HOST, normalize_code, now_text, safe_json_dumps  # noqa: E402
 
 
+def _to_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        text = str(value).strip().replace(",", "")
+        if not text:
+            return None
+        return int(float(text))
+    except (TypeError, ValueError):
+        return None
+
+
+def _event_trade_qty(event: dict[str, Any]) -> int | None:
+    values = event.get("values") if isinstance(event.get("values"), dict) else {}
+    kwargs = event.get("kwargs") if isinstance(event.get("kwargs"), dict) else {}
+    raw = kwargs.get("raw") if isinstance(kwargs.get("raw"), dict) else values.get("raw") if isinstance(values.get("raw"), dict) else {}
+    return _to_int(
+        raw.get("trade_qty_raw")
+        or kwargs.get("trade_qty")
+        or values.get("trade_qty")
+        or kwargs.get("cntg_vol")
+        or values.get("cntg_vol")
+    )
+
+
 class EventSender(threading.Thread):
     """Send display events to the 64-bit worker without replaying every tick.
 
-    Kiwoom's 09:00 burst can produce many trade events for the same symbol within
-    a few milliseconds.  The board only needs the latest quote for display, while
-    raw/replay logging can be handled elsewhere.  This sender therefore keeps one
-    pending trade and one pending orderbook event per symbol, then flushes the
-    latest values in short micro-batches.  Direct events such as collector_status
-    are still sent in FIFO order.
+    Display quotes are coalesced to the latest event per symbol, but 1-minute
+    strength needs every signed trade quantity.  To keep both speed and accuracy,
+    the collector aggregates signed buy/sell quantity per symbol during each
+    micro-batch and attaches that flow to the latest display event.
     """
 
     def __init__(self, host: str, port: int, flush_ms: int = 50):
@@ -38,6 +61,7 @@ class EventSender(threading.Thread):
         self.lock = threading.Lock()
         self.latest_trade_by_code: dict[str, dict[str, Any]] = {}
         self.latest_orderbook_by_code: dict[str, dict[str, Any]] = {}
+        self.trade_flow_by_code: dict[str, dict[str, int]] = {}
         self.direct_events: deque[dict[str, Any]] = deque()
         self.sent_count = 0
         self.sent_per_sec = 0.0
@@ -46,6 +70,9 @@ class EventSender(threading.Thread):
         self.received_direct_count = 0
         self.coalesced_trade_overwrite_count = 0
         self.coalesced_orderbook_overwrite_count = 0
+        self.flow_trade_count = 0
+        self.flow_buy_qty = 0
+        self.flow_sell_qty = 0
         self.last_flush_count = 0
         self.last_flush_at = None
         self.last_error = None
@@ -55,9 +82,20 @@ class EventSender(threading.Thread):
 
     def publish_trade(self, event: dict[str, Any]) -> None:
         code = normalize_code(event.get("stock_code"))
+        qty = _event_trade_qty(event)
         with self.lock:
             self.received_trade_count += 1
             if code:
+                if qty:
+                    flow = self.trade_flow_by_code.setdefault(code, {"buy_qty": 0, "sell_qty": 0, "trade_count": 0})
+                    if qty > 0:
+                        flow["buy_qty"] += int(qty)
+                        self.flow_buy_qty += int(qty)
+                    elif qty < 0:
+                        flow["sell_qty"] += abs(int(qty))
+                        self.flow_sell_qty += abs(int(qty))
+                    flow["trade_count"] += 1
+                    self.flow_trade_count += 1
                 if code in self.latest_trade_by_code:
                     self.coalesced_trade_overwrite_count += 1
                 self.latest_trade_by_code[code] = event
@@ -80,14 +118,29 @@ class EventSender(threading.Thread):
             self.received_direct_count += 1
             self.direct_events.append(event)
 
+    def _attach_trade_flow(self, code: str, event: dict[str, Any], flow: dict[str, int]) -> dict[str, Any]:
+        if not flow:
+            return event
+        next_event = dict(event)
+        kwargs = dict(next_event.get("kwargs") if isinstance(next_event.get("kwargs"), dict) else {})
+        kwargs["collector_buy_qty"] = int(flow.get("buy_qty") or 0)
+        kwargs["collector_sell_qty"] = int(flow.get("sell_qty") or 0)
+        kwargs["collector_trade_count"] = int(flow.get("trade_count") or 0)
+        kwargs["collector_flow_window_ms"] = int(self.flush_sec * 1000)
+        next_event["kwargs"] = kwargs
+        return next_event
+
     def _drain(self) -> list[dict[str, Any]]:
         with self.lock:
             direct = list(self.direct_events)
-            trades = list(self.latest_trade_by_code.values())
+            trade_items = list(self.latest_trade_by_code.items())
             orderbooks = list(self.latest_orderbook_by_code.values())
+            flows = dict(self.trade_flow_by_code)
             self.direct_events.clear()
             self.latest_trade_by_code.clear()
             self.latest_orderbook_by_code.clear()
+            self.trade_flow_by_code.clear()
+        trades = [self._attach_trade_flow(code, event, flows.get(code, {})) for code, event in trade_items]
         return [*direct, *trades, *orderbooks]
 
     def _requeue_unsent(self, events: list[dict[str, Any]]) -> None:
@@ -164,18 +217,23 @@ class EventSender(threading.Thread):
             pending_trade = len(self.latest_trade_by_code)
             pending_orderbook = len(self.latest_orderbook_by_code)
             pending_direct = len(self.direct_events)
+            pending_flow = len(self.trade_flow_by_code)
         return {
             "connected": self.connected,
             "flush_ms": int(self.flush_sec * 1000),
             "pending_trade_count": pending_trade,
             "pending_orderbook_count": pending_orderbook,
             "pending_direct_count": pending_direct,
+            "pending_flow_code_count": pending_flow,
             "pending_total_count": pending_trade + pending_orderbook + pending_direct,
             "received_trade_count": self.received_trade_count,
             "received_orderbook_count": self.received_orderbook_count,
             "received_direct_count": self.received_direct_count,
             "coalesced_trade_overwrite_count": self.coalesced_trade_overwrite_count,
             "coalesced_orderbook_overwrite_count": self.coalesced_orderbook_overwrite_count,
+            "flow_trade_count": self.flow_trade_count,
+            "flow_buy_qty": self.flow_buy_qty,
+            "flow_sell_qty": self.flow_sell_qty,
             "sent_count": self.sent_count,
             "sent_per_sec": self.sent_per_sec,
             "last_flush_count": self.last_flush_count,
