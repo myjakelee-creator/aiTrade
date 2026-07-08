@@ -101,7 +101,7 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font: 700 11px Malgun Gothic, Arial, sans-serif;
+    font: 700 12px Malgun Gothic, Arial, sans-serif;
     background: #e7edf3;
   }
 
@@ -340,7 +340,7 @@
   <div id="topbar" class="topbar">
     <div class="metric-row">
       <span class="title">StockBoard v2 Realtime</span>
-      <span id="clock" class="badge">-</span><button type="button" id="ui-zoom-toggle" class="control">?? 100%</button>
+      <span id="clock" class="badge">-</span><button type="button" id="ui-zoom-toggle" class="control">?? 100%</button><button type="button" id="column-minimize-toggle" class="control">폭 최소화</button>
       <span id="status" class="badge bad">연결 대기</span>
       <label class="badge">선발기준 <select id="candidate-model-selector" class="control" disabled><option value="">모델 설정 로딩</option></select></label>
       <span id="copy-status" class="badge">행 클릭=HTS/S1 즉시 연동 · 포커스 후 ↑/↓ 이동</span>
@@ -432,6 +432,7 @@
   const metricModeStatusEl = document.getElementById('metric-mode-status');
   const clockEl = document.getElementById('clock');
   const uiZoomToggle = document.getElementById('ui-zoom-toggle');
+  const columnMinimizeToggle = document.getElementById('column-minimize-toggle');
   const copyStatusEl = document.getElementById('copy-status');
   const candidateModelSelector = document.getElementById('candidate-model-selector');
   const usMarketRow = document.getElementById('us-market-row');
@@ -499,6 +500,56 @@
     uiZoomToggle.addEventListener('click', cycleUiScale);
   }
   applyUiScale();
+
+
+  const COLUMN_MINIMIZE_MAX = {
+    rank: 36,
+    rank_change: 42,
+    grade: 44,
+    stock_name: 96,
+    price: 70,
+    change_rate: 58,
+    trade_value_eok: 68,
+    amount_ratio: 50,
+    daily_candle: 69,
+    bid_ask_ratio: 56,
+    execution_strength: 62,
+    strength_1m: 58,
+    program_net: 60,
+    large_trade_net_count: 58
+  };
+
+  function minimizedColumnWidth(i){
+    const c = columns[i] || {};
+    const min = Number(c.min || 36);
+    const max = Number(COLUMN_MINIMIZE_MAX[c.key] || c.width || 70);
+
+    let width = Math.max(min, Math.ceil(measureText(c.label || '') + 18));
+
+    document.querySelectorAll(`table.board tbody tr td:nth-child(${i + 1})`).forEach(cell => {
+      const text = String(cell.textContent || '').trim();
+      if(text) width = Math.max(width, Math.ceil(measureText(text) + 14));
+    });
+
+    return Math.max(min, Math.min(max, width));
+  }
+
+  function minimizeAllColumnWidths(){
+    columns.forEach((c, i) => {
+      const width = minimizedColumnWidth(i);
+      setColumnWidth(i, width, true);
+    });
+
+    if(typeof lockDailyCandleRuntime === 'function'){
+      lockDailyCandleRuntime();
+    }
+
+    updateBoardWidth();
+  }
+
+  if(columnMinimizeToggle){
+    columnMinimizeToggle.addEventListener('click', minimizeAllColumnWidths);
+  }
 
 function loadSortState(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KEYS.sort)||'{}'); if(s&&s.key) return {key:s.key,dir:s.dir==='asc'?'asc':'desc'};}catch(_e){} return {key:'rank',dir:'asc'}; }
   function saveSortState(){ try{localStorage.setItem(STORAGE_KEYS.sort,JSON.stringify(sortState));}catch(_e){} }
