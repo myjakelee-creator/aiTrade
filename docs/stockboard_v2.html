@@ -73,6 +73,8 @@
     .supply-count { font-variant-numeric:tabular-nums; white-space:nowrap; }
     .supply-up { color:var(--red); font-weight:700; }
     .supply-down { color:var(--blue); font-weight:700; }
+
+    .us-market-stack td { min-width:52px; white-space:nowrap; }
 </style>
 </head>
 <body>
@@ -175,7 +177,17 @@
   function saveColumnWidths(){ try{localStorage.setItem(STORAGE_KEYS.columnWidths,JSON.stringify(columnWidths));}catch(_e){} }
   function loadMetricModes(){ try{const saved=JSON.parse(localStorage.getItem(STORAGE_KEYS.metricModes)||'{}'); return {...{bid_ask_ratio:'number',execution_strength:'number',strength_1m:'number'}, ...(saved||{})};}catch(_e){return {bid_ask_ratio:'number',execution_strength:'number',strength_1m:'number'};} }
   function saveMetricModes(){ try{localStorage.setItem(STORAGE_KEYS.metricModes,JSON.stringify(metricModes));}catch(_e){} }
-  function toggleMetricMode(key){ if(!metricKeys.has(key)) return; metricModes[key]=metricModes[key]==='bar'?'number':'bar'; saveMetricModes(); updateMetricModeStatus(); if(lastPayload) render(lastPayload,'stream',{forcePool:true}); }
+  function toggleMetricMode(key){
+    if(!metricKeys.has(key)) return;
+    const current = metricModes[key] || 'number';
+    const nextMode = current === 'bar' ? 'number' : 'bar';
+    metricKeys.forEach(metricKey => {
+      metricModes[metricKey] = nextMode;
+    });
+    saveMetricModes();
+    updateMetricModeStatus();
+    if(lastPayload) render(lastPayload,'stream',{forcePool:true});
+  }
   function updateMetricModeStatus(){ const label = key => metricModes[key]==='bar'?'배경':'숫자'; metricModeStatusEl.textContent = `잔량비 ${label('bid_ask_ratio')} · 순간 ${label('execution_strength')} · 1분 ${label('strength_1m')} (셀 클릭 토글)`; }
   function columnWidth(i){ const c=columns[i]||{}; const saved=Number(columnWidths[c.key]); return Number.isFinite(saved)&&saved>0?saved:Number(c.width||70); }
   function clampWidth(i,v){ const c=columns[i]||{}; const n=Math.round(Number(v)); return Math.max(Number(c.min||36),Math.min(Number(c.max||420),Number.isFinite(n)?n:columnWidth(i))); }
@@ -198,12 +210,12 @@
   async function loadCandidateModels(){ try{ const res=await fetch(`/api/v2/candidate_models?ts=${Date.now()}`,{cache:'no-store'}); if(!res.ok)throw new Error(); const p=await res.json(); const models=Array.isArray(p.models)?p.models:[]; if(!models.length)throw new Error(); candidateModelSelector.innerHTML=models.map(m=>`<option value="${escapeHtml(String(m.id||''))}">${escapeHtml(String(m.label||m.id||''))}</option>`).join(''); candidateModelSelector.value=localStorage.getItem(STORAGE_KEYS.candidateModel)||p.default_model_id||models[0].id; candidateModelSelector.disabled=false; }catch(_e){ candidateModelSelector.innerHTML='<option value="">선발기준 설정 미연결</option>'; candidateModelSelector.disabled=true; } }
   async function loadContext(){ try{ const res=await fetch(`/api/v2/context?ts=${Date.now()}`,{cache:'no-store'}); if(!res.ok)throw new Error(); renderContext(await res.json()); }catch(_e){} }
   function first(obj, keys){ for(const k of keys){ if(obj&&obj[k]!==undefined&&obj[k]!==null&&obj[k]!=='')return obj[k]; } return null; }
-  function contextNum(v,d=2){ const n=Number(v); return Number.isFinite(n)?`${n>0?'+':''}${n.toLocaleString('en-US',{maximumFractionDigits:d})}`:'-'; }
+  function contextNum(v,d=2){ if(v===undefined||v===null||v==='')return'-'; const n=Number(v); return Number.isFinite(n)?`${n>0?'+':''}${n.toLocaleString('en-US',{maximumFractionDigits:d})}`:'-'; }
   function contextCls(v){ const n=Number(v); return Number.isFinite(n)?(n>0?'plus':n<0?'minus':'zero'):''; }
   function renderContext(payload){
-    const us=payload.us_market||{}; const usValues=us.values||us; const usItems=['NASDAQ','QQQ','SOXL','SMH','IBB','LIT','BOTZ'];
-    usMarketRow.innerHTML=`<tr><td class="context-title">\uBBF8\uAD6D</td>${usItems.map(k=>{ const row=usValues[k]||usValues[k.toLowerCase()]||{}; const value=first(row,['change_rate','change_percent','regularMarketChangePercent','rate','pct']); return `<td class="${contextCls(value)}">${k} ${contextNum(value,2)}%</td>`; }).join('')}</tr>`;
-
+    const us=payload.us_market||{}; const usValues=us.values||us; const usRows=[['NQ=F','ES=F','YM=F'],['QQQ','SOXL','SMH'],['IBB','LIT','BOTZ']];
+    usMarketRow.closest('table').classList.add('us-market-stack');
+    usMarketRow.innerHTML=usRows.map((items,idx)=>`<tr>${idx===0?'<td class="context-title" rowspan="3">\uBBF8\uAD6D</td>':''}${items.map(k=>{ const row=usValues[k]||usValues[k.toLowerCase()]||{}; const value=first(row,['change_rate','change_percent','regularMarketChangePercent','rate','pct']); return `<td class="${contextCls(value)}">${k} ${contextNum(value,2)}%</td>`; }).join('')}</tr>`).join('');
     const ms=payload.market_supply||{};
     const mks=[['kospi','KOSPI'],['kosdaq','KOSDAQ']];
 
