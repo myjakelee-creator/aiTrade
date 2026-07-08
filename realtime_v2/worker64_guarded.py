@@ -897,32 +897,78 @@ def _apply_aftermarket_orderbook_display_policy(quote: dict[str, Any], session: 
     quote["orderbook_display_basis"] = "??? ??? ??"
 
 
+
+def _positive_strength_value(value: Any) -> float | None:
+    number = to_number(value)
+    if number is None:
+        return None
+    number = float(number)
+    if number <= 0:
+        return None
+    return round(min(ONE_MIN_STRENGTH_CAP, number), 4)
+
+
+def _first_positive_strength(quote: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        value = _positive_strength_value(quote.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _remember_last_valid_strength_display(quote: dict[str, Any]) -> None:
+    one_min = _first_positive_strength(quote, "strength_1m", "one_min_strength")
+    if one_min is not None:
+        quote["last_valid_strength_1m"] = one_min
+
+    five_min = _first_positive_strength(quote, "strength_5m")
+    if five_min is not None:
+        quote["last_valid_strength_5m"] = five_min
+
+    instant = _first_positive_strength(quote, "execution_strength")
+    if instant is not None:
+        quote["last_valid_execution_strength"] = instant
+
+    if one_min is not None or five_min is not None or instant is not None:
+        quote["last_valid_strength_at"] = now_text()
+
+
 def _apply_aftermarket_strength_display_policy(quote: dict[str, Any], session: dict[str, Any] | None) -> None:
     if not _is_aftermarket_session(session):
         return
 
-    strength_5m = to_number(quote.get("strength_5m"))
+    _remember_last_valid_strength_display(quote)
+
+    strength_5m = _first_positive_strength(quote, "strength_5m", "last_valid_strength_5m")
     if strength_5m is not None:
-        value = round(max(0.0, min(ONE_MIN_STRENGTH_CAP, float(strength_5m))), 4)
-        quote["strength_1m"] = value
-        quote["one_min_strength"] = value
+        quote["strength_1m"] = strength_5m
+        quote["one_min_strength"] = strength_5m
         quote["one_min_strength_status"] = "aftermarket_5m"
-        quote["strength_display_basis"] = "5? ???? ??"
+        quote["strength_display_basis"] = "aftermarket_5m"
+        _remember_last_valid_strength_display(quote)
         return
 
-    held = to_number(
-        quote.get("regular_close_strength_1m")
-        or quote.get("strength_1m")
-        or quote.get("one_min_strength")
-        or quote.get("execution_strength")
+    held = _first_positive_strength(
+        quote,
+        "regular_close_strength_1m",
+        "last_valid_strength_1m",
+        "one_min_strength",
+        "strength_1m",
+        "last_valid_execution_strength",
+        "execution_strength",
     )
     if held is not None:
-        value = round(max(0.0, min(ONE_MIN_STRENGTH_CAP, float(held))), 4)
-        quote["strength_1m"] = value
-        quote["one_min_strength"] = value
+        quote["strength_1m"] = held
+        quote["one_min_strength"] = held
         quote["one_min_strength_status"] = "regular_close_hold"
-        quote["strength_display_basis"] = "??? ??? ??"
+        quote["strength_display_basis"] = "regular_close_hold"
+        _remember_last_valid_strength_display(quote)
+        return
 
+    quote["strength_1m"] = None
+    quote["one_min_strength"] = None
+    quote["one_min_strength_status"] = "no_positive_strength"
+    quote["strength_display_basis"] = "no_positive_strength"
 
 def _runtime_context_payload() -> dict[str, Any]:
     market_supply = _load_json_first([RUNTIME_DIR / "market_supply.json", ROOT / "data" / "runtime" / "market_supply.json", ROOT / "docs" / "assets" / "market_supply_snapshot.json", ROOT / "docs" / "assets" / "stockboard_market_supply.json"])
@@ -1035,6 +1081,7 @@ def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
         _apply_previous_daily_display_fallback(self, row, session)
         _apply_aftermarket_strength_display_policy(row, session)
         _apply_aftermarket_orderbook_display_policy(row, session)
+        _restore_afterclose_metric_display(self, row, session)
     rows.sort(key=lambda row: (-(to_number(row.get("trade_value_eok")) or 0), row.get("seed_rank") or 999999, row.get("stock_code") or ""))
     amount_ratio_ready_count = 0
     amount_ratio_missing_count = 0
@@ -1061,6 +1108,147 @@ def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
     self.status["amount_ratio_ready_count"] = amount_ratio_ready_count
     self.status["amount_ratio_missing_count"] = amount_ratio_missing_count
     return rows[:limit]
+
+
+
+def _nonregular_display_phase(session: dict[str, Any] | None) -> bool:
+    session = session or {}
+    phase = str(session.get("phase") or "").lower()
+    label = str(session.get("phase_label") or "")
+    if "regular" in phase or "???" in label:
+        return False
+    return True
+
+
+def _positive_display_number(value: Any) -> float | None:
+    number = to_number(value)
+    if number is None:
+        return None
+    number = float(number)
+    if number <= 0:
+        return None
+    return number
+
+
+def _previous_daily_state_files_for_display() -> list[Path]:
+    current_date = str(trading_date_text())
+    paths = []
+    try:
+        for path in RUNTIME_DIR.glob("daily_state_*.json"):
+            if current_date and current_date in path.name:
+                continue
+            paths.append(path)
+    except OSError:
+        return []
+
+    def mtime(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    return sorted(paths, key=mtime, reverse=True)
+
+
+def _load_previous_daily_display_cache(state) -> dict[str, dict[str, Any]]:
+    cached = getattr(state, "_previous_daily_display_cache", None)
+    if isinstance(cached, dict):
+        return cached
+
+    result: dict[str, dict[str, Any]] = {}
+    source = None
+
+    for path in _previous_daily_state_files_for_display():
+        payload = _json_file(path) or {}
+        codes = payload.get("codes") if isinstance(payload, dict) else None
+        if not isinstance(codes, dict):
+            continue
+
+        for raw_code, values in codes.items():
+            code = normalize_code(raw_code)
+            if code and isinstance(values, dict):
+                result[code] = dict(values)
+
+        if result:
+            source = path
+            break
+
+    state._previous_daily_display_cache = result
+    state.status["previous_daily_metric_display_count"] = len(result)
+    if source is not None:
+        state.status["previous_daily_metric_display_source"] = str(source)
+    return result
+
+
+def _display_sources_for_code(state, code: str, row: dict[str, Any]) -> list[dict[str, Any]]:
+    code = normalize_code(code)
+    sources: list[dict[str, Any]] = [row]
+
+    current_daily = getattr(state, "daily_values_by_code", {}).get(code)
+    if isinstance(current_daily, dict):
+        sources.append(current_daily)
+
+    previous_daily = _load_previous_daily_display_cache(state).get(code)
+    if isinstance(previous_daily, dict):
+        sources.append(previous_daily)
+
+    return sources
+
+
+def _first_positive_from_sources(sources: list[dict[str, Any]], keys: tuple[str, ...]) -> float | None:
+    for source in sources:
+        for key in keys:
+            value = _positive_display_number(source.get(key))
+            if value is not None:
+                return round(value, 4)
+    return None
+
+
+def _restore_afterclose_metric_display(state, row: dict[str, Any], session: dict[str, Any] | None) -> None:
+    if not _nonregular_display_phase(session):
+        return
+
+    code = normalize_code(row.get("stock_code"))
+    if not code:
+        return
+
+    sources = _display_sources_for_code(state, code, row)
+
+    # ???: ???? 0/???? ???/??? ????? ??
+    if _positive_display_number(row.get("bid_ask_ratio")) is None:
+        ratio = _first_positive_from_sources(
+            sources,
+            (
+                "regular_close_bid_ask_ratio",
+                "last_valid_bid_ask_ratio",
+                "bid_ask_ratio",
+            ),
+        )
+        if ratio is not None:
+            row["bid_ask_ratio"] = ratio
+            row["afterclose_metric_fallback_bid_ask_ratio"] = True
+
+    # 1???/??: 5??? 0? ??. ??? ??/??? ??? ??.
+    if _positive_display_number(row.get("strength_1m")) is None:
+        strength = _first_positive_from_sources(
+            sources,
+            (
+                "regular_close_strength_1m",
+                "last_valid_strength_1m",
+                "strength_5m",
+                "last_valid_strength_5m",
+                "one_min_strength",
+                "strength_1m",
+                "last_valid_execution_strength",
+                "execution_strength",
+            ),
+        )
+        if strength is not None:
+            row["strength_1m"] = strength
+            row["one_min_strength"] = strength
+            row["one_min_strength_status"] = row.get("one_min_strength_status") or "afterclose_metric_fallback"
+            row["strength_display_basis"] = row.get("strength_display_basis") or "afterclose_metric_fallback"
+            row["afterclose_metric_fallback_strength_1m"] = True
 
 
 def _drop_trade(state, quote: dict[str, Any], code: str, reason: str, event: dict[str, Any], values: dict[str, Any], trade_time: str, lag_sec: float | None) -> None:
@@ -1151,7 +1339,8 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
     if strength is not None:
         quote["execution_strength"] = round(strength, 4)
         quote["execution_strength_updated_at"] = received_at
-    _persist_live_metrics(self, code, quote, "execution_strength", "execution_strength_updated_at", "strength_1m", "one_min_buy_qty", "one_min_sell_qty", "one_min_strength_updated_at", "regular_close_strength_1m", "strength_5m", "strength_20m", "strength_60m", "strength_source", "strength_snapshot_at", "strength_status", "strength_display_basis")
+    _remember_last_valid_strength_display(quote)
+    _persist_live_metrics(self, code, quote, "execution_strength", "execution_strength_updated_at", "strength_1m", "one_min_buy_qty", "one_min_sell_qty", "one_min_strength_updated_at", "regular_close_strength_1m", "strength_5m", "strength_20m", "strength_60m", "strength_source", "strength_snapshot_at", "strength_status", "strength_display_basis", "last_valid_strength_1m", "last_valid_strength_5m", "last_valid_execution_strength", "last_valid_strength_at")
     if price is not None:
         _persist_live_metrics(self, code, quote, "day_open", "day_high", "day_low", "day_close", "ohlc")
     quote["trade_time"] = trade_time
@@ -1188,20 +1377,60 @@ _original_apply_orderbook = base.State._apply_orderbook
 
 
 def _guarded_apply_orderbook(self, event: dict[str, Any]) -> None:
-    _original_apply_orderbook(self, event)
     values = base.merged_event_values(event)
-    code = normalize_code(event.get("stock_code") or event.get("received_code") or values.get("stock_code") or values.get("normalized_code") or values.get("received_code"))
+    code = normalize_code(
+        event.get("stock_code")
+        or event.get("received_code")
+        or values.get("stock_code")
+        or values.get("normalized_code")
+        or values.get("received_code")
+    )
+    session = _update_market_session_status(self)
+
+    if code:
+        previous_quote = self.quotes.get(code)
+        if isinstance(previous_quote, dict):
+            _remember_last_valid_orderbook_display(previous_quote)
+            _remember_regular_orderbook_display(previous_quote, session)
+
+    _original_apply_orderbook(self, event)
+
     if not code:
         return
     quote = self.quotes.get(code)
     if not isinstance(quote, dict):
         return
-    session = _update_market_session_status(self)
+
     _remember_last_valid_orderbook_display(quote)
     _remember_regular_orderbook_display(quote, session)
     _apply_aftermarket_orderbook_display_policy(quote, session)
-    _persist_live_metrics(self, code, quote, "ask_volume", "bid_volume", "ask_pct", "bid_pct", "bid_ask_ratio", "best_ask_price", "best_bid_price", "orderbook_received_at", "regular_close_bid_ask_ratio", "regular_close_bid_pct", "regular_close_ask_pct", "regular_close_bid_volume", "regular_close_ask_volume", "regular_close_orderbook_at", "orderbook_display_basis", "last_valid_bid_ask_ratio", "last_valid_bid_pct", "last_valid_ask_pct", "last_valid_bid_volume", "last_valid_ask_volume", "last_valid_orderbook_at")
 
+    _persist_live_metrics(
+        self,
+        code,
+        quote,
+        "ask_volume",
+        "bid_volume",
+        "ask_pct",
+        "bid_pct",
+        "bid_ask_ratio",
+        "best_ask_price",
+        "best_bid_price",
+        "orderbook_received_at",
+        "regular_close_bid_ask_ratio",
+        "regular_close_bid_pct",
+        "regular_close_ask_pct",
+        "regular_close_bid_volume",
+        "regular_close_ask_volume",
+        "regular_close_orderbook_at",
+        "orderbook_display_basis",
+        "last_valid_bid_ask_ratio",
+        "last_valid_bid_pct",
+        "last_valid_ask_pct",
+        "last_valid_bid_volume",
+        "last_valid_ask_volume",
+        "last_valid_orderbook_at",
+    )
 
 _original_snapshot = base.State.snapshot
 
