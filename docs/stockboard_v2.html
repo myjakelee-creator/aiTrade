@@ -65,7 +65,15 @@
     .mini-candle .body { position:absolute; left:var(--body-left); width:var(--body-width); top:3px; height:8px; min-width:2px; background:#ef4444; }
     .mini-candle.down .body { background:#3b82f6; }
     .mini-candle.flat .body { background:#6b7280; }
-  </style>
+  
+    .market-supply-table { table-layout:fixed; border-collapse:collapse; }
+    .market-supply-table td { padding:1px 4px; }
+    .supply-head { background:#edf4fb; font-weight:800; text-align:center; white-space:nowrap; }
+    .supply-market { font-weight:800; color:#1d4ed8; white-space:nowrap; }
+    .supply-count { font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .supply-up { color:var(--red); font-weight:700; }
+    .supply-down { color:var(--blue); font-weight:700; }
+</style>
 </head>
 <body>
 <div class="window">
@@ -194,11 +202,53 @@
   function contextCls(v){ const n=Number(v); return Number.isFinite(n)?(n>0?'plus':n<0?'minus':'zero'):''; }
   function renderContext(payload){
     const us=payload.us_market||{}; const usValues=us.values||us; const usItems=['NASDAQ','QQQ','SOXL','SMH','IBB','LIT','BOTZ'];
-    usMarketRow.innerHTML=`<tr><td class="context-title">미국</td>${usItems.map(k=>{ const row=usValues[k]||usValues[k.toLowerCase()]||{}; const value=first(row,['change_rate','change_percent','regularMarketChangePercent','rate','pct']); return `<td class="${contextCls(value)}">${k} ${contextNum(value,2)}%</td>`; }).join('')}</tr>`;
-    const ms=payload.market_supply||{}; const mks=[['kospi','KOSPI'],['kosdaq','KOSDAQ']];
-    marketSupplyRow.innerHTML=`<tr><td class="context-title">시장수급</td>${mks.map(([key,label])=>{ const m=ms[key]||ms[label]||{}; const idx=first(m,['market_index','index','지수']); const ch=first(m,['market_change_rate','change_rate','등락률']); const adv=first(m,['advancers','advance','상승']); const dec=first(m,['decliners','decline','하락']); const fr=first(m,['foreign_spot_eok','foreign','외인']); const inst=first(m,['institution_eok','institution','기관']); const prog=first(m,['program_market_eok','program','프로']); return `<td class="${contextCls(ch)}" title="상승/하락 ${adv??'-'}/${dec??'-'} · 외인 ${contextNum(fr,0)}억 · 기관 ${contextNum(inst,0)}억 · 프로 ${contextNum(prog,0)}억">${label} ${idx??'-'} ${contextNum(ch,2)}%</td>`; }).join('')}</tr>`;
-  }
+    usMarketRow.innerHTML=`<tr><td class="context-title">\uBBF8\uAD6D</td>${usItems.map(k=>{ const row=usValues[k]||usValues[k.toLowerCase()]||{}; const value=first(row,['change_rate','change_percent','regularMarketChangePercent','rate','pct']); return `<td class="${contextCls(value)}">${k} ${contextNum(value,2)}%</td>`; }).join('')}</tr>`;
 
+    const ms=payload.market_supply||{};
+    const mks=[['kospi','KOSPI'],['kosdaq','KOSDAQ']];
+
+    const supplyRows=mks.map(([key,label])=>{
+      const m=ms[key]||ms[label]||{};
+      return {
+        label,
+        idx:first(m,['market_index','index','\uC9C0\uC218']),
+        ch:first(m,['market_change_rate','change_rate','\uB4F1\uB77D\uB960']),
+        adv:first(m,['advancers','advance','\uC0C1\uC2B9']),
+        dec:first(m,['decliners','decline','\uD558\uB77D']),
+        up:first(m,['upper_limit_count','upper_limit','\uC0C1\uD55C']),
+        down:first(m,['lower_limit_count','lower_limit','\uD558\uD55C']),
+        ind:first(m,['individual_eok','individual','\uAC1C\uC778']),
+        fr:first(m,['foreign_spot_eok','foreign','\uC678\uC778']),
+        inst:first(m,['institution_eok','institution','\uAE30\uAD00']),
+        prog:first(m,['program_market_eok','program','\uD504\uB85C'])
+      };
+    });
+
+    function supplyCountHtml(r){
+      return `<span class="supply-up">${r.adv??'-'}(\u2191${r.up??'-'})</span>/<span class="supply-down">${r.dec??'-'}(\u2193${r.down??'-'})</span>`;
+    }
+
+    function eokText(v){
+      const n=Number(v);
+      return Number.isFinite(n)?`${n>0?'+':''}${Math.round(n).toLocaleString('en-US')}`:'-';
+    }
+
+    function eokCell(v){
+      const n=Number(v);
+      const cls=Number.isFinite(n)?(n>0?'plus':n<0?'minus':'zero'):'zero';
+      return `<td class="num ${cls}">${eokText(v)}</td>`;
+    }
+
+    const supplyHeader=`<tr><td class="supply-head">\uC2DC\uC7A5</td><td class="supply-head">\uC9C0\uC218</td><td class="supply-head">\uB4F1\uB77D\uB960</td><td class="supply-head">\uC0C1\uC2B9/\uD558\uB77D</td><td class="supply-head">\uAC1C\uC778(\uC5B5)</td><td class="supply-head">\uC678\uC778(\uC5B5)</td><td class="supply-head">\uAE30\uAD00(\uC5B5)</td><td class="supply-head">\uD504\uB85C(\uC5B5)</td></tr>`;
+
+    const supplyBody=supplyRows.map(r=>{
+      const cls=contextCls(r.ch);
+      return `<tr><td class="supply-market">${r.label}</td><td class="num">${r.idx??'-'}</td><td class="num ${cls}">${contextNum(r.ch,2)}%</td><td class="supply-count">${supplyCountHtml(r)}</td>${eokCell(r.ind)}${eokCell(r.fr)}${eokCell(r.inst)}${eokCell(r.prog)}</tr>`;
+    }).join('');
+
+    marketSupplyRow.closest('table').classList.add('market-supply-table');
+    marketSupplyRow.innerHTML=supplyHeader+supplyBody;
+  }
   function escapeHtml(v){return String(v??'').replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));}
   function numeric(v){const n=Number(v);return Number.isFinite(n)?n:null;}
   function sortValue(r,k){if(k==='stock_name')return String(r.stock_name||'').toLowerCase();return numeric(r[k]);}
