@@ -295,7 +295,7 @@
   <div id="topbar" class="topbar">
     <div class="metric-row">
       <span class="title">StockBoard v2 Realtime</span>
-      <span id="clock" class="badge">-</span>
+      <span id="clock" class="badge">-</span><button type="button" id="ui-zoom-toggle" class="control">?? 100%</button>
       <span id="status" class="badge bad">연결 대기</span>
       <label class="badge">선발기준 <select id="candidate-model-selector" class="control" disabled><option value="">모델 설정 로딩</option></select></label>
       <span id="copy-status" class="badge">행 클릭=HTS/S1 즉시 연동 · 포커스 후 ↑/↓ 이동</span>
@@ -386,12 +386,13 @@
   const renderMetricsEl = document.getElementById('render-metrics');
   const metricModeStatusEl = document.getElementById('metric-mode-status');
   const clockEl = document.getElementById('clock');
+  const uiZoomToggle = document.getElementById('ui-zoom-toggle');
   const copyStatusEl = document.getElementById('copy-status');
   const candidateModelSelector = document.getElementById('candidate-model-selector');
   const usMarketRow = document.getElementById('us-market-row');
   const marketSupplyRow = document.getElementById('market-supply-row');
 
-  const STORAGE_KEYS = { sort:'stockboard.v2.sort', selectedCode:'stockboard.v2.selectedCode', candidateModel:'stockboard.candidateModel.v1', columnWidths:'stockboard.v2.columnWidths.v4', metricModes:'stockboard.v2.metricModes.v1' };
+  const STORAGE_KEYS = { sort:'stockboard.v2.sort', selectedCode:'stockboard.v2.selectedCode', candidateModel:'stockboard.candidateModel.v1', columnWidths:'stockboard.v2.columnWidths.v4', metricModes:'stockboard.v2.metricModes.v1', uiScale:'stockboard.v2.uiScale.v1' };
   const metricKeys = new Set(['bid_ask_ratio', 'execution_strength', 'strength_1m']);
   const columns = [
     { key:'rank', label:'순위', className:'center', sort:'rank', width:46, min:34 },
@@ -423,7 +424,38 @@
   selectedBoardEl.innerHTML = tableSkeleton(); focusBoardEl.innerHTML = tableSkeleton(); poolBoardEl.innerHTML = tableSkeleton();
   applyColumnWidths(); initColumnResizers(); bindRowMouseCapture(); updateMetricModeStatus();
 
-  function loadSortState(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KEYS.sort)||'{}'); if(s&&s.key) return {key:s.key,dir:s.dir==='asc'?'asc':'desc'};}catch(_e){} return {key:'rank',dir:'asc'}; }
+  
+  const UI_SCALE_LEVELS = [1, 0.92, 0.86, 0.80];
+
+  function loadUiScale(){
+    const saved = Number(localStorage.getItem(STORAGE_KEYS.uiScale));
+    return UI_SCALE_LEVELS.includes(saved) ? saved : 1;
+  }
+
+  let uiScale = loadUiScale();
+
+  function applyUiScale(){
+    document.body.style.zoom = String(uiScale);
+    if(uiZoomToggle){
+      const label = String.fromCharCode(54868,47732); // ??
+      uiZoomToggle.textContent = `${label} ${Math.round(uiScale * 100)}%`;
+      uiZoomToggle.title = '100% ? 92% ? 86% ? 80%';
+    }
+  }
+
+  function cycleUiScale(){
+    const idx = UI_SCALE_LEVELS.indexOf(uiScale);
+    uiScale = UI_SCALE_LEVELS[(idx + 1) % UI_SCALE_LEVELS.length];
+    localStorage.setItem(STORAGE_KEYS.uiScale, String(uiScale));
+    applyUiScale();
+  }
+
+  if(uiZoomToggle){
+    uiZoomToggle.addEventListener('click', cycleUiScale);
+  }
+  applyUiScale();
+
+function loadSortState(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KEYS.sort)||'{}'); if(s&&s.key) return {key:s.key,dir:s.dir==='asc'?'asc':'desc'};}catch(_e){} return {key:'rank',dir:'asc'}; }
   function saveSortState(){ try{localStorage.setItem(STORAGE_KEYS.sort,JSON.stringify(sortState));}catch(_e){} }
   function loadColumnWidths(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KEYS.columnWidths)||'{}'); return s&&typeof s==='object'?s:{};}catch(_e){return{}} }
   function saveColumnWidths(){ try{localStorage.setItem(STORAGE_KEYS.columnWidths,JSON.stringify(columnWidths));}catch(_e){} }
