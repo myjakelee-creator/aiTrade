@@ -28,7 +28,10 @@ from realtime_v2.common import (
     trading_date_text,
 )
 from realtime_v2.market_session import market_session_now
-from stockboard_ranking_engine import enrich_net_buy_strength_v02_fields
+from stockboard_ranking_engine import (
+    enrich_candidate_model_fields,
+    load_candidate_model_registry,
+)
 
 STALE_LAG_WARN_SEC = 10.0
 ONE_MIN_STRENGTH_CAP = 999.99
@@ -978,12 +981,7 @@ def _runtime_context_payload() -> dict[str, Any]:
 
 
 def _candidate_models_payload() -> dict[str, Any]:
-    registry_path = ROOT / "configs" / "candidate_models" / "_registry.json"
-    payload = _load_json_first([registry_path]) or {"models": []}
-    payload.setdefault("schema_version", 1)
-    payload.setdefault("source", str(registry_path))
-    return payload
-
+    return load_candidate_model_registry(include_configs=False)
 
 def _guarded_load_universe(self) -> None:
     self.seed_by_code = {}
@@ -1099,8 +1097,10 @@ def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
             amount_ratio_missing_count += 1
             row["amount_ratio_missing_reason"] = "prev_trade_value_missing" if previous_amount is None or previous_amount <= 0 else "current_trade_value_missing"
     try:
-        rows = enrich_net_buy_strength_v02_fields(rows)
-        self.status["candidate_model_id"] = "NET_BUY_STRENGTH_V02"
+        model_id = getattr(self, "selected_candidate_model_id", None)
+        rows = enrich_candidate_model_fields(rows, model_id=model_id)
+        active_model_id = rows[0].get("candidate_model_id") if rows else model_id
+        self.status["candidate_model_id"] = active_model_id
         self.status["candidate_grade_count"] = len(rows)
         self.status["candidate_grade_last_error"] = None
     except Exception as error:
@@ -1449,6 +1449,10 @@ _original_do_get = base.WebHandler.do_GET
 
 def _guarded_do_GET(self) -> None:
     parsed = base.urlparse(self.path)
+    query = base.parse_qs(parsed.query)
+    candidate_model = (query.get("candidate_model") or query.get("candidateModel") or [""])[0]
+    if candidate_model:
+        self.server.state.selected_candidate_model_id = candidate_model
     if parsed.path == "/api/v2/candidate_models":
         self._json(_candidate_models_payload())
         return

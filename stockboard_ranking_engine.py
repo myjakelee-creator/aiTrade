@@ -6,8 +6,11 @@ The first dedicated model is NET_BUY_STRENGTH_V02.
 
 from __future__ import annotations
 
+import json
+
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any, Iterable
 
 
@@ -625,3 +628,500 @@ def enrich_net_buy_strength_v02_fields(
     model: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     return NetBuyStrengthV02RankingEngine(model).enrich(rows)
+
+
+# ---------------------------------------------------------------------------
+# Config-driven candidate model ranking
+# ---------------------------------------------------------------------------
+
+CANDIDATE_MODEL_DIR = Path(__file__).resolve().parent / "configs" / "candidate_models"
+_CANDIDATE_MODEL_REGISTRY_CACHE: dict[str, Any] | None = None
+_CANDIDATE_MODEL_CONFIG_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def _read_candidate_json(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def load_candidate_model_registry(*, include_configs: bool = False) -> dict[str, Any]:
+    global _CANDIDATE_MODEL_REGISTRY_CACHE
+
+    if _CANDIDATE_MODEL_REGISTRY_CACHE is None:
+        path = CANDIDATE_MODEL_DIR / "_registry.json"
+        payload = _read_candidate_json(path) or {"models": []}
+        payload.setdefault("schema_version", 1)
+        payload.setdefault("source", str(path))
+        _CANDIDATE_MODEL_REGISTRY_CACHE = payload
+
+    result = dict(_CANDIDATE_MODEL_REGISTRY_CACHE)
+
+    if include_configs:
+        configs: dict[str, Any] = {}
+        for item in result.get("models") or []:
+            if not isinstance(item, dict):
+                continue
+            model_id = str(item.get("id") or "")
+            if not model_id:
+                continue
+            config = load_candidate_model_config(model_id)
+            if config:
+                configs[model_id] = config
+        result["configs"] = configs
+
+    return result
+
+
+def load_candidate_model_config(model_id: str | None = None) -> dict[str, Any]:
+    registry = load_candidate_model_registry()
+    default_model_id = str(registry.get("default_model_id") or NET_BUY_STRENGTH_V02)
+    requested_id = str(model_id or default_model_id)
+
+    models = registry.get("models") if isinstance(registry.get("models"), list) else []
+    selected = None
+    for item in models:
+        if isinstance(item, dict) and str(item.get("id") or "") == requested_id:
+            selected = item
+            break
+
+    if selected is None and requested_id != default_model_id:
+        return load_candidate_model_config(default_model_id)
+
+    if not isinstance(selected, dict):
+        selected = {"id": NET_BUY_STRENGTH_V02, "label": "??? ?? v0.2", "file": "NET_BUY_STRENGTH_V02.json"}
+
+    selected_id = str(selected.get("id") or requested_id)
+    if selected_id in _CANDIDATE_MODEL_CONFIG_CACHE:
+        return dict(_CANDIDATE_MODEL_CONFIG_CACHE[selected_id])
+
+    file_name = str(selected.get("file") or "")
+    config = _read_candidate_json(CANDIDATE_MODEL_DIR / file_name) if file_name else None
+    if not isinstance(config, dict):
+        config = {}
+
+    config.setdefault("id", selected_id)
+    config.setdefault("label", selected.get("label") or config.get("name") or selected_id)
+    config.setdefault("name", config.get("label") or selected.get("label") or selected_id)
+    config.setdefault("source_file", str(CANDIDATE_MODEL_DIR / file_name) if file_name else "")
+
+    _CANDIDATE_MODEL_CONFIG_CACHE[selected_id] = dict(config)
+    return config
+
+
+def _model_number(row: dict[str, Any], *keys: str) -> float | None:
+    return _number_or_none(_first(row, *keys))
+
+
+def _source_rank(row: dict[str, Any], fallback: int) -> float:
+    return _number_or_none(row.get("_source_rank")) or _current_rank(row) or float(fallback)
+
+
+def _row_ohlc_value(row: dict[str, Any], key: str) -> float | None:
+    ohlc = row.get("ohlc")
+    if isinstance(ohlc, dict):
+        value = _number_or_none(ohlc.get(key))
+        if value is not None:
+            return value
+    return _number_or_none(row.get(f"day_{key}") or row.get(key))
+
+
+def _price_above_reference(row: dict[str, Any], *, allow_vwap: bool = False) -> float:
+    price = _number_or_none(row.get("price") or row.get("trade_price"))
+    if price is None:
+        return 0.0
+
+    ref = None
+    if allow_vwap:
+        ref = _number_or_none(row.get("vwap") or row.get("day_vwap"))
+
+    if ref is None:
+        ref = _row_ohlc_value(row, "open")
+
+    if ref is None or ref <= 0:
+        return 0.0
+
+    return 100.0 if price >= ref else 0.0
+
+
+def _safe_change_rate_score(row: dict[str, Any]) -> float:
+    rate = _number_or_none(row.get("change_rate"))
+    if rate is None or rate < 0:
+        return 0.0
+    if rate <= 12:
+        return 100.0
+    if rate <= 20:
+        return 70.0
+    if rate <= 30:
+        return 30.0
+    return 0.0
+
+
+def _strength_score(value: Any) -> float:
+    strength = _number_or_none(value)
+    if strength is None or strength <= 0:
+        return 0.0
+    if strength >= 200:
+        return 100.0
+    if strength >= 100:
+        return _round_score(60 + (strength - 100) / 100 * 40)
+    return _round_score(strength / 100 * 50)
+
+
+def _sell_wall_score(row: dict[str, Any]) -> float:
+    ratio = _number_or_none(row.get("bid_ask_ratio"))
+    if ratio is not None and ratio > 0:
+        if ratio <= 0.2:
+            return 100.0
+        if ratio <= 0.4:
+            return 90.0
+        if ratio <= 0.6:
+            return 80.0
+        if ratio <= 0.8:
+            return 70.0
+        if ratio <= 1.0:
+            return 60.0
+        if ratio <= 1.2:
+            return 30.0
+        return 0.0
+
+    bid = _bid_volume(row)
+    ask = _ask_volume(row)
+    if bid is None or ask is None or bid + ask <= 0:
+        return 0.0
+    return _round_score(ask / (bid + ask) * 100)
+
+
+def _spike_reversal_penalty_score(row: dict[str, Any]) -> float:
+    rate = _number_or_none(row.get("change_rate"))
+    strength = _realtime_strength(row)
+    price = _number_or_none(row.get("price") or row.get("trade_price"))
+    open_price = _row_ohlc_value(row, "open")
+
+    if rate is not None and rate > 20 and (strength is None or strength < 100):
+        return 100.0
+    if rate is not None and rate > 12 and price is not None and open_price is not None and price < open_price:
+        return 100.0
+    return 0.0
+
+
+def _config_rank_scores(rows: list[dict[str, Any]], values: dict[int, float], *, descending: bool = True) -> dict[int, float]:
+    return _rank_value_scores(rows, values, descending=descending)
+
+
+def _config_context(rows: list[dict[str, Any]]) -> dict[str, dict[int, float]]:
+    amount_values: dict[int, float] = {}
+    program_values: dict[int, float] = {}
+    net_buy_values: dict[int, float] = {}
+    one_min_values: dict[int, float] = {}
+
+    for index, row in enumerate(rows):
+        trade_value = _trade_value(row)
+        prev_trade_value = _previous_trade_value(row)
+        if trade_value is not None and trade_value > 0 and prev_trade_value is not None and prev_trade_value > 0:
+            amount_values[index] = trade_value / prev_trade_value
+
+        program_net = _program_net(row)
+        if program_net is not None and program_net > 0:
+            if trade_value is not None and trade_value > 0:
+                program_values[index] = program_net / trade_value
+            else:
+                program_values[index] = program_net
+
+        large_net = _number_or_none(row.get("large_trade_net_count")) or 0.0
+        if program_net is not None and program_net > 0 or large_net > 0:
+            net_buy_values[index] = (program_net or 0.0) + large_net * 0.1
+
+        one_min_growth = _one_min_strength_growth(row)
+        one_min_strength = _number_or_none(row.get("strength_1m") or row.get("one_min_strength"))
+        if one_min_growth is not None and one_min_growth > 0:
+            one_min_values[index] = one_min_growth
+        elif one_min_strength is not None and one_min_strength > 0:
+            one_min_values[index] = one_min_strength
+
+    return {
+        "amount_scores": _config_rank_scores(rows, amount_values),
+        "program_scores": _config_rank_scores(rows, program_values),
+        "net_buy_scores": _config_rank_scores(rows, net_buy_values),
+        "one_min_scores": _config_rank_scores(rows, one_min_values),
+    }
+
+
+def _config_key_score(
+    row: dict[str, Any],
+    *,
+    index: int,
+    total_count: int,
+    context: dict[str, dict[int, float]],
+    key: str,
+) -> tuple[float, float | None, str]:
+    source_rank = _source_rank(row, index + 1)
+
+    if key == "trade_value_rank":
+        return _rank_position_score(int(source_rank), total_count), source_rank, "trade_value_rank"
+
+    if key in {"rank_gap", "rank_gap_continuation"}:
+        prev_rank = _previous_rank(row)
+        if prev_rank is None:
+            return 0.0, None, "prev_rank_missing"
+        gap = prev_rank - source_rank
+        return _round_score(min(max(gap, 0), 100)), gap, "prev_rank-source_rank"
+
+    if key in {"trade_value_growth", "one_min_trade_value_growth"}:
+        return context["amount_scores"].get(index, 0.0), None, "rank(trade_value/prev_trade_value)"
+
+    if key == "program_net":
+        return context["program_scores"].get(index, 0.0), _program_net(row), "rank(program_net/trade_value)"
+
+    if key in {"one_min_net_buy_value_growth", "one_min_net_buy_value_continuation"}:
+        return context["net_buy_scores"].get(index, 0.0), None, "rank(program_net+large_trade_net)"
+
+    if key in {"realtime_strength", "realtime_strength_hold_100"}:
+        value = _realtime_strength(row)
+        return _strength_score(value), value, "execution_strength"
+
+    if key == "one_min_strength_growth":
+        value = _number_or_none(row.get("strength_1m") or row.get("one_min_strength"))
+        ranked = context["one_min_scores"].get(index)
+        return (ranked if ranked is not None else _strength_score(value)), value, "strength_1m"
+
+    if key == "sell_wall_absorption":
+        value = _number_or_none(row.get("bid_ask_ratio"))
+        return _sell_wall_score(row), value, "bid_ask_ratio"
+
+    if key == "above_open":
+        return _price_above_reference(row, allow_vwap=False), None, "price>=open"
+
+    if key == "above_vwap_or_open":
+        return _price_above_reference(row, allow_vwap=True), None, "price>=vwap_or_open"
+
+    if key == "safe_change_rate_band":
+        value = _number_or_none(row.get("change_rate"))
+        return _safe_change_rate_score(row), value, "safe_change_rate_band"
+
+    if key == "spike_reversal_penalty":
+        value = _spike_reversal_penalty_score(row)
+        return value, value, "spike_reversal_penalty"
+
+    return 0.0, None, "unknown_model_key"
+
+
+def _config_group_score(
+    row: dict[str, Any],
+    *,
+    index: int,
+    total_count: int,
+    context: dict[str, dict[int, float]],
+    items: list[dict[str, Any]],
+) -> tuple[float, list[dict[str, Any]]]:
+    if not items:
+        return 0.0, []
+
+    weighted = 0.0
+    positive_weight_total = 0.0
+    item_results: list[dict[str, Any]] = []
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("key") or "")
+        label = str(item.get("label") or key)
+        weight = _number_or_none(item.get("weight"))
+        if weight is None or weight == 0:
+            continue
+
+        score, value, source = _config_key_score(
+            row,
+            index=index,
+            total_count=total_count,
+            context=context,
+            key=key,
+        )
+
+        weighted += score * weight
+        if weight > 0:
+            positive_weight_total += weight
+
+        item_results.append(
+            {
+                "key": key,
+                "label": label,
+                "points": _round_score(score),
+                "weight": weight,
+                "weighted_points": round(score * weight, 4),
+                "possible_points": max(weight, 0),
+                "source": source,
+                "status": "ok" if source != "unknown_model_key" else "unknown",
+                "value": value,
+            }
+        )
+
+    if positive_weight_total <= 0:
+        return 0.0, item_results
+
+    return _round_score(weighted / positive_weight_total), item_results
+
+
+def _config_grade_text(score: float, config: dict[str, Any]) -> str:
+    bands = ((config.get("grade_policy") or {}).get("base_bands") or {})
+    a = _number_or_none(bands.get("A")) or 90
+    b = _number_or_none(bands.get("B")) or 80
+    c = _number_or_none(bands.get("C")) or 70
+    d = _number_or_none(bands.get("D")) or 60
+    number = int(round(_clamp(score, 0, 100)))
+    letter = "A" if number >= a else "B" if number >= b else "C" if number >= c else "D" if number >= d else "F"
+    return f"{letter}{number}"
+
+
+class ConfigDrivenCandidateRankingEngine:
+    def __init__(self, config: dict[str, Any]):
+        self.config = config or {}
+        self.model_id = str(self.config.get("id") or NET_BUY_STRENGTH_V02)
+        self.model_name = str(self.config.get("label") or self.config.get("name") or self.model_id)
+
+    def enrich(self, rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        score_structure = self.config.get("score_structure")
+        if not isinstance(score_structure, dict):
+            result = NetBuyStrengthV02RankingEngine(self.config).enrich(rows)
+            return self._rerank_by_score(result)
+
+        enriched = [dict(row) for row in rows]
+        for index, row in enumerate(enriched):
+            row["_source_rank"] = _current_rank(row) or index + 1
+            row.setdefault("trade_value_rank", row["_source_rank"])
+
+        total_count = len(enriched)
+        context = _config_context(enriched)
+        grade_weights = score_structure.get("grade_score_weights") if isinstance(score_structure.get("grade_score_weights"), dict) else {}
+        entry_weight = _number_or_none(grade_weights.get("entry_score")) or 0.3333333333
+        confirmation_weight = _number_or_none(grade_weights.get("confirmation_score")) or 0.3333333333
+        focus_weight = _number_or_none(grade_weights.get("focus_score")) or 0.3333333334
+
+        for index, row in enumerate(enriched):
+            entry_score, entry_items = _config_group_score(
+                row,
+                index=index,
+                total_count=total_count,
+                context=context,
+                items=score_structure.get("entry_score") or [],
+            )
+            confirmation_score, confirmation_items = _config_group_score(
+                row,
+                index=index,
+                total_count=total_count,
+                context=context,
+                items=score_structure.get("confirmation_score") or [],
+            )
+            focus_score, focus_items = _config_group_score(
+                row,
+                index=index,
+                total_count=total_count,
+                context=context,
+                items=score_structure.get("focus_score") or [],
+            )
+
+            score = _round_score(
+                entry_score * entry_weight
+                + confirmation_score * confirmation_weight
+                + focus_score * focus_weight
+            )
+            grade_text = _config_grade_text(score, self.config)
+            grade, grade_class = grade_for_percent(score)
+
+            item_dicts = entry_items + confirmation_items + focus_items
+
+            row.update(
+                {
+                    "candidate_model_id": self.model_id,
+                    "candidate_model_name": self.model_name,
+                    "candidate_score_version": self.model_id,
+                    "entry_score": entry_score,
+                    "confirmation_score": confirmation_score,
+                    "focus_score": focus_score,
+                    "candidate_score": score,
+                    "score_percent": score,
+                    "grade_score": score,
+                    "candidate_grade": grade,
+                    "candidate_grade_text": grade_text,
+                    "candidate_grade_class": grade_class,
+                    "display_grade_source": "candidate_model_config",
+                    "score_total": score,
+                    "score_total_points": score,
+                    "score_possible_points": 100,
+                    "score_breakdown": {
+                        "candidate_model": {
+                            "id": self.model_id,
+                            "name": self.model_name,
+                            "entry_score": entry_score,
+                            "confirmation_score": confirmation_score,
+                            "focus_score": focus_score,
+                            "items": item_dicts,
+                        },
+                        "total": {
+                            "score": score,
+                            "possible_points": 100,
+                            "percent": score,
+                            "grade": grade_text,
+                        },
+                    },
+                    "candidate_score_items": {
+                        "entry_score": {item["key"]: item["points"] for item in entry_items},
+                        "confirmation_score": {item["key"]: item["points"] for item in confirmation_items},
+                        "focus_score": {item["key"]: item["points"] for item in focus_items},
+                    },
+                    "momentum": self._momentum_text(item_dicts),
+                    "candidate_reason": self._reason_text(item_dicts),
+                    "candidate_status": "READY" if score >= 60 else "WEAK",
+                }
+            )
+
+        return self._rerank_by_score(enriched)
+
+    def _rerank_by_score(self, rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        enriched = [dict(row) for row in rows]
+        for index, row in enumerate(enriched):
+            row["_source_rank"] = _current_rank(row) or row.get("_source_rank") or index + 1
+            row.setdefault("trade_value_rank", row["_source_rank"])
+            row["candidate_model_id"] = self.model_id
+            row["candidate_model_name"] = self.model_name
+
+        ranked = sorted(
+            enriched,
+            key=lambda row: (
+                -(_number_or_none(row.get("candidate_score") or row.get("score_percent") or row.get("grade_score")) or 0),
+                _number_or_none(row.get("_source_rank")) or float("inf"),
+                -(_trade_value(row) or 0),
+                str(row.get("stock_code") or ""),
+            ),
+        )
+
+        for rank, row in enumerate(ranked, start=1):
+            previous_rank = _previous_rank(row)
+            row["rank"] = rank
+            row["model_rank"] = rank
+            row["pool_rank"] = rank
+            row["funnel_rank"] = rank
+            row["rank_change"] = (previous_rank - rank) if previous_rank is not None else None
+            row["pool_stage"] = _pool_stage(rank)
+            row["is_candidate"] = rank <= 5
+            row["candidate_rank"] = rank if rank <= 5 else None
+
+        return ranked
+
+    def _momentum_text(self, items: list[dict[str, Any]]) -> str:
+        labels = [str(item.get("label") or item.get("key")) for item in items if _number_or_none(item.get("points")) is not None and float(item.get("points")) >= 70]
+        return " + ".join(labels[:4]) if labels else "???? ??"
+
+    def _reason_text(self, items: list[dict[str, Any]]) -> str:
+        return " + ".join(f"{item.get('label') or item.get('key')} {_score_text(item.get('points'))}?" for item in items)
+
+
+def enrich_candidate_model_fields(
+    rows: Iterable[dict[str, Any]],
+    model_id: str | None = None,
+) -> list[dict[str, Any]]:
+    config = load_candidate_model_config(model_id)
+    return ConfigDrivenCandidateRankingEngine(config).enrich(rows)
+
