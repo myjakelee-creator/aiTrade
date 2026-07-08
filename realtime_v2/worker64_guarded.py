@@ -64,15 +64,12 @@ base.DAILY_PERSIST_KEYS = tuple(dict.fromkeys((*base.DAILY_PERSIST_KEYS, *PERSIS
 
 
 def _time_seconds(value: Any) -> int | None:
-    text = str(value or "").strip()
-    digits = "".join(ch for ch in text if ch.isdigit())
+    digits = "".join(ch for ch in str(value or "").strip() if ch.isdigit())
     if len(digits) < 6:
         return None
     digits = digits[:6]
     try:
-        hour = int(digits[0:2])
-        minute = int(digits[2:4])
-        second = int(digits[4:6])
+        hour, minute, second = int(digits[0:2]), int(digits[2:4]), int(digits[4:6])
     except ValueError:
         return None
     if hour > 23 or minute > 59 or second > 59:
@@ -113,32 +110,6 @@ def _load_json_first(paths: list[Path]) -> dict[str, Any] | None:
     return None
 
 
-def _previous_trade_value_cache_paths() -> list[Path]:
-    date_text = trading_date_text()
-    return [
-        ROOT / "data" / "runtime" / f"previous_trade_value_{date_text}.json",
-        RUNTIME_DIR / f"previous_trade_value_{date_text}.json",
-    ]
-
-
-def _load_previous_trade_value_cache() -> dict[str, dict[str, Any]]:
-    for path in _previous_trade_value_cache_paths():
-        payload = _json_file(path)
-        entries = payload.get("entries") if isinstance(payload, dict) else None
-        if not isinstance(entries, dict):
-            continue
-        result: dict[str, dict[str, Any]] = {}
-        for raw_code, raw_entry in entries.items():
-            code = normalize_code(raw_code)
-            if not code or not isinstance(raw_entry, dict):
-                continue
-            value = to_number(raw_entry.get("prev_trade_value_eok"))
-            if value is not None and value > 0:
-                result[code] = dict(raw_entry)
-        return result
-    return {}
-
-
 def _session_dict() -> dict[str, Any]:
     try:
         return market_session_now().to_dict()
@@ -177,60 +148,31 @@ def _update_market_session_status(state) -> dict[str, Any]:
     return session
 
 
-def _drop_trade(state, quote: dict[str, Any], code: str, reason: str, event: dict[str, Any], values: dict[str, Any], trade_time: str, lag_sec: float | None) -> None:
-    state.status["dropped_trade_count"] = int(state.status.get("dropped_trade_count") or 0) + 1
-    state.status["last_dropped_trade"] = {
-        "stock_code": code,
-        "reason": reason,
-        "event_ts": event.get("ts"),
-        "trade_time": trade_time,
-        "fid20_lag_sec": lag_sec,
-        "source_code": values.get("source_code") or values.get("registered_code"),
-    }
-    quote["last_dropped_trade_reason"] = reason
-    quote["last_dropped_trade_at"] = now_text()
-    if lag_sec is not None:
-        quote["fid20_lag_sec"] = lag_sec
+def _previous_trade_value_cache_paths() -> list[Path]:
+    date_text = trading_date_text()
+    return [ROOT / "data" / "runtime" / f"previous_trade_value_{date_text}.json", RUNTIME_DIR / f"previous_trade_value_{date_text}.json"]
 
 
-def _mark_lag_warning(state, quote: dict[str, Any], code: str, values: dict[str, Any], trade_time: str, lag_sec: float | None) -> None:
-    if lag_sec is None or lag_sec <= STALE_LAG_WARN_SEC:
-        return
-    state.status["lagged_trade_warning_count"] = int(state.status.get("lagged_trade_warning_count") or 0) + 1
-    state.status["last_lagged_trade_warning"] = {
-        "stock_code": code,
-        "trade_time": trade_time,
-        "fid20_lag_sec": lag_sec,
-        "source_code": values.get("source_code") or values.get("registered_code"),
-    }
-    quote["fid20_lag_sec"] = lag_sec
-    quote["last_lagged_trade_warning_at"] = now_text()
-
-
-def _restore_persisted_live_metrics(quote: dict[str, Any], persisted: dict[str, Any]) -> None:
-    for key in PERSISTED_LIVE_KEYS:
-        if key in persisted:
-            quote[key] = deepcopy(persisted.get(key))
-
-
-def _persist_live_metrics(state, code: str, quote: dict[str, Any], *keys: str) -> None:
-    if not code:
-        return
-    entry = state.daily_values_by_code.setdefault(code, {})
-    changed = False
-    for key in keys:
-        value = quote.get(key)
-        if value not in (None, "") and entry.get(key) != value:
-            entry[key] = deepcopy(value)
-            changed = True
-    if changed:
-        state._mark_daily_dirty()
+def _load_previous_trade_value_cache() -> dict[str, dict[str, Any]]:
+    for path in _previous_trade_value_cache_paths():
+        payload = _json_file(path)
+        entries = payload.get("entries") if isinstance(payload, dict) else None
+        if not isinstance(entries, dict):
+            continue
+        result: dict[str, dict[str, Any]] = {}
+        for raw_code, raw_entry in entries.items():
+            code = normalize_code(raw_code)
+            if not code or not isinstance(raw_entry, dict):
+                continue
+            value = to_number(raw_entry.get("prev_trade_value_eok"))
+            if value is not None and value > 0:
+                result[code] = dict(raw_entry)
+        return result
+    return {}
 
 
 def _previous_entry_for_code(state, code: str) -> dict[str, Any]:
     code = normalize_code(code)
-    if not code:
-        return {}
     cache = getattr(state, "prev_trade_value_cache_by_code", {}) or {}
     entry = cache.get(code)
     return entry if isinstance(entry, dict) else {}
@@ -320,8 +262,6 @@ def _load_ohlc_snapshot_if_needed(state, force: bool = False) -> None:
 
 def _apply_ohlc_snapshot_to_quote(state, code: str, quote: dict[str, Any]) -> None:
     code = normalize_code(code)
-    if not code:
-        return
     snapshot = getattr(state, "ohlc_by_code", {}).get(code)
     if not isinstance(snapshot, dict):
         return
@@ -345,7 +285,7 @@ def _update_intraday_ohlc(quote: dict[str, Any], price: float | int | None) -> N
     open_price = to_number(current.get("open") or quote.get("day_open")) or float(value)
     high_price = max(to_number(current.get("high") or quote.get("day_high")) or float(value), float(value))
     low_price = min(to_number(current.get("low") or quote.get("day_low")) or float(value), float(value))
-    ohlc = {
+    quote["ohlc"] = {
         "open": round(open_price, 4),
         "high": round(high_price, 4),
         "low": round(low_price, 4),
@@ -353,25 +293,23 @@ def _update_intraday_ohlc(quote: dict[str, Any], price: float | int | None) -> N
         "source": current.get("source") or "realtime_intraday",
         "date": current.get("date"),
     }
-    quote["ohlc"] = ohlc
-    quote["day_open"] = ohlc["open"]
-    quote["day_high"] = ohlc["high"]
-    quote["day_low"] = ohlc["low"]
-    quote["day_close"] = ohlc["close"]
+    quote["day_open"] = quote["ohlc"]["open"]
+    quote["day_high"] = quote["ohlc"]["high"]
+    quote["day_low"] = quote["ohlc"]["low"]
+    quote["day_close"] = quote["ohlc"]["close"]
 
 
-def _update_one_min_strength_from_qty(quote: dict[str, Any], trade_qty: int | None) -> None:
-    qty = to_int(trade_qty)
-    if qty is None or qty == 0:
+def _update_one_min_strength_flow(quote: dict[str, Any], *, buy_qty: int = 0, sell_qty: int = 0) -> None:
+    buy_qty = max(0, int(buy_qty or 0))
+    sell_qty = max(0, int(sell_qty or 0))
+    if buy_qty <= 0 and sell_qty <= 0:
         return
     now_sec = int(time.monotonic())
     raw_buckets = quote.get("_one_min_qty_buckets") if isinstance(quote.get("_one_min_qty_buckets"), list) else []
     buckets: list[list[int]] = []
     for item in raw_buckets:
         try:
-            sec = int(item[0])
-            buy = int(item[1])
-            sell = int(item[2])
+            sec, buy, sell = int(item[0]), int(item[1]), int(item[2])
         except (TypeError, ValueError, IndexError):
             continue
         if now_sec - sec <= 60:
@@ -381,22 +319,20 @@ def _update_one_min_strength_from_qty(quote: dict[str, Any], trade_qty: int | No
     else:
         bucket = [now_sec, 0, 0]
         buckets.append(bucket)
-    if qty > 0:
-        bucket[1] += int(qty)
-    else:
-        bucket[2] += abs(int(qty))
+    bucket[1] += buy_qty
+    bucket[2] += sell_qty
     buckets = buckets[-61:]
-    buy_qty = sum(item[1] for item in buckets)
-    sell_qty = sum(item[2] for item in buckets)
-    if sell_qty > 0:
-        strength = round(min(ONE_MIN_STRENGTH_CAP, buy_qty / sell_qty * 100.0), 4)
-    elif buy_qty > 0:
+    total_buy = sum(item[1] for item in buckets)
+    total_sell = sum(item[2] for item in buckets)
+    if total_sell > 0:
+        strength = round(min(ONE_MIN_STRENGTH_CAP, total_buy / total_sell * 100.0), 4)
+    elif total_buy > 0:
         strength = ONE_MIN_STRENGTH_CAP
     else:
         strength = None
     quote["_one_min_qty_buckets"] = buckets
-    quote["one_min_buy_qty"] = buy_qty
-    quote["one_min_sell_qty"] = sell_qty
+    quote["one_min_buy_qty"] = total_buy
+    quote["one_min_sell_qty"] = total_sell
     quote["strength_1m"] = strength
     quote["one_min_strength"] = strength
     quote["one_min_strength_updated_at"] = now_text()
@@ -404,35 +340,10 @@ def _update_one_min_strength_from_qty(quote: dict[str, Any], trade_qty: int | No
 
 
 def _runtime_context_payload() -> dict[str, Any]:
-    market_supply = _load_json_first(
-        [
-            RUNTIME_DIR / "market_supply.json",
-            ROOT / "data" / "runtime" / "market_supply.json",
-            ROOT / "docs" / "assets" / "market_supply_snapshot.json",
-            ROOT / "docs" / "assets" / "stockboard_market_supply.json",
-        ]
-    )
-    us_market = _load_json_first(
-        [
-            RUNTIME_DIR / "us_market.json",
-            ROOT / "data" / "runtime" / "us_market.json",
-            ROOT / "docs" / "assets" / "us_market_snapshot.json",
-            ROOT / "docs" / "assets" / "stockboard_us_market.json",
-        ]
-    )
+    market_supply = _load_json_first([RUNTIME_DIR / "market_supply.json", ROOT / "data" / "runtime" / "market_supply.json", ROOT / "docs" / "assets" / "market_supply_snapshot.json", ROOT / "docs" / "assets" / "stockboard_market_supply.json"])
+    us_market = _load_json_first([RUNTIME_DIR / "us_market.json", ROOT / "data" / "runtime" / "us_market.json", ROOT / "docs" / "assets" / "us_market_snapshot.json", ROOT / "docs" / "assets" / "stockboard_us_market.json"])
     ohlc_snapshot = _load_json_first([_ohlc_snapshot_path()])
-    return {
-        "schema_version": 1,
-        "ts": now_text(),
-        "market_supply": market_supply or {},
-        "us_market": us_market or {},
-        "ohlc_snapshot_status": {
-            "count": (ohlc_snapshot or {}).get("count"),
-            "ts": (ohlc_snapshot or {}).get("ts"),
-            "source": (ohlc_snapshot or {}).get("source"),
-        },
-        "source_policy": "read_only_snapshot_files_no_realtime_pipeline_work",
-    }
+    return {"schema_version": 1, "ts": now_text(), "market_supply": market_supply or {}, "us_market": us_market or {}, "ohlc_snapshot_status": {"count": (ohlc_snapshot or {}).get("count"), "ts": (ohlc_snapshot or {}).get("ts"), "source": (ohlc_snapshot or {}).get("source")}, "source_policy": "read_only_snapshot_files_no_realtime_pipeline_work"}
 
 
 def _candidate_models_payload() -> dict[str, Any]:
@@ -444,7 +355,7 @@ def _candidate_models_payload() -> dict[str, Any]:
 
 
 def _guarded_load_universe(self) -> None:
-    self.seed_by_code: dict[str, dict[str, Any]] = {}
+    self.seed_by_code = {}
     self.prev_trade_value_cache_by_code = _load_previous_trade_value_cache()
     self.ohlc_by_code = {}
     self.ohlc_snapshot_mtime = None
@@ -471,17 +382,7 @@ def _guarded_load_universe(self) -> None:
             if previous_value is not None and previous_value > 0:
                 self.prev_trade_value_by_code[code] = float(previous_value)
                 previous_value_count += 1
-            self.seed_by_code[code] = {
-                "seed_price": item.get("seed_price"),
-                "seed_change_rate": item.get("seed_change_rate"),
-                "seed_trade_value_eok": item.get("seed_trade_value_eok"),
-                "seed_built_at": built_at,
-                "prev_trade_value_eok": previous_value,
-                "prev_trade_value_source": item.get("prev_trade_value_source"),
-                "prev_trade_value_status": item.get("prev_trade_value_status"),
-                "prev_trade_value_date": item.get("prev_trade_value_date"),
-                "prev_trade_value_lookup_source": item.get("prev_trade_value_lookup_source"),
-            }
+            self.seed_by_code[code] = {"seed_price": item.get("seed_price"), "seed_change_rate": item.get("seed_change_rate"), "seed_trade_value_eok": item.get("seed_trade_value_eok"), "seed_built_at": built_at, "prev_trade_value_eok": previous_value, "prev_trade_value_source": item.get("prev_trade_value_source"), "prev_trade_value_status": item.get("prev_trade_value_status"), "prev_trade_value_date": item.get("prev_trade_value_date"), "prev_trade_value_lookup_source": item.get("prev_trade_value_lookup_source")}
         _update_market_session_status(self)
         for code in list(self.seed_rank_by_code):
             self._quote(code)
@@ -503,20 +404,7 @@ def _guarded_quote(self, code: str) -> dict[str, Any]:
         return quote
     persisted = self.daily_values_by_code.get(code) or {}
     seed = getattr(self, "seed_by_code", {}).get(code, {}) or {}
-    quote = {
-        "stock_code": code,
-        "stock_name": self.name_by_code.get(code, code),
-        "seed_rank": self.seed_rank_by_code.get(code, 999999),
-        "prev_rank": self.prev_rank_by_code.get(code),
-        "large_trade_buy_count": persisted.get("large_trade_buy_count", 0),
-        "large_trade_sell_count": persisted.get("large_trade_sell_count", 0),
-        "large_trade_net_count": persisted.get("large_trade_net_count", 0),
-        "large_trade_buy_sum_eok": persisted.get("large_trade_buy_sum_eok", 0.0),
-        "large_trade_sell_sum_eok": persisted.get("large_trade_sell_sum_eok", 0.0),
-        "large_trade_net_sum_eok": persisted.get("large_trade_net_sum_eok", 0.0),
-        "source_code": "seed_universe",
-        "row_source": "seed_universe",
-    }
+    quote = {"stock_code": code, "stock_name": self.name_by_code.get(code, code), "seed_rank": self.seed_rank_by_code.get(code, 999999), "prev_rank": self.prev_rank_by_code.get(code), "large_trade_buy_count": persisted.get("large_trade_buy_count", 0), "large_trade_sell_count": persisted.get("large_trade_sell_count", 0), "large_trade_net_count": persisted.get("large_trade_net_count", 0), "large_trade_buy_sum_eok": persisted.get("large_trade_buy_sum_eok", 0.0), "large_trade_sell_sum_eok": persisted.get("large_trade_sell_sum_eok", 0.0), "large_trade_net_sum_eok": persisted.get("large_trade_net_sum_eok", 0.0), "source_code": "seed_universe", "row_source": "seed_universe"}
     _copy_previous_fields(self, code, quote, seed)
     seed_price = normalized_price(seed.get("seed_price"))
     seed_rate = normalized_rate(seed.get("seed_change_rate"))
@@ -584,6 +472,22 @@ def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
     return rows[:limit]
 
 
+def _drop_trade(state, quote: dict[str, Any], code: str, reason: str, event: dict[str, Any], values: dict[str, Any], trade_time: str, lag_sec: float | None) -> None:
+    state.status["dropped_trade_count"] = int(state.status.get("dropped_trade_count") or 0) + 1
+    state.status["last_dropped_trade"] = {"stock_code": code, "reason": reason, "event_ts": event.get("ts"), "trade_time": trade_time, "fid20_lag_sec": lag_sec, "source_code": values.get("source_code") or values.get("registered_code")}
+    quote["last_dropped_trade_reason"] = reason
+    quote["last_dropped_trade_at"] = now_text()
+
+
+def _mark_lag_warning(state, quote: dict[str, Any], code: str, values: dict[str, Any], trade_time: str, lag_sec: float | None) -> None:
+    if lag_sec is None or lag_sec <= STALE_LAG_WARN_SEC:
+        return
+    state.status["lagged_trade_warning_count"] = int(state.status.get("lagged_trade_warning_count") or 0) + 1
+    state.status["last_lagged_trade_warning"] = {"stock_code": code, "trade_time": trade_time, "fid20_lag_sec": lag_sec, "source_code": values.get("source_code") or values.get("registered_code")}
+    quote["fid20_lag_sec"] = lag_sec
+    quote["last_lagged_trade_warning_at"] = now_text()
+
+
 def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
     values = base.merged_event_values(event)
     raw = values.get("raw") if isinstance(values.get("raw"), dict) else values
@@ -595,6 +499,8 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
     price = normalized_price(raw.get("price_raw") or values.get("price") or values.get("trade_price") or values.get("realtime_price"))
     change_rate = normalized_rate(raw.get("change_rate_raw") or values.get("change_rate") or values.get("realtime_change_rate"))
     trade_qty = to_int(raw.get("trade_qty_raw") or values.get("trade_qty"))
+    flow_buy_qty = to_int(values.get("collector_buy_qty"))
+    flow_sell_qty = to_int(values.get("collector_sell_qty"))
     cumulative_volume = to_int(raw.get("cumulative_volume_raw") or values.get("cumulative_volume"))
     trade_value_eok = to_number(values.get("trade_value_eok")) if values.get("trade_value_eok") not in (None, "") else None
     if trade_value_eok is None:
@@ -620,12 +526,10 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
                 drop_reason = "older_fid20_than_last_accepted"
         except (TypeError, ValueError):
             pass
-    if drop_reason is None and has_accepted_realtime and trade_value_eok is not None and previous_value is not None:
-        if float(trade_value_eok) + 1.0 < float(previous_value):
-            drop_reason = "cumulative_trade_value_decreased"
-    if drop_reason is None and has_accepted_realtime and cumulative_volume is not None and previous_volume is not None:
-        if int(cumulative_volume) < int(previous_volume):
-            drop_reason = "cumulative_volume_decreased"
+    if drop_reason is None and has_accepted_realtime and trade_value_eok is not None and previous_value is not None and float(trade_value_eok) + 1.0 < float(previous_value):
+        drop_reason = "cumulative_trade_value_decreased"
+    if drop_reason is None and has_accepted_realtime and cumulative_volume is not None and previous_volume is not None and int(cumulative_volume) < int(previous_volume):
+        drop_reason = "cumulative_volume_decreased"
     if drop_reason is not None:
         _drop_trade(self, quote, code, drop_reason, event, values, trade_time, fid20_lag_sec)
         return
@@ -638,7 +542,10 @@ def _guarded_apply_trade(self, event: dict[str, Any]) -> None:
         quote["change_rate"] = change_rate
     if trade_qty is not None:
         quote["trade_qty"] = trade_qty
-        _update_one_min_strength_from_qty(quote, trade_qty)
+    if flow_buy_qty is not None or flow_sell_qty is not None:
+        _update_one_min_strength_flow(quote, buy_qty=flow_buy_qty or 0, sell_qty=flow_sell_qty or 0)
+    elif trade_qty is not None:
+        _update_one_min_strength_flow(quote, buy_qty=max(0, trade_qty), sell_qty=abs(min(0, trade_qty)))
     if cumulative_volume is not None:
         quote["cumulative_volume"] = cumulative_volume
     if trade_value_eok is not None:
