@@ -320,7 +320,7 @@
       <tbody id="us-market-row">
         <tr>
           <td class="context-title">미국</td>
-          <td>????? -</td>
+          <td>NQ -</td><td>ES -</td><td>YM -</td>
           <td>QQQ -</td>
           <td>SOXL -</td>
           <td>SMH -</td>
@@ -521,8 +521,7 @@ function loadSortState(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KE
         ind:first(m,['individual_eok','individual','\uAC1C\uC778']),
         fr:first(m,['foreign_spot_eok','foreign','\uC678\uC778']),
         inst:first(m,['institution_eok','institution','\uAE30\uAD00']),
-        prog:first(m,['program_market_eok','program','\uD504\uB85C']),
-        fut:first(m,['foreign_futures_eok','foreign_futures','\uC678\uC120'])
+        prog:first(m,['program_market_eok','program','\uD504\uB85C'])
       };
     }
 
@@ -563,7 +562,9 @@ function loadSortState(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KE
     const us=payload.us_market||{};
     const usValues=us.values||us;
     const usItems=[
-      ['NQ=F','\uB098\uC2A4\uB2E5\uC120\uBB3C'],
+      ['NQ=F','NQ'],
+      ['ES=F','ES'],
+      ['YM=F','YM'],
       ['QQQ','QQQ'],
       ['SOXL','SOXL'],
       ['SMH','SMH'],
@@ -583,11 +584,11 @@ function loadSortState(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KE
     const kospi=marketRow(ms,'kospi','KOSPI');
     const kosdaq=marketRow(ms,'kosdaq','KOSDAQ');
 
-    const header=`<tr><th>\uC2DC\uC7A5</th><th>\uC9C0\uC218</th><th>\uB4F1\uB77D\uB960</th><th>\uC0C1\uC2B9/\uD558\uB77D</th><th>\uAC1C\uC778(\uC5B5)</th><th>\uC678\uC778(\uC5B5)</th><th>\uAE30\uAD00(\uC5B5)</th><th>\uD504\uB85C(\uC5B5)</th><th>\uC678\uC120(\uC5B5)</th></tr>`;
+    const header=`<tr><th>\uC2DC\uC7A5</th><th>\uC9C0\uC218</th><th>\uB4F1\uB77D\uB960</th><th>\uC0C1\uC2B9/\uD558\uB77D</th><th>\uAC1C\uC778(\uC5B5)</th><th>\uC678\uC778(\uC5B5)</th><th>\uAE30\uAD00(\uC5B5)</th><th>\uD504\uB85C(\uC5B5)</th></tr>`;
     const body=[kospi,kosdaq].map(r=>{
       const cls=contextCls(r.ch);
       const counts=`<span class="v2-market-count-up">${r.adv??'-'}(\u2191${r.up??'-'})</span> / <span class="v2-market-count-down">${r.dec??'-'}(\u2193${r.down??'-'})</span>`;
-      return `<tr><td class="v2-market-name">${r.label}</td><td>${r.idx??'-'}</td><td class="${cls}">${contextNum(r.ch,2)}%</td><td>${counts}</td><td class="${contextCls(r.ind)}">${eokText(r.ind)}</td><td class="${contextCls(r.fr)}">${eokText(r.fr)}</td><td class="${contextCls(r.inst)}">${eokText(r.inst)}</td><td class="${contextCls(r.prog)}">${eokText(r.prog)}</td><td class="${contextCls(r.fut)}">${eokText(r.fut)}</td></tr>`;
+      return `<tr><td class="v2-market-name">${r.label}</td><td>${r.idx??'-'}</td><td class="${cls}">${contextNum(r.ch,2)}%</td><td>${counts}</td><td class="${contextCls(r.ind)}">${eokText(r.ind)}</td><td class="${contextCls(r.fr)}">${eokText(r.fr)}</td><td class="${contextCls(r.inst)}">${eokText(r.inst)}</td><td class="${contextCls(r.prog)}">${eokText(r.prog)}</td></tr>`;
     }).join('');
 
     marketSupplyRow.closest('table').classList.add('v2-market-grid');
