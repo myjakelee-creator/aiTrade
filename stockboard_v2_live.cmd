@@ -53,6 +53,7 @@ $Python32 = "C:\Users\myjay\AppData\Local\Programs\Python\Python310-32\python.ex
 $Python64 = (Get-Command python -ErrorAction Stop).Source
 $WorkerPidFile = Join-Path $RuntimeDir "worker64.pid"
 $CollectorPidFile = Join-Path $RuntimeDir "collector32.pid"
+$ContextPidFile = Join-Path $RuntimeDir "context_snapshot_writer.pid"
 $WorkerUrl = "http://127.0.0.1:8765/api/v2/health"
 $BoardUrl = "http://127.0.0.1:8765/"
 $AhkScript = Join-Path $ProjectRoot "scripts\stockboard_kiwoom_link_v1.ahk"
@@ -207,6 +208,7 @@ function Start-V2([bool]$FastOpen = $false) {
     Write-Step "Stopping old v2 processes"
     Stop-PidFile $CollectorPidFile "collector32"
     Stop-PidFile $WorkerPidFile "worker64"
+    Stop-PidFile $ContextPidFile "context_snapshot_writer"
     Stop-Port 8765
     Stop-Port 8710
 
@@ -219,6 +221,16 @@ function Start-V2([bool]$FastOpen = $false) {
     $workerErr = Join-Path $RuntimeDir "worker64_$stamp.err.log"
     $collectorOut = Join-Path $RuntimeDir "collector32_$stamp.out.log"
     $collectorErr = Join-Path $RuntimeDir "collector32_$stamp.err.log"
+    $contextOut = Join-Path $RuntimeDir "context_snapshot_$stamp.out.log"
+    $contextErr = Join-Path $RuntimeDir "context_snapshot_$stamp.err.log"
+
+    Write-Step "Starting low-priority context snapshot writer"
+    $contextArgs = @("realtime_v2\context_snapshot_writer.py", "--interval-sec", "30", "--ohlc-bootstrap")
+    $context = Start-Process -FilePath $Python64 -ArgumentList $contextArgs -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $contextOut -RedirectStandardError $contextErr -PassThru
+    Set-Content -LiteralPath $ContextPidFile -Value $context.Id -Encoding ASCII
+    Write-Host "CONTEXT_PID=$($context.Id)"
+    Write-Host "CONTEXT_STDOUT=$contextOut"
+    Write-Host "CONTEXT_STDERR=$contextErr"
 
     Write-Step "Starting 64-bit guarded worker"
     $worker = Start-Process -FilePath $Python64 -ArgumentList @("realtime_v2\worker64_guarded.py") -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $workerOut -RedirectStandardError $workerErr -PassThru
@@ -265,10 +277,11 @@ function Start-V2([bool]$FastOpen = $false) {
 
 function Stop-V2 {
     Ensure-RuntimeDir
-    Write-Step "Stopping v2 collector/worker/HTS bridge"
+    Write-Step "Stopping v2 collector/worker/context/HTS bridge"
     Stop-HtsBridge
     Stop-PidFile $CollectorPidFile "collector32"
     Stop-PidFile $WorkerPidFile "worker64"
+    Stop-PidFile $ContextPidFile "context_snapshot_writer"
     Stop-Port 8765
     Stop-Port 8710
 }
@@ -279,6 +292,10 @@ function Status-V2 {
     if (Test-Path -LiteralPath $WorkerPidFile) { Write-Host "WORKER_PID=$(Get-Content -LiteralPath $WorkerPidFile | Select-Object -First 1)" }
     Write-Host "COLLECTOR_PID_FILE=$CollectorPidFile"
     if (Test-Path -LiteralPath $CollectorPidFile) { Write-Host "COLLECTOR_PID=$(Get-Content -LiteralPath $CollectorPidFile | Select-Object -First 1)" }
+    Write-Host "CONTEXT_PID_FILE=$ContextPidFile"
+    if (Test-Path -LiteralPath $ContextPidFile) { Write-Host "CONTEXT_PID=$(Get-Content -LiteralPath $ContextPidFile | Select-Object -First 1)" }
+    $contextStatus = Join-Path $RuntimeDir "context_snapshot_status.json"
+    if (Test-Path -LiteralPath $contextStatus) { Write-Host "CONTEXT_STATUS=$(Get-Content -LiteralPath $contextStatus -Raw)" }
     $hts = Get-HtsBridgeStatus
     Write-Host "AHK_RUNNING=$($hts.running)"
     Write-Host "AHK_PIDS=$($hts.pids -join ',')"
