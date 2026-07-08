@@ -213,6 +213,29 @@ def _copy_previous_fields(state, code: str, target: dict[str, Any], seed: dict[s
                 target[key] = value
 
 
+
+
+def _restore_persisted_live_metrics(quote: dict[str, Any], persisted: dict[str, Any]) -> None:
+    if not isinstance(quote, dict) or not isinstance(persisted, dict):
+        return
+    for key in PERSISTED_LIVE_KEYS:
+        if key in persisted:
+            quote[key] = deepcopy(persisted.get(key))
+
+
+def _persist_live_metrics(state, code: str, quote: dict[str, Any], *keys: str) -> None:
+    if not code or not isinstance(quote, dict):
+        return
+    entry = state.daily_values_by_code.setdefault(code, {})
+    changed = False
+    for key in keys:
+        value = quote.get(key)
+        if value not in (None, "") and entry.get(key) != value:
+            entry[key] = deepcopy(value)
+            changed = True
+    if changed and hasattr(state, "_mark_daily_dirty"):
+        state._mark_daily_dirty()
+
 def _ohlc_snapshot_path() -> Path:
     return RUNTIME_DIR / "ohlc_snapshot.json"
 
