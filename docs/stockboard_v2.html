@@ -76,6 +76,199 @@
 
     .us-market-stack td { min-width:52px; white-space:nowrap; }
 </style>
+
+<style id="stockboard-v2-top-market-exact-copy">
+  .market-overview-v2 {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    border-top: 1px solid #c8d0d8;
+    border-bottom: 1px solid #aab7c4;
+    background: #fff;
+  }
+
+  .v2-us-grid {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+    border-collapse: collapse;
+  }
+
+  .v2-us-grid td {
+    border: 1px solid #c8d0d8;
+    padding: 2px 6px;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font: 700 12px Malgun Gothic, Arial, sans-serif;
+    background: #e7edf3;
+  }
+
+  .v2-us-grid .context-title {
+    width: 42px;
+    text-align: center;
+    color: #263747;
+    background: #dfe7ee;
+    font-weight: 800;
+  }
+
+  .v2-market-graphic-row {
+    display: flex;
+    align-items: stretch;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    background: #fff;
+  }
+
+  .v2-market-distribution {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 1px;
+    flex: 0 0 auto;
+    min-width: 318px;
+    padding: 3px 3px 3px 0;
+    border: 1px solid #c8d0d8;
+    border-top: 0;
+    background: #f8fbff;
+  }
+
+  .v2-market-dist-item {
+    display: grid;
+    grid-template-rows: auto min-content;
+    justify-items: center;
+    gap: 2px;
+    min-width: 76px;
+  }
+
+  .v2-market-dist-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: #263747;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .v2-subject-flow-chart {
+    width: 78px;
+    height: 62px;
+    flex-basis: 78px;
+    border-radius: 3px;
+    padding: 3px;
+    background: #f8fbff;
+  }
+
+  .v2-subject-flow-bars {
+    display: grid;
+    grid-template-rows: repeat(4, 1fr);
+    gap: 2px;
+    width: 100%;
+    height: 100%;
+  }
+
+  .v2-subject-flow-row {
+    display: grid;
+    grid-template-columns: 22px minmax(40px, 1fr);
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .v2-subject-flow-label {
+    overflow: hidden;
+    color: #263747;
+    font-size: 8.5px;
+    font-weight: 700;
+    line-height: 1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .v2-subject-flow-track {
+    position: relative;
+    height: 10px;
+    overflow: hidden;
+    border-radius: 2px;
+    background: #e3e8ec;
+  }
+
+  .v2-subject-flow-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: var(--flow-width);
+    background: var(--flow-color);
+  }
+
+  .v2-subject-flow-fill.positive {
+    left: 50%;
+  }
+
+  .v2-subject-flow-fill.negative {
+    right: 50%;
+  }
+
+  .v2-donut-chart {
+    width: 62px;
+    height: 62px;
+    flex: 0 0 62px;
+    border-radius: 50%;
+    background: #e3e8ec;
+    box-shadow: inset 0 0 0 1px #b7c1ca;
+    position: relative;
+  }
+
+  .v2-donut-chart::after {
+    content: "";
+    position: absolute;
+    inset: 15px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 0 0 1px #d4dbe1;
+  }
+
+  .v2-market-grid {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 0;
+    table-layout: auto;
+    border-collapse: collapse;
+    margin-left: 0;
+  }
+
+  .v2-market-grid th,
+  .v2-market-grid td {
+    border: 1px solid #c8d0d8;
+    padding: 2px 6px;
+    text-align: center;
+    white-space: nowrap;
+    font: 700 12px Malgun Gothic, Arial, sans-serif;
+    background: #fff;
+  }
+
+  .v2-market-grid th {
+    background: #e7edf3;
+    color: #263747;
+  }
+
+  .v2-market-name {
+    color: #1266d6;
+    font-weight: 800;
+  }
+
+  .v2-market-count-up {
+    color: #d71920;
+    font-weight: 800;
+  }
+
+  .v2-market-count-down {
+    color: #1266d6;
+    font-weight: 800;
+  }
+</style>
+
 </head>
 <body>
 <div class="window">
@@ -102,9 +295,48 @@
     </div>
   </div>
 
-  <div class="context-panel">
-    <table><tbody id="us-market-row"><tr><td class="context-title">미국</td><td>NASDAQ -</td><td>QQQ -</td><td>SOXL -</td><td>SMH -</td><td>IBB -</td><td>LIT -</td><td>BOTZ -</td></tr></tbody></table>
-    <table><tbody id="market-supply-row"><tr><td class="context-title">시장수급</td><td>KOSPI -</td><td>KOSDAQ -</td></tr></tbody></table>
+  <div class="context-panel market-overview-v2">
+    <table class="v2-us-grid">
+      <tbody id="us-market-row">
+        <tr>
+          <td class="context-title">미국</td>
+          <td>????? -</td>
+          <td>QQQ -</td>
+          <td>SOXL -</td>
+          <td>SMH -</td>
+          <td>IBB -</td>
+          <td>LIT -</td>
+          <td>BOTZ -</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="v2-market-graphic-row">
+      <aside class="v2-market-distribution" aria-label="시장그래프">
+        <div class="v2-market-dist-item">
+          <div class="v2-subject-flow-chart" id="v2-kospi-subject-chart" role="img"></div>
+          <div class="v2-market-dist-label">코스피</div>
+        </div>
+        <div class="v2-market-dist-item">
+          <div class="v2-subject-flow-chart" id="v2-kosdaq-subject-chart" role="img"></div>
+          <div class="v2-market-dist-label">코스닥</div>
+        </div>
+        <div class="v2-market-dist-item">
+          <div class="v2-donut-chart" id="v2-kospi-breadth-chart" role="img"></div>
+          <div class="v2-market-dist-label">코스피</div>
+        </div>
+        <div class="v2-market-dist-item">
+          <div class="v2-donut-chart" id="v2-kosdaq-breadth-chart" role="img"></div>
+          <div class="v2-market-dist-label">코스닥</div>
+        </div>
+      </aside>
+
+      <table class="v2-market-grid">
+        <tbody id="market-supply-row">
+          <tr><td class="context-title">????</td><td>KOSPI -</td><td>KOSDAQ -</td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 
   <div class="section orange">S1 선택 종목 <span id="selected-row-count" class="lane">0종목</span></div>
@@ -213,13 +445,18 @@
   function contextNum(v,d=2){ if(v===undefined||v===null||v==='')return'-'; const n=Number(v); return Number.isFinite(n)?`${n>0?'+':''}${n.toLocaleString('en-US',{maximumFractionDigits:d})}`:'-'; }
   function contextCls(v){ const n=Number(v); return Number.isFinite(n)?(n>0?'plus':n<0?'minus':'zero'):''; }
   function renderContext(payload){
-    const us=payload.us_market||{}; const usValues=us.values||us; const usRows=[['NQ=F','ES=F','YM=F'],['QQQ','SOXL','SMH'],['IBB','LIT','BOTZ']];
-    usMarketRow.closest('table').classList.add('us-market-stack');
-    usMarketRow.innerHTML=usRows.map((items,idx)=>`<tr>${idx===0?'<td class="context-title" rowspan="3">\uBBF8\uAD6D</td>':''}${items.map(k=>{ const row=usValues[k]||usValues[k.toLowerCase()]||{}; const value=first(row,['change_rate','change_percent','regularMarketChangePercent','rate','pct']); return `<td class="${contextCls(value)}">${k} ${contextNum(value,2)}%</td>`; }).join('')}</tr>`).join('');
-    const ms=payload.market_supply||{};
-    const mks=[['kospi','KOSPI'],['kosdaq','KOSDAQ']];
+    function eokText(v){
+      const n=Number(v);
+      return Number.isFinite(n)?`${n>0?'+':''}${Math.round(n).toLocaleString('en-US')}`:'-';
+    }
 
-    const supplyRows=mks.map(([key,label])=>{
+    function mValue(row, keys){
+      const v = first(row, keys);
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    }
+
+    function marketRow(ms, key, label){
       const m=ms[key]||ms[label]||{};
       return {
         label,
@@ -232,35 +469,85 @@
         ind:first(m,['individual_eok','individual','\uAC1C\uC778']),
         fr:first(m,['foreign_spot_eok','foreign','\uC678\uC778']),
         inst:first(m,['institution_eok','institution','\uAE30\uAD00']),
-        prog:first(m,['program_market_eok','program','\uD504\uB85C'])
+        prog:first(m,['program_market_eok','program','\uD504\uB85C']),
+        fut:first(m,['foreign_futures_eok','foreign_futures','\uC678\uC120'])
       };
-    });
-
-    function supplyCountHtml(r){
-      return `<span class="supply-up">${r.adv??'-'}(\u2191${r.up??'-'})</span>/<span class="supply-down">${r.dec??'-'}(\u2193${r.down??'-'})</span>`;
     }
 
-    function eokText(v){
-      const n=Number(v);
-      return Number.isFinite(n)?`${n>0?'+':''}${Math.round(n).toLocaleString('en-US')}`:'-';
+    function subjectFlowHtml(r){
+      const items = [
+        ['\uAC1C\uC778', mValue(r, ['ind'])],
+        ['\uC678\uC778', mValue(r, ['fr'])],
+        ['\uAE30\uAD00', mValue(r, ['inst'])],
+        ['\uD504\uB85C', mValue(r, ['prog'])]
+      ];
+      const maxAbs = Math.max(1, ...items.map(([,v]) => Math.abs(Number(v)||0)));
+      return `<div class="v2-subject-flow-bars">${items.map(([label,value])=>{
+        const n = Number(value);
+        const ok = Number.isFinite(n);
+        const width = ok ? Math.max(2, Math.min(50, Math.abs(n) / maxAbs * 50)) : 0;
+        const cls = ok && n >= 0 ? 'positive' : 'negative';
+        const color = ok && n >= 0 ? '#d71920' : '#1266d6';
+        return `<div class="v2-subject-flow-row" title="${escapeHtml(label)} ${ok?contextNum(n,0):'-'}"><span class="v2-subject-flow-label">${escapeHtml(label)}</span><span class="v2-subject-flow-track"><span class="v2-subject-flow-fill ${cls}" style="--flow-width:${width.toFixed(1)}%;--flow-color:${color}"></span></span></div>`;
+      }).join('')}</div>`;
     }
 
-    function eokCell(v){
-      const n=Number(v);
-      const cls=Number.isFinite(n)?(n>0?'plus':n<0?'minus':'zero'):'zero';
-      return `<td class="num ${cls}">${eokText(v)}</td>`;
+    function renderSubject(id, r){
+      const el=document.getElementById(id);
+      if(el) el.innerHTML=subjectFlowHtml(r);
     }
 
-    const supplyHeader=`<tr><td class="supply-head">\uC2DC\uC7A5</td><td class="supply-head">\uC9C0\uC218</td><td class="supply-head">\uB4F1\uB77D\uB960</td><td class="supply-head">\uC0C1\uC2B9/\uD558\uB77D</td><td class="supply-head">\uAC1C\uC778(\uC5B5)</td><td class="supply-head">\uC678\uC778(\uC5B5)</td><td class="supply-head">\uAE30\uAD00(\uC5B5)</td><td class="supply-head">\uD504\uB85C(\uC5B5)</td></tr>`;
+    function renderBreadth(id, r){
+      const adv = Number(r.adv);
+      const dec = Number(r.dec);
+      const total = Math.max(1, (Number.isFinite(adv)?adv:0) + (Number.isFinite(dec)?dec:0));
+      const upPct = Math.max(0, Math.min(100, (Number.isFinite(adv)?adv:0) / total * 100));
+      const el = document.getElementById(id);
+      if(!el) return;
+      el.style.background = `conic-gradient(#d71920 0 ${upPct.toFixed(1)}%, #1266d6 ${upPct.toFixed(1)}% 100%)`;
+      el.title = `\uC0C1\uC2B9 ${Number.isFinite(adv)?adv:'-'} / \uD558\uB77D ${Number.isFinite(dec)?dec:'-'}`;
+    }
 
-    const supplyBody=supplyRows.map(r=>{
+    const us=payload.us_market||{};
+    const usValues=us.values||us;
+    const usItems=[
+      ['NQ=F','\uB098\uC2A4\uB2E5\uC120\uBB3C'],
+      ['QQQ','QQQ'],
+      ['SOXL','SOXL'],
+      ['SMH','SMH'],
+      ['IBB','IBB'],
+      ['LIT','LIT'],
+      ['BOTZ','BOTZ']
+    ];
+
+    usMarketRow.closest('table').classList.add('v2-us-grid');
+    usMarketRow.innerHTML=`<tr><td class="context-title">\uBBF8\uAD6D</td>${usItems.map(([key,label])=>{
+      const row=usValues[key]||usValues[key.toLowerCase()]||{};
+      const value=first(row,['change_rate','change_percent','regularMarketChangePercent','rate','pct']);
+      return `<td class="${contextCls(value)}">${label} <span>${contextNum(value,2)}%</span></td>`;
+    }).join('')}</tr>`;
+
+    const ms=payload.market_supply||{};
+    const kospi=marketRow(ms,'kospi','KOSPI');
+    const kosdaq=marketRow(ms,'kosdaq','KOSDAQ');
+
+    const header=`<tr><th>\uC2DC\uC7A5</th><th>\uC9C0\uC218</th><th>\uB4F1\uB77D\uB960</th><th>\uC0C1\uC2B9/\uD558\uB77D</th><th>\uAC1C\uC778(\uC5B5)</th><th>\uC678\uC778(\uC5B5)</th><th>\uAE30\uAD00(\uC5B5)</th><th>\uD504\uB85C(\uC5B5)</th><th>\uC678\uC120(\uC5B5)</th></tr>`;
+    const body=[kospi,kosdaq].map(r=>{
       const cls=contextCls(r.ch);
-      return `<tr><td class="supply-market">${r.label}</td><td class="num">${r.idx??'-'}</td><td class="num ${cls}">${contextNum(r.ch,2)}%</td><td class="supply-count">${supplyCountHtml(r)}</td>${eokCell(r.ind)}${eokCell(r.fr)}${eokCell(r.inst)}${eokCell(r.prog)}</tr>`;
+      const counts=`<span class="v2-market-count-up">${r.adv??'-'}(\u2191${r.up??'-'})</span> / <span class="v2-market-count-down">${r.dec??'-'}(\u2193${r.down??'-'})</span>`;
+      return `<tr><td class="v2-market-name">${r.label}</td><td>${r.idx??'-'}</td><td class="${cls}">${contextNum(r.ch,2)}%</td><td>${counts}</td><td class="${contextCls(r.ind)}">${eokText(r.ind)}</td><td class="${contextCls(r.fr)}">${eokText(r.fr)}</td><td class="${contextCls(r.inst)}">${eokText(r.inst)}</td><td class="${contextCls(r.prog)}">${eokText(r.prog)}</td><td class="${contextCls(r.fut)}">${eokText(r.fut)}</td></tr>`;
     }).join('');
 
-    marketSupplyRow.closest('table').classList.add('market-supply-table');
-    marketSupplyRow.innerHTML=supplyHeader+supplyBody;
+    marketSupplyRow.closest('table').classList.add('v2-market-grid');
+    marketSupplyRow.innerHTML=header+body;
+
+    renderSubject('v2-kospi-subject-chart', kospi);
+    renderSubject('v2-kosdaq-subject-chart', kosdaq);
+    renderBreadth('v2-kospi-breadth-chart', kospi);
+    renderBreadth('v2-kosdaq-breadth-chart', kosdaq);
   }
+
+
   function escapeHtml(v){return String(v??'').replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));}
   function numeric(v){const n=Number(v);return Number.isFinite(n)?n:null;}
   function sortValue(r,k){if(k==='stock_name')return String(r.stock_name||'').toLowerCase();return numeric(r[k]);}
