@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 from realtime_v2 import worker64 as base
 from realtime_v2.common import (
     LARGE_TRADE_THRESHOLD_KRW,
+    RUNTIME_DIR,
     event_age_sec,
     normalize_code,
     normalize_trade_time,
@@ -23,10 +24,18 @@ from realtime_v2.common import (
     now_text,
     to_int,
     to_number,
+    trading_date_text,
 )
 from realtime_v2.market_session import market_session_now
 
 STALE_LAG_WARN_SEC = 10.0
+PREVIOUS_VALUE_KEYS = (
+    "prev_trade_value_eok",
+    "prev_trade_value_source",
+    "prev_trade_value_status",
+    "prev_trade_value_date",
+    "prev_trade_value_lookup_source",
+)
 PERSISTED_LIVE_KEYS = (
     "execution_strength",
     "execution_strength_updated_at",
@@ -71,6 +80,37 @@ def _lag_seconds(trade_time_seconds: int | None) -> float | None:
     if lag < -12 * 3600:
         lag += 24 * 3600
     return round(max(0.0, float(lag)), 3)
+
+
+def _previous_trade_value_cache_paths() -> list[Path]:
+    date_text = trading_date_text()
+    return [
+        ROOT / "data" / "runtime" / f"previous_trade_value_{date_text}.json",
+        RUNTIME_DIR / f"previous_trade_value_{date_text}.json",
+    ]
+
+
+def _load_previous_trade_value_cache() -> dict[str, dict[str, Any]]:
+    for path in _previous_trade_value_cache_paths():
+        try:
+            if not path.is_file():
+                continue
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+            entries = payload.get("entries") if isinstance(payload, dict) else None
+            if not isinstance(entries, dict):
+                continue
+            result: dict[str, dict[str, Any]] = {}
+            for raw_code, raw_entry in entries.items():
+                code = normalize_code(raw_code)
+                if not code or not isinstance(raw_entry, dict):
+                    continue
+                value = to_number(raw_entry.get("prev_trade_value_eok"))
+                if value is not None and value > 0:
+                    result[code] = dict(raw_entry)
+            return result
+        except (OSError, json.JSONDecodeError):
+            continue
+    return {}
 
 
 def _session_dict() -> dict[str, Any]:
@@ -162,44 +202,98 @@ def _persist_live_metrics(state, code: str, quote: dict[str, Any], *keys: str) -
         state._mark_daily_dirty()
 
 
-def _guarded_load_universe(self) -> None:
-    """Load seed rows and create base quotes for the whole universe.
+def _previous_entry_for_code(state, code: str) -> dict[str, Any]:
+    code = normalize_code(code)
+    if not code:
+        return {}
+    cache = getattr(state, "prev_trade_value_cache_by_code", {}) or {}
+    entry = cache.get(code)
+    return entry if isinstance(entry, dict) else {}
 
-    During market halts, closing call auction, after-close gaps, or immediately
-    after a v2 restart, many stocks may not receive a realtime trade event. If
-    rows are created only from realtime trades, price/rate/value cells stay
-    blank. The universe already contains the latest ka10032 seed snapshot; use
-    it as the base row, then let realtime events overwrite it.
-    """
+
+def _previous_value_for_code(state, code: str) -> float | None:
+    code = normalize_code(code)
+    value = to_number(getattr(state, "prev_trade_value_by_code", {}).get(code))
+    if value is not None and value > 0:
+        return float(value)
+    entry_value = to_number(_previous_entry_for_code(state, code).get("prev_trade_value_eok"))
+    if entry_value is not None and entry_value > 0:
+        state.prev_trade_value_by_code[code] = float(entry_value)
+        return float(entry_value)
+    return None
+
+
+def _copy_previous_fields(state, code: str, target: dict[str, Any], seed: dict[str, Any] | None = None) -> None:
+    code = normalize_code(code)
+    seed = seed or {}
+    previous_value = to_number(target.get("prev_trade_value_eok"))
+    if previous_value is None or previous_value <= 0:
+        previous_value = _previous_value_for_code(state, code)
+    if previous_value is not None and previous_value > 0:
+        target["prev_trade_value_eok"] = round(float(previous_value), 4)
+        target.pop("prev_trade_value_missing", None)
+        if code:
+            state.prev_trade_value_by_code[code] = float(previous_value)
+    else:
+        target["prev_trade_value_missing"] = True
+    entry = _previous_entry_for_code(state, code)
+    for key in PREVIOUS_VALUE_KEYS[1:]:
+        if target.get(key) in (None, ""):
+            value = seed.get(key) if isinstance(seed, dict) else None
+            if value in (None, ""):
+                value = entry.get(key)
+            if value not in (None, ""):
+                target[key] = value
+
+
+def _guarded_load_universe(self) -> None:
+    """Load seed rows and create base quotes for the whole universe."""
     self.seed_by_code: dict[str, dict[str, Any]] = {}
+    self.prev_trade_value_cache_by_code = _load_previous_trade_value_cache()
     try:
         payload = json.loads(self.universe_file.read_text(encoding="utf-8-sig"))
         built_at = payload.get("built_at") if isinstance(payload, dict) else None
+        universe_count = 0
+        previous_value_count = 0
         for item in payload.get("items", []) or []:
             code = normalize_code(item.get("stock_code"))
             if not code:
                 continue
+            universe_count += 1
             self.name_by_code[code] = str(item.get("stock_name") or code)
             self.seed_rank_by_code[code] = int(
                 item.get("seed_rank") or item.get("original_rank") or 999999
             )
             previous_rank = to_int(item.get("prev_rank"))
             previous_value = to_number(item.get("prev_trade_value_eok"))
+            if previous_value is None or previous_value <= 0:
+                previous_value = to_number(
+                    self.prev_trade_value_cache_by_code.get(code, {}).get("prev_trade_value_eok")
+                )
             if previous_rank is not None and previous_rank > 0:
                 self.prev_rank_by_code[code] = previous_rank
             if previous_value is not None and previous_value > 0:
                 self.prev_trade_value_by_code[code] = float(previous_value)
+                previous_value_count += 1
             self.seed_by_code[code] = {
                 "seed_price": item.get("seed_price"),
                 "seed_change_rate": item.get("seed_change_rate"),
                 "seed_trade_value_eok": item.get("seed_trade_value_eok"),
                 "seed_built_at": built_at,
+                "prev_trade_value_eok": previous_value,
+                "prev_trade_value_source": item.get("prev_trade_value_source"),
+                "prev_trade_value_status": item.get("prev_trade_value_status"),
+                "prev_trade_value_date": item.get("prev_trade_value_date"),
+                "prev_trade_value_lookup_source": item.get("prev_trade_value_lookup_source"),
             }
         _update_market_session_status(self)
         for code in list(self.seed_rank_by_code):
             self._quote(code)
         self.status["universe_seed_quote_count"] = len(self.quotes)
         self.status["universe_seed_built_at"] = built_at
+        self.status["universe_count"] = universe_count
+        self.status["universe_prev_trade_value_count"] = previous_value_count
+        self.status["previous_trade_value_cache_count"] = len(self.prev_trade_value_cache_by_code)
     except Exception as error:
         self.status["last_error"] = f"universe load failed: {error}"
 
@@ -208,6 +302,7 @@ def _guarded_quote(self, code: str) -> dict[str, Any]:
     code = normalize_code(code)
     quote = self.quotes.get(code)
     if quote is not None:
+        _copy_previous_fields(self, code, quote, getattr(self, "seed_by_code", {}).get(code, {}) or {})
         return quote
     persisted = self.daily_values_by_code.get(code) or {}
     seed = getattr(self, "seed_by_code", {}).get(code, {}) or {}
@@ -216,7 +311,6 @@ def _guarded_quote(self, code: str) -> dict[str, Any]:
         "stock_name": self.name_by_code.get(code, code),
         "seed_rank": self.seed_rank_by_code.get(code, 999999),
         "prev_rank": self.prev_rank_by_code.get(code),
-        "prev_trade_value_eok": self.prev_trade_value_by_code.get(code),
         "large_trade_buy_count": persisted.get("large_trade_buy_count", 0),
         "large_trade_sell_count": persisted.get("large_trade_sell_count", 0),
         "large_trade_net_count": persisted.get("large_trade_net_count", 0),
@@ -226,6 +320,7 @@ def _guarded_quote(self, code: str) -> dict[str, Any]:
         "source_code": "seed_universe",
         "row_source": "seed_universe",
     }
+    _copy_previous_fields(self, code, quote, seed)
     seed_price = normalized_price(seed.get("seed_price"))
     seed_rate = normalized_rate(seed.get("seed_change_rate"))
     seed_value = to_number(seed.get("seed_trade_value_eok"))
@@ -259,6 +354,7 @@ def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
             row["price_age_sec"] = event_age_sec(row.get("received_at"))
         elif row.get("price") is not None:
             row["price_age_sec"] = None
+        _copy_previous_fields(self, row.get("stock_code"), row, getattr(self, "seed_by_code", {}).get(row.get("stock_code"), {}) or {})
     rows.sort(
         key=lambda row: (
             -(to_number(row.get("trade_value_eok")) or 0),
@@ -266,6 +362,8 @@ def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
             row.get("stock_code") or "",
         )
     )
+    amount_ratio_ready_count = 0
+    amount_ratio_missing_count = 0
     for rank, row in enumerate(rows, start=1):
         row["rank"] = rank
         prev_rank = to_int(row.get("prev_rank"))
@@ -274,8 +372,15 @@ def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
         current_amount = to_number(row.get("trade_value_eok"))
         if previous_amount is not None and previous_amount > 0 and current_amount is not None:
             row["amount_ratio"] = round(current_amount / previous_amount, 4)
+            amount_ratio_ready_count += 1
         else:
             row["amount_ratio"] = None
+            amount_ratio_missing_count += 1
+            row["amount_ratio_missing_reason"] = (
+                "prev_trade_value_missing" if previous_amount is None or previous_amount <= 0 else "current_trade_value_missing"
+            )
+    self.status["amount_ratio_ready_count"] = amount_ratio_ready_count
+    self.status["amount_ratio_missing_count"] = amount_ratio_missing_count
     return rows[:limit]
 
 
