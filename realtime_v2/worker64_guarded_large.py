@@ -168,11 +168,208 @@ def _large_trade_title_patch(html: str) -> str:
     return html.replace(old, new, 1)
 
 
+def _speed_render_patch(html: str) -> str:
+    """Patch the served v2 HTML to reduce DOM churn without adding calculations.
+
+    The browser remains display-only: this patch explicitly disables the legacy
+    client-side field synthesis path and only renders fields already present in
+    worker rows.
+    """
+
+    marker = "STOCKBOARD_V2_LARGE_SPEED_PATCH"
+    if marker in html:
+        return html
+
+    anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
+    patch = r"""
+  /*
+   * STOCKBOARD_V2_LARGE_SPEED_PATCH
+   * Display-only rendering patch for the large-trade wrapper.
+   * Do not synthesize trading fields in HTML. Worker rows are the source of truth.
+   */
+  deriveClientFields = function(row){
+    return row && typeof row === 'object' ? {...row} : {};
+  };
+
+  const __largeSpeedRenderCache = new WeakMap();
+
+  function __largeSpeedMetricModeSignature(){
+    try {
+      return Array.from(metricKeys || [])
+        .map(key => `${key}:${metricModes[key] || 'number'}`)
+        .join(',');
+    } catch(_e) {
+      return '';
+    }
+  }
+
+  function __largeSpeedStableValue(value){
+    if(value === null || value === undefined) return '';
+    if(typeof value === 'object'){
+      try { return JSON.stringify(value); } catch(_e) { return String(value); }
+    }
+    return String(value);
+  }
+
+  function __largeSpeedRowSignature(row){
+    const r = row && typeof row === 'object' ? row : {};
+    const code = String(r.stock_code || '');
+    const selected = code && code === selectedCode ? '1' : '0';
+    const keys = [
+      'stock_code','rank','rank_change','candidate_grade_text','grade_text','grade','candidate_grade',
+      'grade_score','candidate_score','score_percent','stock_name','price','change_rate',
+      'trade_value_eok','prev_trade_value_eok','amount_ratio','ohlc','realtime_ohlc','display_ohlc',
+      'bid_ask_ratio','execution_strength','strength_1m','program_net','large_trade_net_count',
+      'large_trade_buy_count','large_trade_sell_count','large_trade_buy_sum_eok','large_trade_sell_sum_eok',
+      'large_trade_net_sum_eok','price_age_sec'
+    ];
+    return `${selected}|${__largeSpeedMetricModeSignature()}|${keys.map(key => __largeSpeedStableValue(r[key])).join('|')}`;
+  }
+
+  function __largeSpeedMakeRow(row, options){
+    const template = document.createElement('template');
+    template.innerHTML = rowHtml(row).trim();
+    const next = template.content.firstElementChild;
+    if(!next) return null;
+    if(options && options.suppressFlash){
+      next.querySelectorAll('.cell-flash').forEach(cell => cell.classList.remove('cell-flash'));
+    }
+    if(options && options.suppressTitle){
+      next.removeAttribute('title');
+      next.querySelectorAll('[title]').forEach(cell => cell.removeAttribute('title'));
+    }
+    return next;
+  }
+
+  function __largeSpeedCopyRowAttributes(target, source){
+    for(const name of target.getAttributeNames()){
+      if(!source.hasAttribute(name)) target.removeAttribute(name);
+    }
+    for(const attr of source.attributes){
+      if(target.getAttribute(attr.name) !== attr.value) target.setAttribute(attr.name, attr.value);
+    }
+  }
+
+  function __largeSpeedPatchRow(existing, next){
+    if(!existing || !next) return next || existing;
+    __largeSpeedCopyRowAttributes(existing, next);
+    const oldCells = Array.from(existing.children);
+    const newCells = Array.from(next.children);
+    if(oldCells.length !== newCells.length){
+      existing.replaceWith(next);
+      return next;
+    }
+    for(let i = 0; i < newCells.length; i += 1){
+      if(oldCells[i].outerHTML !== newCells[i].outerHTML){
+        oldCells[i].replaceWith(newCells[i].cloneNode(true));
+      }
+    }
+    return existing;
+  }
+
+  function __largeSpeedRenderTable(table, rows, empty, options = {}){
+    const tb = table && table.tBodies ? table.tBodies[0] : null;
+    if(!tb) return;
+    const nextRows = Array.isArray(rows) ? rows : [];
+    let cache = __largeSpeedRenderCache.get(table);
+    if(!cache){
+      cache = {nodes:new Map(), signatures:new Map(), order:[], empty:false, sortKey:''};
+      __largeSpeedRenderCache.set(table, cache);
+    }
+
+    if(!nextRows.length){
+      if(!cache.empty){
+        tb.innerHTML = `<tr><td colspan="${columns.length}" class="center">${escapeHtml(empty)}</td></tr>`;
+        cache.nodes.clear();
+        cache.signatures.clear();
+        cache.order = [];
+        cache.empty = true;
+      }
+      return;
+    }
+    cache.empty = false;
+
+    const rowsByCode = new Map();
+    const incomingOrder = [];
+    nextRows.forEach((row, index) => {
+      const code = String(row && row.stock_code || `__row_${index}`);
+      if(!rowsByCode.has(code)) incomingOrder.push(code);
+      rowsByCode.set(code, row);
+    });
+
+    const sortKey = `${sortState.key || ''}/${sortState.dir || ''}`;
+    if(options.stableOrder && cache.sortKey !== sortKey){
+      cache.order = [];
+      cache.sortKey = sortKey;
+    }
+    if(!options.stableOrder){
+      cache.order = incomingOrder.slice();
+      cache.sortKey = sortKey;
+    } else {
+      const stillVisible = new Set(incomingOrder);
+      cache.order = cache.order.filter(code => stillVisible.has(code));
+      incomingOrder.forEach(code => {
+        if(!cache.order.includes(code)) cache.order.push(code);
+      });
+    }
+
+    const fragment = document.createDocumentFragment();
+    const used = new Set();
+
+    cache.order.forEach(code => {
+      const row = rowsByCode.get(code);
+      if(!row) return;
+      used.add(code);
+      const signature = __largeSpeedRowSignature(row);
+      let node = cache.nodes.get(code);
+      if(!node || cache.signatures.get(code) !== signature){
+        const nextNode = __largeSpeedMakeRow(row, options);
+        if(!nextNode) return;
+        node = node ? __largeSpeedPatchRow(node, nextNode) : nextNode;
+        cache.nodes.set(code, node);
+        cache.signatures.set(code, signature);
+      }
+      fragment.appendChild(node);
+    });
+
+    for(const code of Array.from(cache.nodes.keys())){
+      if(!used.has(code)){
+        cache.nodes.delete(code);
+        cache.signatures.delete(code);
+      }
+    }
+
+    tb.replaceChildren(fragment);
+  }
+
+  renderTable = function(table, rows, empty){
+    if(table === poolBoardEl){
+      return __largeSpeedRenderTable(table, rows, empty, {
+        stableOrder: true,
+        suppressFlash: true,
+        suppressTitle: true
+      });
+    }
+    return __largeSpeedRenderTable(table, rows, empty, {
+      stableOrder: false,
+      suppressFlash: false,
+      suppressTitle: false
+    });
+  };
+"""
+    if anchor not in html:
+        return html
+    return html.replace(anchor, f"{patch}\n{anchor}", 1)
+
+
 def _patched_do_get(self) -> None:
     parsed = base.urlparse(self.path)
     if parsed.path in {"/", "/v2", "/stockboard_v2.html"}:
         html_path = Path(base.ROOT) / "docs" / "stockboard_v2.html"
-        body = _large_trade_title_patch(html_path.read_text(encoding="utf-8-sig")).encode("utf-8")
+        html = html_path.read_text(encoding="utf-8-sig")
+        html = _large_trade_title_patch(html)
+        html = _speed_render_patch(html)
+        body = html.encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
