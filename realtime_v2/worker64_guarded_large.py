@@ -180,6 +180,13 @@ def _speed_render_patch(html: str) -> str:
     if marker in html:
         return html
 
+    # Top20/S1 stay hot.  Top300 Pool is a watchlist and should not force a
+    # 300-row DOM pass four times per second during the opening burst.
+    html = html.replace(
+        "const now=performance.now(),shouldPool=opt.forcePool||now-lastPoolRenderAt>=250,",
+        "const now=performance.now(),shouldPool=opt.forcePool||now-lastPoolRenderAt>=1000,",
+    )
+
     anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
     patch = r"""
   /*
@@ -313,7 +320,7 @@ def _speed_render_patch(html: str) -> str:
       });
     }
 
-    const fragment = document.createDocumentFragment();
+    const desiredNodes = [];
     const used = new Set();
 
     cache.order.forEach(code => {
@@ -329,7 +336,7 @@ def _speed_render_patch(html: str) -> str:
         cache.nodes.set(code, node);
         cache.signatures.set(code, signature);
       }
-      fragment.appendChild(node);
+      desiredNodes.push(node);
     });
 
     for(const code of Array.from(cache.nodes.keys())){
@@ -339,7 +346,12 @@ def _speed_render_patch(html: str) -> str:
       }
     }
 
-    tb.replaceChildren(fragment);
+    const currentNodes = Array.from(tb.children);
+    const sameDomOrder = currentNodes.length === desiredNodes.length
+      && desiredNodes.every((node, index) => currentNodes[index] === node);
+    if(!sameDomOrder){
+      tb.replaceChildren(...desiredNodes);
+    }
   }
 
   renderTable = function(table, rows, empty){
