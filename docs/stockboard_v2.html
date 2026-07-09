@@ -433,13 +433,23 @@
   }
 </style>
 
+
+<style id="stockboard-v2-row-position-signal-style">
+  #row-position-toggle.warn {
+    border-color: #facc15 !important;
+    background: #fef9c3 !important;
+    color: #92400e !important;
+    font-weight: 800 !important;
+  }
+</style>
+
 </head>
 <body>
 <div class="window">
   <div id="topbar" class="topbar">
     <div class="metric-row">
       <span class="title">StockBoard v2 Realtime</span>
-      <span id="clock" class="badge">-</span><button type="button" id="ui-zoom-toggle" class="control">?? 100%</button><button type="button" id="column-minimize-toggle" class="control">폭 최소화</button>
+      <span id="clock" class="badge">-</span><button type="button" id="ui-zoom-toggle" class="control">?? 100%</button><button type="button" id="column-minimize-toggle" class="control">폭 최소화</button><button type="button" id="row-position-toggle" class="control"></button>
       <span id="status" class="badge bad">연결 대기</span>
       <label class="badge">선발기준 <select id="candidate-model-selector" class="control" disabled><option value="">모델 설정 로딩</option></select></label>
       <span id="copy-status" class="badge">행 클릭=HTS/S1 즉시 연동 · 포커스 후 ↑/↓ 이동</span>
@@ -532,6 +542,7 @@
   const clockEl = document.getElementById('clock');
   const uiZoomToggle = document.getElementById('ui-zoom-toggle');
   const columnMinimizeToggle = document.getElementById('column-minimize-toggle');
+  const rowPositionToggle = document.getElementById('row-position-toggle');
   const copyStatusEl = document.getElementById('copy-status');
   const candidateModelSelector = document.getElementById('candidate-model-selector');
   const usMarketRow = document.getElementById('us-market-row');
@@ -706,6 +717,40 @@ function loadSortState(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KE
     connectStream();
   }
 
+
+  function updateRowPositionToggle(paused){
+    if(!rowPositionToggle) return;
+    rowPositionToggle.textContent = paused ? '\uC704\uCE58 \uC7AC\uAC1C' : '\uC704\uCE58 \uC815\uC9C0';
+    rowPositionToggle.classList.toggle('warn', !!paused);
+    rowPositionToggle.title = paused
+      ? '\uC11C\uBC84\uC5D0\uC11C \uD589 \uC704\uCE58 \uACE0\uC815 \uC911. \uAC12\uC740 \uACC4\uC18D \uAC31\uC2E0\uB429\uB2C8\uB2E4.'
+      : '\uD074\uB9AD\uD558\uBA74 \uD604\uC7AC \uC11C\uBC84 \uD45C\uC2DC \uC21C\uC11C\uB97C \uACE0\uC815\uD569\uB2C8\uB2E4.';
+  }
+
+  async function setRowPositionMode(mode){
+    try{
+      const res = await fetch(`/api/v2/display_order?mode=${encodeURIComponent(mode)}&ts=${Date.now()}`, {cache:'no-store'});
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      const payload = await res.json();
+      const paused = !!(payload.display_order && payload.display_order.paused);
+      updateRowPositionToggle(paused);
+      if(lastPayload) fallbackPoll();
+    }catch(error){
+      if(rowPositionToggle){
+        rowPositionToggle.textContent = '\uC704\uCE58 \uC624\uB958';
+        rowPositionToggle.classList.add('warn');
+      }
+    }
+  }
+
+  if(rowPositionToggle){
+    rowPositionToggle.addEventListener('click', () => {
+      const paused = rowPositionToggle.classList.contains('warn');
+      setRowPositionMode(paused ? 'live' : 'freeze');
+    });
+    updateRowPositionToggle(false);
+  }
+
   async function loadCandidateModels(){ try{ const res=await fetch(`/api/v2/candidate_models?ts=${Date.now()}`,{cache:'no-store'}); if(!res.ok)throw new Error(); const p=await res.json(); const models=Array.isArray(p.models)?p.models:[]; if(!models.length)throw new Error(); candidateModelSelector.innerHTML=models.map(m=>`<option value="${escapeHtml(String(m.id||''))}">${escapeHtml(String(m.label||m.id||''))}</option>`).join(''); candidateModelSelector.value=localStorage.getItem(STORAGE_KEYS.candidateModel)||p.default_model_id||models[0].id; candidateModelSelector.disabled=false; }catch(_e){ candidateModelSelector.innerHTML='<option value="">선발기준 설정 미연결</option>'; candidateModelSelector.disabled=true; } }
   async function loadContext(){ try{ const res=await fetch(`/api/v2/context?ts=${Date.now()}`,{cache:'no-store'}); if(!res.ok)throw new Error(); renderContext(await res.json()); }catch(_e){} }
   function first(obj, keys){ for(const k of keys){ if(obj&&obj[k]!==undefined&&obj[k]!==null&&obj[k]!=='')return obj[k]; } return null; }
@@ -877,7 +922,7 @@ function loadSortState(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KE
   function senderStats(p){return p?.status?.collector_status?.sender_stats||{};}
   function computeRates(p,s){const now=performance.now(),st=p.status||{},cur={ts:now,events:Number(st.event_count)||0,trades:Number(st.trade_count)||0,sent:Number(s.sent_count)||0};if(!rateSample){rateSample=cur;return{recvPerSec:null,tradePerSec:null,sentPerSec:Number(s.sent_per_sec)||null};}const sec=Math.max(0.001,(cur.ts-rateSample.ts)/1000);const rates={recvPerSec:Math.max(0,(cur.events-rateSample.events)/sec),tradePerSec:Math.max(0,(cur.trades-rateSample.trades)/sec),sentPerSec:Number(s.sent_per_sec)||Math.max(0,(cur.sent-rateSample.sent)/sec)};rateSample=cur;return rates;}
   function top20Diagnostics(rows){const top=byRank(rows).slice(0,20);let maxLag=null,stale=0;top.forEach(r=>{const lag=numeric(r.fid20_lag_sec),age=numeric(r.price_age_sec);if(lag!==null)maxLag=maxLag===null?lag:Math.max(maxLag,lag);if(age!==null&&age>3)stale++;});return{maxLag,stale,realtimeRows:rows.filter(r=>r.row_source==='realtime').length};}
-  function render(payload,mode='stream',opt={}){const start=performance.now();const refocus=opt.focusSelected||(navigationActive&&document.activeElement&&document.activeElement.closest&&document.activeElement.closest('tr[data-code]'));lastPayload=payload;markSortHeaders();const raw=Array.isArray(payload.rows)?payload.rows:[],ranked=byCandidateScore(raw),focusRows=sortedRows(ranked.slice(0,20)),poolRows=sortedRows(ranked.slice(20)),selectedRows=selectedCode?raw.filter(r=>String(r.stock_code||'')===selectedCode):[];const now=performance.now(),shouldPool=opt.forcePool||now-lastPoolRenderAt>=250,lag=payloadLagMs(payload),phase=payload.market_session?.phase_label||payload.status?.market_phase_label||'',sender=senderStats(payload),rates=computeRates(payload,sender),top20=top20Diagnostics(raw);statusEl.textContent=phase?`연결 OK · ${phase}`:'연결 OK';statusEl.className=mode==='stream'?'badge ok':'badge bad';countsEl.textContent=`rows ${payload.row_count||raw.length} · events ${payload.status?.event_count||0} · trades ${payload.status?.trade_count||0}`;latencyEl.textContent=`${mode} ${lag===null?'-':lag.toFixed(0)} ms · sort ${sortState.key}/${sortState.dir}`;throughputEl.textContent=`recv/s ${rates.recvPerSec===null?'-':fmtRate(rates.recvPerSec)} · trade/s ${rates.tradePerSec===null?'-':fmtRate(rates.tradePerSec)}`;collectorMetricsEl.textContent=`collector_q ${sender.pending_total_count??'-'} · sent/s ${rates.sentPerSec===null?'-':fmtRate(rates.sentPerSec)} · cxl ${sender.coalesced_trade_overwrite_count??'-'}`;workerMetricsEl.textContent=`worker_q ${payload.status?.event_log_queue_size??'-'} · drop ${payload.status?.dropped_trade_count??0} · logdrop ${payload.status?.event_log_dropped_count??0}`;lagMetricsEl.textContent=`top20 lag ${top20.maxLag===null?'-':top20.maxLag.toFixed(1)+'s'} · stale ${top20.stale} · rt ${top20.realtimeRows}`;renderTable(selectedBoardEl,selectedRows,'행을 클릭하면 S1 선택 종목으로 고정됩니다.');selectedRowCountEl.textContent=`${selectedRows.length}종목`;renderTable(focusBoardEl,focusRows,'집중 후보 수신 대기 중입니다.');focusRowCountEl.textContent=`${focusRows.length}종목`;if(shouldPool){renderTable(poolBoardEl,poolRows,'Top300 Pool 수신 대기 중입니다.');poolRowCountEl.textContent=`21~${ranked.length} · ${poolRows.length}종목`;lastPoolRenderAt=now;}maybeInitialAutoFit();if(refocus)requestAnimationFrame(()=>focusSelectedRow(true));const ms=performance.now()-start;renderMetricsEl.textContent=`render ${ms.toFixed(1)} ms`;renderMetricsEl.className=ms>70?'badge warn':'badge';}
+  function render(payload,mode='stream',opt={}){const start=performance.now();const refocus=opt.focusSelected||(navigationActive&&document.activeElement&&document.activeElement.closest&&document.activeElement.closest('tr[data-code]'));lastPayload=payload;markSortHeaders();const raw=Array.isArray(payload.rows)?payload.rows:[],displayOrderPaused=!!(payload.display_order&&payload.display_order.paused),ranked=displayOrderPaused?raw:byCandidateScore(raw),focusRows=displayOrderPaused?ranked.slice(0,20):sortedRows(ranked.slice(0,20)),poolRows=displayOrderPaused?ranked.slice(20):sortedRows(ranked.slice(20)),selectedRows=selectedCode?raw.filter(r=>String(r.stock_code||'')===selectedCode):[];updateRowPositionToggle(displayOrderPaused);const now=performance.now(),shouldPool=opt.forcePool||now-lastPoolRenderAt>=250,lag=payloadLagMs(payload),phase=payload.market_session?.phase_label||payload.status?.market_phase_label||'',sender=senderStats(payload),rates=computeRates(payload,sender),top20=top20Diagnostics(raw);statusEl.textContent=phase?`연결 OK · ${phase}`:'연결 OK';statusEl.className=mode==='stream'?'badge ok':'badge bad';countsEl.textContent=`rows ${payload.row_count||raw.length} · events ${payload.status?.event_count||0} · trades ${payload.status?.trade_count||0}`;latencyEl.textContent=`${mode} ${lag===null?'-':lag.toFixed(0)} ms · sort ${sortState.key}/${sortState.dir}`;throughputEl.textContent=`recv/s ${rates.recvPerSec===null?'-':fmtRate(rates.recvPerSec)} · trade/s ${rates.tradePerSec===null?'-':fmtRate(rates.tradePerSec)}`;collectorMetricsEl.textContent=`collector_q ${sender.pending_total_count??'-'} · sent/s ${rates.sentPerSec===null?'-':fmtRate(rates.sentPerSec)} · cxl ${sender.coalesced_trade_overwrite_count??'-'}`;workerMetricsEl.textContent=`worker_q ${payload.status?.event_log_queue_size??'-'} · drop ${payload.status?.dropped_trade_count??0} · logdrop ${payload.status?.event_log_dropped_count??0}`;lagMetricsEl.textContent=`top20 lag ${top20.maxLag===null?'-':top20.maxLag.toFixed(1)+'s'} · stale ${top20.stale} · rt ${top20.realtimeRows}`;renderTable(selectedBoardEl,selectedRows,'행을 클릭하면 S1 선택 종목으로 고정됩니다.');selectedRowCountEl.textContent=`${selectedRows.length}종목`;renderTable(focusBoardEl,focusRows,'집중 후보 수신 대기 중입니다.');focusRowCountEl.textContent=`${focusRows.length}종목`;if(shouldPool){renderTable(poolBoardEl,poolRows,'Top300 Pool 수신 대기 중입니다.');poolRowCountEl.textContent=`21~${ranked.length} · ${poolRows.length}종목`;lastPoolRenderAt=now;}maybeInitialAutoFit();if(refocus)requestAnimationFrame(()=>focusSelectedRow(true));const ms=performance.now()-start;renderMetricsEl.textContent=`render ${ms.toFixed(1)} ms`;renderMetricsEl.className=ms>70?'badge warn':'badge';}
   async function fallbackPoll(){try{const res=await fetch(`/api/v2/snapshot?limit=300&ts=${Date.now()}${candidateModelQueryParam()}`,{cache:'no-store'});if(!res.ok)throw new Error(`HTTP ${res.status}`);render(await res.json(),'poll',{forcePool:true});}catch(e){statusEl.textContent=`연결 실패: ${e.message}`;statusEl.className='badge bad';}}
   function startFallback(){if(fallbackTimer)return;fallbackTimer=setInterval(()=>{if(!lastStreamAt||performance.now()-lastStreamAt>4000)fallbackPoll();},1000);}
   function connectStream(){if(!window.EventSource){startFallback();return;}stream=new EventSource(`/api/v2/stream?limit=300&interval_ms=100&ts=${Date.now()}${candidateModelQueryParam()}`);stream.addEventListener('snapshot',e=>{try{lastStreamAt=performance.now();render(JSON.parse(e.data),'stream');}catch(err){console.warn(err);}});stream.onerror=()=>{statusEl.textContent='stream 재연결 중';statusEl.className='badge bad';startFallback();};}

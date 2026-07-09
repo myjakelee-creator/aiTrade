@@ -28,6 +28,7 @@ from realtime_v2.common import (
     trading_date_text,
 )
 from realtime_v2.market_session import market_session_now
+from stockboard_display_order import DisplayOrderController
 from stockboard_ranking_engine import (
     enrich_candidate_model_fields,
     load_candidate_model_registry,
@@ -85,6 +86,15 @@ PERSISTED_LIVE_KEYS = (
     "last_valid_orderbook_at",
 )
 base.DAILY_PERSIST_KEYS = tuple(dict.fromkeys((*base.DAILY_PERSIST_KEYS, *PERSISTED_LIVE_KEYS)))
+
+
+
+def _display_order_controller(state) -> DisplayOrderController:
+    controller = getattr(state, "display_order_controller", None)
+    if controller is None:
+        controller = DisplayOrderController()
+        state.display_order_controller = controller
+    return controller
 
 
 def _time_seconds(value: Any) -> int | None:
@@ -1105,6 +1115,12 @@ def _guarded_rows(self, limit: int = 300) -> list[dict[str, Any]]:
         self.status["candidate_grade_last_error"] = None
     except Exception as error:
         self.status["candidate_grade_last_error"] = str(error)
+    display_order = _display_order_controller(self)
+    rows = display_order.apply(rows)
+    display_status = display_order.status()
+    self.status["display_order_paused"] = display_status.get("paused")
+    self.status["display_order_frozen_count"] = display_status.get("frozen_count")
+    self.status["display_order_version"] = display_status.get("version")
     self.status["amount_ratio_ready_count"] = amount_ratio_ready_count
     self.status["amount_ratio_missing_count"] = amount_ratio_missing_count
     return rows[:limit]
@@ -1439,8 +1455,10 @@ def _guarded_snapshot(self, limit: int = 300) -> dict[str, Any]:
     session = _update_market_session_status(self)
     payload = _original_snapshot(self, limit)
     payload["market_session"] = session
+    display_status = _display_order_controller(self).status()
+    payload["display_order"] = display_status
     if isinstance(payload.get("status"), dict):
-        payload["status"].update({"market_phase": session.get("phase"), "market_phase_label": session.get("phase_label"), "market_trading_date": session.get("trading_date"), "market_accept_realtime": session.get("accept_realtime"), "market_freeze_realtime_missing": session.get("freeze_realtime_missing"), "market_session_reason": session.get("reason")})
+        payload["status"].update({"market_phase": session.get("phase"), "market_phase_label": session.get("phase_label"), "market_trading_date": session.get("trading_date"), "market_accept_realtime": session.get("accept_realtime"), "market_freeze_realtime_missing": session.get("freeze_realtime_missing"), "market_session_reason": session.get("reason"), "display_order_paused": display_status.get("paused"), "display_order_frozen_count": display_status.get("frozen_count"), "display_order_version": display_status.get("version")})
     return payload
 
 
@@ -1453,6 +1471,19 @@ def _guarded_do_GET(self) -> None:
     candidate_model = (query.get("candidate_model") or query.get("candidateModel") or [""])[0]
     if candidate_model:
         self.server.state.selected_candidate_model_id = candidate_model
+    if parsed.path == "/api/v2/display_order":
+        mode = str((query.get("mode") or ["status"])[0] or "status").strip().lower()
+        controller = _display_order_controller(self.server.state)
+        if mode in {"freeze", "pause", "paused"}:
+            status = controller.freeze()
+        elif mode in {"live", "resume", "unfreeze"}:
+            status = controller.live()
+        elif mode == "toggle":
+            status = controller.toggle()
+        else:
+            status = controller.status()
+        self._json({"ok": True, "mode": mode, "display_order": status})
+        return
     if parsed.path == "/api/v2/candidate_models":
         self._json(_candidate_models_payload())
         return
