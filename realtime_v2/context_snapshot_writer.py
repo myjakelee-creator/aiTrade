@@ -24,6 +24,8 @@ MARKET_SUPPLY_FILE = OUTPUT_DIR / "market_supply.json"
 OHLC_SNAPSHOT_FILE = OUTPUT_DIR / "ohlc_snapshot.json"
 STATUS_FILE = OUTPUT_DIR / "context_snapshot_status.json"
 
+_MARKET_SUPPLY_ACCESS_TOKEN = None
+
 YAHOO_SYMBOLS = {
     "NQ=F": "NQ=F",
     "ES=F": "ES=F",
@@ -101,6 +103,37 @@ def fetch_yahoo_snapshot(timeout: float = 5.0) -> dict[str, Any]:
         **values,
         "errors": errors,
     }
+
+
+
+def fetch_live_market_supply_snapshot() -> dict[str, Any]:
+    """Fetch live KOSPI/KOSDAQ market supply for StockBoard v2 top panel.
+
+    v2 previously copied old snapshot files only. During regular session this
+    should use the proven old StockBoard fetch_market_supply() path first.
+    """
+    global _MARKET_SUPPLY_ACCESS_TOKEN
+
+    from kiwoom_data_provider import fetch_market_supply, issue_access_token
+
+    if not _MARKET_SUPPLY_ACCESS_TOKEN:
+        _MARKET_SUPPLY_ACCESS_TOKEN = issue_access_token()
+
+    try:
+        payload = fetch_market_supply(_MARKET_SUPPLY_ACCESS_TOKEN, trading_date_text())
+    except Exception:
+        # Token may have expired. Refresh once.
+        _MARKET_SUPPLY_ACCESS_TOKEN = issue_access_token()
+        payload = fetch_market_supply(_MARKET_SUPPLY_ACCESS_TOKEN, trading_date_text())
+
+    if not isinstance(payload, dict):
+        raise RuntimeError("fetch_market_supply returned non-dict payload")
+
+    payload.setdefault("schema_version", 1)
+    payload["source"] = "kiwoom_fetch_market_supply"
+    payload["ts"] = now_text()
+    payload["copied_at"] = now_text()
+    return payload
 
 
 def copy_latest_market_supply_snapshot() -> dict[str, Any]:
@@ -308,10 +341,19 @@ def main() -> int:
                 status["us_market_error"] = str(error)
 
             try:
-                market_payload = copy_latest_market_supply_snapshot()
+                try:
+                    market_payload = fetch_live_market_supply_snapshot()
+                    status["market_supply_status"] = "live_ok"
+                    status["market_supply_source"] = market_payload.get("source")
+                    status.pop("market_supply_live_error", None)
+                    status.pop("market_supply_source_file", None)
+                except Exception as live_error:
+                    market_payload = copy_latest_market_supply_snapshot()
+                    market_payload["live_error"] = str(live_error)
+                    status["market_supply_status"] = "fallback_file"
+                    status["market_supply_live_error"] = str(live_error)
+                    status["market_supply_source_file"] = market_payload.get("source_file")
                 _atomic_write(MARKET_SUPPLY_FILE, market_payload)
-                status["market_supply_status"] = "ok"
-                status["market_supply_source_file"] = market_payload.get("source_file")
             except Exception as error:
                 status["market_supply_status"] = "error"
                 status["market_supply_error"] = str(error)
