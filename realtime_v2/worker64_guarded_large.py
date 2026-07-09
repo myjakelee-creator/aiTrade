@@ -274,13 +274,27 @@ def _speed_render_patch(html: str) -> str:
     return existing;
   }
 
+  function __largeSpeedUpdateWindow(order, cache, budget, priorityCodes){
+    const size = order.length;
+    if(!Number.isFinite(budget) || budget <= 0 || budget >= size){
+      return new Set(order);
+    }
+    const result = new Set(priorityCodes || []);
+    const start = Math.max(0, Math.min(size - 1, Number(cache.cursor || 0)));
+    for(let offset = 0; offset < budget && offset < size; offset += 1){
+      result.add(order[(start + offset) % size]);
+    }
+    cache.cursor = (start + Math.min(budget, size)) % size;
+    return result;
+  }
+
   function __largeSpeedRenderTable(table, rows, empty, options = {}){
     const tb = table && table.tBodies ? table.tBodies[0] : null;
     if(!tb) return;
     const nextRows = Array.isArray(rows) ? rows : [];
     let cache = __largeSpeedRenderCache.get(table);
     if(!cache){
-      cache = {nodes:new Map(), signatures:new Map(), order:[], empty:false, sortKey:''};
+      cache = {nodes:new Map(), signatures:new Map(), order:[], empty:false, sortKey:'', cursor:0};
       __largeSpeedRenderCache.set(table, cache);
     }
 
@@ -290,6 +304,7 @@ def _speed_render_patch(html: str) -> str:
         cache.nodes.clear();
         cache.signatures.clear();
         cache.order = [];
+        cache.cursor = 0;
         cache.empty = true;
       }
       return;
@@ -307,10 +322,12 @@ def _speed_render_patch(html: str) -> str:
     const sortKey = `${sortState.key || ''}/${sortState.dir || ''}`;
     if(options.stableOrder && cache.sortKey !== sortKey){
       cache.order = [];
+      cache.cursor = 0;
       cache.sortKey = sortKey;
     }
     if(!options.stableOrder){
       cache.order = incomingOrder.slice();
+      cache.cursor = 0;
       cache.sortKey = sortKey;
     } else {
       const stillVisible = new Set(incomingOrder);
@@ -320,6 +337,10 @@ def _speed_render_patch(html: str) -> str:
       });
     }
 
+    const priorityCodes = [];
+    if(selectedCode) priorityCodes.push(String(selectedCode));
+    const updateBudget = Number(options.maxUpdateRows || 0);
+    const updateCodes = __largeSpeedUpdateWindow(cache.order, cache, updateBudget, priorityCodes);
     const desiredNodes = [];
     const used = new Set();
 
@@ -330,13 +351,15 @@ def _speed_render_patch(html: str) -> str:
       const signature = __largeSpeedRowSignature(row);
       let node = cache.nodes.get(code);
       if(!node || cache.signatures.get(code) !== signature){
-        const nextNode = __largeSpeedMakeRow(row, options);
-        if(!nextNode) return;
-        node = node ? __largeSpeedPatchRow(node, nextNode) : nextNode;
-        cache.nodes.set(code, node);
-        cache.signatures.set(code, signature);
+        if(!node || updateCodes.has(code)){
+          const nextNode = __largeSpeedMakeRow(row, options);
+          if(!nextNode) return;
+          node = node ? __largeSpeedPatchRow(node, nextNode) : nextNode;
+          cache.nodes.set(code, node);
+          cache.signatures.set(code, signature);
+        }
       }
-      desiredNodes.push(node);
+      if(node) desiredNodes.push(node);
     });
 
     for(const code of Array.from(cache.nodes.keys())){
@@ -359,13 +382,15 @@ def _speed_render_patch(html: str) -> str:
       return __largeSpeedRenderTable(table, rows, empty, {
         stableOrder: true,
         suppressFlash: true,
-        suppressTitle: true
+        suppressTitle: true,
+        maxUpdateRows: 50
       });
     }
     return __largeSpeedRenderTable(table, rows, empty, {
       stableOrder: false,
       suppressFlash: false,
-      suppressTitle: false
+      suppressTitle: false,
+      maxUpdateRows: 0
     });
   };
 """
