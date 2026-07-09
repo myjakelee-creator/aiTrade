@@ -1099,11 +1099,11 @@ class ConfigDrivenCandidateRankingEngine:
 
         for rank, row in enumerate(ranked, start=1):
             previous_rank = _previous_rank(row)
-            row["rank"] = rank
+            row["trade_value_rank"] = row.get("rank")
             row["model_rank"] = rank
             row["pool_rank"] = rank
             row["funnel_rank"] = rank
-            row["rank_change"] = (previous_rank - rank) if previous_rank is not None else None
+            row["model_rank_change"] = (previous_rank - rank) if previous_rank is not None else None
             row["pool_stage"] = _pool_stage(rank)
             row["is_candidate"] = rank <= 5
             row["candidate_rank"] = rank if rank <= 5 else None

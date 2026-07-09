@@ -412,6 +412,27 @@
   }
 </style>
 
+
+<style id="stockboard-v2-topbar-stable-height">
+  /*
+   * Prevent the board from jumping up/down when topbar badges wrap.
+   * The topbar keeps a stable reserved height. If text temporarily exceeds it,
+   * only the topbar scrolls internally; the table position does not move.
+   */
+  #topbar.topbar {
+    height: 112px !important;
+    min-height: 112px !important;
+    max-height: 112px !important;
+    overflow-y: auto !important;
+    overflow-x: visible !important;
+    scrollbar-gutter: stable !important;
+  }
+
+  #topbar.topbar::-webkit-scrollbar {
+    width: 8px;
+  }
+</style>
+
 </head>
 <body>
 <div class="window">
@@ -629,7 +650,7 @@
     columnMinimizeToggle.addEventListener('click', minimizeAllColumnWidths);
   }
 
-function loadSortState(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KEYS.sort)||'{}'); if(s&&s.key) return {key:s.key,dir:s.dir==='asc'?'asc':'desc'};}catch(_e){} return {key:'rank',dir:'asc'}; }
+function loadSortState(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KEYS.sort)||'{}'); if(s&&s.key){ if(s.key==='rank'&&s.dir==='asc'&&!localStorage.getItem('stockboard.v2.gradeSortDefault.v1')){localStorage.setItem('stockboard.v2.gradeSortDefault.v1','1');return{key:'grade_score',dir:'desc'};} return {key:s.key,dir:s.dir==='asc'?'asc':'desc'};}}catch(_e){} return {key:'grade_score',dir:'desc'}; }
   function saveSortState(){ try{localStorage.setItem(STORAGE_KEYS.sort,JSON.stringify(sortState));}catch(_e){} }
   function loadColumnWidths(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KEYS.columnWidths)||'{}'); return s&&typeof s==='object'?s:{};}catch(_e){return{}} }
   function saveColumnWidths(){ try{localStorage.setItem(STORAGE_KEYS.columnWidths,JSON.stringify(columnWidths));}catch(_e){} }
@@ -800,6 +821,12 @@ function loadSortState(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KE
   function sortValue(r,k){if(k==='stock_name')return String(r.stock_name||'').toLowerCase();return numeric(r[k]);}
   function sortedRows(rows){const k=sortState.key||'rank',d=sortState.dir==='asc'?'asc':'desc';return[...rows].sort((a,b)=>{const av=sortValue(a,k),bv=sortValue(b,k);let r=0;if(av===null&&bv===null)r=(numeric(a.rank)||999999)-(numeric(b.rank)||999999);else if(av===null)r=1;else if(bv===null)r=-1;else if(typeof av==='number'&&typeof bv==='number')r=av-bv;else r=String(av).localeCompare(String(bv),'ko-KR',{numeric:true});if(r===0)r=(numeric(a.rank)||999999)-(numeric(b.rank)||999999);return d==='asc'?r:-r;});}
   function byRank(rows){return[...rows].sort((a,b)=>(numeric(a.rank)||999999)-(numeric(b.rank)||999999));}
+  function byCandidateScore(rows){return[...rows].sort((a,b)=>{
+    const bs=numeric(b.candidate_score)||numeric(b.grade_score)||numeric(b.score_percent)||0;
+    const as=numeric(a.candidate_score)||numeric(a.grade_score)||numeric(a.score_percent)||0;
+    if(bs!==as)return bs-as;
+    return (numeric(a.rank)||999999)-(numeric(b.rank)||999999);
+  });}
   function clampNumber(v,min,max){const n=Number(v);return Number.isFinite(n)?Math.max(min,Math.min(max,n)):null;}
   function fmtNum(v,d=0){const n=Number(v);return Number.isFinite(n)?n.toLocaleString('en-US',{maximumFractionDigits:d,minimumFractionDigits:d}):'-';}
   function fmtRate(v){const n=Number(v);return Number.isFinite(n)?(n>=1000?`${Math.round(n).toLocaleString('en-US')}`:n.toFixed(n>=100?0:1)):'-';}
@@ -850,7 +877,7 @@ function loadSortState(){ try{const s=JSON.parse(localStorage.getItem(STORAGE_KE
   function senderStats(p){return p?.status?.collector_status?.sender_stats||{};}
   function computeRates(p,s){const now=performance.now(),st=p.status||{},cur={ts:now,events:Number(st.event_count)||0,trades:Number(st.trade_count)||0,sent:Number(s.sent_count)||0};if(!rateSample){rateSample=cur;return{recvPerSec:null,tradePerSec:null,sentPerSec:Number(s.sent_per_sec)||null};}const sec=Math.max(0.001,(cur.ts-rateSample.ts)/1000);const rates={recvPerSec:Math.max(0,(cur.events-rateSample.events)/sec),tradePerSec:Math.max(0,(cur.trades-rateSample.trades)/sec),sentPerSec:Number(s.sent_per_sec)||Math.max(0,(cur.sent-rateSample.sent)/sec)};rateSample=cur;return rates;}
   function top20Diagnostics(rows){const top=byRank(rows).slice(0,20);let maxLag=null,stale=0;top.forEach(r=>{const lag=numeric(r.fid20_lag_sec),age=numeric(r.price_age_sec);if(lag!==null)maxLag=maxLag===null?lag:Math.max(maxLag,lag);if(age!==null&&age>3)stale++;});return{maxLag,stale,realtimeRows:rows.filter(r=>r.row_source==='realtime').length};}
-  function render(payload,mode='stream',opt={}){const start=performance.now();const refocus=opt.focusSelected||(navigationActive&&document.activeElement&&document.activeElement.closest&&document.activeElement.closest('tr[data-code]'));lastPayload=payload;markSortHeaders();const raw=Array.isArray(payload.rows)?payload.rows:[],ranked=byRank(raw),focusRows=sortedRows(ranked.slice(0,20)),poolRows=sortedRows(ranked.slice(20)),selectedRows=selectedCode?raw.filter(r=>String(r.stock_code||'')===selectedCode):[];const now=performance.now(),shouldPool=opt.forcePool||now-lastPoolRenderAt>=250,lag=payloadLagMs(payload),phase=payload.market_session?.phase_label||payload.status?.market_phase_label||'',sender=senderStats(payload),rates=computeRates(payload,sender),top20=top20Diagnostics(raw);statusEl.textContent=phase?`연결 OK · ${phase}`:'연결 OK';statusEl.className=mode==='stream'?'badge ok':'badge bad';countsEl.textContent=`rows ${payload.row_count||raw.length} · events ${payload.status?.event_count||0} · trades ${payload.status?.trade_count||0}`;latencyEl.textContent=`${mode} ${lag===null?'-':lag.toFixed(0)} ms · sort ${sortState.key}/${sortState.dir}`;throughputEl.textContent=`recv/s ${rates.recvPerSec===null?'-':fmtRate(rates.recvPerSec)} · trade/s ${rates.tradePerSec===null?'-':fmtRate(rates.tradePerSec)}`;collectorMetricsEl.textContent=`collector_q ${sender.pending_total_count??'-'} · sent/s ${rates.sentPerSec===null?'-':fmtRate(rates.sentPerSec)} · cxl ${sender.coalesced_trade_overwrite_count??'-'}`;workerMetricsEl.textContent=`worker_q ${payload.status?.event_log_queue_size??'-'} · drop ${payload.status?.dropped_trade_count??0} · logdrop ${payload.status?.event_log_dropped_count??0}`;lagMetricsEl.textContent=`top20 lag ${top20.maxLag===null?'-':top20.maxLag.toFixed(1)+'s'} · stale ${top20.stale} · rt ${top20.realtimeRows}`;renderTable(selectedBoardEl,selectedRows,'행을 클릭하면 S1 선택 종목으로 고정됩니다.');selectedRowCountEl.textContent=`${selectedRows.length}종목`;renderTable(focusBoardEl,focusRows,'집중 후보 수신 대기 중입니다.');focusRowCountEl.textContent=`${focusRows.length}종목`;if(shouldPool){renderTable(poolBoardEl,poolRows,'Top300 Pool 수신 대기 중입니다.');poolRowCountEl.textContent=`21~${ranked.length} · ${poolRows.length}종목`;lastPoolRenderAt=now;}maybeInitialAutoFit();if(refocus)requestAnimationFrame(()=>focusSelectedRow(true));const ms=performance.now()-start;renderMetricsEl.textContent=`render ${ms.toFixed(1)} ms`;renderMetricsEl.className=ms>70?'badge warn':'badge';}
+  function render(payload,mode='stream',opt={}){const start=performance.now();const refocus=opt.focusSelected||(navigationActive&&document.activeElement&&document.activeElement.closest&&document.activeElement.closest('tr[data-code]'));lastPayload=payload;markSortHeaders();const raw=Array.isArray(payload.rows)?payload.rows:[],ranked=byCandidateScore(raw),focusRows=sortedRows(ranked.slice(0,20)),poolRows=sortedRows(ranked.slice(20)),selectedRows=selectedCode?raw.filter(r=>String(r.stock_code||'')===selectedCode):[];const now=performance.now(),shouldPool=opt.forcePool||now-lastPoolRenderAt>=250,lag=payloadLagMs(payload),phase=payload.market_session?.phase_label||payload.status?.market_phase_label||'',sender=senderStats(payload),rates=computeRates(payload,sender),top20=top20Diagnostics(raw);statusEl.textContent=phase?`연결 OK · ${phase}`:'연결 OK';statusEl.className=mode==='stream'?'badge ok':'badge bad';countsEl.textContent=`rows ${payload.row_count||raw.length} · events ${payload.status?.event_count||0} · trades ${payload.status?.trade_count||0}`;latencyEl.textContent=`${mode} ${lag===null?'-':lag.toFixed(0)} ms · sort ${sortState.key}/${sortState.dir}`;throughputEl.textContent=`recv/s ${rates.recvPerSec===null?'-':fmtRate(rates.recvPerSec)} · trade/s ${rates.tradePerSec===null?'-':fmtRate(rates.tradePerSec)}`;collectorMetricsEl.textContent=`collector_q ${sender.pending_total_count??'-'} · sent/s ${rates.sentPerSec===null?'-':fmtRate(rates.sentPerSec)} · cxl ${sender.coalesced_trade_overwrite_count??'-'}`;workerMetricsEl.textContent=`worker_q ${payload.status?.event_log_queue_size??'-'} · drop ${payload.status?.dropped_trade_count??0} · logdrop ${payload.status?.event_log_dropped_count??0}`;lagMetricsEl.textContent=`top20 lag ${top20.maxLag===null?'-':top20.maxLag.toFixed(1)+'s'} · stale ${top20.stale} · rt ${top20.realtimeRows}`;renderTable(selectedBoardEl,selectedRows,'행을 클릭하면 S1 선택 종목으로 고정됩니다.');selectedRowCountEl.textContent=`${selectedRows.length}종목`;renderTable(focusBoardEl,focusRows,'집중 후보 수신 대기 중입니다.');focusRowCountEl.textContent=`${focusRows.length}종목`;if(shouldPool){renderTable(poolBoardEl,poolRows,'Top300 Pool 수신 대기 중입니다.');poolRowCountEl.textContent=`21~${ranked.length} · ${poolRows.length}종목`;lastPoolRenderAt=now;}maybeInitialAutoFit();if(refocus)requestAnimationFrame(()=>focusSelectedRow(true));const ms=performance.now()-start;renderMetricsEl.textContent=`render ${ms.toFixed(1)} ms`;renderMetricsEl.className=ms>70?'badge warn':'badge';}
   async function fallbackPoll(){try{const res=await fetch(`/api/v2/snapshot?limit=300&ts=${Date.now()}${candidateModelQueryParam()}`,{cache:'no-store'});if(!res.ok)throw new Error(`HTTP ${res.status}`);render(await res.json(),'poll',{forcePool:true});}catch(e){statusEl.textContent=`연결 실패: ${e.message}`;statusEl.className='badge bad';}}
   function startFallback(){if(fallbackTimer)return;fallbackTimer=setInterval(()=>{if(!lastStreamAt||performance.now()-lastStreamAt>4000)fallbackPoll();},1000);}
   function connectStream(){if(!window.EventSource){startFallback();return;}stream=new EventSource(`/api/v2/stream?limit=300&interval_ms=100&ts=${Date.now()}${candidateModelQueryParam()}`);stream.addEventListener('snapshot',e=>{try{lastStreamAt=performance.now();render(JSON.parse(e.data),'stream');}catch(err){console.warn(err);}});stream.onerror=()=>{statusEl.textContent='stream 재연결 중';statusEl.className='badge bad';startFallback();};}

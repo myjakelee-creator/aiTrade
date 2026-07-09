@@ -101,6 +101,32 @@ function Stop-PidFile([string]$PidFile, [string]$Name) {
     Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
 }
 
+
+function Stop-Collector32 {
+    Stop-PidFile $CollectorPidFile "collector32"
+
+    try {
+        $collectorMatches = @(Get-CimInstance Win32_Process -ErrorAction Stop |
+            Where-Object {
+                $_.CommandLine -and
+                $_.CommandLine -like "*realtime_v2\collector32.py*"
+            })
+    } catch {
+        $collectorMatches = @()
+    }
+
+    foreach ($proc in $collectorMatches) {
+        try {
+            Write-Host "Stopping hidden collector32 PID=$($proc.ProcessId)"
+            Stop-Process -Id ([int]$proc.ProcessId) -Force -ErrorAction Stop
+        } catch {
+            Write-Host "Could not stop hidden collector32 PID=$($proc.ProcessId): $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+
+    Remove-Item -LiteralPath $CollectorPidFile -Force -ErrorAction SilentlyContinue
+}
+
 function Stop-Port([int]$Port) {
     try {
         $pids = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop | Select-Object -ExpandProperty OwningProcess -Unique)
@@ -203,10 +229,35 @@ function Test-WorkerReady {
     }
 }
 
+
+function Wait-CollectorOpenApiReady([int]$TimeoutSec = 75) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $snapshot = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v2/snapshot?limit=1" -TimeoutSec 1
+            $collectorStatus = $snapshot.status.collector_status
+
+            if ($collectorStatus -and
+                $collectorStatus.provider_started -eq $true -and
+                [int]($collectorStatus.registered_count) -gt 0) {
+                Write-Host "COLLECTOR_OPENAPI_READY=True registered_count=$($collectorStatus.registered_count)"
+                return $true
+            }
+        } catch {
+        }
+
+        Start-Sleep -Milliseconds 500
+    }
+
+    Write-Host "COLLECTOR_OPENAPI_READY=False timeout=${TimeoutSec}s; continuing startup" -ForegroundColor Yellow
+    return $false
+}
+
 function Start-V2([bool]$FastOpen = $false) {
     Ensure-RuntimeDir
     Write-Step "Stopping old v2 processes"
-    Stop-PidFile $CollectorPidFile "collector32"
+    Stop-Collector32
     Stop-PidFile $WorkerPidFile "worker64"
     Stop-PidFile $ContextPidFile "context_snapshot_writer"
     Stop-Port 8765
@@ -261,12 +312,24 @@ function Start-V2([bool]$FastOpen = $false) {
         Write-Host "FAST_OPEN=False"
         Write-Host "ORDERBOOK=True"
     }
+    $oldHideCollectorConsole = $env:STOCKBOARD_HIDE_COLLECTOR_CONSOLE_AFTER_LOGIN
     $env:STOCKBOARD_HIDE_COLLECTOR_CONSOLE_AFTER_LOGIN = "1"
-    $collector = Start-Process -FilePath $Python32 -ArgumentList $collectorArgs -WorkingDirectory $ProjectRoot -WindowStyle Normal -RedirectStandardOutput $collectorOut -RedirectStandardError $collectorErr -PassThru
+    try {
+        $collector = Start-Process -FilePath $Python32 -ArgumentList $collectorArgs -WorkingDirectory $ProjectRoot -WindowStyle Normal -RedirectStandardOutput $collectorOut -RedirectStandardError $collectorErr -PassThru
+    } finally {
+        if ($null -eq $oldHideCollectorConsole) {
+            Remove-Item Env:\STOCKBOARD_HIDE_COLLECTOR_CONSOLE_AFTER_LOGIN -ErrorAction SilentlyContinue
+        } else {
+            $env:STOCKBOARD_HIDE_COLLECTOR_CONSOLE_AFTER_LOGIN = $oldHideCollectorConsole
+        }
+    }
     Set-Content -LiteralPath $CollectorPidFile -Value $collector.Id -Encoding ASCII
     Write-Host "COLLECTOR32_PID=$($collector.Id)"
     Write-Host "COLLECTOR32_STDOUT=$collectorOut"
     Write-Host "COLLECTOR32_STDERR=$collectorErr"
+
+    Write-Step "Waiting for OpenAPI login and registration"
+    [void](Wait-CollectorOpenApiReady 75)
 
     Write-Step "Starting HTS bridge"
     [void](Start-HtsBridge)
@@ -280,7 +343,7 @@ function Stop-V2 {
     Ensure-RuntimeDir
     Write-Step "Stopping v2 collector/worker/context/HTS bridge"
     Stop-HtsBridge
-    Stop-PidFile $CollectorPidFile "collector32"
+    Stop-Collector32
     Stop-PidFile $WorkerPidFile "worker64"
     Stop-PidFile $ContextPidFile "context_snapshot_writer"
     Stop-Port 8765
