@@ -393,6 +393,30 @@ def _speed_render_patch(html: str) -> str:
       maxUpdateRows: 0
     });
   };
+
+  const __largeSpeedRenderSamples = [];
+  function __largeSpeedUpdateRenderDiagnostics(){
+    if(!renderMetricsEl) return;
+    const match = /render\s+([0-9.]+)\s+ms/.exec(String(renderMetricsEl.textContent || ''));
+    if(!match) return;
+    const latest = Number(match[1]);
+    if(!Number.isFinite(latest)) return;
+    __largeSpeedRenderSamples.push(latest);
+    while(__largeSpeedRenderSamples.length > 120) __largeSpeedRenderSamples.shift();
+    const sorted = __largeSpeedRenderSamples.slice().sort((a,b) => a-b);
+    const average = __largeSpeedRenderSamples.reduce((sum, value) => sum + value, 0) / __largeSpeedRenderSamples.length;
+    const p95 = sorted[Math.max(0, Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * 0.95)))];
+    const max = sorted[sorted.length - 1];
+    renderMetricsEl.textContent = `render ${latest.toFixed(1)} ms · avg ${average.toFixed(0)} · p95 ${p95.toFixed(0)} · max ${max.toFixed(0)}`;
+    renderMetricsEl.title = `최근 ${__largeSpeedRenderSamples.length}회 렌더 기준`;
+  }
+
+  const __largeSpeedBaseRender = render;
+  render = function(...args){
+    const result = __largeSpeedBaseRender.apply(this, args);
+    __largeSpeedUpdateRenderDiagnostics();
+    return result;
+  };
 """
     if anchor not in html:
         return html
