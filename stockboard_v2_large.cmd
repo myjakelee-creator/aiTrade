@@ -16,6 +16,7 @@ echo   3 Restart large normal
 echo   4 Status large
 echo   5 Start large fast-open
 echo   6 Restart large fast-open
+echo   7 Doctor large
 echo   0 Exit
 echo.
 set /p "CHOICE=Select: "
@@ -25,6 +26,7 @@ if "%CHOICE%"=="3" set "ACTION=restart"
 if "%CHOICE%"=="4" set "ACTION=status"
 if "%CHOICE%"=="5" set "ACTION=start-fast"
 if "%CHOICE%"=="6" set "ACTION=restart-fast"
+if "%CHOICE%"=="7" set "ACTION=doctor"
 if "%CHOICE%"=="0" exit /b 0
 if "%ACTION%"=="" (
   echo Invalid selection.
@@ -53,8 +55,10 @@ $WorkerPidFile = Join-Path $RuntimeDir "worker64.pid"
 $CollectorPidFile = Join-Path $RuntimeDir "collector32.pid"
 $ContextPidFile = Join-Path $RuntimeDir "context_snapshot_writer.pid"
 $WorkerUrl = "http://127.0.0.1:8765/api/v2/health"
+$SnapshotUrl = "http://127.0.0.1:8765/api/v2/snapshot?limit=300"
 $BoardUrl = "http://127.0.0.1:8765/"
 $OldLauncher = Join-Path $ProjectRoot "stockboard_v2_live.cmd"
+$DoctorReport = Join-Path $RuntimeDir "large_doctor_report.txt"
 
 function Write-Step([string]$Message) {
     Write-Host ""
@@ -120,7 +124,7 @@ function Stop-V2 {
 
 function Test-WorkerReady {
     try {
-        Invoke-RestMethod -Uri $WorkerUrl -TimeoutSec 1 | Out-Null
+        Invoke-RestMethod -Uri $WorkerUrl -TimeoutSec 3 | Out-Null
         return $true
     } catch { return $false }
 }
@@ -138,7 +142,7 @@ function Wait-CollectorOpenApiReady([int]$TimeoutSec = 75) {
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     while ((Get-Date) -lt $deadline) {
         try {
-            $snapshot = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v2/snapshot?limit=1" -TimeoutSec 1
+            $snapshot = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v2/snapshot?limit=1" -TimeoutSec 3
             $collectorStatus = $snapshot.status.collector_status
             if ($collectorStatus -and $collectorStatus.provider_started -eq $true -and [int]($collectorStatus.registered_count) -gt 0) {
                 Write-Host "COLLECTOR_OPENAPI_READY=True registered_count=$($collectorStatus.registered_count)"
@@ -227,7 +231,7 @@ function Start-V2Large([bool]$FastOpen = $false) {
 function Status-V2Large {
     Ensure-RuntimeDir
     try {
-        $snapshot = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v2/snapshot?limit=5" -TimeoutSec 1
+        $snapshot = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v2/snapshot?limit=5" -TimeoutSec 10
         Write-Host "WORKER_HEALTH=True"
         Write-Host "ROW_COUNT=$($snapshot.row_count)"
         Write-Host "EVENT_COUNT=$($snapshot.status.event_count)"
@@ -241,11 +245,151 @@ function Status-V2Large {
             Write-Host "COLLECTOR_LARGE_SELL_COUNT=$($sender.large_trade_sell_count)"
             Write-Host "COLLECTOR_LARGE_BUY_SUM_EOK=$($sender.large_trade_buy_sum_eok)"
             Write-Host "COLLECTOR_LARGE_SELL_SUM_EOK=$($sender.large_trade_sell_sum_eok)"
+        } else {
+            Write-Host "COLLECTOR_SENDER_STATS=False"
         }
     } catch {
         Write-Host "WORKER_HEALTH=False"
         Write-Host "ERROR=$($_.Exception.Message)"
     }
+}
+
+function Add-DoctorTail([scriptblock]$AddLine, [string]$Pattern, [string]$Label) {
+    $file = Get-ChildItem -Path $RuntimeDir -Filter $Pattern -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if ($null -eq $file) {
+        & $AddLine "$Label=NO_LOG_FILE"
+        return
+    }
+    & $AddLine "$Label=$($file.FullName)"
+    & $AddLine "---- ${Label} tail ----"
+    $tail = Get-Content -LiteralPath $file.FullName -Tail 80 -ErrorAction SilentlyContinue
+    if ($tail) {
+        foreach ($line in $tail) { & $AddLine $line }
+    } else {
+        & $AddLine "(empty)"
+    }
+}
+
+function Doctor-V2Large {
+    Ensure-RuntimeDir
+    $lines = New-Object System.Collections.Generic.List[string]
+    function Add-Line([string]$Message) {
+        $lines.Add($Message) | Out-Null
+        Write-Host $Message
+    }
+
+    Add-Line "StockBoard v2 large doctor"
+    Add-Line "TIME=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+    Add-Line "PROJECT_ROOT=$ProjectRoot"
+    Add-Line "REPORT=$DoctorReport"
+
+    try {
+        $head = (& git -C $ProjectRoot rev-parse --short HEAD 2>$null)
+        $branch = (& git -C $ProjectRoot branch --show-current 2>$null)
+        Add-Line "GIT_BRANCH=$branch"
+        Add-Line "GIT_HEAD=$head"
+    } catch {
+        Add-Line "GIT_INFO_ERROR=$($_.Exception.Message)"
+    }
+
+    Add-Line "PYTHON64=$Python64"
+    Add-Line "PYTHON32=$Python32"
+    Add-Line "WORKER_PID_FILE_EXISTS=$(Test-Path -LiteralPath $WorkerPidFile)"
+    if (Test-Path -LiteralPath $WorkerPidFile) { Add-Line "WORKER_PID=$(Get-Content -LiteralPath $WorkerPidFile | Select-Object -First 1)" }
+    Add-Line "COLLECTOR_PID_FILE_EXISTS=$(Test-Path -LiteralPath $CollectorPidFile)"
+    if (Test-Path -LiteralPath $CollectorPidFile) { Add-Line "COLLECTOR_PID=$(Get-Content -LiteralPath $CollectorPidFile | Select-Object -First 1)" }
+    Add-Line "HAS_COLLECTOR_LARGE=$(Test-Path -LiteralPath (Join-Path $ProjectRoot 'realtime_v2\collector32_large.py'))"
+    Add-Line "HAS_WORKER_LARGE=$(Test-Path -LiteralPath (Join-Path $ProjectRoot 'realtime_v2\worker64_guarded_large.py'))"
+
+    try {
+        & $Python64 -m py_compile (Join-Path $ProjectRoot "realtime_v2\collector32_large.py") (Join-Path $ProjectRoot "realtime_v2\worker64_guarded_large.py")
+        Add-Line "PY_COMPILE=True"
+    } catch {
+        Add-Line "PY_COMPILE=False"
+        Add-Line "PY_COMPILE_ERROR=$($_.Exception.Message)"
+    }
+
+    try {
+        $procRows = @(Get-CimInstance Win32_Process -ErrorAction Stop |
+            Where-Object { $_.CommandLine -and ($_.CommandLine -like "*realtime_v2\collector32_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded.py*" -or $_.CommandLine -like "*realtime_v2\collector32.py*") } |
+            Select-Object ProcessId, Name, CommandLine)
+        Add-Line "MATCHED_PROCESS_COUNT=$($procRows.Count)"
+        foreach ($p in $procRows) {
+            Add-Line "PROCESS PID=$($p.ProcessId) NAME=$($p.Name) CMD=$($p.CommandLine)"
+        }
+    } catch {
+        Add-Line "PROCESS_LOOKUP_ERROR=$($_.Exception.Message)"
+    }
+
+    try {
+        $health = Invoke-RestMethod -Uri $WorkerUrl -TimeoutSec 10
+        Add-Line "HEALTH=True"
+        Add-Line "HEALTH_JSON=$($health | ConvertTo-Json -Compress -Depth 6)"
+    } catch {
+        Add-Line "HEALTH=False"
+        Add-Line "HEALTH_ERROR=$($_.Exception.Message)"
+    }
+
+    $snapshot = $null
+    try {
+        $snapshot = Invoke-RestMethod -Uri $SnapshotUrl -TimeoutSec 30
+        Add-Line "SNAPSHOT=True"
+        Add-Line "ROW_COUNT=$($snapshot.row_count)"
+        Add-Line "EVENT_COUNT=$($snapshot.status.event_count)"
+        Add-Line "TRADE_COUNT=$($snapshot.status.trade_count)"
+        Add-Line "ORDERBOOK_COUNT=$($snapshot.status.orderbook_count)"
+        Add-Line "LAST_EVENT_AT=$($snapshot.status.last_event_at)"
+        $collectorStatus = $snapshot.status.collector_status
+        if ($collectorStatus) {
+            Add-Line "COLLECTOR_PROVIDER_STARTED=$($collectorStatus.provider_started)"
+            Add-Line "COLLECTOR_REGISTERED_COUNT=$($collectorStatus.registered_count)"
+            $sender = $collectorStatus.sender_stats
+            if ($sender) {
+                Add-Line "COLLECTOR_CONNECTED=$($sender.connected)"
+                Add-Line "COLLECTOR_SENT_PER_SEC=$($sender.sent_per_sec)"
+                Add-Line "COLLECTOR_PENDING_TOTAL=$($sender.pending_total_count)"
+                Add-Line "COLLECTOR_COALESCED_TRADE=$($sender.coalesced_trade_overwrite_count)"
+                Add-Line "COLLECTOR_FLOW_TRADE_COUNT=$($sender.flow_trade_count)"
+                Add-Line "COLLECTOR_LARGE_BUY_COUNT=$($sender.large_trade_buy_count)"
+                Add-Line "COLLECTOR_LARGE_SELL_COUNT=$($sender.large_trade_sell_count)"
+                Add-Line "COLLECTOR_LARGE_BUY_SUM_EOK=$($sender.large_trade_buy_sum_eok)"
+                Add-Line "COLLECTOR_LARGE_SELL_SUM_EOK=$($sender.large_trade_sell_sum_eok)"
+                Add-Line "COLLECTOR_PENDING_LARGE_CODE_COUNT=$($sender.pending_large_trade_code_count)"
+                Add-Line "COLLECTOR_LAST_ERROR=$($sender.last_error)"
+            } else {
+                Add-Line "COLLECTOR_SENDER_STATS=False"
+            }
+        } else {
+            Add-Line "COLLECTOR_STATUS=False"
+        }
+
+        $largeRows = @($snapshot.rows | Where-Object { ($_.large_trade_buy_count -as [int]) -gt 0 -or ($_.large_trade_sell_count -as [int]) -gt 0 })
+        Add-Line "ROWS_WITH_LARGE_TRADE=$($largeRows.Count)"
+        foreach ($r in ($largeRows | Select-Object -First 20)) {
+            Add-Line "LARGE_ROW code=$($r.stock_code) name=$($r.stock_name) buy=$($r.large_trade_buy_count) sell=$($r.large_trade_sell_count) net=$($r.large_trade_net_count) buy_eok=$($r.large_trade_buy_sum_eok) sell_eok=$($r.large_trade_sell_sum_eok) net_eok=$($r.large_trade_net_sum_eok) source=$($r.large_trade_source)"
+        }
+
+        $ls = $snapshot.rows | Where-Object stock_code -eq "010120" | Select-Object -First 1
+        if ($ls) {
+            Add-Line "LS_ELECTRIC code=$($ls.stock_code) name=$($ls.stock_name) buy=$($ls.large_trade_buy_count) sell=$($ls.large_trade_sell_count) net=$($ls.large_trade_net_count) buy_eok=$($ls.large_trade_buy_sum_eok) sell_eok=$($ls.large_trade_sell_sum_eok) net_eok=$($ls.large_trade_net_sum_eok) source=$($ls.large_trade_source)"
+        } else {
+            Add-Line "LS_ELECTRIC=NOT_IN_SNAPSHOT"
+        }
+    } catch {
+        Add-Line "SNAPSHOT=False"
+        Add-Line "SNAPSHOT_ERROR=$($_.Exception.Message)"
+    }
+
+    Add-DoctorTail ${function:Add-Line} "worker64_large_*.err.log" "WORKER_LARGE_ERR_LOG"
+    Add-DoctorTail ${function:Add-Line} "collector32_large_*.err.log" "COLLECTOR_LARGE_ERR_LOG"
+    Add-DoctorTail ${function:Add-Line} "worker64_*.err.log" "WORKER_ERR_LOG"
+    Add-DoctorTail ${function:Add-Line} "collector32_*.err.log" "COLLECTOR_ERR_LOG"
+
+    Set-Content -LiteralPath $DoctorReport -Value $lines -Encoding UTF8
+    Write-Host ""
+    Write-Host "DOCTOR_REPORT=$DoctorReport" -ForegroundColor Cyan
 }
 
 if ($Action -eq "start") { Start-V2Large $false; exit 0 }
@@ -254,4 +398,5 @@ if ($Action -eq "restart") { Start-V2Large $false; exit 0 }
 if ($Action -eq "restart-fast") { Start-V2Large $true; exit 0 }
 if ($Action -eq "stop") { Stop-V2; exit 0 }
 if ($Action -eq "status") { Status-V2Large; exit 0 }
+if ($Action -eq "doctor") { Doctor-V2Large; exit 0 }
 throw "unknown action: $Action"
