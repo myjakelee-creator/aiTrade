@@ -411,10 +411,101 @@ def _speed_render_patch(html: str) -> str:
     renderMetricsEl.title = `최근 ${__largeSpeedRenderSamples.length}회 렌더 기준`;
   }
 
+  let __largeSpeedLastNavigationTable = null;
+  const __largeSpeedBaseMoveSelection = typeof moveSelection === 'function' ? moveSelection : null;
+
+  function __largeSpeedIsBoardTable(table){
+    return table === selectedBoardEl || table === focusBoardEl || table === poolBoardEl;
+  }
+
+  function __largeSpeedNavigationTable(){
+    const active = document.activeElement;
+    const activeRow = active && active.closest ? active.closest('tr[data-code]') : null;
+    const activeTable = activeRow ? activeRow.closest('table') : null;
+    if(__largeSpeedIsBoardTable(activeTable)) return activeTable;
+
+    if(selectedCode){
+      const selectedRows = Array.from(document.querySelectorAll(`tr[data-code="${selectedCode}"]`));
+      for(const row of selectedRows){
+        const table = row.closest('table');
+        if(__largeSpeedIsBoardTable(table)) return table;
+      }
+    }
+
+    if(__largeSpeedIsBoardTable(__largeSpeedLastNavigationTable)) return __largeSpeedLastNavigationTable;
+    return focusBoardEl || poolBoardEl || selectedBoardEl;
+  }
+
+  function __largeSpeedRowsInTable(table){
+    const body = table && table.tBodies ? table.tBodies[0] : null;
+    return Array.from(body ? body.querySelectorAll('tr[data-code]') : [])
+      .filter(row => /^\d{6}$/.test(String(row.dataset.code || '')));
+  }
+
+  function __largeSpeedFocusCodeInTable(table, code){
+    const row = table && table.querySelector ? table.querySelector(`tbody tr[data-code="${code}"]`) : null;
+    if(row && typeof row.focus === 'function'){
+      row.focus({preventScroll:true});
+      if(typeof row.scrollIntoView === 'function'){
+        row.scrollIntoView({block:'nearest', inline:'nearest'});
+      }
+      return true;
+    }
+    return false;
+  }
+
+  moveSelection = function(delta){
+    const table = __largeSpeedNavigationTable();
+    const rows = __largeSpeedRowsInTable(table);
+    if(!rows.length){
+      if(__largeSpeedBaseMoveSelection) return __largeSpeedBaseMoveSelection(delta);
+      return;
+    }
+
+    const active = document.activeElement;
+    const activeRow = active && active.closest ? active.closest('tr[data-code]') : null;
+    let index = rows.findIndex(row => row === activeRow || String(row.dataset.code || '') === selectedCode);
+    if(index < 0) index = delta > 0 ? -1 : 0;
+    const nextRow = rows[(index + delta + rows.length) % rows.length];
+    const code = String(nextRow && nextRow.dataset.code || '');
+    if(!/^\d{6}$/.test(code)) return;
+    __largeSpeedLastNavigationTable = table;
+    selectCodeAndLink(code, false, {focus:false});
+    requestAnimationFrame(() => __largeSpeedFocusCodeInTable(table, code));
+  };
+
+  function __largeSpeedBoardWidth(){
+    const cssWidth = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--board-width')) || 0;
+    const tableWidths = Array.from(document.querySelectorAll('table.board')).map(table => Math.max(table.scrollWidth || 0, table.getBoundingClientRect().width || 0));
+    return Math.max(cssWidth, ...tableWidths, 0);
+  }
+
+  function __largeSpeedApplyHorizontalScrollFix(){
+    const boardWidth = __largeSpeedBoardWidth();
+    const minWidth = Math.ceil(Math.max(window.innerWidth + 180, boardWidth + 240));
+    const windowEl = document.querySelector('.window');
+    if(windowEl) windowEl.style.minWidth = `${minWidth}px`;
+    document.documentElement.style.minWidth = `${minWidth}px`;
+    document.body.style.minWidth = `${minWidth}px`;
+  }
+
+  const __largeSpeedBaseUpdateBoardWidth = typeof updateBoardWidth === 'function' ? updateBoardWidth : null;
+  if(__largeSpeedBaseUpdateBoardWidth){
+    updateBoardWidth = function(...args){
+      const result = __largeSpeedBaseUpdateBoardWidth.apply(this, args);
+      requestAnimationFrame(__largeSpeedApplyHorizontalScrollFix);
+      return result;
+    };
+  }
+  window.addEventListener('resize', () => requestAnimationFrame(__largeSpeedApplyHorizontalScrollFix));
+  setTimeout(__largeSpeedApplyHorizontalScrollFix, 0);
+  setTimeout(__largeSpeedApplyHorizontalScrollFix, 300);
+
   const __largeSpeedBaseRender = render;
   render = function(...args){
     const result = __largeSpeedBaseRender.apply(this, args);
     __largeSpeedUpdateRenderDiagnostics();
+    requestAnimationFrame(__largeSpeedApplyHorizontalScrollFix);
     return result;
   };
 """
