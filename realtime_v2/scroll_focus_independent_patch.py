@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import re
 
-MARKER = "STOCKBOARD_V2_SCROLL_FOCUS_INDEPENDENT_V2_20260710"
-LEGACY_MARKER = "STOCKBOARD_V2_SCROLL_FOCUS_INDEPENDENT_20260710"
-
+MARKER = "STOCKBOARD_V2_SCROLL_FOCUS_INDEPENDENT_V3_20260710"
+LEGACY_MARKERS = (
+    "STOCKBOARD_V2_SCROLL_FOCUS_INDEPENDENT_20260710",
+    "STOCKBOARD_V2_SCROLL_FOCUS_INDEPENDENT_V2_20260710",
+)
 
 _REFOCUS_PATTERN = re.compile(
     r"const refocus=opt\.focusSelected\|\|\(navigationActive&&document\.activeElement&&"
@@ -32,13 +34,36 @@ _NEW_VISIBLE_FOCUS = f"""  function __sbv2RefocusVisibleRow(table, code, reveal=
   }}
   /* {MARKER} */"""
 
+_SCROLL_GUARD_PATCH = f"""
+  /* {MARKER}_BLUR */
+  function __sbv2BlurFocusedBoardRow(){{
+    const active = document.activeElement;
+    const row = active && active.closest ? active.closest('tr[data-code]') : null;
+    if(row && typeof active.blur === 'function'){{
+      try{{ active.blur(); }}catch(_e){{}}
+    }}
+  }}
+  window.addEventListener('wheel', __sbv2BlurFocusedBoardRow, {{passive:true, capture:true}});
+  window.addEventListener('touchmove', __sbv2BlurFocusedBoardRow, {{passive:true, capture:true}});
+  window.addEventListener('scroll', __sbv2BlurFocusedBoardRow, {{passive:true, capture:true}});
+"""
+
+_SCROLL_ANCHOR_STYLE = f"""
+<style id="stockboard-v2-scroll-focus-independent-v3">
+  html, body, .window, table.board, table.board tbody, table.board tr.data-row {{
+    overflow-anchor: none !important;
+  }}
+</style>
+"""
+
 
 def patch_html(html: str) -> str:
-    """Keep selected-row state independent from the page's vertical scroll.
+    """Separate selected-row state from page scrolling.
 
-    Ordinary stream renders and delayed refocus attempts may restore DOM focus but
-    must not move the viewport. Arrow navigation reveals the newly selected row
-    once, then all delayed focus recovery uses ``preventScroll`` only.
+    Ordinary stream renders never refocus the selected row. Manual scrolling
+    blurs any focused table row while preserving ``selectedCode`` and the visual
+    selected-row state. Arrow navigation reveals the new row once, then no
+    delayed DOM-focus recovery is scheduled.
     """
 
     if MARKER in html:
@@ -53,24 +78,40 @@ def patch_html(html: str) -> str:
         )
         patched = html.replace(old, replacement, 1)
 
-    # The UI safety patch historically called scrollIntoView for every refocus,
-    # including delayed recovery calls. Split focus from reveal so scrolling is
-    # only performed for the user's explicit ArrowUp/ArrowDown movement.
+    # Split focus from viewport reveal.
     patched = patched.replace(_OLD_VISIBLE_FOCUS, _NEW_VISIBLE_FOCUS, 1)
     patched = patched.replace(
         "__sbv2LastNavTable = table;\n    __sbv2RefocusVisibleRow(table, code);\n    selectCodeAndLink(code, false, {focus:false});",
         "__sbv2LastNavTable = table;\n    __sbv2RefocusVisibleRow(table, code, true);\n    selectCodeAndLink(code, false, {focus:false});",
         1,
     )
-    patched = patched.replace(
-        "setTimeout(() => __sbv2RefocusVisibleRow(table, code), delay);",
-        "setTimeout(() => __sbv2RefocusVisibleRow(table, code, false), delay);",
-        1,
+
+    # Delayed focus recovery is the main source of scroll snap-back. Selection
+    # and ArrowUp/Down navigation use selectedCode, so these retries are not
+    # required for navigation continuity.
+    patched = re.sub(
+        r"\s*\[0,\s*80,\s*180,\s*360,\s*720,\s*1200\]\.forEach\(delay\s*=>\s*\{\s*"
+        r"setTimeout\(\(\)\s*=>\s*__sbv2RefocusVisibleRow\(table,\s*code(?:,\s*false)?\),\s*delay\);\s*"
+        r"\}\);",
+        "\n    /* delayed refocus removed: scroll position has priority */",
+        patched,
+        count=1,
     )
 
-    # Remove the legacy marker text if present so the generated HTML clearly
-    # reports only the active V2 behavior.
-    patched = patched.replace(f"/* {LEGACY_MARKER} */", "")
+    # Manual wheel, touch or scrollbar movement removes only DOM focus. The
+    # selectedCode, blue selected-row class, S1 and HTS linkage remain intact.
+    anchor = (
+        "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});"
+        "loadCandidateModels();loadContext();markSortHeaders();connectStream();"
+    )
+    if anchor in patched:
+        patched = patched.replace(anchor, f"{_SCROLL_GUARD_PATCH}\n{anchor}", 1)
+
+    if "</head>" in patched:
+        patched = patched.replace("</head>", f"{_SCROLL_ANCHOR_STYLE}\n</head>", 1)
+
+    for legacy in LEGACY_MARKERS:
+        patched = patched.replace(f"/* {legacy} */", "")
     return patched
 
 
