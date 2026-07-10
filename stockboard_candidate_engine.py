@@ -29,12 +29,23 @@ class ConfigDrivenCandidateRankingEngine:
         structure = self.config["score_structure"]
         required = [str(key) for key in self.config.get("required_features") or []]
         for index, row in enumerate(enriched):
-            stage_results: dict[str, tuple[float, list[dict[str, Any]], float]] = {}
-            for group in ("final_score", "entry_score", "confirmation_score", "focus_score"):
-                stage_results[group] = self._group_score(snapshot, index, structure[group])
-            raw_score, final_items, coverage = stage_results["final_score"]
-            required_missing = [key for key in required if snapshot.get(index, key).status in {"missing", "stale"}]
-            score = raw_score
+            final_score, final_points, final_items, coverage = self._group_score(
+                snapshot, index, structure["final_score"], details=True
+            )
+            entry_score, entry_points, _unused, _entry_coverage = self._group_score(
+                snapshot, index, structure["entry_score"]
+            )
+            confirmation_score, confirmation_points, _unused, _confirmation_coverage = self._group_score(
+                snapshot, index, structure["confirmation_score"]
+            )
+            focus_score, focus_points, _unused, _focus_coverage = self._group_score(
+                snapshot, index, structure["focus_score"]
+            )
+            required_missing = [
+                key for key in required
+                if snapshot.get(index, key).status in {"missing", "stale"}
+            ]
+            score = final_score
             if coverage < .60 or required_missing:
                 score = min(score, 59.0)
             elif coverage < .75:
@@ -48,18 +59,24 @@ class ConfigDrivenCandidateRankingEngine:
                     guard_failures.append(str(guard.get("name") or guard.get("type")))
             score = _round_score(score)
             grade, grade_class = grade_for_percent(score)
-            status = "WAIT_DATA" if coverage < .60 or required_missing else "READY" if score >= 80 else "WATCH" if score >= 70 else "EARLY" if score >= 60 else "WEAK"
+            status = (
+                "WAIT_DATA" if coverage < .60 or required_missing
+                else "READY" if score >= 80
+                else "WATCH" if score >= 70
+                else "EARLY" if score >= 60
+                else "WEAK"
+            )
             row.update({
                 "candidate_model_id": self.model_id,
                 "candidate_model_name": self.model_name,
                 "candidate_score_version": self.model_id,
-                "entry_score": stage_results["entry_score"][0],
-                "confirmation_score": stage_results["confirmation_score"][0],
-                "focus_score": stage_results["focus_score"][0],
-                "score_top50": stage_results["entry_score"][0],
-                "score_top20": stage_results["confirmation_score"][0],
-                "score_top5": stage_results["focus_score"][0],
-                "candidate_score_raw": raw_score,
+                "entry_score": entry_score,
+                "confirmation_score": confirmation_score,
+                "focus_score": focus_score,
+                "score_top50": entry_score,
+                "score_top20": confirmation_score,
+                "score_top5": focus_score,
+                "candidate_score_raw": final_score,
                 "candidate_score": score,
                 "score_percent": score,
                 "grade_score": score,
@@ -78,19 +95,26 @@ class ConfigDrivenCandidateRankingEngine:
                 "grade_guard_failures": guard_failures,
                 "score_breakdown": {
                     "candidate_model": {
-                        "id": self.model_id, "name": self.model_name,
-                        "entry_score": stage_results["entry_score"][0],
-                        "confirmation_score": stage_results["confirmation_score"][0],
-                        "focus_score": stage_results["focus_score"][0],
+                        "id": self.model_id,
+                        "name": self.model_name,
+                        "entry_score": entry_score,
+                        "confirmation_score": confirmation_score,
+                        "focus_score": focus_score,
                         "items": final_items,
                     },
-                    "total": {"score": score, "raw_score": raw_score, "possible_points": 100, "percent": score, "grade": grade_text_for_percent(score)},
+                    "total": {
+                        "score": score,
+                        "raw_score": final_score,
+                        "possible_points": 100,
+                        "percent": score,
+                        "grade": grade_text_for_percent(score),
+                    },
                 },
                 "candidate_score_items": {
-                    "final_score": {item["key"]: item["points"] for item in final_items},
-                    "entry_score": {item["key"]: item["points"] for item in stage_results["entry_score"][1]},
-                    "confirmation_score": {item["key"]: item["points"] for item in stage_results["confirmation_score"][1]},
-                    "focus_score": {item["key"]: item["points"] for item in stage_results["focus_score"][1]},
+                    "final_score": final_points,
+                    "entry_score": entry_points,
+                    "confirmation_score": confirmation_points,
+                    "focus_score": focus_points,
                 },
                 "momentum": self._momentum(final_items),
                 "candidate_reason": self._reason(final_items),
@@ -98,25 +122,34 @@ class ConfigDrivenCandidateRankingEngine:
             })
         return self._apply_funnel(enriched)
 
-    def _group_score(self, snapshot: FeatureSnapshot, index: int, items: list[dict[str, Any]]) -> tuple[float, list[dict[str, Any]], float]:
+    def _group_score(
+        self,
+        snapshot: FeatureSnapshot,
+        index: int,
+        items: list[dict[str, Any]],
+        *,
+        details: bool = False,
+    ) -> tuple[float, dict[str, float], list[dict[str, Any]], float]:
         total = 0.0
         covered_weight = 0.0
         positive_weight = 0.0
+        points: dict[str, float] = {}
         results: list[dict[str, Any]] = []
         for item in items:
             key = str(item.get("key"))
             weight = float(item.get("weight"))
             feature = snapshot.get(index, key)
-            label = str(item.get("label") or FEATURE_LABELS.get(key) or key)
-            result = feature.item(label=label, weight=weight)
-            results.append(result)
+            points[key] = _round_score(feature.points)
+            if details:
+                label = str(item.get("label") or FEATURE_LABELS.get(key) or key)
+                results.append(feature.item(label=label, weight=weight))
             total += feature.points * weight / 100.0
             if weight > 0:
                 positive_weight += weight
                 if feature.status not in {"missing", "stale"}:
                     covered_weight += weight
         coverage = covered_weight / positive_weight if positive_weight else 0.0
-        return _round_score(total), results, coverage
+        return _round_score(total), points, results, coverage
 
     def _guard_passes(self, snapshot: FeatureSnapshot, index: int, guard: dict[str, Any]) -> bool:
         kind = str(guard.get("type"))
