@@ -161,25 +161,28 @@ RestorePreviousWindow(previousHwnd, targetWindowHwnd) {
     if (previousHwnd = targetWindowHwnd)
         return
 
-    Sleep, 70
-    if WinExist("ahk_id " . previousHwnd) {
+    Loop, 5 {
+        Sleep, 80
+        if !WinExist("ahk_id " . previousHwnd)
+            return
+
         WinActivate, ahk_id %previousHwnd%
-        WinWaitActive, ahk_id %previousHwnd%,, 0.7
+        WinWaitActive, ahk_id %previousHwnd%,, 0.4
 
         ; For Chrome/Edge, return keyboard focus to the page renderer rather than
-        ; leaving it on the browser frame/address area.  This is what lets
-        ; StockBoard keep receiving ArrowUp/ArrowDown immediately after HTS sync.
+        ; leaving it on the browser frame/address area.  Repeating this a few times
+        ; covers the short interval where HTS is still processing Enter.
         ControlGet, chromeRenderer, Hwnd,, Chrome_RenderWidgetHostHWND1, ahk_id %previousHwnd%
         if (chromeRenderer) {
             ControlFocus,, ahk_id %chromeRenderer%
-            return
+            continue
         }
 
         ; Harmless fallback for other embedded browser controls.
         ControlGet, ieRenderer, Hwnd,, Internet Explorer_Server1, ahk_id %previousHwnd%
         if (ieRenderer) {
             ControlFocus,, ahk_id %ieRenderer%
-            return
+            continue
         }
     }
 }
