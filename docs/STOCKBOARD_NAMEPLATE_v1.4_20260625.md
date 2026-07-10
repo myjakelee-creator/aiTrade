@@ -490,3 +490,24 @@ HTML은 보여준다.
 - 접근성 문구는 `aria-label`로 유지할 수 있다.
 - visual-cell 내부 자식 element에도 `title`을 남기지 않는다.
 - 잔량비, 순간강도, 5분강도, 일봉은 숫자 본문보다 셀 배경과 tooltip 중심으로 표시한다.
+
+---
+
+# 11. 2026-06-29 Standalone execution/OHLC chart
+
+| Screen name / function | Internal name / file | Meaning | Status | Notes |
+|---|---|---|---|---|
+| Execution/OHLC chart sample | `docs/stockboard_execution_chart_sample.html` | Standalone local chart page using v3 CSS/JS assets | DONE/prototype | Existing StockBoard main server and live board logic unchanged |
+| Chart CSS | `docs/assets/stockboard_execution_chart_v3.css` | Standalone chart layout and viewport styling | DONE/prototype | v2/static assets removed from final local state |
+| Chart JS | `docs/assets/stockboard_execution_chart_v3.js` | Upload UI, local JSON loading, OHLC/execution chart rendering | DONE/prototype | Supports OHLC candle, VWAP/open helper lines, buy/sell bars, fixed-width viewport zoom, visible-range y-axis |
+| Chart parser | `stockboard_execution_chart.py` | Parses uploaded OHLC and 0110 execution files into local runtime JSON | DONE/prototype | Runtime output stays under `data/execution_charts` |
+| Chart local server | `stockboard_execution_chart_server.py` | Serves standalone chart workflow on port `8010` | DONE/prototype | Uses local runtime JSON only |
+| Chart launcher | `start_stockboard_execution_chart.cmd` | Starts the standalone chart server | DONE/prototype | Separate from main StockBoard launcher |
+| Chart runtime index | `data/execution_charts/index.json` | Local date/code chart index | runtime/ignored | Git ignored |
+| Chart runtime parsed data | `data/execution_charts/parsed/YYYYMMDD/CODE.json` | Local parsed chart series by date and code | runtime/ignored | Git ignored |
+
+Deferred:
+
+- Realtime charting.
+- Google Drive sync.
+- Aftermarket 1m/5m strength mode.
