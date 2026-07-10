@@ -5,7 +5,7 @@ import os
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.request import urlopen
@@ -116,11 +116,9 @@ def build_lane_plan(base, payload: dict[str, Any], selected: str = "") -> list[d
     if selected:
         add(selected, "s1", by_code.get(selected))
 
-    # First 20 rows are current protected Top20 membership, not score-sort output.
     for row in rows[:20]:
         add(row.get("stock_code"), "top20", row)
 
-    # Hidden Top50 is a query-priority lane only. It does not alter display order.
     hidden = sorted(
         (
             (index, row)
@@ -169,6 +167,16 @@ def _clock_minutes(text: Any, fallback: str) -> int:
         return int(hour_text) * 60 + int(minute_text)
 
 
+def _clock_datetime(now: datetime, text: Any, fallback: str) -> datetime:
+    minutes = _clock_minutes(text, fallback)
+    return now.replace(
+        hour=minutes // 60,
+        minute=minutes % 60,
+        second=0,
+        microsecond=0,
+    )
+
+
 class Strength5mScheduler(threading.Thread):
     NORMAL = {"s1": 30.0, "top20": 90.0, "hidden50": 300.0, "top300": 1200.0}
     OPENING = {"s1": 45.0, "top20": 120.0, "hidden50": 600.0, "top300": 1800.0}
@@ -193,12 +201,22 @@ class Strength5mScheduler(threading.Thread):
             self.normal_gap,
             float(os.getenv("STOCKBOARD_STRENGTH_5M_OPENING_GAP_SEC", "2")),
         )
+        self.close_sweep_minutes = max(
+            10,
+            int(os.getenv("STOCKBOARD_STRENGTH_5M_CLOSE_SWEEP_MINUTES", "30")),
+        )
+        self.close_sweep_retry_sec = max(
+            30.0,
+            float(os.getenv("STOCKBOARD_STRENGTH_5M_CLOSE_SWEEP_RETRY_SEC", "60")),
+        )
         self.selected = _load_selected(base)
         self.payload: dict[str, Any] = {}
         self.last_poll = 0.0
         self.local_last: dict[str, float] = {}
+        self.close_sweep_requested_at: dict[str, float] = {}
         self.enqueue_count = self.busy_skips = self.snapshot_errors = 0
         self.market_closed_skips = 0
+        self.close_sweep_enqueue_count = 0
         self.last_code = self.last_lane = ""
         self.last_cycle_at = self.last_error = None
         self.last_market_phase = "unknown"
@@ -206,25 +224,35 @@ class Strength5mScheduler(threading.Thread):
     def _session(self):
         return market_session_now()
 
-    def _market_accepts_strength_query(self) -> bool:
-        session = self._session()
+    def _market_accepts_strength_query(self, session=None) -> bool:
+        session = session or self._session()
         self.last_market_phase = session.phase
         return bool(session.is_trading_day and session.accept_realtime)
 
-    def opening(self) -> bool:
-        session = self._session()
+    def opening(self, session=None) -> bool:
+        session = session or self._session()
         windows = session.windows or {}
         regular_start = _clock_minutes(windows.get("regular_start"), "09:00")
         now = datetime.now()
         minute = now.hour * 60 + now.minute
-        # Protect five minutes before and ten minutes after the calendar-defined open.
         return regular_start - 5 <= minute < regular_start + 10
 
-    def intervals(self) -> dict[str, float]:
-        return self.OPENING if self.opening() else self.NORMAL
+    def intervals(self, session=None) -> dict[str, float]:
+        return self.OPENING if self.opening(session) else self.NORMAL
 
-    def gap(self) -> float:
-        return self.opening_gap if self.opening() else self.normal_gap
+    def gap(self, session=None) -> float:
+        return self.opening_gap if self.opening(session) else self.normal_gap
+
+    def _close_sweep_cutoff(self, session, now: datetime | None = None) -> datetime | None:
+        if not session or not session.is_trading_day:
+            return None
+        if str(session.phase or "") not in {"after_wait", "aftermarket"}:
+            return None
+        now = now or datetime.now()
+        windows = session.windows or {}
+        regular_close = _clock_datetime(now, windows.get("regular_close"), "15:30")
+        sweep_end = regular_close + timedelta(minutes=self.close_sweep_minutes)
+        return regular_close if regular_close <= now < sweep_end else None
 
     def _refresh(self) -> None:
         self.selected = _refresh_selected(self.base, self.selected)
@@ -239,7 +267,7 @@ class Strength5mScheduler(threading.Thread):
             self.snapshot_errors += 1
             self.last_error = f"snapshot: {error}"
 
-    def _idle(self) -> bool:
+    def _idle(self, session=None) -> bool:
         provider = self.provider
         lock = getattr(provider, "_lock", None)
         if lock is None:
@@ -270,14 +298,49 @@ class Strength5mScheduler(threading.Thread):
                     "_close_metrics_last_request_at",
                 )
             )
-        return time.monotonic() - last >= self.gap()
+        return time.monotonic() - last >= self.gap(session)
 
-    def _due(self, item: dict[str, Any]) -> tuple[bool, float]:
+    def _close_sweep_due(
+        self,
+        item: dict[str, Any],
+        session,
+        now: datetime | None = None,
+    ) -> tuple[bool, float]:
+        cutoff = self._close_sweep_cutoff(session, now)
+        if cutoff is None:
+            return False, -1.0
         row = item.get("row") if isinstance(item.get("row"), dict) else {}
         status = str(row.get("strength_status") or "").lower()
         if status in {"pending", "requested", "deferred"}:
             return False, -1.0
-        interval = self.intervals().get(item.get("lane"), self.intervals()["top300"])
+        snapshot_at = _timestamp(
+            row.get("strength_completed_at")
+            or row.get("strength_snapshot_at")
+            or row.get("last_valid_strength_at")
+        )
+        code = item["stock_code"]
+        if snapshot_at is not None and snapshot_at >= cutoff:
+            self.close_sweep_requested_at.pop(code, None)
+            return False, -1.0
+        last_request = self.close_sweep_requested_at.get(code)
+        if last_request is not None:
+            elapsed = time.monotonic() - last_request
+            if elapsed < self.close_sweep_retry_sec:
+                return False, -1.0
+        overdue = (
+            float("inf")
+            if snapshot_at is None
+            else max(0.0, (cutoff - snapshot_at).total_seconds())
+        )
+        return True, overdue
+
+    def _normal_due(self, item: dict[str, Any], session) -> tuple[bool, float]:
+        row = item.get("row") if isinstance(item.get("row"), dict) else {}
+        status = str(row.get("strength_status") or "").lower()
+        if status in {"pending", "requested", "deferred"}:
+            return False, -1.0
+        intervals = self.intervals(session)
+        interval = intervals.get(item.get("lane"), intervals["top300"])
         age = _age(row)
         local = self.local_last.get(item["stock_code"])
         if local is not None:
@@ -296,10 +359,12 @@ class Strength5mScheduler(threading.Thread):
         self._refresh()
         if not self.payload:
             return
-        if not self._market_accepts_strength_query():
+
+        session = self._session()
+        if not self._market_accepts_strength_query(session):
             self.market_closed_skips += 1
             return
-        if not self._idle():
+        if not self._idle(session):
             self.busy_skips += 1
             return
 
@@ -308,13 +373,17 @@ class Strength5mScheduler(threading.Thread):
         for index, item in enumerate(
             build_lane_plan(self.base, self.payload, self.selected)
         ):
-            due, overdue = self._due(item)
+            sweep_due, sweep_overdue = self._close_sweep_due(item, session)
+            if sweep_due:
+                candidates.append((0, lane_order[item["lane"]], -sweep_overdue, index, item))
+                continue
+            due, overdue = self._normal_due(item, session)
             if due:
-                candidates.append((lane_order[item["lane"]], -overdue, index, item))
+                candidates.append((1, lane_order[item["lane"]], -overdue, index, item))
         if not candidates:
             return
 
-        item = min(candidates)[3]
+        priority, _lane_priority, _overdue, _index, item = min(candidates)
         code, lane = item["stock_code"], item["lane"]
         response = self.provider.enqueue_strength_probe(
             code,
@@ -326,9 +395,13 @@ class Strength5mScheduler(threading.Thread):
             "requested",
             "deferred",
         }:
-            self.local_last[code] = time.monotonic()
+            now_mono = time.monotonic()
+            self.local_last[code] = now_mono
             self.last_code, self.last_lane = code, lane
             self.enqueue_count += 1
+            if priority == 0:
+                self.close_sweep_requested_at[code] = now_mono
+                self.close_sweep_enqueue_count += 1
 
     def run(self) -> None:
         while not self.stop_event.wait(0.25):
@@ -342,14 +415,18 @@ class Strength5mScheduler(threading.Thread):
         self.stop_event.set()
 
     def stats(self) -> dict[str, Any]:
+        session = self._session()
         return {
             "enabled": True,
             "alive": self.is_alive(),
-            "market_phase": self.last_market_phase,
-            "market_accepts_query": self._market_accepts_strength_query(),
-            "opening_burst": self.opening(),
-            "intervals_sec": self.intervals(),
-            "global_gap_sec": self.gap(),
+            "market_phase": session.phase,
+            "market_accepts_query": self._market_accepts_strength_query(session),
+            "opening_burst": self.opening(session),
+            "regular_close_sweep_active": self._close_sweep_cutoff(session) is not None,
+            "regular_close_sweep_minutes": self.close_sweep_minutes,
+            "regular_close_sweep_enqueue_count": self.close_sweep_enqueue_count,
+            "intervals_sec": self.intervals(session),
+            "global_gap_sec": self.gap(session),
             "selected_code": self.selected or None,
             "last_enqueued_code": self.last_code or None,
             "last_enqueued_lane": self.last_lane or None,
