@@ -17,10 +17,9 @@ SetBatchLines, -1
 ;
 ; Safety policy:
 ; - Never send keys to the foreground window.
-; - Send only to a verified Edit6 control HWND.
-; - If the target control is missing or ambiguous, do nothing and write status.
+; - Send only to one verified Edit6 control.
 ; - Enter is sent only after ControlFocus + focus readback confirms Edit6.
-; - After HTS link, restore the previously active window so browser arrow keys keep working.
+; - After HTS linkage, reactivate the previous browser/page window so ArrowUp/Down keeps working.
 
 TargetControl := "Edit6"
 SendEnterAfterSet := true
@@ -128,8 +127,6 @@ SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
     }
 
     if (SendEnterAfterSet) {
-        ; Focus the verified Edit6 first, then verify focus by control name.
-        ; If focus cannot be verified, never send Enter.
         ControlFocus, %TargetControl%, ahk_id %windowHwnd%
         Sleep, 45
         ControlGetFocus, focusedControl, ahk_id %windowHwnd%
@@ -163,9 +160,27 @@ RestorePreviousWindow(previousHwnd, targetWindowHwnd) {
         return
     if (previousHwnd = targetWindowHwnd)
         return
-    Sleep, 60
+
+    Sleep, 70
     if WinExist("ahk_id " . previousHwnd) {
         WinActivate, ahk_id %previousHwnd%
+        WinWaitActive, ahk_id %previousHwnd%,, 0.7
+
+        ; For Chrome/Edge, return keyboard focus to the page renderer rather than
+        ; leaving it on the browser frame/address area.  This is what lets
+        ; StockBoard keep receiving ArrowUp/ArrowDown immediately after HTS sync.
+        ControlGet, chromeRenderer, Hwnd,, Chrome_RenderWidgetHostHWND1, ahk_id %previousHwnd%
+        if (chromeRenderer) {
+            ControlFocus,, ahk_id %chromeRenderer%
+            return
+        }
+
+        ; Harmless fallback for other embedded browser controls.
+        ControlGet, ieRenderer, Hwnd,, Internet Explorer_Server1, ahk_id %previousHwnd%
+        if (ieRenderer) {
+            ControlFocus,, ahk_id %ieRenderer%
+            return
+        }
     }
 }
 
