@@ -23,6 +23,7 @@ SetBatchLines, -1
 ; - Enter is posted only to that Edit6 HWND.
 ; - After HTS linkage, reactivate the previous browser/page window so ArrowUp/Down keeps working.
 ; - Clipboard can be busy while Chrome/Windows owns it; retry briefly and skip the tick instead of crashing.
+; - If the launcher removes/replaces the pid file, exit voluntarily. This avoids lingering elevated AHK processes.
 
 TargetControl := "Edit6"
 SendEnterAfterSet := true
@@ -32,10 +33,30 @@ SafeReadClipboard(LastClipboard)
 LastCommandId := ""
 LastSentCode := ""
 StatusFile := "C:\aiTrade\data\runtime\stockboard_v2\hts_link_status.txt"
+PidFile := "C:\aiTrade\data\runtime\stockboard_v2\stockboard_v2_ahk.pid"
+SelfPid := DllCall("GetCurrentProcessId")
+StartedTick := A_TickCount
 
 SetTimer, WatchClipboardCommand, 80
+SetTimer, WatchLauncherPidFile, 500
 WriteStatus("started", "", "bridge started")
 TrayTip, StockBoard Kiwoom Link v2, HTS link bridge started, 1
+return
+
+WatchLauncherPidFile:
+    ; Give the launcher a few seconds to create/write the pid file after Start-Process.
+    if (A_TickCount - StartedTick < 5000)
+        return
+    if (!FileExist(PidFile)) {
+        WriteStatus("stopping", "", "pid file removed; exiting bridge")
+        ExitApp
+    }
+    FileRead, pidText, %PidFile%
+    pidText := Trim(pidText)
+    if (pidText != "" && pidText != SelfPid) {
+        WriteStatus("stopping", "", "pid file changed to " . pidText . "; exiting bridge")
+        ExitApp
+    }
 return
 
 WatchClipboardCommand:
