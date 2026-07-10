@@ -20,6 +20,7 @@ SetBatchLines, -1
 ; - Send only to a verified Edit6 control HWND.
 ; - If the target control is missing or ambiguous, do nothing and write status.
 ; - Enter is sent only after ControlFocus + focus readback confirms Edit6.
+; - After HTS link, restore the previously active window so browser arrow keys keep working.
 
 TargetControl := "Edit6"
 SendEnterAfterSet := true
@@ -92,6 +93,8 @@ SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
     global NotifySuccess
     global TargetControl
 
+    WinGet, previousHwnd, ID, A
+
     target := FindSingleTargetControl(usedSpec, message)
     if (!IsObject(target)) {
         TrayTip, StockBoard Kiwoom Link v2, %message%, 3
@@ -106,6 +109,7 @@ SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
         if (ErrorLevel) {
             message := "ControlSetText failed: " . usedSpec
             TrayTip, StockBoard Kiwoom Link v2, %message%, 3
+            RestorePreviousWindow(previousHwnd, windowHwnd)
             return false
         }
         Sleep, 35
@@ -119,6 +123,7 @@ SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
     if (readback != code) {
         message := "Edit6 set failed. expected " . code . ", got " . readback
         TrayTip, StockBoard Kiwoom Link v2, %message%, 3
+        RestorePreviousWindow(previousHwnd, windowHwnd)
         return false
     }
 
@@ -130,12 +135,14 @@ SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
         ControlGetFocus, focusedControl, ahk_id %windowHwnd%
         if (focusedControl != TargetControl) {
             message := "OK " . code . " / code set only, Edit6 focus not verified: " . focusedControl . " / " . usedSpec
+            RestorePreviousWindow(previousHwnd, windowHwnd)
             return true
         }
 
         ControlSend, %TargetControl%, {Enter}, ahk_id %windowHwnd%
         if (ErrorLevel) {
             message := "OK " . code . " / code set, Enter send failed safely / " . usedSpec
+            RestorePreviousWindow(previousHwnd, windowHwnd)
             return true
         }
         message := "OK " . code . " / enter sent after Edit6 focus verified / " . usedSpec
@@ -143,10 +150,23 @@ SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
         message := "OK " . code . " / code set only, enter blocked / " . usedSpec
     }
 
+    RestorePreviousWindow(previousHwnd, windowHwnd)
+
     if (NotifySuccess) {
         TrayTip, StockBoard Kiwoom Link v2, %message%, 1
     }
     return true
+}
+
+RestorePreviousWindow(previousHwnd, targetWindowHwnd) {
+    if (!previousHwnd)
+        return
+    if (previousHwnd = targetWindowHwnd)
+        return
+    Sleep, 60
+    if WinExist("ahk_id " . previousHwnd) {
+        WinActivate, ahk_id %previousHwnd%
+    }
 }
 
 FindSingleTargetControl(ByRef usedSpec, ByRef message) {
