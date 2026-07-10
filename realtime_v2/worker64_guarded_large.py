@@ -166,6 +166,13 @@ def _ui_safety_patch(html: str) -> str:
     marker = "STOCKBOARD_V2_SAFE_NAV_SCROLL_20260710"
     if marker in html:
         return html
+
+    # Top20 stays hot.  Top300 Pool is a watch list, so keep it slower and stable.
+    html = html.replace(
+        "const now=performance.now(),shouldPool=opt.forcePool||now-lastPoolRenderAt>=250,",
+        "const now=performance.now(),shouldPool=opt.forcePool||now-lastPoolRenderAt>=1000,",
+    )
+
     anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
     patch = r'''
   /* STOCKBOARD_V2_SAFE_NAV_SCROLL_20260710 */
@@ -197,6 +204,13 @@ def _ui_safety_patch(html: str) -> str:
     }
     return focusBoardEl || poolBoardEl || selectedBoardEl;
   }
+  function __sbv2RefocusVisibleRow(table, code){
+    const row = table && table.querySelector ? table.querySelector(`tbody tr[data-code="${code}"]`) : null;
+    if(row && typeof row.focus === 'function'){
+      row.focus({preventScroll:true});
+      if(typeof row.scrollIntoView === 'function') row.scrollIntoView({block:'nearest', inline:'nearest'});
+    }
+  }
   function __sbv2MoveByVisibleRows(delta){
     const table = __sbv2NavTable();
     const rows = __sbv2RowsInTable(table);
@@ -210,12 +224,8 @@ def _ui_safety_patch(html: str) -> str:
     if(!/^\d{6}$/.test(code)) return false;
     __sbv2LastNavTable = table;
     selectCodeAndLink(code, false, {focus:false}); // keep HTS linkage on arrow navigation
-    requestAnimationFrame(() => {
-      const row = table.querySelector(`tbody tr[data-code="${code}"]`);
-      if(row && typeof row.focus === 'function'){
-        row.focus({preventScroll:true});
-        if(typeof row.scrollIntoView === 'function') row.scrollIntoView({block:'nearest', inline:'nearest'});
-      }
+    [0, 80, 180, 360, 720].forEach(delay => {
+      setTimeout(() => __sbv2RefocusVisibleRow(table, code), delay);
     });
     return true;
   }
@@ -231,29 +241,37 @@ def _ui_safety_patch(html: str) -> str:
     moveSelection(event.key === 'ArrowDown' ? 1 : -1);
   }, true);
 
-  function __sbv2ColumnSum(){
-    try { return columns.reduce((sum, _c, i) => sum + Number(columnWidth(i) || 0), 0); }
-    catch(_e) { return 0; }
+  // Hide the row-position freeze button.  Pool row positions are already stable enough for the current design.
+  if(rowPositionToggle){ rowPositionToggle.style.display = 'none'; }
+
+  function __sbv2ScrollSpacer(){
+    let spacer = document.getElementById('sbv2-horizontal-scroll-spacer');
+    if(!spacer){
+      spacer = document.createElement('div');
+      spacer.id = 'sbv2-horizontal-scroll-spacer';
+      spacer.setAttribute('aria-hidden', 'true');
+      spacer.style.height = '1px';
+      spacer.style.pointerEvents = 'none';
+      spacer.style.visibility = 'hidden';
+      document.body.appendChild(spacer);
+    }
+    return spacer;
+  }
+  function __sbv2BoardRightEdge(){
+    const boxes = Array.from(document.querySelectorAll('.window, table.board')).map(el => {
+      const rect = el.getBoundingClientRect();
+      return rect.right + window.pageXOffset;
+    });
+    return Math.max(window.innerWidth, ...boxes, 0);
   }
   function __sbv2ApplyHorizontalScrollFix(){
-    const existing = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--board-width')) || 0;
-    const columnSum = __sbv2ColumnSum();
-    const forcedBoardWidth = Math.ceil(Math.max(existing, columnSum, window.innerWidth + 520, 1480));
-    const documentWidth = forcedBoardWidth + 80;
-    document.documentElement.style.overflowX = 'scroll';
-    document.body.style.overflowX = 'scroll';
-    document.documentElement.style.minWidth = `${documentWidth}px`;
-    document.body.style.minWidth = `${documentWidth}px`;
-    document.documentElement.style.setProperty('--board-width', `${forcedBoardWidth}px`);
-    const windowEl = document.querySelector('.window');
-    if(windowEl){
-      windowEl.style.width = `${documentWidth}px`;
-      windowEl.style.minWidth = `${documentWidth}px`;
-    }
-    document.querySelectorAll('table.board').forEach(table => {
-      table.style.width = `${forcedBoardWidth}px`;
-      table.style.minWidth = `${forcedBoardWidth}px`;
-    });
+    const rightEdge = __sbv2BoardRightEdge();
+    const width = Math.ceil(Math.max(rightEdge + 120, window.innerWidth + 360));
+    document.documentElement.style.overflowX = 'auto';
+    document.body.style.overflowX = 'auto';
+    document.documentElement.style.minWidth = `${width}px`;
+    document.body.style.minWidth = `${width}px`;
+    __sbv2ScrollSpacer().style.width = `${width}px`;
   }
   const __sbv2OriginalUpdateBoardWidth = typeof updateBoardWidth === 'function' ? updateBoardWidth : null;
   if(__sbv2OriginalUpdateBoardWidth){
