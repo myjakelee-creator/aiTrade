@@ -19,6 +19,12 @@ from realtime_v2.strength5m_scheduler import (
 _ORDERBOOK_NORMAL = {"s1": 5.0, "top20": 45.0, "hidden50": 300.0, "top300": 1200.0}
 _ORDERBOOK_OPENING = {"s1": 10.0, "top20": 90.0, "hidden50": 600.0, "top300": 1800.0}
 
+# Missing/blank ratios need a bootstrap pass, but a just-requested blank row must
+# not monopolize the scheduler forever.  These retry gaps let the scheduler move
+# through Hidden50/Top300 while still revisiting important rows soon enough.
+_MISSING_RETRY_NORMAL = {"s1": 6.0, "top20": 18.0, "hidden50": 45.0, "top300": 75.0}
+_MISSING_RETRY_OPENING = {"s1": 10.0, "top20": 30.0, "hidden50": 90.0, "top300": 150.0}
+
 
 def _timestamp(value: Any) -> datetime | None:
     text = str(value or "").strip()
@@ -75,7 +81,7 @@ class OrderbookThinScheduler(threading.Thread):
             "http://127.0.0.1:8765/api/v2/snapshot?limit=300",
         )
         self.poll_sec = max(2.0, float(os.getenv("STOCKBOARD_BIDASK_SNAPSHOT_POLL_SEC", "5")))
-        self.normal_gap = max(1.1, float(os.getenv("STOCKBOARD_BIDASK_GLOBAL_GAP_SEC", "1.5")))
+        self.normal_gap = max(1.0, float(os.getenv("STOCKBOARD_BIDASK_GLOBAL_GAP_SEC", "1.15")))
         self.opening_gap = max(self.normal_gap, float(os.getenv("STOCKBOARD_BIDASK_OPENING_GAP_SEC", "2.5")))
         self.selected = _load_selected(base)
         self.payload: dict[str, Any] = {}
@@ -85,6 +91,7 @@ class OrderbookThinScheduler(threading.Thread):
         self.busy_skips = 0
         self.market_closed_skips = 0
         self.snapshot_errors = 0
+        self.bootstrap_missing_count = 0
         self.last_code = ""
         self.last_lane = ""
         self.last_cycle_at = None
@@ -104,6 +111,9 @@ class OrderbookThinScheduler(threading.Thread):
 
     def intervals(self, session=None) -> dict[str, float]:
         return _ORDERBOOK_OPENING if self.opening(session) else _ORDERBOOK_NORMAL
+
+    def missing_retry_intervals(self, session=None) -> dict[str, float]:
+        return _MISSING_RETRY_OPENING if self.opening(session) else _MISSING_RETRY_NORMAL
 
     def gap(self, session=None) -> float:
         return self.opening_gap if self.opening(session) else self.normal_gap
@@ -165,26 +175,35 @@ class OrderbookThinScheduler(threading.Thread):
             )
         return time.monotonic() - last >= self.gap(session)
 
-    def _due(self, item: dict[str, Any], session) -> tuple[bool, float]:
+    def _due(self, item: dict[str, Any], session) -> tuple[bool, float, bool]:
+        code = item["stock_code"]
+        lane = item.get("lane") or "top300"
         row = item.get("row") if isinstance(item.get("row"), dict) else {}
         status = str(row.get("orderbook_status") or "").lower()
         if status in {"pending", "requested", "deferred"}:
-            return False, -1.0
-        intervals = self.intervals(session)
-        interval = intervals.get(item.get("lane"), intervals["top300"])
+            return False, -1.0, False
+
         age = _orderbook_age(row)
-        local = self.local_last.get(item["stock_code"])
-        if local is not None:
-            local_age = time.monotonic() - local
+        local = self.local_last.get(code)
+        local_age = time.monotonic() - local if local is not None else None
+
+        if not _has_positive_bidask(row):
+            retry_intervals = self.missing_retry_intervals(session)
+            retry_interval = retry_intervals.get(lane, retry_intervals["top300"])
+            if local_age is not None and local_age < retry_interval:
+                return False, local_age / max(retry_interval, 1.0), True
+            overdue = float("inf") if local_age is None else local_age / max(retry_interval, 1.0)
+            return True, overdue, True
+
+        intervals = self.intervals(session)
+        interval = intervals.get(lane, intervals["top300"])
+        if local_age is not None:
             age = local_age if age is None else min(age, local_age)
         if status in {"error", "timeout"}:
             interval = min(interval, 120.0)
         if age is None:
-            return True, float("inf")
-        # A missing/invalid visible ratio should be refreshed even if the timestamp is recent.
-        if not _has_positive_bidask(row):
-            return True, max(1.0, age / max(interval, 1.0))
-        return age >= interval, age / max(interval, 1.0)
+            return True, float("inf"), False
+        return age >= interval, age / max(interval, 1.0), False
 
     def cycle(self) -> None:
         self.last_cycle_at = datetime.now().isoformat(timespec="seconds")
@@ -200,10 +219,14 @@ class OrderbookThinScheduler(threading.Thread):
             return
         lane_order = {"s1": 0, "top20": 1, "hidden50": 2, "top300": 3}
         candidates = []
+        bootstrap_missing = 0
         for index, item in enumerate(build_lane_plan(self.base, self.payload, self.selected)):
-            due, overdue = self._due(item, session)
+            due, overdue, missing = self._due(item, session)
+            if missing:
+                bootstrap_missing += 1
             if due:
                 candidates.append((lane_order.get(item["lane"], 9), -overdue, index, item))
+        self.bootstrap_missing_count = bootstrap_missing
         if not candidates:
             return
         _lane_priority, _overdue, _index, item = min(candidates)
@@ -246,11 +269,13 @@ class OrderbookThinScheduler(threading.Thread):
             "market_accepts_query": self._market_accepts_query(session),
             "opening_burst": self.opening(session),
             "intervals_sec": self.intervals(session),
+            "missing_retry_sec": self.missing_retry_intervals(session),
             "global_gap_sec": self.gap(session),
             "selected_code": self.selected or None,
             "last_enqueued_code": self.last_code or None,
             "last_enqueued_lane": self.last_lane or None,
             "enqueue_count": self.enqueue_count,
+            "bootstrap_missing_count": self.bootstrap_missing_count,
             "skip_busy_count": self.busy_skips,
             "skip_market_closed_count": self.market_closed_skips,
             "snapshot_error_count": self.snapshot_errors,
