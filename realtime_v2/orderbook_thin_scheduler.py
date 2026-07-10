@@ -19,15 +19,22 @@ from realtime_v2.strength5m_scheduler import (
 _ORDERBOOK_NORMAL = {"s1": 5.0, "top20": 45.0, "hidden50": 300.0, "top300": 1200.0}
 _ORDERBOOK_OPENING = {"s1": 10.0, "top20": 90.0, "hidden50": 600.0, "top300": 1800.0}
 
+# 09:00~09:10 is the volume-bomb window.  Do not sweep Top300 there.
+# The display should be filled by the last-valid/cache policy; live querying is
+# limited to S1 and very slow Top20 repair only.
+_ORDERBOOK_VOLUME_BOMB = {"s1": 30.0, "top20": 300.0, "hidden50": 999999.0, "top300": 999999.0}
+
 # Missing/blank ratios need a bootstrap pass, but a just-requested blank row must
 # not monopolize the scheduler forever. These retry gaps let the scheduler move
 # through Hidden50/Top300 while still revisiting important rows soon enough.
 _MISSING_RETRY_NORMAL = {"s1": 6.0, "top20": 18.0, "hidden50": 45.0, "top300": 75.0}
 _MISSING_RETRY_OPENING = {"s1": 10.0, "top20": 30.0, "hidden50": 90.0, "top300": 150.0}
+_MISSING_RETRY_VOLUME_BOMB = {"s1": 12.0, "top20": 90.0, "hidden50": 999999.0, "top300": 999999.0}
 
 # S1 remains immediate priority. For the rest, use this pattern so Top300 cannot
-# starve behind repeatedly-missing Top20 rows.  One scheduler cycle still enqueues
-# only one stock code / one opt10004 request.
+# starve behind repeatedly-missing Top20 rows. One scheduler cycle still enqueues
+# only one stock code / one opt10004 request. This pattern is not used during the
+# 09:00~09:10 volume-bomb window.
 _BOOTSTRAP_PATTERN = ("top20", "hidden50", "top300", "top300")
 
 
@@ -75,6 +82,12 @@ def _clock_minutes(text: Any, fallback: str) -> int:
         return int(hour_text) * 60 + int(minute_text)
 
 
+def _regular_start_minutes(session=None) -> int:
+    session = session or market_session_now()
+    windows = getattr(session, "windows", None) or {}
+    return _clock_minutes(windows.get("regular_start"), "09:00")
+
+
 class OrderbookThinScheduler(threading.Thread):
     def __init__(self, base, provider) -> None:
         super().__init__(name="StockBoardOrderbookThinScheduler", daemon=True)
@@ -88,6 +101,10 @@ class OrderbookThinScheduler(threading.Thread):
         self.poll_sec = max(2.0, float(os.getenv("STOCKBOARD_BIDASK_SNAPSHOT_POLL_SEC", "5")))
         self.normal_gap = max(0.9, float(os.getenv("STOCKBOARD_BIDASK_GLOBAL_GAP_SEC", "1.2")))
         self.opening_gap = max(self.normal_gap, float(os.getenv("STOCKBOARD_BIDASK_OPENING_GAP_SEC", "2.5")))
+        self.volume_bomb_gap = max(
+            self.opening_gap,
+            float(os.getenv("STOCKBOARD_BIDASK_VOLUME_BOMB_GAP_SEC", "10")),
+        )
         self.selected = _load_selected(base)
         self.payload: dict[str, Any] = {}
         self.last_poll = 0.0
@@ -100,6 +117,8 @@ class OrderbookThinScheduler(threading.Thread):
         self.bootstrap_top300_enqueues = 0
         self.bootstrap_hidden50_enqueues = 0
         self.bootstrap_top20_enqueues = 0
+        self.volume_bomb_background_skips = 0
+        self.volume_bomb_top20_skips = 0
         self.last_code = ""
         self.last_lane = ""
         self.last_pick_reason = ""
@@ -112,19 +131,31 @@ class OrderbookThinScheduler(threading.Thread):
 
     def opening(self, session=None) -> bool:
         session = session or self._session()
-        windows = session.windows or {}
-        regular_start = _clock_minutes(windows.get("regular_start"), "09:00")
+        regular_start = _regular_start_minutes(session)
         now = datetime.now()
         minute = now.hour * 60 + now.minute
         return regular_start - 5 <= minute < regular_start + 10
 
+    def volume_bomb(self, session=None) -> bool:
+        session = session or self._session()
+        regular_start = _regular_start_minutes(session)
+        now = datetime.now()
+        minute = now.hour * 60 + now.minute
+        return regular_start <= minute < regular_start + 10
+
     def intervals(self, session=None) -> dict[str, float]:
+        if self.volume_bomb(session):
+            return _ORDERBOOK_VOLUME_BOMB
         return _ORDERBOOK_OPENING if self.opening(session) else _ORDERBOOK_NORMAL
 
     def missing_retry_intervals(self, session=None) -> dict[str, float]:
+        if self.volume_bomb(session):
+            return _MISSING_RETRY_VOLUME_BOMB
         return _MISSING_RETRY_OPENING if self.opening(session) else _MISSING_RETRY_NORMAL
 
     def gap(self, session=None) -> float:
+        if self.volume_bomb(session):
+            return self.volume_bomb_gap
         return self.opening_gap if self.opening(session) else self.normal_gap
 
     def _market_accepts_query(self, session=None) -> bool:
@@ -191,11 +222,24 @@ class OrderbookThinScheduler(threading.Thread):
         if status in {"pending", "requested", "deferred"}:
             return False, -1.0, False
 
+        missing = not _has_positive_bidask(row)
+
+        if self.volume_bomb(session):
+            # 09:00~09:10: no Hidden50/Top300 work at all.  Fill those lanes from
+            # last-valid/display-hold caches only.  Top20 receives very slow repair
+            # for blanks; normal refresh of already-filled Top20 is suppressed.
+            if lane not in {"s1", "top20"}:
+                self.volume_bomb_background_skips += 1
+                return False, -1.0, missing
+            if lane == "top20" and not missing:
+                self.volume_bomb_top20_skips += 1
+                return False, -1.0, False
+
         age = _orderbook_age(row)
         local = self.local_last.get(code)
         local_age = time.monotonic() - local if local is not None else None
 
-        if not _has_positive_bidask(row):
+        if missing:
             retry_intervals = self.missing_retry_intervals(session)
             retry_interval = retry_intervals.get(lane, retry_intervals["top300"])
             if local_age is not None and local_age < retry_interval:
@@ -213,7 +257,7 @@ class OrderbookThinScheduler(threading.Thread):
             return True, float("inf"), False
         return age >= interval, age / max(interval, 1.0), False
 
-    def _pick_candidate(self, candidates: list[tuple[int, float, int, dict[str, Any], bool]]):
+    def _pick_candidate(self, candidates: list[tuple[int, float, int, dict[str, Any], bool]], session=None):
         if not candidates:
             return None, "none"
 
@@ -221,6 +265,15 @@ class OrderbookThinScheduler(threading.Thread):
         s1_candidates = [item for item in candidates if item[3].get("lane") == "s1"]
         if s1_candidates:
             return min(s1_candidates, key=lambda item: (-item[1], item[2])), "s1_priority"
+
+        if self.volume_bomb(session):
+            top20_missing = [
+                item for item in candidates
+                if item[4] and item[3].get("lane") == "top20"
+            ]
+            if top20_missing:
+                return min(top20_missing, key=lambda item: (-item[1], item[2])), "volume_bomb_top20_blank_repair"
+            return None, "volume_bomb_cache_only"
 
         missing = [item for item in candidates if item[4]]
         if missing:
@@ -257,8 +310,9 @@ class OrderbookThinScheduler(threading.Thread):
             due, overdue, missing = self._due(item, session)
             if due:
                 candidates.append((lane_order.get(item["lane"], 9), overdue, index, item, missing))
-        picked, reason = self._pick_candidate(candidates)
+        picked, reason = self._pick_candidate(candidates, session)
         if picked is None:
+            self.last_pick_reason = reason
             return
         _lane_priority, _overdue, _index, item, _missing = picked
         code = item["stock_code"]
@@ -306,6 +360,8 @@ class OrderbookThinScheduler(threading.Thread):
             "market_phase": session.phase,
             "market_accepts_query": self._market_accepts_query(session),
             "opening_burst": self.opening(session),
+            "volume_bomb_window": self.volume_bomb(session),
+            "volume_bomb_policy": "s1_minimal_top20_blank_only_top300_cache_only",
             "intervals_sec": self.intervals(session),
             "missing_retry_sec": self.missing_retry_intervals(session),
             "global_gap_sec": self.gap(session),
@@ -317,6 +373,8 @@ class OrderbookThinScheduler(threading.Thread):
             "bootstrap_top20_enqueues": self.bootstrap_top20_enqueues,
             "bootstrap_hidden50_enqueues": self.bootstrap_hidden50_enqueues,
             "bootstrap_top300_enqueues": self.bootstrap_top300_enqueues,
+            "volume_bomb_background_skips": self.volume_bomb_background_skips,
+            "volume_bomb_top20_skips": self.volume_bomb_top20_skips,
             "skip_busy_count": self.busy_skips,
             "skip_market_closed_count": self.market_closed_skips,
             "snapshot_error_count": self.snapshot_errors,
