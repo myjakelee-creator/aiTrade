@@ -162,13 +162,13 @@ def _large_trade_title_patch(html: str) -> str:
     return html.replace(old, new, 1)
 
 
-def _keyboard_navigation_patch(html: str) -> str:
-    marker = "STOCKBOARD_V2_SAFE_DOM_KEY_NAV_20260710"
+def _ui_safety_patch(html: str) -> str:
+    marker = "STOCKBOARD_V2_SAFE_NAV_SCROLL_20260710"
     if marker in html:
         return html
     anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
     patch = r'''
-  /* STOCKBOARD_V2_SAFE_DOM_KEY_NAV_20260710 */
+  /* STOCKBOARD_V2_SAFE_NAV_SCROLL_20260710 */
   let __sbv2LastNavTable = null;
   function __sbv2IsBoardTable(table){ return table === selectedBoardEl || table === focusBoardEl || table === poolBoardEl; }
   function __sbv2RememberNavTable(event){
@@ -178,6 +178,7 @@ def _keyboard_navigation_patch(html: str) -> str:
   }
   document.addEventListener('pointerdown', __sbv2RememberNavTable, true);
   document.addEventListener('mousedown', __sbv2RememberNavTable, true);
+
   function __sbv2RowsInTable(table){
     const body = table && table.tBodies ? table.tBodies[0] : null;
     return Array.from(body ? body.querySelectorAll('tr[data-code]') : [])
@@ -208,7 +209,7 @@ def _keyboard_navigation_patch(html: str) -> str:
     const code = String(nextRow && nextRow.dataset.code || '');
     if(!/^\d{6}$/.test(code)) return false;
     __sbv2LastNavTable = table;
-    selectCodeAndLink(code, false, {focus:false});
+    selectCodeAndLink(code, false, {focus:false}); // keep HTS linkage on arrow navigation
     requestAnimationFrame(() => {
       const row = table.querySelector(`tbody tr[data-code="${code}"]`);
       if(row && typeof row.focus === 'function'){
@@ -230,19 +231,29 @@ def _keyboard_navigation_patch(html: str) -> str:
     moveSelection(event.key === 'ArrowDown' ? 1 : -1);
   }, true);
 
-  function __sbv2BoardWidth(){
-    const cssWidth = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--board-width')) || 0;
-    const tableWidths = Array.from(document.querySelectorAll('table.board'))
-      .map(table => Math.max(table.scrollWidth || 0, table.getBoundingClientRect().width || 0));
-    return Math.max(cssWidth, ...tableWidths, 0);
+  function __sbv2ColumnSum(){
+    try { return columns.reduce((sum, _c, i) => sum + Number(columnWidth(i) || 0), 0); }
+    catch(_e) { return 0; }
   }
   function __sbv2ApplyHorizontalScrollFix(){
-    const boardWidth = __sbv2BoardWidth();
-    const minWidth = Math.ceil(Math.max(window.innerWidth + 180, boardWidth + 240));
+    const existing = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--board-width')) || 0;
+    const columnSum = __sbv2ColumnSum();
+    const forcedBoardWidth = Math.ceil(Math.max(existing, columnSum, window.innerWidth + 520, 1480));
+    const documentWidth = forcedBoardWidth + 80;
+    document.documentElement.style.overflowX = 'scroll';
+    document.body.style.overflowX = 'scroll';
+    document.documentElement.style.minWidth = `${documentWidth}px`;
+    document.body.style.minWidth = `${documentWidth}px`;
+    document.documentElement.style.setProperty('--board-width', `${forcedBoardWidth}px`);
     const windowEl = document.querySelector('.window');
-    if(windowEl) windowEl.style.minWidth = `${minWidth}px`;
-    document.documentElement.style.minWidth = `${minWidth}px`;
-    document.body.style.minWidth = `${minWidth}px`;
+    if(windowEl){
+      windowEl.style.width = `${documentWidth}px`;
+      windowEl.style.minWidth = `${documentWidth}px`;
+    }
+    document.querySelectorAll('table.board').forEach(table => {
+      table.style.width = `${forcedBoardWidth}px`;
+      table.style.minWidth = `${forcedBoardWidth}px`;
+    });
   }
   const __sbv2OriginalUpdateBoardWidth = typeof updateBoardWidth === 'function' ? updateBoardWidth : null;
   if(__sbv2OriginalUpdateBoardWidth){
@@ -261,6 +272,7 @@ def _keyboard_navigation_patch(html: str) -> str:
   window.addEventListener('resize', () => requestAnimationFrame(__sbv2ApplyHorizontalScrollFix));
   setTimeout(__sbv2ApplyHorizontalScrollFix, 0);
   setTimeout(__sbv2ApplyHorizontalScrollFix, 300);
+  setTimeout(__sbv2ApplyHorizontalScrollFix, 1000);
 '''
     if anchor not in html:
         return html
@@ -273,7 +285,7 @@ def _patched_do_get(self) -> None:
         html_path = Path(base.ROOT) / "docs" / "stockboard_v2.html"
         html = html_path.read_text(encoding="utf-8-sig")
         html = _large_trade_title_patch(html)
-        html = _keyboard_navigation_patch(html)
+        html = _ui_safety_patch(html)
         body = html.encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
