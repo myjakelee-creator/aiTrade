@@ -1,163 +1,17 @@
 {
-  "schema_version": 1,
-  "id": "OPENING_ACCUMULATION_V01",
-  "name": "조용한 매집 시작형",
-  "runtime_status": "design_ready_not_loaded_yet",
-  "purpose": "급등 후 추격보다 아직 덜 오른 상태에서 돈이 조용히 쌓이는 종목을 찾는다.",
-  "grade_policy": {
-    "mode": "absolute_market_calibrated",
-    "distribution": "natural_not_forced",
-    "base_bands": {
-      "A": 91,
-      "B": 81,
-      "C": 71,
-      "D": 61,
-      "F": 0
-    },
-    "market_adjustment": {
-      "strong": {
-        "A": 91,
-        "B": 81,
-        "C": 71,
-        "D": 61
-      },
-      "neutral": {
-        "A": 91,
-        "B": 81,
-        "C": 71,
-        "D": 61
-      },
-      "weak": {
-        "A": 91,
-        "B": 81,
-        "C": 71,
-        "D": 61
-      },
-      "very_weak": {
-        "A": 91,
-        "B": 81,
-        "C": 71,
-        "D": 61
-      }
-    },
-    "a_grade_guards": [
-      "price >= vwap_or_open",
-      "realtime_strength >= 100",
-      "score_has_money_flow_confirmation"
-    ]
+  "schema_version":3,"id":"OPENING_ACCUMULATION_V01","name":"조용한 매집 시작형","label":"조용한 매집형","runtime_status":"READY",
+  "required_features":["amount_ratio","five_min_strength"],
+  "score_structure":{
+    "final_score":[{"key":"rank_gap","weight":15},{"key":"amount_ratio","weight":15},{"key":"program_net","weight":20},{"key":"large_trade","weight":20},{"key":"five_min_strength","weight":10},{"key":"instant_strength","weight":5},{"key":"near_high","weight":10},{"key":"not_overheated","weight":5},{"key":"reversal_penalty","weight":-10}],
+    "entry_score":[{"key":"rank_gap","weight":40},{"key":"amount_ratio","weight":35},{"key":"not_overheated","weight":25}],
+    "confirmation_score":[{"key":"program_net","weight":30},{"key":"large_trade","weight":30},{"key":"five_min_strength","weight":15},{"key":"instant_strength","weight":10},{"key":"above_open","weight":15}],
+    "focus_score":[{"key":"rank_gap","weight":15},{"key":"amount_ratio","weight":15},{"key":"program_net","weight":20},{"key":"large_trade","weight":20},{"key":"five_min_strength","weight":10},{"key":"instant_strength","weight":5},{"key":"near_high","weight":10},{"key":"not_overheated","weight":5},{"key":"reversal_penalty","weight":-10}]
   },
-  "promotion_demotion_policy": {
-    "principle": "group_membership_is_result_not_score_source",
-    "score_all_rows_for_entry": true,
-    "top50": "top 50 by entry_score from Top300",
-    "top20": "top 20 by confirmation_score from Top50",
-    "top5": "top 5 by focus_score from Top20",
-    "refresh_behavior": "every refresh can promote or demote rows"
-  },
-  "orderbook_policy": {
-    "name": "quiet_sell_wall_absorption",
-    "principle": "매도잔량이 더 큰데 가격이 밀리지 않으면 조용한 흡수로 가점한다. 매수잔량 우위 자체는 가점하지 않는다.",
-    "favorable": [
-      "ask_pct > bid_pct",
-      "bid_ask_ratio < 1.0",
-      "price >= vwap_or_open",
-      "realtime_strength >= 100"
-    ]
-  },
-  "score_structure": {
-    "entry_score": [
-      {
-        "key": "rank_gap",
-        "weight": 30
-      },
-      {
-        "key": "trade_value_growth",
-        "weight": 25
-      },
-      {
-        "key": "change_rate_0_to_7",
-        "weight": 20
-      },
-      {
-        "key": "above_open",
-        "weight": 15
-      },
-      {
-        "key": "not_overheated_volatility",
-        "weight": 10
-      }
-    ],
-    "confirmation_score": [
-      {
-        "key": "program_net",
-        "weight": 20
-      },
-      {
-        "key": "sell_wall_absorption",
-        "weight": 25
-      },
-      {
-        "key": "session_strength",
-        "weight": 20
-      },
-      {
-        "key": "above_vwap",
-        "weight": 25
-      }
-    ],
-    "focus_score": [
-      {
-        "key": "one_min_net_buy_value_growth",
-        "weight": 25
-      },
-      {
-        "key": "realtime_strength_hold_100",
-        "weight": 20
-      },
-      {
-        "key": "not_overextended",
-        "weight": 20
-      },
-      {
-        "key": "above_vwap_hold",
-        "weight": 25
-      },
-      {
-        "key": "burst_reversal_penalty",
-        "weight": -10
-      }
-    ],
-    "grade_score_weights": {
-      "entry_score": 0.3,
-      "confirmation_score": 0.45,
-      "focus_score": 0.25
-    }
-  },
-  "funnel": {
-    "top50": {
-      "take": 50,
-      "score": "entry_score"
-    },
-    "top20": {
-      "from": "top50",
-      "take": 20,
-      "score": "confirmation_score"
-    },
-    "top5": {
-      "from": "top20",
-      "take": 5,
-      "score": "focus_score"
-    }
-  },
-  "excluded_scoring_items": [
-    {
-      "key": "foreign_display_value",
-      "weight": 10,
-      "stage": "confirmation_score",
-      "original_weight": 10,
-      "scoring_weight": 0,
-      "excluded_reason": "data_collection_not_stable_yet",
-      "enabled_for_scoring": false
-    }
-  ]
+  "grade_guards":[
+    {"name":"수급양수","type":"any_positive","keys":["program_net","large_trade"],"max_score":89},
+    {"name":"시가위","type":"feature_value_min","key":"above_open","value":1,"max_score":89},
+    {"name":"5분100","type":"feature_value_min","key":"five_min_strength","value":100,"max_score":89},
+    {"name":"윗꼬리40","type":"feature_value_max","key":"upper_wick_ratio","value":40,"max_score":89}
+  ],
+  "funnel":{"top50":{"take":50},"top20":{"take":20},"top5":{"take":5}}
 }
