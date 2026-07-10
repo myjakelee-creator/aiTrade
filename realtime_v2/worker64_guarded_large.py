@@ -418,6 +418,19 @@ def _speed_render_patch(html: str) -> str:
     return table === selectedBoardEl || table === focusBoardEl || table === poolBoardEl;
   }
 
+  function __largeSpeedTableHasCode(table, code){
+    return !!(table && code && table.querySelector && table.querySelector(`tbody tr[data-code="${code}"]`));
+  }
+
+  function __largeSpeedRememberNavigationTable(event){
+    const row = event && event.target && event.target.closest ? event.target.closest('tr[data-code]') : null;
+    const table = row ? row.closest('table') : null;
+    if(__largeSpeedIsBoardTable(table)) __largeSpeedLastNavigationTable = table;
+  }
+
+  document.addEventListener('pointerdown', __largeSpeedRememberNavigationTable, true);
+  document.addEventListener('mousedown', __largeSpeedRememberNavigationTable, true);
+
   function __largeSpeedNavigationTable(){
     const active = document.activeElement;
     const activeRow = active && active.closest ? active.closest('tr[data-code]') : null;
@@ -425,10 +438,9 @@ def _speed_render_patch(html: str) -> str:
     if(__largeSpeedIsBoardTable(activeTable)) return activeTable;
 
     if(selectedCode){
-      const selectedRows = Array.from(document.querySelectorAll(`tr[data-code="${selectedCode}"]`));
-      for(const row of selectedRows){
-        const table = row.closest('table');
-        if(__largeSpeedIsBoardTable(table)) return table;
+      const preferred = [__largeSpeedLastNavigationTable, focusBoardEl, poolBoardEl, selectedBoardEl];
+      for(const table of preferred){
+        if(__largeSpeedIsBoardTable(table) && __largeSpeedTableHasCode(table, selectedCode)) return table;
       }
     }
 
