@@ -151,15 +151,23 @@ base.State._apply_trade = _patched_apply_trade
 _original_do_get = base.WebHandler.do_GET
 
 
-def _large_trade_title_patch(html: str) -> str:
-    if "function largeTradeTitle(" not in html:
-        anchor = "  function rowTitle(r){return[`코드: ${r.stock_code||'-'}`,`행 클릭 즉시 S1 + HTS 연동`,`포커스 후 ↑/↓ 이동`,`전일 거래대금: ${fmtNum(r.prev_trade_value_eok,0)}억`,`대금비: ${fmtRatio(r.amount_ratio)}`,`등급: ${r.candidate_grade_text||r.grade_text||'-'}`].join('\\n');}"
-        helper = anchor + "\n  function largeTradeTitle(r){return `5천만원↑ 대량체결: 매수 ${fmtNum(r.large_trade_buy_count,0)} / 매도 ${fmtNum(r.large_trade_sell_count,0)} / 순 ${fmtNum(r.large_trade_net_count,0)}건\\n금액: 순 ${fmtNum(r.large_trade_net_sum_eok,1)}억`; }"
-        html = html.replace(anchor, helper, 1)
+def _strip_noisy_tooltips_patch(html: str) -> str:
+    """Keep only the daily candle tooltip and remove row/cell metric tooltips."""
 
-    old = "<td class=\"num ${clsSigned(r.large_trade_net_count)}${cellFlashClass(code,'large_trade_net_count',r.large_trade_net_count)}\">${largeText}</td>"
-    new = "<td class=\"num ${clsSigned(r.large_trade_net_count)}${cellFlashClass(code,'large_trade_net_count',r.large_trade_net_count)}\" title=\"${escapeHtml(largeTradeTitle(r))}\">${largeText}</td>"
-    return html.replace(old, new, 1)
+    html = html.replace(
+        "function candleHtml(r){",
+        "function candleTitle(r,o){const rate=Number(r.change_rate);const rateText=Number.isFinite(rate)?`${rate>0?'+':''}${rate.toFixed(2)}%`:'-';return `시가 ${fmtNum(o.open)}\\n고가 ${fmtNum(o.high)}\\n저가 ${fmtNum(o.low)}\\n종가 ${fmtNum(o.close)}\\n등락률 ${rateText}`;} function candleHtml(r){",
+        1,
+    )
+    html = html.replace(
+        'title="O ${fmtNum(o.open)} H ${fmtNum(o.high)} L ${fmtNum(o.low)} C ${fmtNum(o.close)}"',
+        'title="${escapeHtml(candleTitle(r,o))}"',
+    )
+    html = html.replace(' title="${escapeHtml(rowTitle(r))}"', '')
+    html = html.replace(' title="score ${r.grade_score??\'-\'}"', '')
+    html = html.replace(' title="?? ${fmtNum(r.prev_trade_value_eok,0)}?"', '')
+    html = html.replace(' title="${escapeHtml(fullTitle)}"', '')
+    return html
 
 
 def _ui_safety_patch(html: str) -> str:
@@ -184,6 +192,8 @@ def _ui_safety_patch(html: str) -> str:
 
   let __sbv2LastNavTable = null;
   function __sbv2IsBoardTable(table){ return table === selectedBoardEl || table === focusBoardEl || table === poolBoardEl; }
+  function __sbv2IsPoolLikeTable(table){ return table === focusBoardEl || table === poolBoardEl; }
+  function __sbv2TableHasCode(table, code){ return !!(table && code && table.querySelector && table.querySelector(`tbody tr[data-code="${code}"]`)); }
   function __sbv2RememberNavTable(event){
     const row = event && event.target && event.target.closest ? event.target.closest('tr[data-code]') : null;
     const table = row ? row.closest('table') : null;
@@ -201,11 +211,15 @@ def _ui_safety_patch(html: str) -> str:
     const active = document.activeElement;
     const activeRow = active && active.closest ? active.closest('tr[data-code]') : null;
     const activeTable = activeRow ? activeRow.closest('table') : null;
-    if(__sbv2IsBoardTable(activeTable)) return activeTable;
+
+    // After a click the original page may focus the S1 duplicate row.  Keep
+    // arrow navigation in the visible Focus/Pool table the user clicked.
+    if(selectedCode && __sbv2IsPoolLikeTable(__sbv2LastNavTable) && __sbv2TableHasCode(__sbv2LastNavTable, selectedCode)) return __sbv2LastNavTable;
+    if(__sbv2IsPoolLikeTable(activeTable)) return activeTable;
     if(__sbv2IsBoardTable(__sbv2LastNavTable)) return __sbv2LastNavTable;
     if(selectedCode){
       for(const table of [focusBoardEl, poolBoardEl, selectedBoardEl]){
-        if(__sbv2IsBoardTable(table) && table.querySelector(`tbody tr[data-code="${selectedCode}"]`)) return table;
+        if(__sbv2IsBoardTable(table) && __sbv2TableHasCode(table, selectedCode)) return table;
       }
     }
     return focusBoardEl || poolBoardEl || selectedBoardEl;
@@ -215,7 +229,20 @@ def _ui_safety_patch(html: str) -> str:
     if(row && typeof row.focus === 'function'){
       row.focus({preventScroll:true});
       if(typeof row.scrollIntoView === 'function') row.scrollIntoView({block:'nearest', inline:'nearest'});
+      return true;
     }
+    return false;
+  }
+  const __sbv2OriginalFocusSelectedRow = typeof focusSelectedRow === 'function' ? focusSelectedRow : null;
+  if(__sbv2OriginalFocusSelectedRow){
+    focusSelectedRow = function(preventScroll=true){
+      if(selectedCode){
+        for(const table of [__sbv2LastNavTable, focusBoardEl, poolBoardEl, selectedBoardEl]){
+          if(__sbv2IsBoardTable(table) && __sbv2RefocusVisibleRow(table, selectedCode)) return;
+        }
+      }
+      return __sbv2OriginalFocusSelectedRow(preventScroll);
+    };
   }
   function __sbv2MoveByVisibleRows(delta){
     const table = __sbv2NavTable();
@@ -316,7 +343,7 @@ def _patched_do_get(self) -> None:
     if parsed.path in {"/", "/v2", "/stockboard_v2.html"}:
         html_path = Path(base.ROOT) / "docs" / "stockboard_v2.html"
         html = html_path.read_text(encoding="utf-8-sig")
-        html = _large_trade_title_patch(html)
+        html = _strip_noisy_tooltips_patch(html)
         html = _ui_safety_patch(html)
         body = html.encode("utf-8")
         self.send_response(HTTPStatus.OK)
