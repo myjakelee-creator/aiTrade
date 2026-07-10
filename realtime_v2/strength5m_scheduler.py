@@ -203,7 +203,7 @@ class Strength5mScheduler(threading.Thread):
         )
         self.close_sweep_minutes = max(
             10,
-            int(os.getenv("STOCKBOARD_STRENGTH_5M_CLOSE_SWEEP_MINUTES", "30")),
+            int(os.getenv("STOCKBOARD_STRENGTH_5M_CLOSE_SWEEP_MINUTES", "270")),
         )
         self.close_sweep_retry_sec = max(
             30.0,
@@ -251,7 +251,13 @@ class Strength5mScheduler(threading.Thread):
         now = now or datetime.now()
         windows = session.windows or {}
         regular_close = _clock_datetime(now, windows.get("regular_close"), "15:30")
-        sweep_end = regular_close + timedelta(minutes=self.close_sweep_minutes)
+        configured_end = regular_close + timedelta(minutes=self.close_sweep_minutes)
+        calendar_end = _clock_datetime(
+            now,
+            windows.get("aftermarket_end"),
+            "20:00",
+        )
+        sweep_end = min(configured_end, calendar_end)
         return regular_close if regular_close <= now < sweep_end else None
 
     def _refresh(self) -> None:
