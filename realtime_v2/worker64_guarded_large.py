@@ -167,15 +167,21 @@ def _ui_safety_patch(html: str) -> str:
     if marker in html:
         return html
 
-    # Top20 stays hot.  Top300 Pool is a watch list, so keep it slower and stable.
+    # Top20 stays hot. Top300 Pool is slow only during the opening burst.
     html = html.replace(
         "const now=performance.now(),shouldPool=opt.forcePool||now-lastPoolRenderAt>=250,",
-        "const now=performance.now(),shouldPool=opt.forcePool||now-lastPoolRenderAt>=1000,",
+        "const now=performance.now(),shouldPool=opt.forcePool||now-lastPoolRenderAt>=__sbv2PoolIntervalMs(),",
     )
 
     anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
     patch = r'''
   /* STOCKBOARD_V2_SAFE_NAV_SCROLL_20260710 */
+  function __sbv2PoolIntervalMs(){
+    const now = new Date();
+    const minutes = now.getHours() * 60 + now.getMinutes();
+    return minutes >= 9 * 60 && minutes < 9 * 60 + 10 ? 1000 : 250;
+  }
+
   let __sbv2LastNavTable = null;
   function __sbv2IsBoardTable(table){ return table === selectedBoardEl || table === focusBoardEl || table === poolBoardEl; }
   function __sbv2RememberNavTable(event){
@@ -241,7 +247,7 @@ def _ui_safety_patch(html: str) -> str:
     moveSelection(event.key === 'ArrowDown' ? 1 : -1);
   }, true);
 
-  // Hide the row-position freeze button.  Pool row positions are already stable enough for the current design.
+  // Hide the row-position freeze button. Pool row positions are already stable enough for the current design.
   if(rowPositionToggle){ rowPositionToggle.style.display = 'none'; }
 
   function __sbv2ScrollSpacer(){
