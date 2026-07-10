@@ -16,10 +16,11 @@ SetBatchLines, -1
 ;   005930_NX
 ;
 ; Safety policy:
+; - Never activate HTS.
+; - Never focus HTS/Edit6.
 ; - Never send keys to the foreground window.
-; - Send only to one verified Edit6 control.
-; - Enter is sent only after ControlFocus + focus readback confirms Edit6.
-; - After HTS linkage, reactivate the previous browser/page window so ArrowUp/Down keeps working.
+; - Write the code only to one verified Edit6 HWND.
+; - Enter is posted only to that Edit6 HWND, so StockBoard keeps browser focus for ArrowUp/Down.
 
 TargetControl := "Edit6"
 SendEnterAfterSet := true
@@ -89,10 +90,6 @@ ParseStockCommand(rawText, ByRef commandId, ByRef code, ByRef parseMode) {
 
 SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
     global SendEnterAfterSet
-    global NotifySuccess
-    global TargetControl
-
-    WinGet, previousHwnd, ID, A
 
     target := FindSingleTargetControl(usedSpec, message)
     if (!IsObject(target)) {
@@ -101,14 +98,12 @@ SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
     }
 
     controlHwnd := target.control
-    windowHwnd := target.window
 
     Loop, 3 {
         ControlSetText,, %code%, ahk_id %controlHwnd%
         if (ErrorLevel) {
             message := "ControlSetText failed: " . usedSpec
             TrayTip, StockBoard Kiwoom Link v2, %message%, 3
-            RestorePreviousWindow(previousHwnd, windowHwnd)
             return false
         }
         Sleep, 35
@@ -122,32 +117,18 @@ SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
     if (readback != code) {
         message := "Edit6 set failed. expected " . code . ", got " . readback
         TrayTip, StockBoard Kiwoom Link v2, %message%, 3
-        RestorePreviousWindow(previousHwnd, windowHwnd)
         return false
     }
 
     if (SendEnterAfterSet) {
-        ControlFocus, %TargetControl%, ahk_id %windowHwnd%
-        Sleep, 45
-        ControlGetFocus, focusedControl, ahk_id %windowHwnd%
-        if (focusedControl != TargetControl) {
-            message := "OK " . code . " / code set only, Edit6 focus not verified: " . focusedControl . " / " . usedSpec
-            RestorePreviousWindow(previousHwnd, windowHwnd)
-            return true
+        if (PostEnterToEdit(controlHwnd)) {
+            message := "OK " . code . " / enter posted to Edit6 HWND without focus / " . usedSpec
+        } else {
+            message := "OK " . code . " / code set only, Enter post failed safely / " . usedSpec
         }
-
-        ControlSend, %TargetControl%, {Enter}, ahk_id %windowHwnd%
-        if (ErrorLevel) {
-            message := "OK " . code . " / code set, Enter send failed safely / " . usedSpec
-            RestorePreviousWindow(previousHwnd, windowHwnd)
-            return true
-        }
-        message := "OK " . code . " / enter sent after Edit6 focus verified / " . usedSpec
     } else {
         message := "OK " . code . " / code set only, enter blocked / " . usedSpec
     }
-
-    RestorePreviousWindow(previousHwnd, windowHwnd)
 
     if (NotifySuccess) {
         TrayTip, StockBoard Kiwoom Link v2, %message%, 1
@@ -155,36 +136,16 @@ SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
     return true
 }
 
-RestorePreviousWindow(previousHwnd, targetWindowHwnd) {
-    if (!previousHwnd)
-        return
-    if (previousHwnd = targetWindowHwnd)
-        return
+PostEnterToEdit(controlHwnd) {
+    if (!controlHwnd)
+        return false
 
-    Loop, 5 {
-        Sleep, 80
-        if !WinExist("ahk_id " . previousHwnd)
-            return
-
-        WinActivate, ahk_id %previousHwnd%
-        WinWaitActive, ahk_id %previousHwnd%,, 0.4
-
-        ; For Chrome/Edge, return keyboard focus to the page renderer rather than
-        ; leaving it on the browser frame/address area.  Repeating this a few times
-        ; covers the short interval where HTS is still processing Enter.
-        ControlGet, chromeRenderer, Hwnd,, Chrome_RenderWidgetHostHWND1, ahk_id %previousHwnd%
-        if (chromeRenderer) {
-            ControlFocus,, ahk_id %chromeRenderer%
-            continue
-        }
-
-        ; Harmless fallback for other embedded browser controls.
-        ControlGet, ieRenderer, Hwnd,, Internet Explorer_Server1, ahk_id %previousHwnd%
-        if (ieRenderer) {
-            ControlFocus,, ahk_id %ieRenderer%
-            continue
-        }
-    }
+    ; VK_RETURN=0x0D.  Post only to the verified Edit6 HWND.
+    ; Do not activate HTS and do not move browser focus.
+    PostMessage, 0x100, 0x0D, 0x001C0001,, ahk_id %controlHwnd%  ; WM_KEYDOWN
+    Sleep, 20
+    PostMessage, 0x101, 0x0D, 0xC01C0001,, ahk_id %controlHwnd%  ; WM_KEYUP
+    return true
 }
 
 FindSingleTargetControl(ByRef usedSpec, ByRef message) {
