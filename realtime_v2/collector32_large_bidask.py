@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import importlib
+import sys
 import traceback
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 large = importlib.import_module("realtime_v2.collector32_large")
 base = large.base
@@ -12,7 +17,7 @@ def _runtime_dir() -> Path:
     try:
         return Path(base.RUNTIME_DIR)
     except Exception:
-        return Path("data/runtime/stockboard_v2")
+        return ROOT / "data" / "runtime" / "stockboard_v2"
 
 
 def _install_orderbook_thin_fail_open() -> None:
