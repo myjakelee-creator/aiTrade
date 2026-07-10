@@ -272,7 +272,7 @@ def _ui_safety_patch(html: str) -> str:
   }
   function __sbv2ApplyHorizontalScrollFix(){
     const rightEdge = __sbv2BoardRightEdge();
-    const width = Math.ceil(Math.max(rightEdge + 120, window.innerWidth + 360));
+    const width = Math.ceil(Math.max(rightEdge + 48, window.innerWidth + 120));
     document.documentElement.style.overflowX = 'auto';
     document.body.style.overflowX = 'auto';
     document.documentElement.style.minWidth = `${width}px`;
