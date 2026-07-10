@@ -15,10 +15,11 @@ SetBatchLines, -1
 ;   005930_AL
 ;   005930_NX
 ;
-; The bridge no longer ignores duplicate stock codes. Every new command sequence
-; is processed once, so clicking the same row repeatedly works. The bridge does
-; not activate or close HTS windows. It only writes the verified code to Edit6
-; and sends Enter to that exact control after readback succeeds.
+; Safety policy:
+; - Never activate HTS.
+; - Never send keys to the foreground window.
+; - Send only to a verified Edit control HWND.
+; - If the target control is missing or ambiguous, do nothing and write status.
 
 TargetControl := "Edit6"
 SendEnterAfterSet := true
@@ -87,26 +88,22 @@ ParseStockCommand(rawText, ByRef commandId, ByRef code, ByRef parseMode) {
 }
 
 SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
-    global TargetControl
     global SendEnterAfterSet
     global NotifySuccess
 
-    hwnd := FindTargetWindow(usedSpec, triedSpecs)
-    if (!hwnd) {
-        message := "HTS window not found: " . triedSpecs
-        TrayTip, StockBoard Kiwoom Link v2, %message%, 3
-        return false
-    }
-
-    ControlGet, controlHwnd, Hwnd,, %TargetControl%, ahk_id %hwnd%
+    controlHwnd := FindSingleTargetControl(usedSpec, message)
     if (!controlHwnd) {
-        message := "Target control not found: " . TargetControl . " / " . usedSpec
         TrayTip, StockBoard Kiwoom Link v2, %message%, 3
         return false
     }
 
     Loop, 3 {
         ControlSetText,, %code%, ahk_id %controlHwnd%
+        if (ErrorLevel) {
+            message := "ControlSetText failed: " . usedSpec
+            TrayTip, StockBoard Kiwoom Link v2, %message%, 3
+            return false
+        }
         Sleep, 35
         ControlGetText, readback,, ahk_id %controlHwnd%
         if (readback = code)
@@ -116,17 +113,17 @@ SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
 
     ControlGetText, readback,, ahk_id %controlHwnd%
     if (readback != code) {
-        message := "Edit6 set failed. expected " . code . ", got " . readback
+        message := "Edit control set failed. expected " . code . ", got " . readback
         TrayTip, StockBoard Kiwoom Link v2, %message%, 3
         return false
     }
 
     if (SendEnterAfterSet) {
-        ; Send Enter to the Edit6 control HWND directly. Do not activate HTS and
-        ; do not send keys to the foreground window.
+        ; Send Enter to the verified target control HWND directly.
+        ; Never send Enter to a window HWND or the current foreground window.
         ControlSend,, {Enter}, ahk_id %controlHwnd%
         if (ErrorLevel) {
-            message := "Enter send failed: " . usedSpec . " / " . TargetControl
+            message := "Enter send failed: " . usedSpec
             TrayTip, StockBoard Kiwoom Link v2, %message%, 3
             return false
         }
@@ -139,26 +136,61 @@ SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
     return true
 }
 
-FindTargetWindow(ByRef usedSpec, ByRef triedSpecs) {
-    heroTitle := Chr(0xC601) . Chr(0xC6C5) . Chr(0xBB38)
-    heroTitle4 := heroTitle . "4"
-    specs := ["ahk_class _NKHeroMainClass", "ahk_class NHeroMainClass", heroTitle4, heroTitle]
-    triedSpecs := ""
+FindSingleTargetControl(ByRef usedSpec, ByRef message) {
+    global TargetControl
+    windows := CandidateHtsWindows()
+    matches := []
+    tried := ""
 
-    for index, spec in specs {
-        if (triedSpecs != "")
-            triedSpecs .= ", "
-        triedSpecs .= spec
+    for index, hwnd in windows {
+        if (tried != "")
+            tried .= ", "
+        tried .= hwnd
 
-        WinGet, hwnd, ID, %spec%
-        if (hwnd) {
-            usedSpec := spec
-            return hwnd
+        if (!hwnd)
+            continue
+
+        ControlGet, controlHwnd, Hwnd,, %TargetControl%, ahk_id %hwnd%
+        if (controlHwnd) {
+            matches.Push({window: hwnd, control: controlHwnd})
         }
     }
 
-    usedSpec := ""
-    return 0
+    if (matches.Length() = 0) {
+        usedSpec := ""
+        message := "Target control not found. No keys sent. tried_hwnds=" . tried
+        return 0
+    }
+
+    if (matches.Length() > 1) {
+        usedSpec := ""
+        message := "Target control ambiguous: " . matches.Length() . " Edit6 controls. No keys sent."
+        return 0
+    }
+
+    usedSpec := "hwnd " . matches[1].window . " / " . TargetControl . " " . matches[1].control
+    return matches[1].control
+}
+
+CandidateHtsWindows() {
+    heroTitle := Chr(0xC601) . Chr(0xC6C5) . Chr(0xBB38)
+    heroTitle4 := heroTitle . "4"
+    specs := ["ahk_class _NKHeroMainClass", "ahk_class NHeroMainClass", heroTitle4, heroTitle]
+    result := []
+    seen := {}
+
+    for index, spec in specs {
+        WinGet, list, List, %spec%
+        Loop, %list% {
+            hwnd := list%A_Index%
+            if (hwnd && !seen.HasKey(hwnd)) {
+                seen[hwnd] := true
+                result.Push(hwnd)
+            }
+        }
+    }
+
+    return result
 }
 
 WriteStatus(status, code, message) {
