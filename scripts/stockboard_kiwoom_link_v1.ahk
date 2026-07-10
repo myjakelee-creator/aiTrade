@@ -16,14 +16,13 @@ SetBatchLines, -1
 ;   005930_NX
 ;
 ; Safety policy:
-; - Never activate HTS.
 ; - Never send keys to the foreground window.
-; - Send only to a verified Edit control HWND.
+; - Send only to a verified Edit6 control HWND.
 ; - If the target control is missing or ambiguous, do nothing and write status.
-; - Enter is disabled by default because ControlSend Enter can close HTS when Edit6 is not focused.
+; - Enter is sent only after ControlFocus + focus readback confirms Edit6.
 
 TargetControl := "Edit6"
-SendEnterAfterSet := false
+SendEnterAfterSet := true
 NotifySuccess := false
 LastClipboard := Clipboard
 LastCommandId := ""
@@ -91,12 +90,16 @@ ParseStockCommand(rawText, ByRef commandId, ByRef code, ByRef parseMode) {
 SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
     global SendEnterAfterSet
     global NotifySuccess
+    global TargetControl
 
-    controlHwnd := FindSingleTargetControl(usedSpec, message)
-    if (!controlHwnd) {
+    target := FindSingleTargetControl(usedSpec, message)
+    if (!IsObject(target)) {
         TrayTip, StockBoard Kiwoom Link v2, %message%, 3
         return false
     }
+
+    controlHwnd := target.control
+    windowHwnd := target.window
 
     Loop, 3 {
         ControlSetText,, %code%, ahk_id %controlHwnd%
@@ -114,23 +117,30 @@ SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
 
     ControlGetText, readback,, ahk_id %controlHwnd%
     if (readback != code) {
-        message := "Edit control set failed. expected " . code . ", got " . readback
+        message := "Edit6 set failed. expected " . code . ", got " . readback
         TrayTip, StockBoard Kiwoom Link v2, %message%, 3
         return false
     }
 
     if (SendEnterAfterSet) {
-        ; Disabled by default.  If re-enabled later, still send Enter only to the
-        ; verified Edit6 HWND and never to a window HWND or foreground window.
-        ControlSend,, {Enter}, ahk_id %controlHwnd%
-        if (ErrorLevel) {
-            message := "Enter send failed: " . usedSpec
-            TrayTip, StockBoard Kiwoom Link v2, %message%, 3
-            return false
+        ; Focus the verified Edit6 first, then verify focus by control name.
+        ; If focus cannot be verified, never send Enter.
+        ControlFocus, %TargetControl%, ahk_id %windowHwnd%
+        Sleep, 45
+        ControlGetFocus, focusedControl, ahk_id %windowHwnd%
+        if (focusedControl != TargetControl) {
+            message := "OK " . code . " / code set only, Edit6 focus not verified: " . focusedControl . " / " . usedSpec
+            return true
         }
-        message := "OK " . code . " / enter sent / " . usedSpec
+
+        ControlSend, %TargetControl%, {Enter}, ahk_id %windowHwnd%
+        if (ErrorLevel) {
+            message := "OK " . code . " / code set, Enter send failed safely / " . usedSpec
+            return true
+        }
+        message := "OK " . code . " / enter sent after Edit6 focus verified / " . usedSpec
     } else {
-        message := "OK " . code . " / code set only, enter blocked for safety / " . usedSpec
+        message := "OK " . code . " / code set only, enter blocked / " . usedSpec
     }
 
     if (NotifySuccess) {
@@ -161,18 +171,18 @@ FindSingleTargetControl(ByRef usedSpec, ByRef message) {
 
     if (matches.Length() = 0) {
         usedSpec := ""
-        message := "Target control not found. No keys sent. tried_hwnds=" . tried
+        message := "Target Edit6 not found. No keys sent. tried_hwnds=" . tried
         return 0
     }
 
     if (matches.Length() > 1) {
         usedSpec := ""
-        message := "Target control ambiguous: " . matches.Length() . " Edit6 controls. No keys sent."
+        message := "Target Edit6 ambiguous: " . matches.Length() . " controls. No keys sent."
         return 0
     }
 
     usedSpec := "hwnd " . matches[1].window . " / " . TargetControl . " " . matches[1].control
-    return matches[1].control
+    return matches[1]
 }
 
 CandidateHtsWindows() {
