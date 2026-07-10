@@ -342,12 +342,58 @@ def apply_focus_throttle_patch(html: str) -> str:
     anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
     patch = r'''
   /* __FOCUS_THROTTLE_MARKER__ */
-  const __sbv2FocusThrottle = { lastAt: 0 };
+  const __sbv2FocusThrottle = {
+    lastAt: 0,
+    manualScrollLocked: false,
+    lastScrollX: window.scrollX || document.documentElement.scrollLeft || 0,
+    lastScrollY: window.scrollY || document.documentElement.scrollTop || 0
+  };
+
+  function __sbv2CurrentScrollX(){
+    return window.scrollX || document.documentElement.scrollLeft || document.body.scrollLeft || 0;
+  }
+
+  function __sbv2CurrentScrollY(){
+    return window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+  }
+
+  function __sbv2LockManualScroll(){
+    __sbv2FocusThrottle.manualScrollLocked = true;
+    __sbv2FocusThrottle.lastScrollX = __sbv2CurrentScrollX();
+    __sbv2FocusThrottle.lastScrollY = __sbv2CurrentScrollY();
+  }
+
+  function __sbv2UnlockManualScroll(){
+    __sbv2FocusThrottle.manualScrollLocked = false;
+    __sbv2FocusThrottle.lastScrollX = __sbv2CurrentScrollX();
+    __sbv2FocusThrottle.lastScrollY = __sbv2CurrentScrollY();
+  }
+
+  window.addEventListener('wheel', __sbv2LockManualScroll, {passive:true, capture:true});
+  window.addEventListener('touchmove', __sbv2LockManualScroll, {passive:true, capture:true});
+  window.addEventListener('scroll', () => {
+    const x = __sbv2CurrentScrollX();
+    const y = __sbv2CurrentScrollY();
+    if(Math.abs(x - __sbv2FocusThrottle.lastScrollX) > 1 || Math.abs(y - __sbv2FocusThrottle.lastScrollY) > 1){
+      __sbv2FocusThrottle.manualScrollLocked = true;
+      __sbv2FocusThrottle.lastScrollX = x;
+      __sbv2FocusThrottle.lastScrollY = y;
+    }
+  }, {passive:true, capture:true});
+
+  document.addEventListener('keydown', event => {
+    if(event.key === 'ArrowUp' || event.key === 'ArrowDown') __sbv2UnlockManualScroll();
+  }, true);
+
+  document.addEventListener('pointerdown', event => {
+    if(event.target && event.target.closest && event.target.closest('tr[data-code]')) __sbv2UnlockManualScroll();
+  }, true);
 
   if(typeof focusSelectedRow === 'function'){
     const __sbv2OriginalFocusSelectedRow = focusSelectedRow;
     focusSelectedRow = function(preventScroll=true){
       if(!selectedCode) return;
+      if(__sbv2FocusThrottle.manualScrollLocked) return;
       const active = document.activeElement;
       if(active && active.dataset && active.dataset.code === selectedCode) return;
       const now = performance.now();
