@@ -8,7 +8,7 @@ goto run
 
 :menu
 echo.
-echo StockBoard v2 Realtime - Large Trade Aggregation Test
+echo StockBoard v2 Realtime - Large Trade / BidAsk Last Cache
 echo.
 echo   1 Start large normal
 echo   2 Stop v2
@@ -111,8 +111,10 @@ function Stop-ProcessRows([object[]]$Rows, [string]$Label) {
 function Stop-V2PythonAndAhkProcesses {
     try {
         $patterns = @(
+            "realtime_v2\collector32_large_bidask.py",
             "realtime_v2\collector32_large.py",
             "realtime_v2\collector32.py",
+            "realtime_v2\worker64_guarded_large_bidask.py",
             "realtime_v2\worker64_guarded_large.py",
             "realtime_v2\worker64_guarded_large_hotfix.py",
             "realtime_v2\worker64_guarded.py",
@@ -229,8 +231,8 @@ function Start-V2Large([bool]$FastOpen = $false) {
     Set-Content -LiteralPath $ContextPidFile -Value $context.Id -Encoding ASCII
     Write-Host "CONTEXT_PID=$($context.Id)"
 
-    Write-Step "Starting 64-bit guarded worker with large-trade delta support"
-    $worker = Start-Process -FilePath $Python64 -ArgumentList @("realtime_v2\worker64_guarded_large.py") -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $workerOut -RedirectStandardError $workerErr -PassThru
+    Write-Step "Starting 64-bit guarded worker with large-trade and bidask last-cache support"
+    $worker = Start-Process -FilePath $Python64 -ArgumentList @("realtime_v2\worker64_guarded_large_bidask.py") -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $workerOut -RedirectStandardError $workerErr -PassThru
     Set-Content -LiteralPath $WorkerPidFile -Value $worker.Id -Encoding ASCII
     Write-Host "WORKER64_PID=$($worker.Id)"
     Write-Host "WORKER64_STDOUT=$workerOut"
@@ -240,17 +242,20 @@ function Start-V2Large([bool]$FastOpen = $false) {
         Write-Warning "worker did not respond yet; collector will still be started"
     }
 
-    Write-Step "Starting 32-bit collector with pre-coalescing large-trade aggregation"
+    Write-Step "Starting 32-bit collector with large-trade and thin bidask scheduler"
     if (-not (Test-Path -LiteralPath $Python32)) { throw "32-bit Python not found: $Python32" }
-    $collectorArgs = @("realtime_v2\collector32_large.py", "--limit", "300", "--suffix", "AL", "--flush-ms", "50")
+    $collectorArgs = @("realtime_v2\collector32_large_bidask.py", "--limit", "300", "--suffix", "AL", "--flush-ms", "50")
     if ($FastOpen) {
         Write-Host "FAST_OPEN=True"
-        Write-Host "ORDERBOOK=False during fast-open mode"
+        Write-Host "ORDERBOOK_REALTIME=False"
+        Write-Host "BIDASK_THIN=True"
     } else {
         $collectorArgs += "--orderbook"
         Write-Host "FAST_OPEN=False"
-        Write-Host "ORDERBOOK=True"
+        Write-Host "ORDERBOOK_REALTIME=True"
+        Write-Host "BIDASK_THIN=True"
     }
+
     $oldHideCollectorConsole = $env:STOCKBOARD_HIDE_COLLECTOR_CONSOLE_AFTER_LOGIN
     $env:STOCKBOARD_HIDE_COLLECTOR_CONSOLE_AFTER_LOGIN = "1"
     try {
@@ -289,17 +294,26 @@ function Status-V2Large {
         Write-Host "ROW_COUNT=$($snapshot.row_count)"
         Write-Host "EVENT_COUNT=$($snapshot.status.event_count)"
         Write-Host "TRADE_COUNT=$($snapshot.status.trade_count)"
-        $sender = $snapshot.status.collector_status.sender_stats
+        Write-Host "ORDERBOOK_COUNT=$($snapshot.status.orderbook_count)"
+        Write-Host "BIDASK_CACHE_COUNT=$($snapshot.status.bidask_cache_count)"
+        Write-Host "BIDASK_CACHE_APPLIED_ROWS=$($snapshot.status.bidask_cache_applied_rows)"
+        $collectorStatus = $snapshot.status.collector_status
+        $sender = $collectorStatus.sender_stats
         if ($sender) {
             Write-Host "COLLECTOR_CONNECTED=$($sender.connected)"
             Write-Host "COLLECTOR_PENDING_TOTAL=$($sender.pending_total_count)"
             Write-Host "COLLECTOR_SENT_PER_SEC=$($sender.sent_per_sec)"
             Write-Host "COLLECTOR_LARGE_BUY_COUNT=$($sender.large_trade_buy_count)"
             Write-Host "COLLECTOR_LARGE_SELL_COUNT=$($sender.large_trade_sell_count)"
-            Write-Host "COLLECTOR_LARGE_BUY_SUM_EOK=$($sender.large_trade_buy_sum_eok)"
-            Write-Host "COLLECTOR_LARGE_SELL_SUM_EOK=$($sender.large_trade_sell_sum_eok)"
         } else {
             Write-Host "COLLECTOR_SENDER_STATS=False"
+        }
+        if ($collectorStatus.status.orderbook_thin_scheduler) {
+            $sched = $collectorStatus.status.orderbook_thin_scheduler
+            Write-Host "BIDASK_THIN_ALIVE=$($sched.alive)"
+            Write-Host "BIDASK_THIN_LAST_CODE=$($sched.last_enqueued_code)"
+            Write-Host "BIDASK_THIN_LAST_LANE=$($sched.last_enqueued_lane)"
+            Write-Host "BIDASK_THIN_ENQUEUE_COUNT=$($sched.enqueue_count)"
         }
     } catch {
         Write-Host "WORKER_HEALTH=False"
@@ -353,11 +367,17 @@ function Doctor-V2Large {
     if (Test-Path -LiteralPath $WorkerPidFile) { Add-Line "WORKER_PID=$(Get-Content -LiteralPath $WorkerPidFile | Select-Object -First 1)" }
     Add-Line "COLLECTOR_PID_FILE_EXISTS=$(Test-Path -LiteralPath $CollectorPidFile)"
     if (Test-Path -LiteralPath $CollectorPidFile) { Add-Line "COLLECTOR_PID=$(Get-Content -LiteralPath $CollectorPidFile | Select-Object -First 1)" }
-    Add-Line "HAS_COLLECTOR_LARGE=$(Test-Path -LiteralPath (Join-Path $ProjectRoot 'realtime_v2\collector32_large.py'))"
-    Add-Line "HAS_WORKER_LARGE=$(Test-Path -LiteralPath (Join-Path $ProjectRoot 'realtime_v2\worker64_guarded_large.py'))"
+    Add-Line "HAS_COLLECTOR_LARGE_BIDASK=$(Test-Path -LiteralPath (Join-Path $ProjectRoot 'realtime_v2\collector32_large_bidask.py'))"
+    Add-Line "HAS_WORKER_LARGE_BIDASK=$(Test-Path -LiteralPath (Join-Path $ProjectRoot 'realtime_v2\worker64_guarded_large_bidask.py'))"
 
     try {
-        & $Python64 -m py_compile (Join-Path $ProjectRoot "realtime_v2\collector32_large.py") (Join-Path $ProjectRoot "realtime_v2\worker64_guarded_large.py")
+        & $Python64 -m py_compile `
+            (Join-Path $ProjectRoot "realtime_v2\collector32_large.py") `
+            (Join-Path $ProjectRoot "realtime_v2\collector32_large_bidask.py") `
+            (Join-Path $ProjectRoot "realtime_v2\orderbook_thin_scheduler.py") `
+            (Join-Path $ProjectRoot "realtime_v2\worker64_guarded_large.py") `
+            (Join-Path $ProjectRoot "realtime_v2\worker64_guarded_large_bidask.py") `
+            (Join-Path $ProjectRoot "realtime_v2\bidask_last_cache_patch.py")
         Add-Line "PY_COMPILE=True"
     } catch {
         Add-Line "PY_COMPILE=False"
@@ -366,7 +386,7 @@ function Doctor-V2Large {
 
     try {
         $procRows = @(Get-CimInstance Win32_Process -ErrorAction Stop |
-            Where-Object { $_.CommandLine -and ($_.CommandLine -like "*realtime_v2\collector32_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded.py*" -or $_.CommandLine -like "*realtime_v2\collector32.py*") } |
+            Where-Object { $_.CommandLine -and ($_.CommandLine -like "*realtime_v2\collector32_large_bidask.py*" -or $_.CommandLine -like "*realtime_v2\collector32_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded_large_bidask.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded_large.py*") } |
             Select-Object ProcessId, Name, CommandLine)
         Add-Line "MATCHED_PROCESS_COUNT=$($procRows.Count)"
         foreach ($p in $procRows) {
@@ -377,58 +397,21 @@ function Doctor-V2Large {
     }
 
     try {
-        $health = Invoke-RestMethod -Uri $WorkerUrl -TimeoutSec 10
-        Add-Line "HEALTH=True"
-        Add-Line "HEALTH_JSON=$($health | ConvertTo-Json -Compress -Depth 6)"
-    } catch {
-        Add-Line "HEALTH=False"
-        Add-Line "HEALTH_ERROR=$($_.Exception.Message)"
-    }
-
-    $snapshot = $null
-    try {
         $snapshot = Invoke-RestMethod -Uri $SnapshotUrl -TimeoutSec 30
         Add-Line "SNAPSHOT=True"
         Add-Line "ROW_COUNT=$($snapshot.row_count)"
         Add-Line "EVENT_COUNT=$($snapshot.status.event_count)"
         Add-Line "TRADE_COUNT=$($snapshot.status.trade_count)"
         Add-Line "ORDERBOOK_COUNT=$($snapshot.status.orderbook_count)"
-        Add-Line "LAST_EVENT_AT=$($snapshot.status.last_event_at)"
+        Add-Line "BIDASK_CACHE_COUNT=$($snapshot.status.bidask_cache_count)"
+        Add-Line "BIDASK_CACHE_APPLIED_ROWS=$($snapshot.status.bidask_cache_applied_rows)"
         $collectorStatus = $snapshot.status.collector_status
         if ($collectorStatus) {
             Add-Line "COLLECTOR_PROVIDER_STARTED=$($collectorStatus.provider_started)"
             Add-Line "COLLECTOR_REGISTERED_COUNT=$($collectorStatus.registered_count)"
-            $sender = $collectorStatus.sender_stats
-            if ($sender) {
-                Add-Line "COLLECTOR_CONNECTED=$($sender.connected)"
-                Add-Line "COLLECTOR_SENT_PER_SEC=$($sender.sent_per_sec)"
-                Add-Line "COLLECTOR_PENDING_TOTAL=$($sender.pending_total_count)"
-                Add-Line "COLLECTOR_COALESCED_TRADE=$($sender.coalesced_trade_overwrite_count)"
-                Add-Line "COLLECTOR_FLOW_TRADE_COUNT=$($sender.flow_trade_count)"
-                Add-Line "COLLECTOR_LARGE_BUY_COUNT=$($sender.large_trade_buy_count)"
-                Add-Line "COLLECTOR_LARGE_SELL_COUNT=$($sender.large_trade_sell_count)"
-                Add-Line "COLLECTOR_LARGE_BUY_SUM_EOK=$($sender.large_trade_buy_sum_eok)"
-                Add-Line "COLLECTOR_LARGE_SELL_SUM_EOK=$($sender.large_trade_sell_sum_eok)"
-                Add-Line "COLLECTOR_PENDING_LARGE_CODE_COUNT=$($sender.pending_large_trade_code_count)"
-                Add-Line "COLLECTOR_LAST_ERROR=$($sender.last_error)"
-            } else {
-                Add-Line "COLLECTOR_SENDER_STATS=False"
-            }
+            Add-Line "ORDERBOOK_THIN_SCHEDULER=$($collectorStatus.status.orderbook_thin_scheduler | ConvertTo-Json -Compress -Depth 5)"
         } else {
             Add-Line "COLLECTOR_STATUS=False"
-        }
-
-        $largeRows = @($snapshot.rows | Where-Object { ($_.large_trade_buy_count -as [int]) -gt 0 -or ($_.large_trade_sell_count -as [int]) -gt 0 })
-        Add-Line "ROWS_WITH_LARGE_TRADE=$($largeRows.Count)"
-        foreach ($r in ($largeRows | Select-Object -First 20)) {
-            Add-Line "LARGE_ROW code=$($r.stock_code) name=$($r.stock_name) buy=$($r.large_trade_buy_count) sell=$($r.large_trade_sell_count) net=$($r.large_trade_net_count) buy_eok=$($r.large_trade_buy_sum_eok) sell_eok=$($r.large_trade_sell_sum_eok) net_eok=$($r.large_trade_net_sum_eok) source=$($r.large_trade_source)"
-        }
-
-        $ls = $snapshot.rows | Where-Object stock_code -eq "010120" | Select-Object -First 1
-        if ($ls) {
-            Add-Line "LS_ELECTRIC code=$($ls.stock_code) name=$($ls.stock_name) buy=$($ls.large_trade_buy_count) sell=$($ls.large_trade_sell_count) net=$($ls.large_trade_net_count) buy_eok=$($ls.large_trade_buy_sum_eok) sell_eok=$($ls.large_trade_sell_sum_eok) net_eok=$($ls.large_trade_net_sum_eok) source=$($ls.large_trade_source)"
-        } else {
-            Add-Line "LS_ELECTRIC=NOT_IN_SNAPSHOT"
         }
     } catch {
         Add-Line "SNAPSHOT=False"
@@ -437,8 +420,6 @@ function Doctor-V2Large {
 
     Add-DoctorTail ${function:Add-Line} "worker64_large_*.err.log" "WORKER_LARGE_ERR_LOG"
     Add-DoctorTail ${function:Add-Line} "collector32_large_*.err.log" "COLLECTOR_LARGE_ERR_LOG"
-    Add-DoctorTail ${function:Add-Line} "worker64_*.err.log" "WORKER_ERR_LOG"
-    Add-DoctorTail ${function:Add-Line} "collector32_*.err.log" "COLLECTOR_ERR_LOG"
 
     Set-Content -LiteralPath $DoctorReport -Value $lines -Encoding UTF8
     Write-Host ""
