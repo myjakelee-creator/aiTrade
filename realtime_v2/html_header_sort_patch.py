@@ -7,6 +7,7 @@ from pathlib import Path
 
 MARKER = "STOCKBOARD_V2_HEADER_SORT_WITH_LOCK_20260710"
 CONNECTION_MARKER = "STOCKBOARD_V2_CONNECTION_HEALTH_BADGE_20260710"
+FLASH_SCOPE_MARKER = "STOCKBOARD_V2_FLASH_SCOPE_20260710"
 MANUAL_SORT_KEY = "stockboard.v2.headerSortActive.v1"
 
 
@@ -111,6 +112,71 @@ def apply_connection_health_patch(html: str) -> str:
     return html
 
 
+def apply_flash_scope_patch(html: str) -> str:
+    if FLASH_SCOPE_MARKER in html:
+        return html
+
+    anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
+    patch = r'''
+  /* __FLASH_SCOPE_MARKER__ */
+  const __sbv2FlashScopeState = { map: new Map() };
+
+  function __sbv2FlashScopeRank(row, fallback){
+    const keys = ['model_rank','funnel_rank','pool_rank','rank'];
+    for(const key of keys){
+      const n = Number(row && row[key]);
+      if(Number.isFinite(n) && n > 0) return n;
+    }
+    return fallback;
+  }
+
+  function __sbv2FlashScopePrepare(table, rows){
+    if(!Array.isArray(rows)) return;
+    const isSelected = table === selectedBoardEl;
+    const isFocus = table === focusBoardEl;
+    const isPool = table === poolBoardEl;
+    rows.forEach((row, index) => {
+      const code = String(row && row.stock_code || '');
+      if(!/^\d{6}$/.test(code)) return;
+      let allow = false;
+      if(isSelected || isFocus){
+        allow = true;
+      }else if(isPool){
+        const rank = __sbv2FlashScopeRank(row, index + 21);
+        allow = rank >= 21 && rank <= 50;
+      }
+      __sbv2FlashScopeState.map.set(code, allow);
+    });
+  }
+
+  if(typeof renderTable === 'function' && typeof cellFlashClass === 'function'){
+    const __sbv2OriginalFlashRenderTable = renderTable;
+    renderTable = function(table, rows, empty){
+      __sbv2FlashScopePrepare(table, rows);
+      return __sbv2OriginalFlashRenderTable.apply(this, arguments);
+    };
+
+    const __sbv2OriginalFlashClass = cellFlashClass;
+    cellFlashClass = function(code, key, value){
+      const stockCode = String(code || '').trim();
+      const normalized = String(value ?? '');
+      const cacheKey = `${stockCode}|${key}`;
+      const keyAllowed = key === 'price' || key === 'change_rate';
+      const laneAllowed = __sbv2FlashScopeState.map.get(stockCode) === true;
+      if(!keyAllowed || !laneAllowed){
+        if(stockCode && key) previousCellValues.set(cacheKey, normalized);
+        return '';
+      }
+      return __sbv2OriginalFlashClass.apply(this, arguments);
+    };
+  }
+'''.replace("__FLASH_SCOPE_MARKER__", FLASH_SCOPE_MARKER)
+
+    if anchor in html:
+        html = html.replace(anchor, f"{patch}\n{anchor}", 1)
+    return html
+
+
 def install(base, large_module) -> None:
     handler = base.WebHandler
     if getattr(handler, "_stockboard_header_sort_patch_installed", False):
@@ -129,6 +195,7 @@ def install(base, large_module) -> None:
                 html = large_module._ui_safety_patch(html)
                 html = apply_header_sort_patch(html)
                 html = apply_connection_health_patch(html)
+                html = apply_flash_scope_patch(html)
                 body = html.encode("utf-8")
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
