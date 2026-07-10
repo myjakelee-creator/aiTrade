@@ -90,11 +90,67 @@ function Stop-Port([int]$Port) {
         $pids = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop | Select-Object -ExpandProperty OwningProcess -Unique)
     } catch { $pids = @() }
     foreach ($pidNumber in $pids) {
-        if ($pidNumber -gt 0) {
+        if ($pidNumber -gt 0 -and $pidNumber -ne $PID) {
             Write-Host "Stopping port $Port listener PID=$pidNumber"
             Stop-Process -Id $pidNumber -Force -ErrorAction SilentlyContinue
         }
     }
+}
+
+function Stop-ProcessRows([object[]]$Rows, [string]$Label) {
+    foreach ($row in $Rows) {
+        $pidNumber = [int]$row.ProcessId
+        if ($pidNumber -le 0 -or $pidNumber -eq $PID) { continue }
+        try {
+            Write-Host "Stopping $Label PID=$pidNumber NAME=$($row.Name)"
+            Stop-Process -Id $pidNumber -Force -ErrorAction SilentlyContinue
+        } catch { }
+    }
+}
+
+function Stop-V2PythonAndAhkProcesses {
+    try {
+        $patterns = @(
+            "realtime_v2\collector32_large.py",
+            "realtime_v2\collector32.py",
+            "realtime_v2\worker64_guarded_large.py",
+            "realtime_v2\worker64_guarded_large_hotfix.py",
+            "realtime_v2\worker64_guarded.py",
+            "realtime_v2\worker64.py",
+            "realtime_v2\context_snapshot_writer.py",
+            "scripts\stockboard_kiwoom_link_v1.ahk"
+        )
+        $rows = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+            $cmd = [string]$_.CommandLine
+            if (-not $cmd) { return $false }
+            foreach ($pattern in $patterns) {
+                if ($cmd -like "*$pattern*") { return $true }
+            }
+            return $false
+        } | Select-Object ProcessId, Name, CommandLine)
+        Stop-ProcessRows $rows "v2 process"
+    } catch { }
+}
+
+function Stop-OrphanStockBoardConsoles {
+    try {
+        $self = $PID
+        $rows = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+            $name = [string]$_.Name
+            $cmd = [string]$_.CommandLine
+            if (-not $cmd) { return $false }
+            if ($_.ProcessId -eq $self) { return $false }
+            if ($name -notin @("cmd.exe", "conhost.exe", "powershell.exe", "pwsh.exe")) { return $false }
+            return ($cmd -like "*stockboard_v2*" -or $cmd -like "*StockBoard v2*" -or $cmd -like "*C:\aiTrade*data\runtime\stockboard_v2*")
+        } | Select-Object ProcessId, Name, CommandLine)
+        Stop-ProcessRows $rows "orphan console"
+    } catch { }
+}
+
+function Clear-RuntimePidFiles {
+    Remove-Item -LiteralPath $WorkerPidFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $CollectorPidFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $ContextPidFile -Force -ErrorAction SilentlyContinue
 }
 
 function Stop-LargeProcesses {
@@ -102,16 +158,12 @@ function Stop-LargeProcesses {
     Stop-PidFile $CollectorPidFile "collector32"
     Stop-PidFile $WorkerPidFile "worker64"
     Stop-PidFile $ContextPidFile "context_snapshot_writer"
-    try {
-        Get-CimInstance Win32_Process -ErrorAction Stop |
-            Where-Object { $_.CommandLine -and ($_.CommandLine -like "*realtime_v2\collector32_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded_large_hotfix.py*") } |
-            ForEach-Object {
-                Write-Host "Stopping large wrapper PID=$($_.ProcessId)"
-                Stop-Process -Id ([int]$_.ProcessId) -Force -ErrorAction SilentlyContinue
-            }
-    } catch { }
+    Stop-V2PythonAndAhkProcesses
     Stop-Port 8765
     Stop-Port 8710
+    Start-Sleep -Milliseconds 300
+    Stop-OrphanStockBoardConsoles
+    Clear-RuntimePidFiles
 }
 
 function Stop-V2 {
@@ -177,8 +229,8 @@ function Start-V2Large([bool]$FastOpen = $false) {
     Set-Content -LiteralPath $ContextPidFile -Value $context.Id -Encoding ASCII
     Write-Host "CONTEXT_PID=$($context.Id)"
 
-    Write-Step "Starting 64-bit guarded worker with large-trade UI hotfix support"
-    $worker = Start-Process -FilePath $Python64 -ArgumentList @("realtime_v2\worker64_guarded_large_hotfix.py") -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $workerOut -RedirectStandardError $workerErr -PassThru
+    Write-Step "Starting 64-bit guarded worker with large-trade delta support"
+    $worker = Start-Process -FilePath $Python64 -ArgumentList @("realtime_v2\worker64_guarded_large.py") -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $workerOut -RedirectStandardError $workerErr -PassThru
     Set-Content -LiteralPath $WorkerPidFile -Value $worker.Id -Encoding ASCII
     Write-Host "WORKER64_PID=$($worker.Id)"
     Write-Host "WORKER64_STDOUT=$workerOut"
@@ -205,6 +257,7 @@ function Start-V2Large([bool]$FastOpen = $false) {
         $collector = Start-Process -FilePath $Python32 -ArgumentList $collectorArgs -WorkingDirectory $ProjectRoot -WindowStyle Normal -RedirectStandardOutput $collectorOut -RedirectStandardError $collectorErr -PassThru
     } finally {
         if ($null -eq $oldHideCollectorConsole) {
+            Remove-Item Env:\STOCKBOARD_HIDE_COLLECTOR_CONSOLE -ErrorAction SilentlyContinue
             Remove-Item Env:\STOCKBOARD_HIDE_COLLECTOR_CONSOLE_AFTER_LOGIN -ErrorAction SilentlyContinue
         } else {
             $env:STOCKBOARD_HIDE_COLLECTOR_CONSOLE_AFTER_LOGIN = $oldHideCollectorConsole
@@ -304,7 +357,7 @@ function Doctor-V2Large {
     Add-Line "HAS_WORKER_LARGE=$(Test-Path -LiteralPath (Join-Path $ProjectRoot 'realtime_v2\worker64_guarded_large.py'))"
 
     try {
-        & $Python64 -m py_compile (Join-Path $ProjectRoot "realtime_v2\collector32_large.py") (Join-Path $ProjectRoot "realtime_v2\worker64_guarded_large.py") (Join-Path $ProjectRoot "realtime_v2\worker64_guarded_large_hotfix.py")
+        & $Python64 -m py_compile (Join-Path $ProjectRoot "realtime_v2\collector32_large.py") (Join-Path $ProjectRoot "realtime_v2\worker64_guarded_large.py")
         Add-Line "PY_COMPILE=True"
     } catch {
         Add-Line "PY_COMPILE=False"
@@ -313,7 +366,7 @@ function Doctor-V2Large {
 
     try {
         $procRows = @(Get-CimInstance Win32_Process -ErrorAction Stop |
-            Where-Object { $_.CommandLine -and ($_.CommandLine -like "*realtime_v2\collector32_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded_large_hotfix.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded.py*" -or $_.CommandLine -like "*realtime_v2\collector32.py*") } |
+            Where-Object { $_.CommandLine -and ($_.CommandLine -like "*realtime_v2\collector32_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded.py*" -or $_.CommandLine -like "*realtime_v2\collector32.py*") } |
             Select-Object ProcessId, Name, CommandLine)
         Add-Line "MATCHED_PROCESS_COUNT=$($procRows.Count)"
         foreach ($p in $procRows) {
