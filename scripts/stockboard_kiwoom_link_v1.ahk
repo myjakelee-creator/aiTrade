@@ -22,11 +22,13 @@ SetBatchLines, -1
 ; - Write the code only to one verified Edit6 HWND.
 ; - Enter is posted only to that Edit6 HWND.
 ; - After HTS linkage, reactivate the previous browser/page window so ArrowUp/Down keeps working.
+; - Clipboard can be busy while Chrome/Windows owns it; retry briefly and skip the tick instead of crashing.
 
 TargetControl := "Edit6"
 SendEnterAfterSet := true
 NotifySuccess := false
-LastClipboard := Clipboard
+LastClipboard := ""
+SafeReadClipboard(LastClipboard)
 LastCommandId := ""
 LastSentCode := ""
 StatusFile := "C:\aiTrade\data\runtime\stockboard_v2\hts_link_status.txt"
@@ -37,7 +39,8 @@ TrayTip, StockBoard Kiwoom Link v2, HTS link bridge started, 1
 return
 
 WatchClipboardCommand:
-    current := Clipboard
+    if (!SafeReadClipboard(current))
+        return
     if (current = LastClipboard)
         return
     LastClipboard := current
@@ -58,6 +61,19 @@ WatchClipboardCommand:
         WriteStatus("error", code, message)
     }
 return
+
+SafeReadClipboard(ByRef text) {
+    text := ""
+    Loop, 5 {
+        try {
+            text := Clipboard
+            return true
+        } catch e {
+            Sleep, 30
+        }
+    }
+    return false
+}
 
 ParseStockCommand(rawText, ByRef commandId, ByRef code, ByRef parseMode) {
     text := Trim(rawText)
