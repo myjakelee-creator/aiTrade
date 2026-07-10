@@ -9,6 +9,7 @@ MARKER = "STOCKBOARD_V2_HEADER_SORT_WITH_LOCK_20260710"
 CONNECTION_MARKER = "STOCKBOARD_V2_CONNECTION_HEALTH_BADGE_20260710"
 FLASH_SCOPE_MARKER = "STOCKBOARD_V2_FLASH_SCOPE_20260710"
 POOL_INTERVAL_MARKER = "STOCKBOARD_V2_POOL_INTERVAL_20260710"
+POOL_SIGNATURE_MARKER = "STOCKBOARD_V2_POOL_SIGNATURE_20260710"
 WIDTH_THROTTLE_MARKER = "STOCKBOARD_V2_WIDTH_THROTTLE_20260710"
 FOCUS_THROTTLE_MARKER = "STOCKBOARD_V2_FOCUS_THROTTLE_20260710"
 MANUAL_SORT_KEY = "stockboard.v2.headerSortActive.v1"
@@ -212,6 +213,72 @@ def apply_pool_interval_patch(html: str) -> str:
     return html
 
 
+def apply_pool_signature_patch(html: str) -> str:
+    if POOL_SIGNATURE_MARKER in html:
+        return html
+
+    old = "if(shouldPool){renderTable(poolBoardEl,poolRows,'Top300 Pool 수신 대기 중입니다.');poolRowCountEl.textContent=`21~${ranked.length} · ${poolRows.length}종목`;lastPoolRenderAt=now;}"
+    new = "if(shouldPool){if(__sbv2ShouldRenderPool(poolRows,opt)){renderTable(poolBoardEl,poolRows,'Top300 Pool 수신 대기 중입니다.');poolRowCountEl.textContent=`21~${ranked.length} · ${poolRows.length}종목`;}lastPoolRenderAt=now;}"
+    if old not in html:
+        return html
+    html = html.replace(old, new, 1)
+
+    anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
+    patch = r'''
+  /* __POOL_SIGNATURE_MARKER__ */
+  const __sbv2PoolSignatureState = { sig: '' };
+
+  function __sbv2PoolSigValue(value){
+    return value === undefined || value === null ? '' : String(value);
+  }
+
+  function __sbv2PoolOhlcSig(row){
+    const o = (row && (row.ohlc || row.realtime_ohlc || row.display_ohlc)) || {};
+    return [o.open, o.high, o.low, o.close, o.current].map(__sbv2PoolSigValue).join('/');
+  }
+
+  function __sbv2PoolSignature(rows){
+    const modeSig = Array.from(metricKeys || []).map(k => `${k}:${metricModes[k] || ''}`).join(',');
+    const parts = [selectedCode || '', sortState?.key || '', sortState?.dir || '', modeSig];
+    (rows || []).forEach(row => {
+      parts.push(
+        __sbv2PoolSigValue(row && row.stock_code),
+        __sbv2PoolSigValue(row && row.rank),
+        __sbv2PoolSigValue(row && row.rank_change),
+        __sbv2PoolSigValue(row && (row.candidate_grade_text || row.grade_text || row.grade || row.candidate_grade)),
+        __sbv2PoolSigValue(row && row.stock_name),
+        __sbv2PoolSigValue(row && row.price),
+        __sbv2PoolSigValue(row && row.change_rate),
+        __sbv2PoolSigValue(row && row.trade_value_eok),
+        __sbv2PoolSigValue(row && row.amount_ratio),
+        __sbv2PoolOhlcSig(row),
+        __sbv2PoolSigValue(row && row.bid_ask_ratio),
+        __sbv2PoolSigValue(row && row.execution_strength),
+        __sbv2PoolSigValue(row && row.strength_1m),
+        __sbv2PoolSigValue(row && row.program_net),
+        __sbv2PoolSigValue(row && row.large_trade_net_count),
+        __sbv2PoolSigValue(row && row.price_age_sec)
+      );
+    });
+    return parts.join('|');
+  }
+
+  function __sbv2ShouldRenderPool(rows, opt){
+    const sig = __sbv2PoolSignature(rows || []);
+    if(opt && opt.forcePool){
+      __sbv2PoolSignatureState.sig = sig;
+      return true;
+    }
+    if(sig === __sbv2PoolSignatureState.sig) return false;
+    __sbv2PoolSignatureState.sig = sig;
+    return true;
+  }
+'''.replace("__POOL_SIGNATURE_MARKER__", POOL_SIGNATURE_MARKER)
+    if anchor in html:
+        html = html.replace(anchor, f"{patch}\n{anchor}", 1)
+    return html
+
+
 def apply_width_throttle_patch(html: str) -> str:
     if WIDTH_THROTTLE_MARKER in html:
         return html
@@ -316,6 +383,7 @@ def install(base, large_module) -> None:
                 html = apply_connection_health_patch(html)
                 html = apply_flash_scope_patch(html)
                 html = apply_pool_interval_patch(html)
+                html = apply_pool_signature_patch(html)
                 html = apply_width_throttle_patch(html)
                 html = apply_focus_throttle_patch(html)
                 body = html.encode("utf-8")
