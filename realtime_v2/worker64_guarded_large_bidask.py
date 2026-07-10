@@ -62,6 +62,16 @@ def _install_display_hold_ohlc_price_fail_open() -> None:
         _write_patch_error("display_hold_ohlc_price_patch_error.txt", error)
 
 
+def _install_scroll_focus_independent_patch_fail_open() -> None:
+    try:
+        from realtime_v2.scroll_focus_independent_patch import install as install_scroll_focus_independent
+
+        install_scroll_focus_independent(large)
+    except Exception as error:
+        # Scroll/focus behavior is UI-only; never let it stop the worker.
+        _write_patch_error("scroll_focus_independent_patch_error.txt", error)
+
+
 def _install_header_sort_patch_fail_open() -> None:
     try:
         from realtime_v2.html_header_sort_patch import install as install_header_sort
@@ -75,6 +85,7 @@ def _install_header_sort_patch_fail_open() -> None:
 _install_bidask_patch_fail_open()
 _install_display_hold_fail_open()
 _install_display_hold_ohlc_price_fail_open()
+_install_scroll_focus_independent_patch_fail_open()
 _install_header_sort_patch_fail_open()
 
 if __name__ == "__main__":
