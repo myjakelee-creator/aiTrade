@@ -229,23 +229,28 @@ def _ui_safety_patch(html: str) -> str:
     const code = String(nextRow && nextRow.dataset.code || '');
     if(!/^\d{6}$/.test(code)) return false;
     __sbv2LastNavTable = table;
+    __sbv2RefocusVisibleRow(table, code);
     selectCodeAndLink(code, false, {focus:false}); // keep HTS linkage on arrow navigation
-    [0, 80, 180, 360, 720].forEach(delay => {
+    [0, 80, 180, 360, 720, 1200].forEach(delay => {
       setTimeout(() => __sbv2RefocusVisibleRow(table, code), delay);
     });
     return true;
   }
   const __sbv2OriginalMoveSelection = moveSelection;
   moveSelection = function(delta){ if(!__sbv2MoveByVisibleRows(delta)) return __sbv2OriginalMoveSelection(delta); };
-  document.addEventListener('keydown', function(event){
+  function __sbv2HandleArrowKey(event){
+    if(event.__sbv2Handled) return;
     if(event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
     const target = event.target;
     if(target && target.closest && target.closest('input,textarea,select,button,[contenteditable="true"]')) return;
     if(!document.querySelector('table.board tbody tr[data-code]')) return;
+    event.__sbv2Handled = true;
     event.preventDefault();
     event.stopImmediatePropagation();
     moveSelection(event.key === 'ArrowDown' ? 1 : -1);
-  }, true);
+  }
+  document.addEventListener('keydown', __sbv2HandleArrowKey, true);
+  window.addEventListener('keydown', __sbv2HandleArrowKey, true);
 
   // Hide the row-position freeze button. Pool row positions are already stable enough for the current design.
   if(rowPositionToggle){ rowPositionToggle.style.display = 'none'; }
@@ -263,16 +268,19 @@ def _ui_safety_patch(html: str) -> str:
     }
     return spacer;
   }
-  function __sbv2BoardRightEdge(){
-    const boxes = Array.from(document.querySelectorAll('.window, table.board')).map(el => {
-      const rect = el.getBoundingClientRect();
-      return rect.right + window.pageXOffset;
-    });
-    return Math.max(window.innerWidth, ...boxes, 0);
+  function __sbv2ColumnSum(){
+    try { return columns.reduce((sum, _c, i) => sum + Number(columnWidth(i) || 0), 0); }
+    catch(_e) { return 0; }
+  }
+  function __sbv2BoardWidth(){
+    const cssWidth = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--board-width')) || 0;
+    const tableWidths = Array.from(document.querySelectorAll('table.board'))
+      .map(table => Math.max(table.scrollWidth || 0, table.getBoundingClientRect().width || 0));
+    return Math.ceil(Math.max(cssWidth, __sbv2ColumnSum(), ...tableWidths, 0));
   }
   function __sbv2ApplyHorizontalScrollFix(){
-    const rightEdge = __sbv2BoardRightEdge();
-    const width = Math.ceil(Math.max(rightEdge + 48, window.innerWidth + 120));
+    const boardWidth = __sbv2BoardWidth();
+    const width = Math.ceil(Math.max(boardWidth + 24, window.innerWidth));
     document.documentElement.style.overflowX = 'auto';
     document.body.style.overflowX = 'auto';
     document.documentElement.style.minWidth = `${width}px`;
