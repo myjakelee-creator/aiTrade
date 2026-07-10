@@ -1,98 +1,12 @@
 {
-  "schema_version": 1,
-  "id": "FIVE_FACTOR_FLOW_V01",
-  "name": "5요소 수급선발 v0.1",
-  "label": "5요소 수급선발 v0.1",
-  "runtime_status": "server_ranking_engine_wired",
-  "runtime_engine": "stockboard_ranking_engine.FiveFactorFlowV01RankingEngine",
-  "purpose": "순위상승, 대금비, 순간강도, 프로그램 순매수, 5천만원 이상 대량체결을 결합해 현재 매수 후보 적합도를 100점으로 계산한다.",
-  "html_policy": "HTML은 계산하지 않고 worker가 전달한 점수·등급·설명·pool metadata만 표시한다.",
-  "excluded_scoring_items": [
-    {
-      "key": "bid_ask_ratio",
-      "label": "잔량비",
-      "reason": "대표님 승인에 따라 등급점수 제외"
-    },
-    {
-      "key": "strength_1m",
-      "label": "1분강도",
-      "reason": "신뢰성 문제로 등급점수 제외"
-    }
-  ],
-  "score_structure": {
-    "rank_rise_score": {
-      "max_points": 20,
-      "formula": "rank_rise_detail_score * 0.20"
-    },
-    "amount_ratio_score": {
-      "max_points": 20,
-      "formula": "relative_rank(trade_value_eok/prev_trade_value_eok) * 0.20"
-    },
-    "instant_strength_score": {
-      "max_points": 15,
-      "formula": "execution_strength_bucket * 0.15"
-    },
-    "program_score": {
-      "max_points": 10,
-      "formula": "relative_rank(program_net/trade_value_eok) * 0.10"
-    },
-    "large_trade_score": {
-      "max_points": 10,
-      "formula": "large_trade_net_ratio 60% + buy_amount_share 25% + buy_count_share 15%"
-    },
-    "combination_score": {
-      "max_points": 25,
-      "formula": "money_alignment 8 + execution_confirmation 7 + dual_flow 5 + strong_factor_count 5"
-    }
+  "schema_version":3,"id":"FIVE_FACTOR_FLOW_V01","name":"5요소 수급선발 v0.1","label":"5요소 수급선발 v0.1","runtime_status":"READY",
+  "purpose":"순위상승, 대금비, 순간강도, 프로그램 순매수, 대량체결과 조합품질을 계산한다.",
+  "required_features":["rank_gap","amount_ratio"],
+  "score_structure":{
+    "final_score":[{"key":"rank_gap","weight":20},{"key":"amount_ratio","weight":20},{"key":"instant_strength","weight":15},{"key":"program_net","weight":10},{"key":"large_trade","weight":10},{"key":"combination_quality","weight":25}],
+    "entry_score":[{"key":"rank_gap","weight":45},{"key":"amount_ratio","weight":55}],
+    "confirmation_score":[{"key":"rank_gap","weight":10},{"key":"amount_ratio","weight":25},{"key":"instant_strength","weight":25},{"key":"program_net","weight":15},{"key":"large_trade","weight":25}],
+    "focus_score":[{"key":"rank_gap","weight":20},{"key":"amount_ratio","weight":20},{"key":"instant_strength","weight":15},{"key":"program_net","weight":10},{"key":"large_trade","weight":10},{"key":"combination_quality","weight":25}]
   },
-  "stage_scores": {
-    "entry_score": "rank_rise_score 45% + amount_ratio_score 55%",
-    "confirmation_score": "rank_rise 10% + amount 25% + instant 25% + program 15% + large_trade 25%",
-    "focus_score": "final grade score; Top5 is not a separate lane"
-  },
-  "grade_policy": {
-    "display": "letter_with_score",
-    "fixed_direct_bands": {
-      "A": 90,
-      "B": 80,
-      "C": 70,
-      "D": 60,
-      "F": 0
-    },
-    "rule": "계산된 점수가 90점 이상이면 별도 판정 없이 A등급"
-  },
-  "layout_policy": {
-    "visible": [
-      "S1",
-      "Top20",
-      "Top300"
-    ],
-    "internal": [
-      "S1",
-      "Top20",
-      "Hidden Top50",
-      "Top300"
-    ],
-    "inside_lane_order": "기존 행 위치 고정; 값과 등급점수만 갱신",
-    "cross_lane": "기존 Hidden Top50 및 Top20 승격·강등 안전장치 사용",
-    "top5": "별도 lane 없음; 최상위 점수 5종목과 같은 개념"
-  },
-  "freshness_policy": {
-    "execution_strength_stale_sec": 3,
-    "program_net_stale_sec": 120,
-    "missing_score": 0
-  },
-  "data_requirements": [
-    "rank",
-    "prev_rank",
-    "trade_value_eok",
-    "prev_trade_value_eok",
-    "execution_strength",
-    "program_net",
-    "large_trade_buy_count",
-    "large_trade_sell_count",
-    "large_trade_buy_sum_eok",
-    "large_trade_sell_sum_eok",
-    "large_trade_net_sum_eok"
-  ]
+  "grade_guards":[],"funnel":{"top50":{"take":50},"top20":{"take":20},"top5":{"take":5}}
 }
