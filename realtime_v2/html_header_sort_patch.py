@@ -10,6 +10,7 @@ CONNECTION_MARKER = "STOCKBOARD_V2_CONNECTION_HEALTH_BADGE_20260710"
 FLASH_SCOPE_MARKER = "STOCKBOARD_V2_FLASH_SCOPE_20260710"
 POOL_INTERVAL_MARKER = "STOCKBOARD_V2_POOL_INTERVAL_20260710"
 WIDTH_THROTTLE_MARKER = "STOCKBOARD_V2_WIDTH_THROTTLE_20260710"
+FOCUS_THROTTLE_MARKER = "STOCKBOARD_V2_FOCUS_THROTTLE_20260710"
 MANUAL_SORT_KEY = "stockboard.v2.headerSortActive.v1"
 
 
@@ -267,6 +268,34 @@ def apply_width_throttle_patch(html: str) -> str:
     return html
 
 
+def apply_focus_throttle_patch(html: str) -> str:
+    if FOCUS_THROTTLE_MARKER in html:
+        return html
+
+    anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
+    patch = r'''
+  /* __FOCUS_THROTTLE_MARKER__ */
+  const __sbv2FocusThrottle = { lastAt: 0 };
+
+  if(typeof focusSelectedRow === 'function'){
+    const __sbv2OriginalFocusSelectedRow = focusSelectedRow;
+    focusSelectedRow = function(preventScroll=true){
+      if(!selectedCode) return;
+      const active = document.activeElement;
+      if(active && active.dataset && active.dataset.code === selectedCode) return;
+      const now = performance.now();
+      if(now - __sbv2FocusThrottle.lastAt < 250) return;
+      __sbv2FocusThrottle.lastAt = now;
+      return __sbv2OriginalFocusSelectedRow.call(this, preventScroll);
+    };
+  }
+'''.replace("__FOCUS_THROTTLE_MARKER__", FOCUS_THROTTLE_MARKER)
+
+    if anchor in html:
+        html = html.replace(anchor, f"{patch}\n{anchor}", 1)
+    return html
+
+
 def install(base, large_module) -> None:
     handler = base.WebHandler
     if getattr(handler, "_stockboard_header_sort_patch_installed", False):
@@ -288,6 +317,7 @@ def install(base, large_module) -> None:
                 html = apply_flash_scope_patch(html)
                 html = apply_pool_interval_patch(html)
                 html = apply_width_throttle_patch(html)
+                html = apply_focus_throttle_patch(html)
                 body = html.encode("utf-8")
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
