@@ -46,18 +46,18 @@ def apply_header_sort_patch(html: str) -> str:
     html = html.replace(old, new, 1)
 
     anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
-    patch = f'''
-  /* {MARKER} */
+    patch = r'''
+  /* __MARKER__ */
   window.__sbv2HeaderSortActive = window.__sbv2HeaderSortActive || false;
-  function __sbv2ClientSortActive(displayOrderPaused){{
+  function __sbv2ClientSortActive(displayOrderPaused){
     if(!displayOrderPaused) return true;
-    try{{
-      return !!window.__sbv2HeaderSortActive || localStorage.getItem('{MANUAL_SORT_KEY}') === '1';
-    }}catch(_e){{
+    try{
+      return !!window.__sbv2HeaderSortActive || localStorage.getItem('__MANUAL_SORT_KEY__') === '1';
+    }catch(_e){
       return !!window.__sbv2HeaderSortActive;
-    }}
-  }}
-'''
+    }
+  }
+'''.replace("__MARKER__", MARKER).replace("__MANUAL_SORT_KEY__", MANUAL_SORT_KEY)
     if anchor in html:
         html = html.replace(anchor, f"{patch}\n{anchor}", 1)
     return html
@@ -71,45 +71,45 @@ def apply_connection_health_patch(html: str) -> str:
     html = html.replace(old, "__sbv2UpdateConnectionHealth(payload,mode,phase);", 1)
 
     anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
-    patch = f'''
-  /* {CONNECTION_MARKER} */
-  function __sbv2SecondsSinceIso(value){{
+    patch = r'''
+  /* __CONNECTION_MARKER__ */
+  function __sbv2SecondsSinceIso(value){
     const parsed = Date.parse(value || '');
     return Number.isFinite(parsed) ? Math.max(0, (Date.now() - parsed) / 1000) : null;
-  }}
-  function __sbv2UpdateConnectionHealth(payload, mode, phase){{
-    const st = (payload && payload.status) || {{}};
-    const collector = st.collector_status || {{}};
-    const sender = collector.sender_stats || {{}};
+  }
+  function __sbv2UpdateConnectionHealth(payload, mode, phase){
+    const st = (payload && payload.status) || {};
+    const collector = st.collector_status || {};
+    const sender = collector.sender_stats || {};
     const providerStarted = collector.provider_started === true;
     const registered = Number(collector.registered_count || 0);
     const senderConnected = sender.connected === true;
     const eventCount = Number(st.event_count || 0);
     const tradeCount = Number(st.trade_count || 0);
     const lastAge = __sbv2SecondsSinceIso(st.last_event_at || collector.ts || payload.ts);
-    const phaseText = phase ? ` · ${{phase}}` : '';
+    const phaseText = phase ? ` · ${phase}` : '';
     let label = '';
     let cls = 'badge bad';
-    if(!providerStarted || registered <= 0){{
-      label = `연결 대기${{phaseText}}`;
+    if(!providerStarted || registered <= 0){
+      label = `연결 대기${phaseText}`;
       cls = 'badge bad';
-    }}else if(!senderConnected){{
-      label = `collector 끊김${{phaseText}}`;
+    }else if(!senderConnected){
+      label = `collector 끊김${phaseText}`;
       cls = 'badge bad';
-    }}else if(lastAge !== null && lastAge > 8){{
-      label = `연결 지연 ${{lastAge.toFixed(1)}}s${{phaseText}}`;
+    }else if(lastAge !== null && lastAge > 8){
+      label = `연결 지연 ${lastAge.toFixed(1)}s${phaseText}`;
       cls = 'badge warn';
-    }}else if(eventCount <= 0 && tradeCount <= 0){{
-      label = `수신 대기${{phaseText}}`;
+    }else if(eventCount <= 0 && tradeCount <= 0){
+      label = `수신 대기${phaseText}`;
       cls = 'badge warn';
-    }}else{{
-      label = `연결 OK${{phaseText}}`;
+    }else{
+      label = `연결 OK${phaseText}`;
       cls = mode === 'stream' ? 'badge ok' : 'badge warn';
-    }}
+    }
     statusEl.textContent = label;
     statusEl.className = cls;
-  }}
-'''
+  }
+'''.replace("__CONNECTION_MARKER__", CONNECTION_MARKER)
     if anchor in html:
         html = html.replace(anchor, f"{patch}\n{anchor}", 1)
     return html
@@ -196,17 +196,17 @@ def apply_pool_interval_patch(html: str) -> str:
     )
 
     anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
-    patch = f'''
-  /* {POOL_INTERVAL_MARKER} */
-  function __sbv2PoolDietIntervalMs(){{
+    patch = r'''
+  /* __POOL_INTERVAL_MARKER__ */
+  function __sbv2PoolDietIntervalMs(){
     const now = new Date();
     const minutes = now.getHours() * 60 + now.getMinutes();
     const phase = String(lastPayload?.market_session?.phase || lastPayload?.status?.market_phase || '').toLowerCase();
-    if(minutes >= 9 * 60 && minutes < 9 * 60 + 10) return 1800;
-    if(phase.includes('after')) return 1200;
-    return 900;
-  }}
-'''
+    if(minutes >= 9 * 60 && minutes < 9 * 60 + 10) return 2500;
+    if(phase.includes('after')) return 2000;
+    return 1500;
+  }
+'''.replace("__POOL_INTERVAL_MARKER__", POOL_INTERVAL_MARKER)
     if anchor in html:
         html = html.replace(anchor, f"{patch}\n{anchor}", 1)
     return html
