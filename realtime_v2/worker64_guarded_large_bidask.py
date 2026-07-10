@@ -20,6 +20,28 @@ def _runtime_dir() -> Path:
         return ROOT / "data" / "runtime" / "stockboard_v2"
 
 
+def _write_patch_error(filename: str, error: Exception) -> None:
+    try:
+        runtime = _runtime_dir()
+        runtime.mkdir(parents=True, exist_ok=True)
+        (runtime / filename).write_text(
+            f"{type(error).__name__}: {error}\n\n{traceback.format_exc()}",
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _install_display_hold_fail_open() -> None:
+    try:
+        from realtime_v2.display_hold_policy_patch import install as install_display_hold
+
+        install_display_hold(base)
+    except Exception as error:
+        # Optional display carry-forward policy must never kill the worker.
+        _write_patch_error("display_hold_patch_error.txt", error)
+
+
 def _install_bidask_patch_fail_open() -> None:
     try:
         from realtime_v2.bidask_last_cache_patch import install as install_bidask_last_cache
@@ -27,19 +49,22 @@ def _install_bidask_patch_fail_open() -> None:
         install_bidask_last_cache(base)
     except Exception as error:
         # The web worker must never die because an optional display/cache patch failed.
-        # Keep the board alive and leave a concrete log file for diagnosis.
-        try:
-            runtime = _runtime_dir()
-            runtime.mkdir(parents=True, exist_ok=True)
-            (runtime / "bidask_worker_patch_error.txt").write_text(
-                f"{type(error).__name__}: {error}\n\n{traceback.format_exc()}",
-                encoding="utf-8",
-            )
-        except Exception:
-            pass
+        _write_patch_error("bidask_worker_patch_error.txt", error)
+
+
+def _install_header_sort_patch_fail_open() -> None:
+    try:
+        from realtime_v2.html_header_sort_patch import install as install_header_sort
+
+        install_header_sort(base, large)
+    except Exception as error:
+        # Sorting patch is UI-only; keep the web worker alive on any failure.
+        _write_patch_error("html_header_sort_patch_error.txt", error)
 
 
 _install_bidask_patch_fail_open()
+_install_display_hold_fail_open()
+_install_header_sort_patch_fail_open()
 
 if __name__ == "__main__":
     raise SystemExit(base.main())
