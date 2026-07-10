@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 from urllib.request import urlopen
 
+from realtime_v2.market_session import market_session_now
+
 ROOT = Path(__file__).resolve().parents[1]
 SELECTED_PATH = ROOT / "data" / "runtime" / "stockboard_v2" / "selected_code.json"
 COMMAND_RE = re.compile(r"^SBV2\|[^|]+\|(\d{6})$")
@@ -30,6 +32,7 @@ def _clipboard_text() -> str:
         return ""
     try:
         import ctypes
+
         user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
         if not user32.OpenClipboard(None):
             return ""
@@ -60,7 +63,16 @@ def _save_selected(code: str) -> None:
     try:
         SELECTED_PATH.parent.mkdir(parents=True, exist_ok=True)
         temp = SELECTED_PATH.with_suffix(".tmp")
-        temp.write_text(json.dumps({"stock_code": code, "updated_at": datetime.now().isoformat(timespec="seconds")}, ensure_ascii=False), encoding="utf-8")
+        temp.write_text(
+            json.dumps(
+                {
+                    "stock_code": code,
+                    "updated_at": datetime.now().isoformat(timespec="seconds"),
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
         os.replace(temp, SELECTED_PATH)
     except OSError:
         pass
@@ -87,7 +99,8 @@ def _model_rank(row: dict[str, Any], fallback: int) -> int:
 
 
 def build_lane_plan(base, payload: dict[str, Any], selected: str = "") -> list[dict[str, Any]]:
-    """Preserve current Top20 membership; classify only query priority."""
+    """Classify query priority using the already-stable worker display order."""
+
     rows = [row for row in payload.get("rows", []) if isinstance(row, dict)]
     by_code = {_code(base, row.get("stock_code")): row for row in rows}
     result: list[dict[str, Any]] = []
@@ -102,14 +115,23 @@ def build_lane_plan(base, payload: dict[str, Any], selected: str = "") -> list[d
     selected = _code(base, selected)
     if selected:
         add(selected, "s1", by_code.get(selected))
+
+    # First 20 rows are current protected Top20 membership, not score-sort output.
     for row in rows[:20]:
         add(row.get("stock_code"), "top20", row)
+
+    # Hidden Top50 is a query-priority lane only. It does not alter display order.
     hidden = sorted(
-        ((index, row) for index, row in enumerate(rows[20:], 21) if 21 <= _model_rank(row, index) <= 50),
+        (
+            (index, row)
+            for index, row in enumerate(rows[20:], 21)
+            if 21 <= _model_rank(row, index) <= 50
+        ),
         key=lambda item: (_model_rank(item[1], item[0]), item[0]),
     )
     for _index, row in hidden:
         add(row.get("stock_code"), "hidden50", row)
+
     for row in rows[20:]:
         add(row.get("stock_code"), "top300", row)
     return result
@@ -129,8 +151,22 @@ def _timestamp(value: Any) -> datetime | None:
 
 
 def _age(row: dict[str, Any]) -> float | None:
-    parsed = _timestamp(row.get("strength_completed_at") or row.get("strength_snapshot_at") or row.get("last_valid_strength_at"))
+    parsed = _timestamp(
+        row.get("strength_completed_at")
+        or row.get("strength_snapshot_at")
+        or row.get("last_valid_strength_at")
+    )
     return max(0.0, (datetime.now() - parsed).total_seconds()) if parsed else None
+
+
+def _clock_minutes(text: Any, fallback: str) -> int:
+    value = str(text or fallback).strip()
+    try:
+        hour_text, minute_text = value.split(":", 1)
+        return int(hour_text) * 60 + int(minute_text[:2])
+    except (TypeError, ValueError):
+        hour_text, minute_text = fallback.split(":", 1)
+        return int(hour_text) * 60 + int(minute_text)
 
 
 class Strength5mScheduler(threading.Thread):
@@ -141,23 +177,48 @@ class Strength5mScheduler(threading.Thread):
         super().__init__(name="StockBoardStrength5mScheduler", daemon=True)
         self.base, self.provider = base, provider
         self.stop_event = threading.Event()
-        self.url = os.getenv("STOCKBOARD_V2_WORKER_SNAPSHOT_URL", "http://127.0.0.1:8765/api/v2/snapshot?limit=300")
-        self.poll_sec = max(2.0, float(os.getenv("STOCKBOARD_STRENGTH_5M_SNAPSHOT_POLL_SEC", "5")))
-        self.normal_gap = max(1.05, float(os.getenv("STOCKBOARD_STRENGTH_5M_GLOBAL_GAP_SEC", "1.25")))
-        self.opening_gap = max(self.normal_gap, float(os.getenv("STOCKBOARD_STRENGTH_5M_OPENING_GAP_SEC", "2")))
+        self.url = os.getenv(
+            "STOCKBOARD_V2_WORKER_SNAPSHOT_URL",
+            "http://127.0.0.1:8765/api/v2/snapshot?limit=300",
+        )
+        self.poll_sec = max(
+            2.0,
+            float(os.getenv("STOCKBOARD_STRENGTH_5M_SNAPSHOT_POLL_SEC", "5")),
+        )
+        self.normal_gap = max(
+            1.05,
+            float(os.getenv("STOCKBOARD_STRENGTH_5M_GLOBAL_GAP_SEC", "1.25")),
+        )
+        self.opening_gap = max(
+            self.normal_gap,
+            float(os.getenv("STOCKBOARD_STRENGTH_5M_OPENING_GAP_SEC", "2")),
+        )
         self.selected = _load_selected(base)
         self.payload: dict[str, Any] = {}
         self.last_poll = 0.0
         self.local_last: dict[str, float] = {}
         self.enqueue_count = self.busy_skips = self.snapshot_errors = 0
+        self.market_closed_skips = 0
         self.last_code = self.last_lane = ""
         self.last_cycle_at = self.last_error = None
+        self.last_market_phase = "unknown"
 
-    @staticmethod
-    def opening() -> bool:
+    def _session(self):
+        return market_session_now()
+
+    def _market_accepts_strength_query(self) -> bool:
+        session = self._session()
+        self.last_market_phase = session.phase
+        return bool(session.is_trading_day and session.accept_realtime)
+
+    def opening(self) -> bool:
+        session = self._session()
+        windows = session.windows or {}
+        regular_start = _clock_minutes(windows.get("regular_start"), "09:00")
         now = datetime.now()
         minute = now.hour * 60 + now.minute
-        return 535 <= minute < 550
+        # Protect five minutes before and ten minutes after the calendar-defined open.
+        return regular_start - 5 <= minute < regular_start + 10
 
     def intervals(self) -> dict[str, float]:
         return self.OPENING if self.opening() else self.NORMAL
@@ -184,12 +245,31 @@ class Strength5mScheduler(threading.Thread):
         if lock is None:
             return False
         with lock:
-            if any((getattr(provider, "_strength_probe_inflight", None), getattr(provider, "_orderbook_probe_inflight", None), getattr(provider, "_opt10055_probe_inflight", None))):
+            if any(
+                (
+                    getattr(provider, "_strength_probe_inflight", None),
+                    getattr(provider, "_orderbook_probe_inflight", None),
+                    getattr(provider, "_opt10055_probe_inflight", None),
+                )
+            ):
                 return False
-            queues = ("_strength_probe_pending", "_orderbook_probe_pending", "_opt10055_probe_pending", "_close_metrics_queue")
+            queues = (
+                "_strength_probe_pending",
+                "_orderbook_probe_pending",
+                "_opt10055_probe_pending",
+                "_close_metrics_queue",
+            )
             if any(len(getattr(provider, name, ())) for name in queues):
                 return False
-            last = max(float(getattr(provider, name, 0.0) or 0.0) for name in ("_strength_probe_last_request_at", "_orderbook_probe_last_request_at", "_opt10055_probe_last_request_at", "_close_metrics_last_request_at"))
+            last = max(
+                float(getattr(provider, name, 0.0) or 0.0)
+                for name in (
+                    "_strength_probe_last_request_at",
+                    "_orderbook_probe_last_request_at",
+                    "_opt10055_probe_last_request_at",
+                    "_close_metrics_last_request_at",
+                )
+            )
         return time.monotonic() - last >= self.gap()
 
     def _due(self, item: dict[str, Any]) -> tuple[bool, float]:
@@ -205,28 +285,47 @@ class Strength5mScheduler(threading.Thread):
             age = local_age if age is None else min(age, local_age)
         if status in {"error", "timeout"}:
             interval = min(interval, 60.0)
-        return (True, float("inf")) if age is None else (age >= interval, age / max(interval, 1.0))
+        return (
+            (True, float("inf"))
+            if age is None
+            else (age >= interval, age / max(interval, 1.0))
+        )
 
     def cycle(self) -> None:
         self.last_cycle_at = datetime.now().isoformat(timespec="seconds")
         self._refresh()
         if not self.payload:
             return
+        if not self._market_accepts_strength_query():
+            self.market_closed_skips += 1
+            return
         if not self._idle():
             self.busy_skips += 1
             return
+
         lane_order = {"s1": 0, "top20": 1, "hidden50": 2, "top300": 3}
         candidates = []
-        for index, item in enumerate(build_lane_plan(self.base, self.payload, self.selected)):
+        for index, item in enumerate(
+            build_lane_plan(self.base, self.payload, self.selected)
+        ):
             due, overdue = self._due(item)
             if due:
                 candidates.append((lane_order[item["lane"]], -overdue, index, item))
         if not candidates:
             return
+
         item = min(candidates)[3]
         code, lane = item["stock_code"], item["lane"]
-        response = self.provider.enqueue_strength_probe(code, priority="active" if lane in {"s1", "top20"} else "background", force=True)
-        if str((response or {}).get("status") or "") in {"pending", "requested", "deferred"}:
+        response = self.provider.enqueue_strength_probe(
+            code,
+            priority="active" if lane in {"s1", "top20"} else "background",
+            force=True,
+        )
+        if str((response or {}).get("status") or "") in {
+            "pending",
+            "requested",
+            "deferred",
+        }:
             self.local_last[code] = time.monotonic()
             self.last_code, self.last_lane = code, lane
             self.enqueue_count += 1
@@ -243,7 +342,24 @@ class Strength5mScheduler(threading.Thread):
         self.stop_event.set()
 
     def stats(self) -> dict[str, Any]:
-        return {"enabled": True, "alive": self.is_alive(), "opening_burst": self.opening(), "intervals_sec": self.intervals(), "global_gap_sec": self.gap(), "selected_code": self.selected or None, "last_enqueued_code": self.last_code or None, "last_enqueued_lane": self.last_lane or None, "enqueue_count": self.enqueue_count, "skip_busy_count": self.busy_skips, "snapshot_error_count": self.snapshot_errors, "last_cycle_at": self.last_cycle_at, "last_error": self.last_error}
+        return {
+            "enabled": True,
+            "alive": self.is_alive(),
+            "market_phase": self.last_market_phase,
+            "market_accepts_query": self._market_accepts_strength_query(),
+            "opening_burst": self.opening(),
+            "intervals_sec": self.intervals(),
+            "global_gap_sec": self.gap(),
+            "selected_code": self.selected or None,
+            "last_enqueued_code": self.last_code or None,
+            "last_enqueued_lane": self.last_lane or None,
+            "enqueue_count": self.enqueue_count,
+            "skip_busy_count": self.busy_skips,
+            "skip_market_closed_count": self.market_closed_skips,
+            "snapshot_error_count": self.snapshot_errors,
+            "last_cycle_at": self.last_cycle_at,
+            "last_error": self.last_error,
+        }
 
 
 def install(base) -> None:
@@ -255,7 +371,12 @@ def install(base) -> None:
     original_status = provider_class.status
 
     def enabled() -> bool:
-        return str(os.getenv("STOCKBOARD_STRENGTH_5M_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+        return str(os.getenv("STOCKBOARD_STRENGTH_5M_ENABLED", "1")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
     def register(self, codes):
         result = original_register(self, codes)
@@ -278,7 +399,11 @@ def install(base) -> None:
         result = original_status(self)
         result = result if isinstance(result, dict) else {"status": result}
         scheduler = getattr(self, "_stockboard_strength5m_scheduler", None)
-        result["strength5m_scheduler"] = scheduler.stats() if scheduler is not None else {"enabled": enabled(), "alive": False}
+        result["strength5m_scheduler"] = (
+            scheduler.stats()
+            if scheduler is not None
+            else {"enabled": enabled(), "alive": False}
+        )
         return result
 
     provider_class.register_codes = register
