@@ -104,7 +104,7 @@ function Stop-LargeProcesses {
     Stop-PidFile $ContextPidFile "context_snapshot_writer"
     try {
         Get-CimInstance Win32_Process -ErrorAction Stop |
-            Where-Object { $_.CommandLine -and ($_.CommandLine -like "*realtime_v2\collector32_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded_large.py*") } |
+            Where-Object { $_.CommandLine -and ($_.CommandLine -like "*realtime_v2\collector32_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded_large_hotfix.py*") } |
             ForEach-Object {
                 Write-Host "Stopping large wrapper PID=$($_.ProcessId)"
                 Stop-Process -Id ([int]$_.ProcessId) -Force -ErrorAction SilentlyContinue
@@ -177,8 +177,8 @@ function Start-V2Large([bool]$FastOpen = $false) {
     Set-Content -LiteralPath $ContextPidFile -Value $context.Id -Encoding ASCII
     Write-Host "CONTEXT_PID=$($context.Id)"
 
-    Write-Step "Starting 64-bit guarded worker with large-trade delta support"
-    $worker = Start-Process -FilePath $Python64 -ArgumentList @("realtime_v2\worker64_guarded_large.py") -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $workerOut -RedirectStandardError $workerErr -PassThru
+    Write-Step "Starting 64-bit guarded worker with large-trade UI hotfix support"
+    $worker = Start-Process -FilePath $Python64 -ArgumentList @("realtime_v2\worker64_guarded_large_hotfix.py") -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $workerOut -RedirectStandardError $workerErr -PassThru
     Set-Content -LiteralPath $WorkerPidFile -Value $worker.Id -Encoding ASCII
     Write-Host "WORKER64_PID=$($worker.Id)"
     Write-Host "WORKER64_STDOUT=$workerOut"
@@ -304,7 +304,7 @@ function Doctor-V2Large {
     Add-Line "HAS_WORKER_LARGE=$(Test-Path -LiteralPath (Join-Path $ProjectRoot 'realtime_v2\worker64_guarded_large.py'))"
 
     try {
-        & $Python64 -m py_compile (Join-Path $ProjectRoot "realtime_v2\collector32_large.py") (Join-Path $ProjectRoot "realtime_v2\worker64_guarded_large.py")
+        & $Python64 -m py_compile (Join-Path $ProjectRoot "realtime_v2\collector32_large.py") (Join-Path $ProjectRoot "realtime_v2\worker64_guarded_large.py") (Join-Path $ProjectRoot "realtime_v2\worker64_guarded_large_hotfix.py")
         Add-Line "PY_COMPILE=True"
     } catch {
         Add-Line "PY_COMPILE=False"
@@ -313,7 +313,7 @@ function Doctor-V2Large {
 
     try {
         $procRows = @(Get-CimInstance Win32_Process -ErrorAction Stop |
-            Where-Object { $_.CommandLine -and ($_.CommandLine -like "*realtime_v2\collector32_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded.py*" -or $_.CommandLine -like "*realtime_v2\collector32.py*") } |
+            Where-Object { $_.CommandLine -and ($_.CommandLine -like "*realtime_v2\collector32_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded_large.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded_large_hotfix.py*" -or $_.CommandLine -like "*realtime_v2\worker64_guarded.py*" -or $_.CommandLine -like "*realtime_v2\collector32.py*") } |
             Select-Object ProcessId, Name, CommandLine)
         Add-Line "MATCHED_PROCESS_COUNT=$($procRows.Count)"
         foreach ($p in $procRows) {
