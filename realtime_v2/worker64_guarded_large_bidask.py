@@ -32,6 +32,16 @@ def _write_patch_error(filename: str, error: Exception) -> None:
         pass
 
 
+def _install_bidask_patch_fail_open() -> None:
+    try:
+        from realtime_v2.bidask_last_cache_patch import install as install_bidask_last_cache
+
+        install_bidask_last_cache(base)
+    except Exception as error:
+        # The web worker must never die because an optional display/cache patch failed.
+        _write_patch_error("bidask_worker_patch_error.txt", error)
+
+
 def _install_display_hold_fail_open() -> None:
     try:
         from realtime_v2.display_hold_policy_patch import install as install_display_hold
@@ -42,14 +52,14 @@ def _install_display_hold_fail_open() -> None:
         _write_patch_error("display_hold_patch_error.txt", error)
 
 
-def _install_bidask_patch_fail_open() -> None:
+def _install_display_hold_ohlc_price_fail_open() -> None:
     try:
-        from realtime_v2.bidask_last_cache_patch import install as install_bidask_last_cache
+        from realtime_v2.display_hold_ohlc_price_patch import install as install_ohlc_price_hold
 
-        install_bidask_last_cache(base)
+        install_ohlc_price_hold(base)
     except Exception as error:
-        # The web worker must never die because an optional display/cache patch failed.
-        _write_patch_error("bidask_worker_patch_error.txt", error)
+        # OHLC-derived close-price fallback is optional; keep worker alive on failure.
+        _write_patch_error("display_hold_ohlc_price_patch_error.txt", error)
 
 
 def _install_header_sort_patch_fail_open() -> None:
@@ -64,6 +74,7 @@ def _install_header_sort_patch_fail_open() -> None:
 
 _install_bidask_patch_fail_open()
 _install_display_hold_fail_open()
+_install_display_hold_ohlc_price_fail_open()
 _install_header_sort_patch_fail_open()
 
 if __name__ == "__main__":
