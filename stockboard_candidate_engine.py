@@ -151,7 +151,7 @@ class ConfigDrivenCandidateRankingEngine:
         top50_sorted = sorted(top50, key=lambda row: (row.get("candidate_status") == "WAIT_DATA", -(row.get("confirmation_score") or 0), -(row.get("entry_score") or 0), row.get("_source_rank") or 999999))
         top20 = top50_sorted[:top20_take]
         remaining50 = top50_sorted[top20_take:]
-        top20_sorted = sorted(top20, key=lambda row: (row.get("candidate_status") == "WAIT_DATA", -(row.get("focus_score") or 0), -(row.get("candidate_score") or 0), row.get("_source_rank") or 99999))
+        top20_sorted = sorted(top20, key=lambda row: (row.get("candidate_status") == "WAIT_DATA", -(row.get("focus_score") or 0), -(row.get("candidate_score") or 0), row.get("_source_rank") or 999999))
         top5 = top20_sorted[:top5_take]
         remaining20 = top20_sorted[top5_take:]
         ordered = [*top5, *remaining20, *remaining50, *rest]
@@ -173,10 +173,10 @@ class ConfigDrivenCandidateRankingEngine:
 
     def _momentum(self, items: list[dict[str, Any]]) -> str:
         labels = [str(item.get("label")) for item in items if (_number_or_none(item.get("points")) or 0) >= 70 and (_number_or_none(item.get("weight")) or 0) > 0]
-        return " + ".join(labels[:4]) if labels else "선발신호 약"
+        return " + ".join(labels[:4]) if labels else "선발신호 약함"
 
     def _reason(self, items: list[dict[str, Any]]) -> str:
-        return " + ".join(f"{item.get('label')} {_score_text(item.get('points'))}점 " for item in items)
+        return " + ".join(f"{item.get('label')} {_score_text(item.get('points'))}점" for item in items)
 
 
 class FiveFactorFlowV01RankingEngine(ConfigDrivenCandidateRankingEngine):
