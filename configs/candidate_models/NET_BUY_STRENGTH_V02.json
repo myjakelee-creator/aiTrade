@@ -1,66 +1,83 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "NET_BUY_STRENGTH_V02",
-  "name": "순매수 강도 v0.2",
-  "label": "순매수 강도 v0.2",
+  "name": "순매수 강도 v0.2 · 5분강도",
+  "label": "순매수 강도 v0.2 · 5분강도",
   "runtime_status": "ranking_engine_standard_launcher_wired",
   "runtime_engine": "stockboard_ranking_engine.enrich_net_buy_strength_v02_fields",
-  "purpose": "순위, 전일 순위상승, 거래대금/전일 거래대금, 잔량비, 순간강도, 1분강도, 프로그램 순매수/거래대금을 평가해 총점이 높은 종목부터 전체 줄세우기한다.",
+  "purpose": "기존 순매수 강도 v0.2의 1분강도 항목을 키움 조회 원천 strength_5m으로 교체한다.",
   "total_points": 700,
   "regular_total_points": 700,
-  "after_close_total_points": 600,
-  "denominator_policy": "장중에는 7개 항목 700점을 분모로 쓰고, 장마감에는 1분강도 항목을 계산에서 제외해 6개 항목 600점을 분모로 쓴다.",
+  "after_close_total_points": 700,
+  "denominator_policy": "장중과 장마감 모두 7개 항목 700점. strength_5m 미조회 종목은 해당 항목 0점·missing 처리한다.",
   "items": [
-    {"key": "rank", "label": "순위", "max_score": 100, "method": "filtered_pool_rank_100_to_0"},
-    {"key": "previous_rank", "label": "전일", "max_score": 100, "method": "min(max(prev_rank-rank,0),100)"},
-    {"key": "trade_value_ratio", "label": "금액(억)", "max_score": 100, "method": "rank(trade_value_eok/prev_trade_value_eok)_100_to_0", "fallback_score": 60, "fallback_label": "전일대금 미확인 60점"},
-    {"key": "ask_share", "label": "잔량비", "max_score": 100, "method": "ask_volume/(bid_volume+ask_volume)*100"},
-    {"key": "instant_strength", "label": "순간강도", "max_score": 100, "method": "min(max(realtime_strength,0),200)/200*100"},
-    {"key": "one_min_strength", "label": "1분강도", "max_score": 100, "after_close_max_score": 0, "method": "regular: rank(one_min_strength_growth_rate or one_min_strength_delta)_100_to_0; after-close: strength_5m display only, excluded from score denominator", "after_close_source": "strength_5m_after_close", "regular_missing_fallback_score": 50},
-    {"key": "program_ratio", "label": "프로(억)", "max_score": 100, "method": "rank(program_net/trade_value_eok)_100_to_0_when_program_net_positive", "zero_rule": "program_net<=0 => 0"}
+    {
+      "key": "rank",
+      "label": "순위",
+      "max_score": 100,
+      "method": "filtered_pool_rank_100_to_0"
+    },
+    {
+      "key": "previous_rank",
+      "label": "전일",
+      "max_score": 100,
+      "method": "min(max(prev_rank-rank,0),100)"
+    },
+    {
+      "key": "trade_value_ratio",
+      "label": "금액(억)",
+      "max_score": 100,
+      "method": "rank(trade_value_eok/prev_trade_value_eok)_100_to_0",
+      "fallback_score": 60
+    },
+    {
+      "key": "ask_share",
+      "label": "잔량비",
+      "max_score": 100,
+      "method": "ask_volume/(bid_volume+ask_volume)*100"
+    },
+    {
+      "key": "instant_strength",
+      "label": "순간강도",
+      "max_score": 100,
+      "method": "execution_strength absolute score"
+    },
+    {
+      "key": "five_min_strength",
+      "label": "5분강도",
+      "max_score": 100,
+      "method": "Kiwoom strength_5m absolute score",
+      "missing_score": 0
+    },
+    {
+      "key": "program_ratio",
+      "label": "프로(억)",
+      "max_score": 100,
+      "method": "rank(program_net/trade_value_eok)_100_to_0_when_positive"
+    }
   ],
   "grade_policy": {
     "display": "letter_with_score",
-    "base_bands": {
+    "fixed_direct_bands": {
       "A": 90,
       "B": 80,
       "C": 70,
       "D": 60,
       "F": 0
-    },
-    "fixed_rule": "90점 이상 A, 80~89점 B, 70~79점 C, 60~69점 D, 60점 미만 F"
+    }
   },
   "pool_policy": {
-    "sort": "score_percent desc, score_total_points desc, rank asc, trade_value_eok desc",
-    "top5": {"from_rank": 1, "to_rank": 5, "lane": "HOT"},
-    "top20": {"from_rank": 6, "to_rank": 20, "lane": "HOT"},
-    "top50": {"from_rank": 21, "to_rank": 50, "lane": "MID"},
-    "top300": {"from_rank": 51, "to_rank": null, "lane": "POOL"}
-  },
-  "data_requirements": {
-    "required_for_regular_full_score": [
-      "rank",
-      "prev_rank",
-      "trade_value_eok",
-      "prev_trade_value_eok",
-      "bid_volume or bid_volume_snapshot",
-      "ask_volume or ask_volume_snapshot",
-      "realtime_strength or execution_strength",
-      "one_min_strength_growth_rate or one_min_strength_delta",
-      "program_net"
-    ],
-    "required_for_after_close_full_score": [
-      "rank",
-      "prev_rank",
-      "trade_value_eok",
-      "prev_trade_value_eok",
-      "bid_volume or bid_volume_snapshot",
-      "ask_volume or ask_volume_snapshot",
-      "realtime_strength or execution_strength",
-      "program_net"
-    ],
-    "display_only_after_close": ["strength_5m"],
-    "never_store_missing_as_zero": ["prev_trade_value_eok"],
-    "fallback": "전일 거래대금 최종 실패 시 금액(억) 항목 60점 고정 + 화면 표시. 정규장 1분강도와 5분강도가 모두 없으면 정규장 1분강도 항목은 중립 50점. 장마감에는 1분강도 항목을 계산에서 제외하고 strength_5m는 표시만 한다."
+    "top20": {
+      "from_rank": 1,
+      "to_rank": 20
+    },
+    "top50": {
+      "from_rank": 21,
+      "to_rank": 50
+    },
+    "top300": {
+      "from_rank": 51,
+      "to_rank": null
+    }
   }
 }
