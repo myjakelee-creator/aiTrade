@@ -37,6 +37,7 @@ SESSION = SimpleNamespace(
     windows={
         "regular_close": "15:30",
         "regular_start": "09:00",
+        "aftermarket_end": "20:00",
     },
 )
 
@@ -55,13 +56,16 @@ def test_regular_close_sweep_is_active_during_after_wait_and_early_aftermarket()
     ) == datetime(2026, 7, 10, 15, 30)
 
 
-def test_regular_close_sweep_stops_after_configured_window():
+def test_regular_close_sweep_remains_available_through_aftermarket():
     scheduler = Strength5mScheduler(DummyBase, DummyProvider())
-    scheduler.close_sweep_minutes = 30
 
     assert scheduler._close_sweep_cutoff(
         SESSION,
-        datetime(2026, 7, 10, 16, 0),
+        datetime(2026, 7, 10, 17, 0),
+    ) == datetime(2026, 7, 10, 15, 30)
+    assert scheduler._close_sweep_cutoff(
+        SESSION,
+        datetime(2026, 7, 10, 20, 0),
     ) is None
 
 
