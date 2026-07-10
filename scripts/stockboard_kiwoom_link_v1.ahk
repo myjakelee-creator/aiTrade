@@ -20,7 +20,8 @@ SetBatchLines, -1
 ; - Never focus HTS/Edit6.
 ; - Never send keys to the foreground window.
 ; - Write the code only to one verified Edit6 HWND.
-; - Enter is posted only to that Edit6 HWND, so StockBoard keeps browser focus for ArrowUp/Down.
+; - Enter is posted only to that Edit6 HWND.
+; - After HTS linkage, reactivate the previous browser/page window so ArrowUp/Down keeps working.
 
 TargetControl := "Edit6"
 SendEnterAfterSet := true
@@ -91,9 +92,14 @@ ParseStockCommand(rawText, ByRef commandId, ByRef code, ByRef parseMode) {
 SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
     global SendEnterAfterSet
 
+    ; StockBoard/Chrome should be the active window at click or Arrow navigation time.
+    ; Keep that hwnd and restore it after the HTS control-only operation.
+    WinGet, previousHwnd, ID, A
+
     target := FindSingleTargetControl(usedSpec, message)
     if (!IsObject(target)) {
         TrayTip, StockBoard Kiwoom Link v2, %message%, 3
+        RestorePreviousWindow(previousHwnd)
         return false
     }
 
@@ -104,6 +110,7 @@ SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
         if (ErrorLevel) {
             message := "ControlSetText failed: " . usedSpec
             TrayTip, StockBoard Kiwoom Link v2, %message%, 3
+            RestorePreviousWindow(previousHwnd)
             return false
         }
         Sleep, 35
@@ -117,18 +124,21 @@ SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
     if (readback != code) {
         message := "Edit6 set failed. expected " . code . ", got " . readback
         TrayTip, StockBoard Kiwoom Link v2, %message%, 3
+        RestorePreviousWindow(previousHwnd)
         return false
     }
 
     if (SendEnterAfterSet) {
         if (PostEnterToEdit(controlHwnd)) {
-            message := "OK " . code . " / enter posted to Edit6 HWND without focus / " . usedSpec
+            message := "OK " . code . " / enter posted to Edit6 HWND without HTS focus / " . usedSpec
         } else {
             message := "OK " . code . " / code set only, Enter post failed safely / " . usedSpec
         }
     } else {
         message := "OK " . code . " / code set only, enter blocked / " . usedSpec
     }
+
+    RestorePreviousWindow(previousHwnd)
 
     if (NotifySuccess) {
         TrayTip, StockBoard Kiwoom Link v2, %message%, 1
@@ -146,6 +156,34 @@ PostEnterToEdit(controlHwnd) {
     Sleep, 20
     PostMessage, 0x101, 0x0D, 0xC01C0001,, ahk_id %controlHwnd%  ; WM_KEYUP
     return true
+}
+
+RestorePreviousWindow(previousHwnd) {
+    if (!previousHwnd)
+        return
+
+    Loop, 6 {
+        Sleep, 70
+        if !WinExist("ahk_id " . previousHwnd)
+            return
+
+        WinActivate, ahk_id %previousHwnd%
+        WinWaitActive, ahk_id %previousHwnd%,, 0.35
+
+        ; Chrome/Edge renderer focus is required for page-level ArrowUp/ArrowDown.
+        ControlGet, chromeRenderer, Hwnd,, Chrome_RenderWidgetHostHWND1, ahk_id %previousHwnd%
+        if (chromeRenderer) {
+            ControlFocus,, ahk_id %chromeRenderer%
+            continue
+        }
+
+        ; Harmless fallback for embedded browser controls.
+        ControlGet, ieRenderer, Hwnd,, Internet Explorer_Server1, ahk_id %previousHwnd%
+        if (ieRenderer) {
+            ControlFocus,, ahk_id %ieRenderer%
+            continue
+        }
+    }
 }
 
 FindSingleTargetControl(ByRef usedSpec, ByRef message) {
