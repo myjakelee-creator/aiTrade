@@ -229,6 +229,38 @@ def _keyboard_navigation_patch(html: str) -> str:
     event.stopImmediatePropagation();
     moveSelection(event.key === 'ArrowDown' ? 1 : -1);
   }, true);
+
+  function __sbv2BoardWidth(){
+    const cssWidth = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--board-width')) || 0;
+    const tableWidths = Array.from(document.querySelectorAll('table.board'))
+      .map(table => Math.max(table.scrollWidth || 0, table.getBoundingClientRect().width || 0));
+    return Math.max(cssWidth, ...tableWidths, 0);
+  }
+  function __sbv2ApplyHorizontalScrollFix(){
+    const boardWidth = __sbv2BoardWidth();
+    const minWidth = Math.ceil(Math.max(window.innerWidth + 180, boardWidth + 240));
+    const windowEl = document.querySelector('.window');
+    if(windowEl) windowEl.style.minWidth = `${minWidth}px`;
+    document.documentElement.style.minWidth = `${minWidth}px`;
+    document.body.style.minWidth = `${minWidth}px`;
+  }
+  const __sbv2OriginalUpdateBoardWidth = typeof updateBoardWidth === 'function' ? updateBoardWidth : null;
+  if(__sbv2OriginalUpdateBoardWidth){
+    updateBoardWidth = function(...args){
+      const result = __sbv2OriginalUpdateBoardWidth.apply(this, args);
+      requestAnimationFrame(__sbv2ApplyHorizontalScrollFix);
+      return result;
+    };
+  }
+  const __sbv2OriginalRenderForScroll = render;
+  render = function(...args){
+    const result = __sbv2OriginalRenderForScroll.apply(this, args);
+    requestAnimationFrame(__sbv2ApplyHorizontalScrollFix);
+    return result;
+  };
+  window.addEventListener('resize', () => requestAnimationFrame(__sbv2ApplyHorizontalScrollFix));
+  setTimeout(__sbv2ApplyHorizontalScrollFix, 0);
+  setTimeout(__sbv2ApplyHorizontalScrollFix, 300);
 '''
     if anchor not in html:
         return html
