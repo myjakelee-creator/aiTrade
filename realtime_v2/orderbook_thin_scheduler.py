@@ -20,10 +20,15 @@ _ORDERBOOK_NORMAL = {"s1": 5.0, "top20": 45.0, "hidden50": 300.0, "top300": 1200
 _ORDERBOOK_OPENING = {"s1": 10.0, "top20": 90.0, "hidden50": 600.0, "top300": 1800.0}
 
 # Missing/blank ratios need a bootstrap pass, but a just-requested blank row must
-# not monopolize the scheduler forever.  These retry gaps let the scheduler move
+# not monopolize the scheduler forever. These retry gaps let the scheduler move
 # through Hidden50/Top300 while still revisiting important rows soon enough.
 _MISSING_RETRY_NORMAL = {"s1": 6.0, "top20": 18.0, "hidden50": 45.0, "top300": 75.0}
 _MISSING_RETRY_OPENING = {"s1": 10.0, "top20": 30.0, "hidden50": 90.0, "top300": 150.0}
+
+# S1 remains immediate priority. For the rest, use this pattern so Top300 cannot
+# starve behind repeatedly-missing Top20 rows.  One scheduler cycle still enqueues
+# only one stock code / one opt10004 request.
+_BOOTSTRAP_PATTERN = ("top20", "hidden50", "top300", "top300")
 
 
 def _timestamp(value: Any) -> datetime | None:
@@ -81,7 +86,7 @@ class OrderbookThinScheduler(threading.Thread):
             "http://127.0.0.1:8765/api/v2/snapshot?limit=300",
         )
         self.poll_sec = max(2.0, float(os.getenv("STOCKBOARD_BIDASK_SNAPSHOT_POLL_SEC", "5")))
-        self.normal_gap = max(1.0, float(os.getenv("STOCKBOARD_BIDASK_GLOBAL_GAP_SEC", "1.15")))
+        self.normal_gap = max(0.9, float(os.getenv("STOCKBOARD_BIDASK_GLOBAL_GAP_SEC", "1.2")))
         self.opening_gap = max(self.normal_gap, float(os.getenv("STOCKBOARD_BIDASK_OPENING_GAP_SEC", "2.5")))
         self.selected = _load_selected(base)
         self.payload: dict[str, Any] = {}
@@ -91,9 +96,13 @@ class OrderbookThinScheduler(threading.Thread):
         self.busy_skips = 0
         self.market_closed_skips = 0
         self.snapshot_errors = 0
-        self.bootstrap_missing_count = 0
+        self.bootstrap_cursor = 0
+        self.bootstrap_top300_enqueues = 0
+        self.bootstrap_hidden50_enqueues = 0
+        self.bootstrap_top20_enqueues = 0
         self.last_code = ""
         self.last_lane = ""
+        self.last_pick_reason = ""
         self.last_cycle_at = None
         self.last_error = None
         self.last_market_phase = "unknown"
@@ -121,7 +130,7 @@ class OrderbookThinScheduler(threading.Thread):
     def _market_accepts_query(self, session=None) -> bool:
         session = session or self._session()
         self.last_market_phase = session.phase
-        # Query during sessions where Kiwoom accepts realtime/TR requests.  After
+        # Query during sessions where Kiwoom accepts realtime/TR requests. After
         # the market is fully closed we keep displaying the last valid value only.
         return bool(session.is_trading_day and session.accept_realtime)
 
@@ -144,8 +153,8 @@ class OrderbookThinScheduler(threading.Thread):
         if lock is None:
             return False
         with lock:
-            # Do not overlap with any active TR request.  Pending strength probes no
-            # longer block thin bidask forever; this lets missing ratios fill slowly
+            # Do not overlap with any active TR request. Pending strength probes do
+            # not block thin bidask forever; this lets missing ratios fill slowly
             # between strength requests without increasing request burst size.
             if any(
                 (
@@ -155,8 +164,7 @@ class OrderbookThinScheduler(threading.Thread):
                 )
             ):
                 return False
-            # Orderbook/OPT10055/close queues are directly competing work.  Strength
-            # pending items are intentionally not treated as a hard block.
+            # Directly competing queues are still respected.
             queues = (
                 "_orderbook_probe_pending",
                 "_opt10055_probe_pending",
@@ -205,6 +213,32 @@ class OrderbookThinScheduler(threading.Thread):
             return True, float("inf"), False
         return age >= interval, age / max(interval, 1.0), False
 
+    def _pick_candidate(self, candidates: list[tuple[int, float, int, dict[str, Any], bool]]):
+        if not candidates:
+            return None, "none"
+
+        # S1 is always the most urgent active selection.
+        s1_candidates = [item for item in candidates if item[3].get("lane") == "s1"]
+        if s1_candidates:
+            return min(s1_candidates, key=lambda item: (-item[1], item[2])), "s1_priority"
+
+        missing = [item for item in candidates if item[4]]
+        if missing:
+            by_lane: dict[str, list[tuple[int, float, int, dict[str, Any], bool]]] = {}
+            for candidate in missing:
+                lane = str(candidate[3].get("lane") or "top300")
+                by_lane.setdefault(lane, []).append(candidate)
+            for offset in range(len(_BOOTSTRAP_PATTERN)):
+                index = (self.bootstrap_cursor + offset) % len(_BOOTSTRAP_PATTERN)
+                lane = _BOOTSTRAP_PATTERN[index]
+                lane_items = by_lane.get(lane)
+                if lane_items:
+                    self.bootstrap_cursor = (index + 1) % len(_BOOTSTRAP_PATTERN)
+                    return min(lane_items, key=lambda item: (-item[1], item[2])), f"bootstrap_{lane}"
+            self.bootstrap_cursor = (self.bootstrap_cursor + 1) % len(_BOOTSTRAP_PATTERN)
+
+        return min(candidates, key=lambda item: (item[0], -item[1], item[2])), "normal_due"
+
     def cycle(self) -> None:
         self.last_cycle_at = datetime.now().isoformat(timespec="seconds")
         self._refresh()
@@ -219,17 +253,14 @@ class OrderbookThinScheduler(threading.Thread):
             return
         lane_order = {"s1": 0, "top20": 1, "hidden50": 2, "top300": 3}
         candidates = []
-        bootstrap_missing = 0
         for index, item in enumerate(build_lane_plan(self.base, self.payload, self.selected)):
             due, overdue, missing = self._due(item, session)
-            if missing:
-                bootstrap_missing += 1
             if due:
-                candidates.append((lane_order.get(item["lane"], 9), -overdue, index, item))
-        self.bootstrap_missing_count = bootstrap_missing
-        if not candidates:
+                candidates.append((lane_order.get(item["lane"], 9), overdue, index, item, missing))
+        picked, reason = self._pick_candidate(candidates)
+        if picked is None:
             return
-        _lane_priority, _overdue, _index, item = min(candidates)
+        _lane_priority, _overdue, _index, item, _missing = picked
         code = item["stock_code"]
         lane = item["lane"]
         try:
@@ -247,7 +278,14 @@ class OrderbookThinScheduler(threading.Thread):
             self.local_last[code] = now_mono
             self.last_code = code
             self.last_lane = lane
+            self.last_pick_reason = reason
             self.enqueue_count += 1
+            if lane == "top300":
+                self.bootstrap_top300_enqueues += 1
+            elif lane == "hidden50":
+                self.bootstrap_hidden50_enqueues += 1
+            elif lane == "top20":
+                self.bootstrap_top20_enqueues += 1
 
     def run(self) -> None:
         while not self.stop_event.wait(0.25):
@@ -274,8 +312,11 @@ class OrderbookThinScheduler(threading.Thread):
             "selected_code": self.selected or None,
             "last_enqueued_code": self.last_code or None,
             "last_enqueued_lane": self.last_lane or None,
+            "last_pick_reason": self.last_pick_reason or None,
             "enqueue_count": self.enqueue_count,
-            "bootstrap_missing_count": self.bootstrap_missing_count,
+            "bootstrap_top20_enqueues": self.bootstrap_top20_enqueues,
+            "bootstrap_hidden50_enqueues": self.bootstrap_hidden50_enqueues,
+            "bootstrap_top300_enqueues": self.bootstrap_top300_enqueues,
             "skip_busy_count": self.busy_skips,
             "skip_market_closed_count": self.market_closed_skips,
             "snapshot_error_count": self.snapshot_errors,
