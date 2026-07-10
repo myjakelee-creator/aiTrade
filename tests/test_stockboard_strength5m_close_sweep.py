@@ -90,6 +90,34 @@ def test_row_with_only_preclose_strength_is_queried_again_after_close():
     assert overdue == 600
 
 
+def test_postclose_held_value_retries_but_is_capped():
+    scheduler = Strength5mScheduler(DummyBase, DummyProvider())
+    item = {
+        "stock_code": "000001",
+        "lane": "top300",
+        "row": {
+            "strength_5m": 123.4,
+            "strength_status": "held_last_valid",
+            "strength_snapshot_at": "2026-07-10T15:31:00",
+        },
+    }
+
+    due, _overdue = scheduler._close_sweep_due(
+        item,
+        SESSION,
+        datetime(2026, 7, 10, 15, 45),
+    )
+    assert due is True
+
+    scheduler.close_sweep_attempts["000001"] = scheduler.close_sweep_max_attempts
+    due, _overdue = scheduler._close_sweep_due(
+        item,
+        SESSION,
+        datetime(2026, 7, 10, 15, 45),
+    )
+    assert due is False
+
+
 def test_row_with_postclose_strength_is_not_queried_twice_by_sweep():
     scheduler = Strength5mScheduler(DummyBase, DummyProvider())
     item = {
