@@ -237,8 +237,35 @@ def _is_al_source(value):
     return str(value or "").upper().endswith("_AL")
 
 
+def _price_received_at(row):
+    return (
+        row.get("price_received_at")
+        or row.get("trade_received_at")
+        or row.get("realtime_price_received_at")
+        or row.get("realtime_trade_received_at")
+        or row.get("realtime_received_at")
+    )
+
+
+def _price_age_seconds(row):
+    return _age_seconds(_price_received_at(row))
+
+
+def _apply_freshness_fields(row):
+    price_age_sec = _price_age_seconds(row)
+    orderbook_age_sec = _age_seconds(row.get("orderbook_received_at"))
+    row["price_age_sec"] = price_age_sec
+    row["orderbook_age_sec"] = orderbook_age_sec
+    row["price_fresh"] = (
+        price_age_sec is not None
+        and price_age_sec <= AFTERMARKET_REALTIME_FRESH_SEC
+    )
+    row["price_status"] = "fresh" if row["price_fresh"] else "stale_or_missing"
+    return row
+
+
 def _is_realtime_fresh(row):
-    age = _age_seconds(row.get("received_at") or row.get("realtime_received_at"))
+    age = _price_age_seconds(row)
     return age is not None and age <= AFTERMARKET_REALTIME_FRESH_SEC
 
 
@@ -532,6 +559,28 @@ def _top100_with_realtime(rows, realtime_store):
                     "realtime_ohlc_source"
                 )
             row["realtime_received_at"] = trade_event.get("received_at")
+            row["price_received_at"] = (
+                trade_event.get("price_received_at")
+                or trade_event.get("trade_received_at")
+                or trade_event.get("received_at")
+            )
+            row["trade_received_at"] = (
+                trade_event.get("trade_received_at")
+                or trade_event.get("price_received_at")
+                or trade_event.get("received_at")
+            )
+            row["price_sequence"] = (
+                trade_event.get("price_sequence") or trade_event.get("sequence")
+            )
+            row["trade_sequence"] = (
+                trade_event.get("trade_sequence") or trade_event.get("sequence")
+            )
+            row["trade_lag_sec"] = trade_event.get("trade_lag_sec")
+            row["fid20_trade_lag_sec"] = (
+                trade_event.get("fid20_trade_lag_sec")
+                or trade_event.get("trade_lag_sec")
+            )
+            row["stale_trade_suspect"] = trade_event.get("stale_trade_suspect")
             row["realtime_received_code"] = trade_event.get("received_code")
             row["realtime_registered_code"] = trade_event.get("registered_code")
             row["realtime_source_code"] = trade_event.get(
@@ -565,10 +614,16 @@ def _top100_with_realtime(rows, realtime_store):
             row["best_ask_price"] = _realtime_abs_number(
                 orderbook_event.get("best_ask")
             )
-            row["orderbook_received_at"] = orderbook_event.get("received_at")
-            row["orderbook_age_sec"] = _age_seconds(
+            row["orderbook_received_at"] = (
                 orderbook_event.get("orderbook_received_at")
                 or orderbook_event.get("received_at")
+            )
+            row["orderbook_sequence"] = (
+                orderbook_event.get("orderbook_sequence")
+                or orderbook_event.get("sequence")
+            )
+            row["orderbook_age_sec"] = _age_seconds(
+                row.get("orderbook_received_at")
             )
             row["orderbook_source"] = (
                 orderbook_event.get("orderbook_source") or "orderbook"
@@ -584,6 +639,7 @@ def _top100_with_realtime(rows, realtime_store):
             except Exception as error:
                 row["regular_close_snapshot_status"] = "error"
                 row["regular_close_snapshot_error"] = str(error)
+        _apply_freshness_fields(row)
         _apply_display_price_fields(row)
     return response_rows
 
@@ -623,6 +679,15 @@ def _realtime_patch_payload(
             "realtime_change_rate": change_rate,
             "trade_time": quote.get("trade_time"),
             "fid20_trade_time": quote.get("trade_time"),
+            "trade_lag_sec": quote.get("trade_lag_sec"),
+            "fid20_trade_lag_sec": (
+                quote.get("fid20_trade_lag_sec") or quote.get("trade_lag_sec")
+            ),
+            "stale_trade_suspect": quote.get("stale_trade_suspect"),
+            "price_received_at": quote.get("price_received_at"),
+            "trade_received_at": quote.get("trade_received_at"),
+            "price_sequence": quote.get("price_sequence"),
+            "trade_sequence": quote.get("trade_sequence"),
             "received_code": quote.get("received_code"),
             "normalized_code": quote.get("normalized_code"),
             "registered_code": quote.get("registered_code"),
@@ -694,9 +759,10 @@ def _realtime_patch_payload(
             "best_bid_price": best_bid,
             "best_ask_price": best_ask,
             "orderbook_received_at": quote.get("orderbook_received_at"),
+            "orderbook_sequence": quote.get("orderbook_sequence"),
             "orderbook_snapshot_at": quote.get("orderbook_snapshot_at"),
             "orderbook_age_sec": _age_seconds(
-                quote.get("orderbook_received_at") or quote.get("received_at")
+                quote.get("orderbook_received_at")
             ),
             "orderbook_stale_sec": _realtime_number(
                 quote.get("orderbook_stale_sec")
@@ -709,6 +775,7 @@ def _realtime_patch_payload(
             "sequence": quote.get("sequence"),
         }
         _copy_regular_close_fields(patch, quote)
+        _apply_freshness_fields(patch)
         _apply_display_price_fields(patch)
         _sanitize_realtime_display_patch(patch)
         patches.append(patch)
@@ -721,6 +788,19 @@ def _realtime_patch_payload(
         "fallback_reason": fallback_reason,
         "rows": patches,
     }
+
+
+def _realtime_snapshot_payload(snapshot):
+    payload = deepcopy(snapshot)
+    for quote in payload.get("quotes", {}).values():
+        if not isinstance(quote, dict):
+            continue
+        if quote.get("fid20_trade_time") is None:
+            quote["fid20_trade_time"] = quote.get("trade_time")
+        if quote.get("fid20_trade_lag_sec") is None:
+            quote["fid20_trade_lag_sec"] = quote.get("trade_lag_sec")
+        _apply_freshness_fields(quote)
+    return payload
 
 
 def _empty_foreign_investor_net_data(query_date, error=None):
@@ -803,7 +883,9 @@ def make_handler(
                         if code.strip()
                     ]
                     try:
-                        response_payload = realtime_store.snapshot_many(codes)
+                        response_payload = _realtime_snapshot_payload(
+                            realtime_store.snapshot_many(codes)
+                        )
                     except ValueError as error:
                         body = json.dumps({"error": str(error)}).encode("utf-8")
                         self.send_response(400)
@@ -814,7 +896,9 @@ def make_handler(
                         self.wfile.write(body)
                         return
                 else:
-                    response_payload = realtime_store.snapshot()
+                    response_payload = _realtime_snapshot_payload(
+                        realtime_store.snapshot()
+                    )
                 body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")

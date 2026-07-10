@@ -24,7 +24,17 @@ QUOTE_FIELDS = (
     "trade_qty",
     "trade_side",
     "trade_time",
+    "fid20_trade_time",
+    "trade_lag_sec",
+    "fid20_trade_lag_sec",
+    "stale_trade_suspect",
     "execution_strength",
+    "price_received_at",
+    "price_updated_at",
+    "price_sequence",
+    "trade_received_at",
+    "trade_updated_at",
+    "trade_sequence",
     "best_bid",
     "best_ask",
     "bid_volume",
@@ -50,6 +60,8 @@ QUOTE_FIELDS = (
     "total_ask_qty",
     "bid_ask_ratio",
     "orderbook_received_at",
+    "orderbook_updated_at",
+    "orderbook_sequence",
     "orderbook_age_sec",
     "orderbook_source",
     "realtime_strength_snapshot",
@@ -346,6 +358,21 @@ class RealtimeStore:
         return event
 
     @staticmethod
+    def _mark_price_lane(quote, timestamp_text, sequence):
+        quote["price_received_at"] = timestamp_text
+        quote["price_updated_at"] = timestamp_text
+        quote["price_sequence"] = sequence
+        quote["trade_received_at"] = timestamp_text
+        quote["trade_updated_at"] = timestamp_text
+        quote["trade_sequence"] = sequence
+
+    @staticmethod
+    def _mark_orderbook_lane(quote, timestamp_text, sequence):
+        quote["orderbook_received_at"] = timestamp_text
+        quote["orderbook_updated_at"] = timestamp_text
+        quote["orderbook_sequence"] = sequence
+
+    @staticmethod
     def _orderbook_ratio(bid_volume, ask_volume):
         try:
             bid_number = float(bid_volume)
@@ -499,6 +526,9 @@ class RealtimeStore:
         strength_snapshot_at=None,
         strength_source=None,
         strength_stale_sec=None,
+        trade_lag_sec=None,
+        fid20_trade_lag_sec=None,
+        stale_trade_suspect=None,
     ):
         code = self._normalized_code(stock_code)
         values = {
@@ -508,6 +538,10 @@ class RealtimeStore:
             "trade_qty": trade_qty,
             "trade_side": trade_side,
             "trade_time": trade_time,
+            "fid20_trade_time": trade_time,
+            "trade_lag_sec": trade_lag_sec,
+            "fid20_trade_lag_sec": fid20_trade_lag_sec,
+            "stale_trade_suspect": stale_trade_suspect,
             "execution_strength": execution_strength,
             "cumulative_volume": cumulative_volume,
             "cumulative_value": cumulative_value,
@@ -532,6 +566,10 @@ class RealtimeStore:
                     "change_rate",
                     "trade_qty",
                     "trade_time",
+                    "fid20_trade_time",
+                    "trade_lag_sec",
+                    "fid20_trade_lag_sec",
+                    "stale_trade_suspect",
                     "cumulative_volume",
                     "cumulative_value",
                     "received_code",
@@ -544,7 +582,10 @@ class RealtimeStore:
             }
             with self._lock:
                 self._ensure_quote(code)
-                self._apply_update(code, first_values)
+                quote, timestamp_text, sequence = self._apply_update(
+                    code, first_values
+                )
+                self._mark_price_lane(quote, timestamp_text, sequence)
         with self._lock:
             quote = self._ensure_quote(code)
             realtime_ohlc = self._realtime_ohlc(code, price)
@@ -578,10 +619,18 @@ class RealtimeStore:
                 }
             )
             quote, timestamp_text, sequence = self._apply_update(code, values)
+            self._mark_price_lane(quote, timestamp_text, sequence)
             events = self._trade_events.setdefault(
                 code, deque(maxlen=self._trade_event_limit)
             )
-            events.append(self._event(code, values, timestamp_text, sequence))
+            event = self._event(code, values, timestamp_text, sequence)
+            event["price_received_at"] = timestamp_text
+            event["price_updated_at"] = timestamp_text
+            event["price_sequence"] = sequence
+            event["trade_received_at"] = timestamp_text
+            event["trade_updated_at"] = timestamp_text
+            event["trade_sequence"] = sequence
+            events.append(event)
             return deepcopy(quote)
 
     def update_orderbook(
@@ -634,7 +683,7 @@ class RealtimeStore:
             quote["bid_volume"] = total_bid_qty
             quote["ask_volume"] = total_ask_qty
             quote["bid_ask_ratio"] = bid_ask_ratio
-            quote["orderbook_received_at"] = timestamp_text
+            self._mark_orderbook_lane(quote, timestamp_text, sequence)
             quote["orderbook_source"] = orderbook_source
             events = self._orderbook_events.setdefault(
                 code, deque(maxlen=self._orderbook_event_limit)
@@ -644,6 +693,8 @@ class RealtimeStore:
             event["ask_volume"] = total_ask_qty
             event["bid_ask_ratio"] = bid_ask_ratio
             event["orderbook_received_at"] = timestamp_text
+            event["orderbook_updated_at"] = timestamp_text
+            event["orderbook_sequence"] = sequence
             event["orderbook_source"] = orderbook_source
             events.append(event)
             return deepcopy(quote)
