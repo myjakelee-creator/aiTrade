@@ -156,7 +156,7 @@ def _strip_noisy_tooltips_patch(html: str) -> str:
 
     html = html.replace(
         "function candleHtml(r){",
-        "function candleTitle(r,o){const rate=Number(r.change_rate);const rateText=Number.isFinite(rate)?`${rate>0?'+':''}${rate.toFixed(2)}%`:'-';return `시가 ${fmtNum(o.open)}\\n고가 ${fmtNum(o.high)}\\n저가 ${fmtNum(o.low)}\\n종가 ${fmtNum(o.close)}\\n등락률 ${rateText}`;} function candleHtml(r){",
+        "function candleTitle(r,o){const rate=Number(r.change_rate);let base=numeric(r.prev_close??r.prev_close_price??r.prev_price??r.yesterday_close??r.base_price??r.reference_price??r.prev_day_close);if((base===null||base<=0)&&Number.isFinite(Number(o.close))&&Number.isFinite(rate)&&rate!==-100){base=Number(o.close)/(1+rate/100);}const rateFor=value=>{const n=Number(value);if(!Number.isFinite(n)||base===null||base<=0)return '-';const pct=(n/base-1)*100;return `${pct>0?'+':''}${pct.toFixed(2)}%`;};const line=(label,value)=>`${label} ${fmtNum(value)} (${rateFor(value)})`;return `${line('시가',o.open)}\\n${line('고가',o.high)}\\n${line('저가',o.low)}\\n${line('종가',o.close)}`;} function candleHtml(r){",
         1,
     )
     html = html.replace(
