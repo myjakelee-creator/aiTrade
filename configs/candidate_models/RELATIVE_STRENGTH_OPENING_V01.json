@@ -1,146 +1,18 @@
 {
-  "schema_version": 1,
-  "id": "RELATIVE_STRENGTH_OPENING_V01",
-  "name": "시장 대비 상대강도형",
-  "runtime_status": "design_ready_not_loaded_yet",
-  "grade_policy": {
-    "mode": "absolute_market_calibrated",
-    "distribution": "natural_not_forced",
-    "base_bands": {
-      "A": 91,
-      "B": 81,
-      "C": 71,
-      "D": 61,
-      "F": 0
-    },
-    "market_adjustment": {
-      "strong": {
-        "A": 91,
-        "B": 81,
-        "C": 71,
-        "D": 61
-      },
-      "neutral": {
-        "A": 91,
-        "B": 81,
-        "C": 71,
-        "D": 61
-      },
-      "weak": {
-        "A": 91,
-        "B": 81,
-        "C": 71,
-        "D": 61
-      },
-      "very_weak": {
-        "A": 91,
-        "B": 81,
-        "C": 71,
-        "D": 61
-      }
-    }
+  "schema_version":3,"id":"RELATIVE_STRENGTH_OPENING_V01","name":"보드 대비 상대강도형","label":"보드 대비 상대강도형","runtime_status":"READY",
+  "required_features":["relative_change","amount_ratio"],
+  "score_structure":{
+    "final_score":[{"key":"relative_change","weight":30},{"key":"green_while_board_weak","weight":15},{"key":"rank_gap","weight":15},{"key":"amount_ratio","weight":15},{"key":"instant_strength","weight":10},{"key":"five_min_strength","weight":5},{"key":"near_high","weight":10},{"key":"reversal_penalty","weight":-20}],
+    "entry_score":[{"key":"relative_change","weight":45},{"key":"rank_gap","weight":20},{"key":"amount_ratio","weight":25},{"key":"trade_value_amount","weight":10}],
+    "confirmation_score":[{"key":"relative_change","weight":35},{"key":"instant_strength","weight":20},{"key":"five_min_strength","weight":10},{"key":"near_high","weight":20},{"key":"green_while_board_weak","weight":15}],
+    "focus_score":[{"key":"relative_change","weight":30},{"key":"green_while_board_weak","weight":15},{"key":"rank_gap","weight":15},{"key":"amount_ratio","weight":15},{"key":"instant_strength","weight":10},{"key":"five_min_strength","weight":5},{"key":"near_high","weight":10},{"key":"reversal_penalty","weight":-20}]
   },
-  "promotion_demotion_policy": {
-    "principle": "group_membership_is_result_not_score_source",
-    "score_all_rows_for_entry": true,
-    "top50": "top 50 by entry_score from Top300",
-    "top20": "top 20 by confirmation_score from Top50",
-    "top5": "top 5 by focus_score from Top20"
-  },
-  "score_structure": {
-    "entry_score": [
-      {
-        "key": "trade_value_rank",
-        "weight": 15
-      },
-      {
-        "key": "rank_gap",
-        "weight": 15
-      },
-      {
-        "key": "market_relative_change_rate",
-        "weight": 35
-      },
-      {
-        "key": "trade_value_growth",
-        "weight": 25
-      },
-      {
-        "key": "above_open",
-        "weight": 10
-      }
-    ],
-    "confirmation_score": [
-      {
-        "key": "relative_strength_continuation",
-        "weight": 30
-      },
-      {
-        "key": "realtime_strength",
-        "weight": 20
-      },
-      {
-        "key": "above_vwap",
-        "weight": 20
-      },
-      {
-        "key": "sell_wall_absorption",
-        "weight": 20
-      }
-    ],
-    "focus_score": [
-      {
-        "key": "green_while_market_weak",
-        "weight": 30
-      },
-      {
-        "key": "one_min_net_buy_value_growth",
-        "weight": 25
-      },
-      {
-        "key": "near_high_hold",
-        "weight": 20
-      },
-      {
-        "key": "realtime_strength_hold",
-        "weight": 15
-      },
-      {
-        "key": "spike_reversal_penalty",
-        "weight": -20
-      }
-    ],
-    "grade_score_weights": {
-      "entry_score": 0.3,
-      "confirmation_score": 0.35,
-      "focus_score": 0.35
-    }
-  },
-  "funnel": {
-    "top50": {
-      "take": 50,
-      "score": "entry_score"
-    },
-    "top20": {
-      "from": "top50",
-      "take": 20,
-      "score": "confirmation_score"
-    },
-    "top5": {
-      "from": "top20",
-      "take": 5,
-      "score": "focus_score"
-    }
-  },
-  "excluded_scoring_items": [
-    {
-      "key": "flow_confirmation",
-      "weight": 10,
-      "stage": "confirmation_score",
-      "original_weight": 10,
-      "scoring_weight": 0,
-      "excluded_reason": "data_collection_not_stable_yet",
-      "enabled_for_scoring": false
-    }
-  ]
+  "grade_guards":[
+    {"name":"상대강도상위20","type":"feature_score_min","key":"relative_change","value":80,"max_score":89},
+    {"name":"시가위","type":"feature_value_min","key":"above_open","value":1,"max_score":89},
+    {"name":"고가권65","type":"feature_value_min","key":"near_high","value":65,"max_score":89},
+    {"name":"강도100","type":"any_value_min","keys":["instant_strength","five_min_strength"],"value":100,"max_score":89},
+    {"name":"대금비상위50","type":"feature_score_min","key":"amount_ratio","value":50,"max_score":89}
+  ],
+  "funnel":{"top50":{"take":50},"top20":{"take":20},"top5":{"take":5}}
 }
