@@ -162,12 +162,87 @@ def _large_trade_title_patch(html: str) -> str:
     return html.replace(old, new, 1)
 
 
+def _keyboard_navigation_patch(html: str) -> str:
+    marker = "STOCKBOARD_V2_SAFE_DOM_KEY_NAV_20260710"
+    if marker in html:
+        return html
+    anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
+    patch = r'''
+  /* STOCKBOARD_V2_SAFE_DOM_KEY_NAV_20260710 */
+  let __sbv2LastNavTable = null;
+  function __sbv2IsBoardTable(table){ return table === selectedBoardEl || table === focusBoardEl || table === poolBoardEl; }
+  function __sbv2RememberNavTable(event){
+    const row = event && event.target && event.target.closest ? event.target.closest('tr[data-code]') : null;
+    const table = row ? row.closest('table') : null;
+    if(__sbv2IsBoardTable(table)) __sbv2LastNavTable = table;
+  }
+  document.addEventListener('pointerdown', __sbv2RememberNavTable, true);
+  document.addEventListener('mousedown', __sbv2RememberNavTable, true);
+  function __sbv2RowsInTable(table){
+    const body = table && table.tBodies ? table.tBodies[0] : null;
+    return Array.from(body ? body.querySelectorAll('tr[data-code]') : [])
+      .filter(row => /^\d{6}$/.test(String(row.dataset.code || '')));
+  }
+  function __sbv2NavTable(){
+    const active = document.activeElement;
+    const activeRow = active && active.closest ? active.closest('tr[data-code]') : null;
+    const activeTable = activeRow ? activeRow.closest('table') : null;
+    if(__sbv2IsBoardTable(activeTable)) return activeTable;
+    if(__sbv2IsBoardTable(__sbv2LastNavTable)) return __sbv2LastNavTable;
+    if(selectedCode){
+      for(const table of [focusBoardEl, poolBoardEl, selectedBoardEl]){
+        if(__sbv2IsBoardTable(table) && table.querySelector(`tbody tr[data-code="${selectedCode}"]`)) return table;
+      }
+    }
+    return focusBoardEl || poolBoardEl || selectedBoardEl;
+  }
+  function __sbv2MoveByVisibleRows(delta){
+    const table = __sbv2NavTable();
+    const rows = __sbv2RowsInTable(table);
+    if(!rows.length) return false;
+    const active = document.activeElement;
+    const activeRow = active && active.closest ? active.closest('tr[data-code]') : null;
+    let index = rows.findIndex(row => row === activeRow || String(row.dataset.code || '') === selectedCode);
+    if(index < 0) index = delta > 0 ? -1 : 0;
+    const nextRow = rows[(index + delta + rows.length) % rows.length];
+    const code = String(nextRow && nextRow.dataset.code || '');
+    if(!/^\d{6}$/.test(code)) return false;
+    __sbv2LastNavTable = table;
+    selectCodeAndLink(code, false, {focus:false});
+    requestAnimationFrame(() => {
+      const row = table.querySelector(`tbody tr[data-code="${code}"]`);
+      if(row && typeof row.focus === 'function'){
+        row.focus({preventScroll:true});
+        if(typeof row.scrollIntoView === 'function') row.scrollIntoView({block:'nearest', inline:'nearest'});
+      }
+    });
+    return true;
+  }
+  const __sbv2OriginalMoveSelection = moveSelection;
+  moveSelection = function(delta){ if(!__sbv2MoveByVisibleRows(delta)) return __sbv2OriginalMoveSelection(delta); };
+  document.addEventListener('keydown', function(event){
+    if(event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    const target = event.target;
+    if(target && target.closest && target.closest('input,textarea,select,button,[contenteditable="true"]')) return;
+    if(!document.querySelector('table.board tbody tr[data-code]')) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    moveSelection(event.key === 'ArrowDown' ? 1 : -1);
+  }, true);
+'''
+    if anchor not in html:
+        return html
+    return html.replace(anchor, f"{patch}\n{anchor}", 1)
+
+
 def _patched_do_get(self) -> None:
     parsed = base.urlparse(self.path)
     if parsed.path in {"/", "/v2", "/stockboard_v2.html"}:
         html_path = Path(base.ROOT) / "docs" / "stockboard_v2.html"
         html = html_path.read_text(encoding="utf-8-sig")
-        body = _large_trade_title_patch(html).encode("utf-8")
+        html = _large_trade_title_patch(html)
+        html = _keyboard_navigation_patch(html)
+        body = html.encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
