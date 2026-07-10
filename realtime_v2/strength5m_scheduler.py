@@ -209,11 +209,16 @@ class Strength5mScheduler(threading.Thread):
             30.0,
             float(os.getenv("STOCKBOARD_STRENGTH_5M_CLOSE_SWEEP_RETRY_SEC", "60")),
         )
+        self.close_sweep_max_attempts = max(
+            1,
+            int(os.getenv("STOCKBOARD_STRENGTH_5M_CLOSE_SWEEP_MAX_ATTEMPTS", "2")),
+        )
         self.selected = _load_selected(base)
         self.payload: dict[str, Any] = {}
         self.last_poll = 0.0
         self.local_last: dict[str, float] = {}
         self.close_sweep_requested_at: dict[str, float] = {}
+        self.close_sweep_attempts: dict[str, int] = {}
         self.enqueue_count = self.busy_skips = self.snapshot_errors = 0
         self.market_closed_skips = 0
         self.close_sweep_enqueue_count = 0
@@ -325,8 +330,28 @@ class Strength5mScheduler(threading.Thread):
             or row.get("last_valid_strength_at")
         )
         code = item["stock_code"]
-        if snapshot_at is not None and snapshot_at >= cutoff:
+        try:
+            strength_value = float(row.get("strength_5m"))
+        except (TypeError, ValueError):
+            strength_value = 0.0
+        incomplete_statuses = {
+            "held_last_valid",
+            "error",
+            "timeout",
+            "missing",
+            "no_data",
+            "empty",
+        }
+        if (
+            strength_value > 0
+            and snapshot_at is not None
+            and snapshot_at >= cutoff
+            and status not in incomplete_statuses
+        ):
             self.close_sweep_requested_at.pop(code, None)
+            self.close_sweep_attempts.pop(code, None)
+            return False, -1.0
+        if self.close_sweep_attempts.get(code, 0) >= self.close_sweep_max_attempts:
             return False, -1.0
         last_request = self.close_sweep_requested_at.get(code)
         if last_request is not None:
@@ -407,6 +432,9 @@ class Strength5mScheduler(threading.Thread):
             self.enqueue_count += 1
             if priority == 0:
                 self.close_sweep_requested_at[code] = now_mono
+                self.close_sweep_attempts[code] = (
+                    self.close_sweep_attempts.get(code, 0) + 1
+                )
                 self.close_sweep_enqueue_count += 1
 
     def run(self) -> None:
@@ -431,6 +459,7 @@ class Strength5mScheduler(threading.Thread):
             "regular_close_sweep_active": self._close_sweep_cutoff(session) is not None,
             "regular_close_sweep_minutes": self.close_sweep_minutes,
             "regular_close_sweep_enqueue_count": self.close_sweep_enqueue_count,
+            "regular_close_sweep_max_attempts": self.close_sweep_max_attempts,
             "intervals_sec": self.intervals(session),
             "global_gap_sec": self.gap(session),
             "selected_code": self.selected or None,
