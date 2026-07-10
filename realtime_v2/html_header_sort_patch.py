@@ -9,6 +9,7 @@ MARKER = "STOCKBOARD_V2_HEADER_SORT_WITH_LOCK_20260710"
 CONNECTION_MARKER = "STOCKBOARD_V2_CONNECTION_HEALTH_BADGE_20260710"
 FLASH_SCOPE_MARKER = "STOCKBOARD_V2_FLASH_SCOPE_20260710"
 POOL_INTERVAL_MARKER = "STOCKBOARD_V2_POOL_INTERVAL_20260710"
+WIDTH_THROTTLE_MARKER = "STOCKBOARD_V2_WIDTH_THROTTLE_20260710"
 MANUAL_SORT_KEY = "stockboard.v2.headerSortActive.v1"
 
 
@@ -210,6 +211,62 @@ def apply_pool_interval_patch(html: str) -> str:
     return html
 
 
+def apply_width_throttle_patch(html: str) -> str:
+    if WIDTH_THROTTLE_MARKER in html:
+        return html
+
+    anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
+    patch = r'''
+  /* __WIDTH_THROTTLE_MARKER__ */
+  const __sbv2WidthThrottle = {
+    lastBoardWidthAt: 0,
+    boardWidthTimer: 0,
+    lastDailyLockAt: 0,
+    dailyLockTimer: 0
+  };
+
+  if(typeof updateBoardWidth === 'function'){
+    const __sbv2OriginalUpdateBoardWidth = updateBoardWidth;
+    updateBoardWidth = function(force=false){
+      const now = performance.now();
+      if(force === true || resizeState || now - __sbv2WidthThrottle.lastBoardWidthAt >= 750){
+        __sbv2WidthThrottle.lastBoardWidthAt = now;
+        return __sbv2OriginalUpdateBoardWidth.apply(this, arguments);
+      }
+      if(!__sbv2WidthThrottle.boardWidthTimer){
+        __sbv2WidthThrottle.boardWidthTimer = setTimeout(() => {
+          __sbv2WidthThrottle.boardWidthTimer = 0;
+          __sbv2WidthThrottle.lastBoardWidthAt = performance.now();
+          __sbv2OriginalUpdateBoardWidth();
+        }, 750);
+      }
+    };
+  }
+
+  if(typeof lockDailyCandleRuntime === 'function'){
+    const __sbv2OriginalDailyLock = lockDailyCandleRuntime;
+    lockDailyCandleRuntime = function(force=false){
+      const now = performance.now();
+      if(force === true || now - __sbv2WidthThrottle.lastDailyLockAt >= 1000){
+        __sbv2WidthThrottle.lastDailyLockAt = now;
+        return __sbv2OriginalDailyLock.apply(this, arguments);
+      }
+      if(!__sbv2WidthThrottle.dailyLockTimer){
+        __sbv2WidthThrottle.dailyLockTimer = setTimeout(() => {
+          __sbv2WidthThrottle.dailyLockTimer = 0;
+          __sbv2WidthThrottle.lastDailyLockAt = performance.now();
+          __sbv2OriginalDailyLock();
+        }, 1000);
+      }
+    };
+  }
+'''.replace("__WIDTH_THROTTLE_MARKER__", WIDTH_THROTTLE_MARKER)
+
+    if anchor in html:
+        html = html.replace(anchor, f"{patch}\n{anchor}", 1)
+    return html
+
+
 def install(base, large_module) -> None:
     handler = base.WebHandler
     if getattr(handler, "_stockboard_header_sort_patch_installed", False):
@@ -230,6 +287,7 @@ def install(base, large_module) -> None:
                 html = apply_connection_health_patch(html)
                 html = apply_flash_scope_patch(html)
                 html = apply_pool_interval_patch(html)
+                html = apply_width_throttle_patch(html)
                 body = html.encode("utf-8")
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
