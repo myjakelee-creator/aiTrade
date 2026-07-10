@@ -7,7 +7,8 @@ from pathlib import Path
 
 MARKER = "STOCKBOARD_V2_HEADER_SORT_WITH_LOCK_20260710"
 CONNECTION_MARKER = "STOCKBOARD_V2_CONNECTION_HEALTH_BADGE_20260710"
-RENDER_DIET_MARKER = "STOCKBOARD_V2_RENDER_DIET_20260710"
+FLASH_SCOPE_MARKER = "STOCKBOARD_V2_FLASH_SCOPE_20260710"
+POOL_INTERVAL_MARKER = "STOCKBOARD_V2_POOL_INTERVAL_20260710"
 MANUAL_SORT_KEY = "stockboard.v2.headerSortActive.v1"
 
 
@@ -112,48 +113,16 @@ def apply_connection_health_patch(html: str) -> str:
     return html
 
 
-def apply_render_diet_patch(html: str) -> str:
-    if RENDER_DIET_MARKER in html:
+def apply_flash_scope_patch(html: str) -> str:
+    if FLASH_SCOPE_MARKER in html:
         return html
-
-    # Prefer the new render-diet interval even if a previous safety patch already
-    # replaced the raw 250ms constant with __sbv2PoolIntervalMs().
-    html = html.replace(
-        "now-lastPoolRenderAt>=__sbv2PoolIntervalMs()",
-        "now-lastPoolRenderAt>=__sbv2RenderDietPoolIntervalMs()",
-        1,
-    )
-    html = html.replace(
-        "now-lastPoolRenderAt>=250",
-        "now-lastPoolRenderAt>=__sbv2RenderDietPoolIntervalMs()",
-        1,
-    )
 
     anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
     patch = r'''
-  /* __RENDER_DIET_MARKER__ */
-  const __sbv2RenderDiet = {
-    flashMap: new Map(),
-    pendingArgs: null,
-    frame: 0,
-    lastFocusAt: 0,
-    lastDailyLockAt: 0,
-    dailyLockScheduled: false,
-    lastBoardWidthAt: 0,
-    boardWidthScheduled: false
-  };
+  /* __FLASH_SCOPE_MARKER__ */
+  const __sbv2FlashScopeState = { map: new Map() };
 
-  function __sbv2RenderDietPoolIntervalMs(){
-    const now = new Date();
-    const minutes = now.getHours() * 60 + now.getMinutes();
-    const regularStart = 9 * 60;
-    const phase = String(lastPayload?.market_session?.phase || lastPayload?.status?.market_phase || '').toLowerCase();
-    if(minutes >= regularStart && minutes < regularStart + 10) return 1800;
-    if(phase.includes('after')) return 1200;
-    return 900;
-  }
-
-  function __sbv2RenderDietModelRank(row, fallback){
+  function __sbv2FlashScopeRank(row, fallback){
     const keys = ['model_rank','funnel_rank','pool_rank','rank'];
     for(const key of keys){
       const n = Number(row && row[key]);
@@ -162,112 +131,80 @@ def apply_render_diet_patch(html: str) -> str:
     return fallback;
   }
 
-  function __sbv2RenderDietPrepareFlashMap(table, rows){
+  function __sbv2FlashScopePrepare(table, rows){
     if(!Array.isArray(rows)) return;
-    const selected = table === selectedBoardEl;
-    const focus = table === focusBoardEl;
-    const pool = table === poolBoardEl;
+    const isSelected = table === selectedBoardEl;
+    const isFocus = table === focusBoardEl;
+    const isPool = table === poolBoardEl;
     rows.forEach((row, index) => {
-      const code = String(row?.stock_code || '');
+      const code = String(row && row.stock_code || '');
       if(!/^\d{6}$/.test(code)) return;
       let allow = false;
-      if(selected || focus){
+      if(isSelected || isFocus){
         allow = true;
-      }else if(pool){
-        const rank = __sbv2RenderDietModelRank(row, index + 21);
+      }else if(isPool){
+        const rank = __sbv2FlashScopeRank(row, index + 21);
         allow = rank >= 21 && rank <= 50;
       }
-      if(allow) __sbv2RenderDiet.flashMap.set(code, true);
-      else if(!__sbv2RenderDiet.flashMap.has(code)) __sbv2RenderDiet.flashMap.set(code, false);
+      __sbv2FlashScopeState.map.set(code, allow);
     });
   }
 
-  const __sbv2OriginalRenderTable = renderTable;
-  renderTable = function(table, rows, empty){
-    __sbv2RenderDietPrepareFlashMap(table, rows);
-    return __sbv2OriginalRenderTable.apply(this, arguments);
-  };
+  if(typeof renderTable === 'function' && typeof cellFlashClass === 'function'){
+    const __sbv2OriginalFlashRenderTable = renderTable;
+    renderTable = function(table, rows, empty){
+      __sbv2FlashScopePrepare(table, rows);
+      return __sbv2OriginalFlashRenderTable.apply(this, arguments);
+    };
 
-  const __sbv2OriginalCellFlashClass = cellFlashClass;
-  cellFlashClass = function(code, key, value){
-    const stockCode = String(code || '').trim();
-    const normalized = String(value ?? '');
-    const cacheKey = `${stockCode}|${key}`;
-    const keyAllowed = key === 'price' || key === 'change_rate';
-    const laneAllowed = __sbv2RenderDiet.flashMap.get(stockCode) === true;
-    if(!keyAllowed || !laneAllowed){
-      if(stockCode && key) previousCellValues.set(cacheKey, normalized);
-      return '';
-    }
-    return __sbv2OriginalCellFlashClass.apply(this, arguments);
-  };
-
-  if(typeof lockDailyCandleRuntime === 'function'){
-    const __sbv2OriginalDailyLock = lockDailyCandleRuntime;
-    lockDailyCandleRuntime = function(force=false){
-      const now = performance.now();
-      if(force === true || now - __sbv2RenderDiet.lastDailyLockAt >= 1000){
-        __sbv2RenderDiet.lastDailyLockAt = now;
-        return __sbv2OriginalDailyLock.apply(this, arguments);
+    const __sbv2OriginalFlashClass = cellFlashClass;
+    cellFlashClass = function(code, key, value){
+      const stockCode = String(code || '').trim();
+      const normalized = String(value ?? '');
+      const cacheKey = `${stockCode}|${key}`;
+      const keyAllowed = key === 'price' || key === 'change_rate';
+      const laneAllowed = __sbv2FlashScopeState.map.get(stockCode) === true;
+      if(!keyAllowed || !laneAllowed){
+        if(stockCode && key) previousCellValues.set(cacheKey, normalized);
+        return '';
       }
-      if(!__sbv2RenderDiet.dailyLockScheduled){
-        __sbv2RenderDiet.dailyLockScheduled = true;
-        setTimeout(() => {
-          __sbv2RenderDiet.dailyLockScheduled = false;
-          __sbv2RenderDiet.lastDailyLockAt = performance.now();
-          __sbv2OriginalDailyLock(true);
-        }, 1000);
-      }
+      return __sbv2OriginalFlashClass.apply(this, arguments);
     };
   }
+'''.replace("__FLASH_SCOPE_MARKER__", FLASH_SCOPE_MARKER)
 
-  if(typeof updateBoardWidth === 'function'){
-    const __sbv2OriginalUpdateBoardWidth = updateBoardWidth;
-    updateBoardWidth = function(force=false){
-      const now = performance.now();
-      if(force === true || resizeState || now - __sbv2RenderDiet.lastBoardWidthAt >= 750){
-        __sbv2RenderDiet.lastBoardWidthAt = now;
-        return __sbv2OriginalUpdateBoardWidth.apply(this, arguments);
-      }
-      if(!__sbv2RenderDiet.boardWidthScheduled){
-        __sbv2RenderDiet.boardWidthScheduled = true;
-        setTimeout(() => {
-          __sbv2RenderDiet.boardWidthScheduled = false;
-          __sbv2RenderDiet.lastBoardWidthAt = performance.now();
-          __sbv2OriginalUpdateBoardWidth(true);
-        }, 750);
-      }
-    };
-  }
+    if anchor in html:
+        html = html.replace(anchor, f"{patch}\n{anchor}", 1)
+    return html
 
-  const __sbv2OriginalFocusSelectedRow = focusSelectedRow;
-  focusSelectedRow = function(preventScroll=true){
-    if(!selectedCode) return;
-    const active = document.activeElement;
-    if(active && active.dataset && active.dataset.code === selectedCode) return;
-    const now = performance.now();
-    if(now - __sbv2RenderDiet.lastFocusAt < 250) return;
-    __sbv2RenderDiet.lastFocusAt = now;
-    return __sbv2OriginalFocusSelectedRow.call(this, preventScroll);
-  };
 
-  const __sbv2OriginalRenderDietRender = render;
-  function __sbv2RunRenderDietFrame(){
-    __sbv2RenderDiet.frame = 0;
-    const args = __sbv2RenderDiet.pendingArgs;
-    __sbv2RenderDiet.pendingArgs = null;
-    if(!args) return;
-    __sbv2RenderDiet.flashMap.clear();
-    return __sbv2OriginalRenderDietRender.apply(window, args);
-  }
+def apply_pool_interval_patch(html: str) -> str:
+    if POOL_INTERVAL_MARKER in html:
+        return html
 
-  render = function(payload, mode='stream', opt={}){
-    __sbv2RenderDiet.pendingArgs = [payload, mode, opt || {}];
-    if(__sbv2RenderDiet.frame) return;
-    __sbv2RenderDiet.frame = requestAnimationFrame(__sbv2RunRenderDietFrame);
-  };
-'''.replace("__RENDER_DIET_MARKER__", RENDER_DIET_MARKER)
+    html = html.replace(
+        "now-lastPoolRenderAt>=__sbv2PoolIntervalMs()",
+        "now-lastPoolRenderAt>=__sbv2PoolDietIntervalMs()",
+        1,
+    )
+    html = html.replace(
+        "now-lastPoolRenderAt>=250",
+        "now-lastPoolRenderAt>=__sbv2PoolDietIntervalMs()",
+        1,
+    )
 
+    anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
+    patch = f'''
+  /* {POOL_INTERVAL_MARKER} */
+  function __sbv2PoolDietIntervalMs(){{
+    const now = new Date();
+    const minutes = now.getHours() * 60 + now.getMinutes();
+    const phase = String(lastPayload?.market_session?.phase || lastPayload?.status?.market_phase || '').toLowerCase();
+    if(minutes >= 9 * 60 && minutes < 9 * 60 + 10) return 1800;
+    if(phase.includes('after')) return 1200;
+    return 900;
+  }}
+'''
     if anchor in html:
         html = html.replace(anchor, f"{patch}\n{anchor}", 1)
     return html
@@ -291,7 +228,8 @@ def install(base, large_module) -> None:
                 html = large_module._ui_safety_patch(html)
                 html = apply_header_sort_patch(html)
                 html = apply_connection_health_patch(html)
-                html = apply_render_diet_patch(html)
+                html = apply_flash_scope_patch(html)
+                html = apply_pool_interval_patch(html)
                 body = html.encode("utf-8")
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
