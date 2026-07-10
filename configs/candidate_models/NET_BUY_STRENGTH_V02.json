@@ -1,83 +1,15 @@
 {
-  "schema_version": 2,
-  "id": "NET_BUY_STRENGTH_V02",
-  "name": "순매수 강도 v0.2 · 5분강도",
-  "label": "순매수 강도 v0.2 · 5분강도",
-  "runtime_status": "ranking_engine_standard_launcher_wired",
-  "runtime_engine": "stockboard_ranking_engine.enrich_net_buy_strength_v02_fields",
-  "purpose": "기존 순매수 강도 v0.2의 1분강도 항목을 키움 조회 원천 strength_5m으로 교체한다.",
-  "total_points": 700,
-  "regular_total_points": 700,
-  "after_close_total_points": 700,
-  "denominator_policy": "장중과 장마감 모두 7개 항목 700점. strength_5m 미조회 종목은 해당 항목 0점·missing 처리한다.",
-  "items": [
-    {
-      "key": "rank",
-      "label": "순위",
-      "max_score": 100,
-      "method": "filtered_pool_rank_100_to_0"
-    },
-    {
-      "key": "previous_rank",
-      "label": "전일",
-      "max_score": 100,
-      "method": "min(max(prev_rank-rank,0),100)"
-    },
-    {
-      "key": "trade_value_ratio",
-      "label": "금액(억)",
-      "max_score": 100,
-      "method": "rank(trade_value_eok/prev_trade_value_eok)_100_to_0",
-      "fallback_score": 60
-    },
-    {
-      "key": "ask_share",
-      "label": "잔량비",
-      "max_score": 100,
-      "method": "ask_volume/(bid_volume+ask_volume)*100"
-    },
-    {
-      "key": "instant_strength",
-      "label": "순간강도",
-      "max_score": 100,
-      "method": "execution_strength absolute score"
-    },
-    {
-      "key": "five_min_strength",
-      "label": "5분강도",
-      "max_score": 100,
-      "method": "Kiwoom strength_5m absolute score",
-      "missing_score": 0
-    },
-    {
-      "key": "program_ratio",
-      "label": "프로(억)",
-      "max_score": 100,
-      "method": "rank(program_net/trade_value_eok)_100_to_0_when_positive"
-    }
-  ],
-  "grade_policy": {
-    "display": "letter_with_score",
-    "fixed_direct_bands": {
-      "A": 90,
-      "B": 80,
-      "C": 70,
-      "D": 60,
-      "F": 0
-    }
+  "schema_version":3,"id":"NET_BUY_STRENGTH_V02","name":"순매수 강도 v0.2 · 5분강도","label":"순매수 강도 v0.2 · 5분강도","runtime_status":"READY",
+  "required_features":["amount_ratio","five_min_strength"],
+  "score_structure":{
+    "final_score":[{"key":"trade_value_rank","weight":10},{"key":"rank_gap","weight":10},{"key":"amount_ratio","weight":15},{"key":"instant_strength","weight":15},{"key":"five_min_strength","weight":15},{"key":"program_net","weight":20},{"key":"large_trade","weight":15}],
+    "entry_score":[{"key":"trade_value_rank","weight":25},{"key":"rank_gap","weight":25},{"key":"amount_ratio","weight":50}],
+    "confirmation_score":[{"key":"instant_strength","weight":20},{"key":"five_min_strength","weight":20},{"key":"program_net","weight":35},{"key":"large_trade","weight":25}],
+    "focus_score":[{"key":"trade_value_rank","weight":10},{"key":"rank_gap","weight":10},{"key":"amount_ratio","weight":15},{"key":"instant_strength","weight":15},{"key":"five_min_strength","weight":15},{"key":"program_net","weight":20},{"key":"large_trade","weight":15}]
   },
-  "pool_policy": {
-    "top20": {
-      "from_rank": 1,
-      "to_rank": 20
-    },
-    "top50": {
-      "from_rank": 21,
-      "to_rank": 50
-    },
-    "top300": {
-      "from_rank": 51,
-      "to_rank": null
-    }
-  }
+  "grade_guards":[
+    {"name":"수급양수","type":"any_positive","keys":["program_net","large_trade"],"max_score":89},
+    {"name":"강도100","type":"any_value_min","keys":["instant_strength","five_min_strength"],"value":100,"max_score":89}
+  ],
+  "funnel":{"top50":{"take":50},"top20":{"take":20},"top5":{"take":5}}
 }

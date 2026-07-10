@@ -1,137 +1,19 @@
 {
-  "schema_version": 2,
-  "id": "OPENING_BURST_V01",
-  "name": "장초반 폭발 확인형 · 5분강도",
-  "label": "폭발 확인형 · 5분강도",
-  "runtime_status": "design_ready_loaded_with_current_engine_mapping",
-  "purpose": "09:00 직후 거래대금과 체결강도가 동시에 폭발하는 종목을 감시하며 기존 1분강도 가속 항목은 키움 조회 기반 5분강도로 교체한다.",
-  "grade_policy": {
-    "mode": "absolute_market_calibrated",
-    "distribution": "natural_not_forced",
-    "base_bands": {
-      "A": 90,
-      "B": 80,
-      "C": 70,
-      "D": 60,
-      "F": 0
-    },
-    "a_grade_guards": [
-      "price >= vwap_or_open",
-      "realtime_strength >= 100",
-      "score_has_money_flow_confirmation"
-    ]
+  "schema_version":3,"id":"OPENING_BURST_V01","name":"장초반 폭발 확인형 · 5분강도","label":"폭발 확인형 · 5분강도","runtime_status":"READY",
+  "required_features":["rank_gap","amount_ratio","five_min_strength"],
+  "score_structure":{
+    "final_score":[{"key":"rank_gap","weight":15},{"key":"amount_ratio","weight":20},{"key":"trade_value_amount","weight":10},{"key":"instant_strength","weight":20},{"key":"five_min_strength","weight":15},{"key":"program_net","weight":5},{"key":"large_trade","weight":5},{"key":"near_high","weight":10},{"key":"reversal_penalty","weight":-20},{"key":"strength_divergence_penalty","weight":-15}],
+    "entry_score":[{"key":"rank_gap","weight":30},{"key":"amount_ratio","weight":40},{"key":"trade_value_amount","weight":30}],
+    "confirmation_score":[{"key":"instant_strength","weight":35},{"key":"five_min_strength","weight":25},{"key":"program_net","weight":10},{"key":"large_trade","weight":10},{"key":"near_high","weight":20}],
+    "focus_score":[{"key":"rank_gap","weight":15},{"key":"amount_ratio","weight":20},{"key":"trade_value_amount","weight":10},{"key":"instant_strength","weight":20},{"key":"five_min_strength","weight":15},{"key":"program_net","weight":5},{"key":"large_trade","weight":5},{"key":"near_high","weight":10},{"key":"reversal_penalty","weight":-20},{"key":"strength_divergence_penalty","weight":-15}]
   },
-  "promotion_demotion_policy": {
-    "principle": "group_membership_is_result_not_score_source",
-    "score_all_rows_for_entry": true,
-    "top50": "top 50 by entry_score from Top300",
-    "top20": "top 20 by confirmation_score from Top50",
-    "top5": "score reference only; no separate visible lane",
-    "refresh_behavior": "existing display-order and lane safety controller owns movement"
-  },
-  "orderbook_policy": {
-    "name": "aggressive_sell_wall_absorption",
-    "principle": "폭발형에서도 매도잔량 우위 + 매수체결 우위 + 가격 유지가 함께 있을 때만 흡수로 가점한다.",
-    "favorable": [
-      "ask_pct > 55",
-      "bid_pct < 45",
-      "realtime_strength >= 120",
-      "price >= open"
-    ],
-    "penalty": [
-      "upper_wick_reversal",
-      "one_min_trade_value_collapse",
-      "strength_drop_below_100"
-    ]
-  },
-  "score_structure": {
-    "entry_score": [
-      {
-        "key": "trade_value_rank",
-        "weight": 25
-      },
-      {
-        "key": "rank_gap",
-        "weight": 25
-      },
-      {
-        "key": "trade_value_growth",
-        "weight": 25
-      },
-      {
-        "key": "change_rate_reaction",
-        "weight": 15
-      },
-      {
-        "key": "above_open",
-        "weight": 10
-      }
-    ],
-    "confirmation_score": [
-      {
-        "key": "one_min_trade_value_burst",
-        "weight": 30
-      },
-      {
-        "key": "realtime_strength_rank",
-        "weight": 25
-      },
-      {
-        "key": "one_min_net_buy_value_growth",
-        "weight": 25
-      },
-      {
-        "key": "sell_wall_absorption",
-        "weight": 10
-      },
-      {
-        "key": "session_strength",
-        "weight": 10
-      }
-    ],
-    "focus_score": [
-      {
-        "key": "five_min_strength",
-        "label": "5분강도",
-        "weight": 25
-      },
-      {
-        "key": "breakout_or_above_open",
-        "weight": 25
-      },
-      {
-        "key": "rank_gap_continuation",
-        "weight": 20
-      },
-      {
-        "key": "no_trade_value_collapse",
-        "weight": 15
-      },
-      {
-        "key": "spike_reversal_penalty",
-        "weight": -30
-      }
-    ],
-    "grade_score_weights": {
-      "entry_score": 0.3,
-      "confirmation_score": 0.4,
-      "focus_score": 0.3
-    }
-  },
-  "funnel": {
-    "top50": {
-      "take": 50,
-      "score": "entry_score"
-    },
-    "top20": {
-      "from": "top50",
-      "take": 20,
-      "score": "confirmation_score"
-    },
-    "top5": {
-      "from": "top20",
-      "take": 5,
-      "score": "focus_score"
-    }
-  }
+  "grade_guards":[
+    {"name":"순간120","type":"feature_value_min","key":"instant_strength","value":120,"max_score":89},
+    {"name":"5분100","type":"feature_value_min","key":"five_min_strength","value":100,"max_score":89},
+    {"name":"시가위","type":"feature_value_min","key":"above_open","value":1,"max_score":89},
+    {"name":"고가권70","type":"feature_value_min","key":"near_high","value":70,"max_score":89},
+    {"name":"윗꼬리35","type":"feature_value_max","key":"upper_wick_ratio","value":35,"max_score":89},
+    {"name":"대금비상위30","type":"feature_score_min","key":"amount_ratio","value":70,"max_score":89}
+  ],
+  "funnel":{"top50":{"take":50},"top20":{"take":20},"top5":{"take":5}}
 }
