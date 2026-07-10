@@ -1,16 +1,55 @@
 {
   "schema_version": 1,
-  "default_model_id": "NET_BUY_STRENGTH_V02",
-  "runtime_status": "ranking_engine_v02_standard_launcher_wired",
+  "default_model_id": "FIVE_FACTOR_FLOW_V01",
+  "runtime_status": "five_factor_flow_v01_server_scoring_wired",
   "models": [
-    {"id": "NET_BUY_STRENGTH_V02", "label": "순매수 강도 v0.2", "file": "NET_BUY_STRENGTH_V02.json", "recommended": true},
-    {"id": "NET_BUY_STRENGTH_V01", "label": "순매수 강도 v0.1", "file": "NET_BUY_STRENGTH_V01.json"},
-    {"id": "OPENING_MONEY_FLOW_V01", "label": "돈쏠림 시작형", "file": "OPENING_MONEY_FLOW_V01.json"},
-    {"id": "OPENING_ACCUMULATION_V01", "label": "조용한 매집형", "file": "OPENING_ACCUMULATION_V01.json"},
-    {"id": "OPENING_BURST_V01", "label": "폭발 확인형", "file": "OPENING_BURST_V01.json"},
-    {"id": "PROGRAM_FLOW_V01", "label": "프로그램 동행형", "file": "PROGRAM_FLOW_V01.json"},
-    {"id": "RELATIVE_STRENGTH_OPENING_V01", "label": "시장대비 강도형", "file": "RELATIVE_STRENGTH_OPENING_V01.json"},
-    {"id": "TVRANK_A_V03_TEMP", "label": "현재 하드코딩 기준", "file": "TVRANK_A_V03_TEMP.json", "legacy": true}
+    {
+      "id": "FIVE_FACTOR_FLOW_V01",
+      "label": "5요소 수급선발 v0.1",
+      "file": "FIVE_FACTOR_FLOW_V01.json",
+      "recommended": true
+    },
+    {
+      "id": "NET_BUY_STRENGTH_V02",
+      "label": "순매수 강도 v0.2 · 5분강도",
+      "file": "NET_BUY_STRENGTH_V02.json"
+    },
+    {
+      "id": "NET_BUY_STRENGTH_V01",
+      "label": "순매수 강도 v0.1 · 5분강도",
+      "file": "NET_BUY_STRENGTH_V01.json"
+    },
+    {
+      "id": "OPENING_MONEY_FLOW_V01",
+      "label": "돈쏠림 시작형 · 5분강도",
+      "file": "OPENING_MONEY_FLOW_V01.json"
+    },
+    {
+      "id": "OPENING_ACCUMULATION_V01",
+      "label": "조용한 매집형",
+      "file": "OPENING_ACCUMULATION_V01.json"
+    },
+    {
+      "id": "OPENING_BURST_V01",
+      "label": "폭발 확인형 · 5분강도",
+      "file": "OPENING_BURST_V01.json"
+    },
+    {
+      "id": "PROGRAM_FLOW_V01",
+      "label": "프로그램 동행형",
+      "file": "PROGRAM_FLOW_V01.json"
+    },
+    {
+      "id": "RELATIVE_STRENGTH_OPENING_V01",
+      "label": "시장대비 강도형",
+      "file": "RELATIVE_STRENGTH_OPENING_V01.json"
+    },
+    {
+      "id": "TVRANK_A_V03_TEMP",
+      "label": "현재 하드코딩 기준",
+      "file": "TVRANK_A_V03_TEMP.json",
+      "legacy": true
+    }
   ],
   "ui_target": {
     "control": "topbar_dropdown",

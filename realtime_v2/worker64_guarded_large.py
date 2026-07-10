@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import re
 import sys
 from copy import deepcopy
 from http import HTTPStatus
@@ -23,7 +24,7 @@ from realtime_v2.common import (
 guarded = importlib.import_module("realtime_v2.worker64_guarded")
 base = guarded.base
 
-# Persist source/timestamp metadata together with the existing large_trade_* totals.
+# Persist large-trade metadata and the last valid opt10046 strength values.
 base.DAILY_PERSIST_KEYS = tuple(
     dict.fromkeys(
         (
@@ -31,6 +32,12 @@ base.DAILY_PERSIST_KEYS = tuple(
             "large_trade_source",
             "large_trade_threshold_krw",
             "large_trade_updated_at",
+            "strength_5m",
+            "strength_20m",
+            "strength_60m",
+            "strength_source",
+            "strength_snapshot_at",
+            "strength_status",
         )
     )
 )
@@ -77,7 +84,13 @@ def _suppress_single_trade_large_count(event: dict[str, Any]) -> dict[str, Any]:
     return next_event
 
 
-def _apply_large_trade_delta(state, code: str, quote: dict[str, Any], delta: dict[str, Any], received_at: Any) -> None:
+def _apply_large_trade_delta(
+    state,
+    code: str,
+    quote: dict[str, Any],
+    delta: dict[str, Any],
+    received_at: Any,
+) -> None:
     buy_delta = int(delta.get("buy_count") or 0)
     sell_delta = int(delta.get("sell_count") or 0)
     buy_sum_delta = float(delta.get("buy_sum_eok") or 0.0)
@@ -85,11 +98,18 @@ def _apply_large_trade_delta(state, code: str, quote: dict[str, Any], delta: dic
 
     quote["large_trade_buy_count"] = int(quote.get("large_trade_buy_count") or 0) + buy_delta
     quote["large_trade_sell_count"] = int(quote.get("large_trade_sell_count") or 0) + sell_delta
-    quote["large_trade_buy_sum_eok"] = round(float(quote.get("large_trade_buy_sum_eok") or 0.0) + buy_sum_delta, 4)
-    quote["large_trade_sell_sum_eok"] = round(float(quote.get("large_trade_sell_sum_eok") or 0.0) + sell_sum_delta, 4)
-    quote["large_trade_net_count"] = int(quote.get("large_trade_buy_count") or 0) - int(quote.get("large_trade_sell_count") or 0)
+    quote["large_trade_buy_sum_eok"] = round(
+        float(quote.get("large_trade_buy_sum_eok") or 0.0) + buy_sum_delta, 4
+    )
+    quote["large_trade_sell_sum_eok"] = round(
+        float(quote.get("large_trade_sell_sum_eok") or 0.0) + sell_sum_delta, 4
+    )
+    quote["large_trade_net_count"] = int(quote.get("large_trade_buy_count") or 0) - int(
+        quote.get("large_trade_sell_count") or 0
+    )
     quote["large_trade_net_sum_eok"] = round(
-        float(quote.get("large_trade_buy_sum_eok") or 0.0) - float(quote.get("large_trade_sell_sum_eok") or 0.0),
+        float(quote.get("large_trade_buy_sum_eok") or 0.0)
+        - float(quote.get("large_trade_sell_sum_eok") or 0.0),
         4,
     )
     quote["large_trade_source"] = "collector_aggregate"
@@ -117,7 +137,11 @@ def _patched_apply_trade(self, event: dict[str, Any]) -> None:
     if not _has_large_trade_delta(delta):
         return _original_apply_trade(self, event)
 
-    values = delta.get("values") if isinstance(delta.get("values"), dict) else base.merged_event_values(event)
+    values = (
+        delta.get("values")
+        if isinstance(delta.get("values"), dict)
+        else base.merged_event_values(event)
+    )
     code = normalize_code(
         event.get("stock_code")
         or event.get("received_code")
@@ -151,6 +175,50 @@ base.State._apply_trade = _patched_apply_trade
 _original_do_get = base.WebHandler.do_GET
 
 
+def _five_min_strength_display_patch(html: str) -> str:
+    """Replace the legacy one-minute display with worker-supplied strength_5m.
+
+    No strength or OHLC calculation is performed in the browser. The worker row is
+    the only source of the displayed value.
+    """
+
+    marker = "STOCKBOARD_V2_STRENGTH5M_DISPLAY_20260710"
+    if marker in html:
+        return html
+
+    html = html.replace("잔량비/순간강도/1분강도", "잔량비/순간강도/5분강도")
+    html = html.replace(
+        "const metricKeys = new Set(['bid_ask_ratio', 'execution_strength', 'strength_1m']);",
+        "const metricKeys = new Set(['bid_ask_ratio', 'execution_strength', 'strength_5m']);",
+    )
+    html = html.replace(
+        "{ key:'strength_1m', label:'1분강도', className:'num metric-header', sort:'strength_1m', width:70, min:54 },",
+        "{ key:'strength_5m', label:'5분강도', className:'num metric-header', sort:'strength_5m', width:70, min:54 },",
+    )
+    html = html.replace("    strength_1m: 58,", "    strength_5m: 58,")
+    html = html.replace(
+        "    const one=numeric(r.strength_1m);",
+        "    const five=numeric(r.strength_5m);",
+    )
+    html = re.sub(
+        r"\$\{metricCell\('strength_1m',one,fmtStrength\(one\),clsStrength\(one\)\+cellFlashClass\(code,'strength_1m',one\),'[^']*'\)\}",
+        "${metricCell('strength_5m',five,fmtStrength(five),clsStrength(five)+cellFlashClass(code,'strength_5m',five),'키움 opt10046 5분강도 · 마지막 정상값 유지')}",
+        html,
+        count=1,
+    )
+
+    anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
+    patch = r'''
+  /* STOCKBOARD_V2_STRENGTH5M_DISPLAY_20260710 */
+  deriveClientFields = function(row){
+    return row && typeof row === 'object' ? {...row} : {};
+  };
+'''
+    if anchor in html:
+        html = html.replace(anchor, f"{patch}\n{anchor}", 1)
+    return html
+
+
 def _strip_noisy_tooltips_patch(html: str) -> str:
     """Keep only the daily candle tooltip and remove row/cell metric tooltips."""
 
@@ -163,10 +231,10 @@ def _strip_noisy_tooltips_patch(html: str) -> str:
         'title="O ${fmtNum(o.open)} H ${fmtNum(o.high)} L ${fmtNum(o.low)} C ${fmtNum(o.close)}"',
         'title="${escapeHtml(candleTitle(r,o))}"',
     )
-    html = html.replace(' title="${escapeHtml(rowTitle(r))}"', '')
-    html = html.replace(' title="score ${r.grade_score??\'-\'}"', '')
-    html = html.replace(' title="?? ${fmtNum(r.prev_trade_value_eok,0)}?"', '')
-    html = html.replace(' title="${escapeHtml(fullTitle)}"', '')
+    html = html.replace(' title="${escapeHtml(rowTitle(r))}"', "")
+    html = html.replace(' title="score ${r.grade_score??\'-\'}"', "")
+    html = html.replace(' title="?? ${fmtNum(r.prev_trade_value_eok,0)}?"', "")
+    html = html.replace(' title="${escapeHtml(fullTitle)}"', "")
     return html
 
 
@@ -175,7 +243,6 @@ def _ui_safety_patch(html: str) -> str:
     if marker in html:
         return html
 
-    # Top20 stays hot. Top300 Pool is slow only during the opening burst.
     html = html.replace(
         "const now=performance.now(),shouldPool=opt.forcePool||now-lastPoolRenderAt>=250,",
         "const now=performance.now(),shouldPool=opt.forcePool||now-lastPoolRenderAt>=__sbv2PoolIntervalMs(),",
@@ -193,7 +260,7 @@ def _ui_safety_patch(html: str) -> str:
   let __sbv2LastNavTable = null;
   function __sbv2IsBoardTable(table){ return table === selectedBoardEl || table === focusBoardEl || table === poolBoardEl; }
   function __sbv2IsPoolLikeTable(table){ return table === focusBoardEl || table === poolBoardEl; }
-  function __sbv2TableHasCode(table, code){ return !!(table && code && table.querySelector && table.querySelector(`tbody tr[data-code="${code}"]`)); }
+  function __sbv2TableHasCode(table, code){ return !!(table && code && table.querySelector(`tbody tr[data-code="${code}"]`)); }
   function __sbv2RememberNavTable(event){
     const row = event && event.target && event.target.closest ? event.target.closest('tr[data-code]') : null;
     const table = row ? row.closest('table') : null;
@@ -211,9 +278,6 @@ def _ui_safety_patch(html: str) -> str:
     const active = document.activeElement;
     const activeRow = active && active.closest ? active.closest('tr[data-code]') : null;
     const activeTable = activeRow ? activeRow.closest('table') : null;
-
-    // After a click the original page may focus the S1 duplicate row.  Keep
-    // arrow navigation in the visible Focus/Pool table the user clicked.
     if(selectedCode && __sbv2IsPoolLikeTable(__sbv2LastNavTable) && __sbv2TableHasCode(__sbv2LastNavTable, selectedCode)) return __sbv2LastNavTable;
     if(__sbv2IsPoolLikeTable(activeTable)) return activeTable;
     if(__sbv2IsBoardTable(__sbv2LastNavTable)) return __sbv2LastNavTable;
@@ -257,7 +321,7 @@ def _ui_safety_patch(html: str) -> str:
     if(!/^\d{6}$/.test(code)) return false;
     __sbv2LastNavTable = table;
     __sbv2RefocusVisibleRow(table, code);
-    selectCodeAndLink(code, false, {focus:false}); // keep HTS linkage on arrow navigation
+    selectCodeAndLink(code, false, {focus:false});
     [0, 80, 180, 360, 720, 1200].forEach(delay => {
       setTimeout(() => __sbv2RefocusVisibleRow(table, code), delay);
     });
@@ -279,7 +343,6 @@ def _ui_safety_patch(html: str) -> str:
   document.addEventListener('keydown', __sbv2HandleArrowKey, true);
   window.addEventListener('keydown', __sbv2HandleArrowKey, true);
 
-  // Hide the row-position freeze button. Pool row positions are already stable enough for the current design.
   if(rowPositionToggle){ rowPositionToggle.style.display = 'none'; }
 
   function __sbv2ScrollSpacer(){
@@ -343,6 +406,7 @@ def _patched_do_get(self) -> None:
     if parsed.path in {"/", "/v2", "/stockboard_v2.html"}:
         html_path = Path(base.ROOT) / "docs" / "stockboard_v2.html"
         html = html_path.read_text(encoding="utf-8-sig")
+        html = _five_min_strength_display_patch(html)
         html = _strip_noisy_tooltips_patch(html)
         html = _ui_safety_patch(html)
         body = html.encode("utf-8")

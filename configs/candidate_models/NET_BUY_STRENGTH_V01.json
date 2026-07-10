@@ -1,69 +1,133 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "NET_BUY_STRENGTH_V01",
-  "name": "순매수 강도 v0.1",
-  "label": "순매수 강도 v0.1",
+  "name": "순매수 강도 v0.1 · 5분강도",
+  "label": "순매수 강도 v0.1 · 5분강도",
   "runtime_status": "design_ready_loaded_with_current_engine_mapping",
-  "purpose": "순위, 전일 순위상승, 거래대금/전일 거래대금, 잔량비, 순간강도, 1분강도, 프로그램 순매수를 100점씩 평가해 총점이 높은 종목을 상위 풀에서 하위 풀까지 같은 기준으로 배열한다.",
-  "owner_spec": {
-    "total_points": 700,
-    "grade_display": "등급 문자 + 점수, 예: A93, B84, C76",
-    "items": [
-      {"label": "순위", "condition": "100등 이내", "max_score": 100, "tiers": "20등 이내 100점, 40등 이내 90점, 60등 이내 80점, 80등 이내 70점, 100등 이내 60점"},
-      {"label": "전일", "condition": "전일대비 순위 상승", "max_score": 100, "tiers": "상승폭 상위 20등 이내 100점, 40등 이내 90점, 60등 이내 80점, 80등 이내 70점, 100등 이내 60점"},
-      {"label": "금액(억)", "condition": "거래대금/전일 거래대금 순위", "max_score": 100, "tiers": "20등 이내 100점, 40등 이내 90점, 60등 이내 80점, 80등 이내 70점, 100등 이내 60점"},
-      {"label": "잔량비", "condition": "1 이하", "max_score": 100, "tiers": "0.2 이하 100점, 0.4 이하 90점, 0.6 이하 80점, 0.8 이하 70점, 1.0 이하 60점"},
-      {"label": "순간강도", "condition": "체결강도 100 이상", "max_score": 100, "tiers": "200 이상 100점, 175 이상 90점, 150 이상 80점, 125 이상 70점, 100 이상 60점"},
-      {"label": "1분강도", "condition": "1분전 대비 상승", "max_score": 100, "tiers": "8% 이상 100점, 6% 이상 90점, 4% 이상 80점, 2% 이상 70점, 0% 이상 60점"},
-      {"label": "프로(억)", "condition": "프로그램 순매수/거래대금 순위", "max_score": 100, "tiers": "20등 이내 100점, 40등 이내 90점, 60등 이내 80점, 80등 이내 70점, 100등 이내 60점"}
-    ]
-  },
-  "implementation_notes": [
-    "v0.1은 현재 엔진 score_structure에 연결 가능한 내부 key로 매핑한다.",
-    "금액(억)은 시총 기준이 아니라 거래대금/전일 거래대금 기준으로 정의한다.",
-    "현재 엔진 score_structure의 trade_value_growth key는 아직 trade_value_eok 상대 스케일 기반으로 동작한다. owner_spec의 정확한 거래대금/전일 거래대금 bucket 계산은 후속 엔진 확장에서 trade_value_ratio 전용 key로 고정해야 한다.",
-    "프로(억)/거래대금 순위는 현재 엔진의 program_net 상대 점수로 우선 대체한다.",
-    "등급은 엔진의 candidate_grade_text 형식에 따라 문자+점수로 표시한다. 예: A93, B84, C76."
-  ],
+  "purpose": "기존 v0.1의 1분강도 항목을 키움 조회 기반 5분강도로 교체한다.",
   "grade_policy": {
     "mode": "absolute_market_calibrated",
     "display": "letter_with_score",
     "distribution": "natural_not_forced",
     "base_bands": {
-      "A": 91,
-      "B": 81,
-      "C": 71,
-      "D": 61,
+      "A": 90,
+      "B": 80,
+      "C": 70,
+      "D": 60,
       "F": 0
     }
   },
   "score_structure": {
     "entry_score": [
-      {"key": "trade_value_rank", "label": "순위", "weight": 100},
-      {"key": "rank_gap", "label": "전일", "weight": 100},
-      {"key": "trade_value_growth", "label": "금액(억): 거래대금/전일거래대금", "weight": 100},
-      {"key": "sell_wall_absorption", "label": "잔량비", "weight": 100},
-      {"key": "realtime_strength_hold_100", "label": "순간강도", "weight": 100},
-      {"key": "one_min_strength_growth", "label": "1분강도", "weight": 100},
-      {"key": "program_net", "label": "프로(억)", "weight": 100}
+      {
+        "key": "trade_value_rank",
+        "label": "순위",
+        "weight": 100
+      },
+      {
+        "key": "rank_gap",
+        "label": "전일",
+        "weight": 100
+      },
+      {
+        "key": "trade_value_growth",
+        "label": "금액(억): 거래대금/전일거래대금",
+        "weight": 100
+      },
+      {
+        "key": "sell_wall_absorption",
+        "label": "잔량비",
+        "weight": 100
+      },
+      {
+        "key": "realtime_strength_hold_100",
+        "label": "순간강도",
+        "weight": 100
+      },
+      {
+        "key": "five_min_strength",
+        "label": "5분강도",
+        "weight": 100
+      },
+      {
+        "key": "program_net",
+        "label": "프로(억)",
+        "weight": 100
+      }
     ],
     "confirmation_score": [
-      {"key": "trade_value_rank", "label": "순위", "weight": 100},
-      {"key": "rank_gap", "label": "전일", "weight": 100},
-      {"key": "trade_value_growth", "label": "금액(억): 거래대금/전일거래대금", "weight": 100},
-      {"key": "sell_wall_absorption", "label": "잔량비", "weight": 100},
-      {"key": "realtime_strength_hold_100", "label": "순간강도", "weight": 100},
-      {"key": "one_min_strength_growth", "label": "1분강도", "weight": 100},
-      {"key": "program_net", "label": "프로(억)", "weight": 100}
+      {
+        "key": "trade_value_rank",
+        "label": "순위",
+        "weight": 100
+      },
+      {
+        "key": "rank_gap",
+        "label": "전일",
+        "weight": 100
+      },
+      {
+        "key": "trade_value_growth",
+        "label": "금액(억): 거래대금/전일거래대금",
+        "weight": 100
+      },
+      {
+        "key": "sell_wall_absorption",
+        "label": "잔량비",
+        "weight": 100
+      },
+      {
+        "key": "realtime_strength_hold_100",
+        "label": "순간강도",
+        "weight": 100
+      },
+      {
+        "key": "five_min_strength",
+        "label": "5분강도",
+        "weight": 100
+      },
+      {
+        "key": "program_net",
+        "label": "프로(억)",
+        "weight": 100
+      }
     ],
     "focus_score": [
-      {"key": "trade_value_rank", "label": "순위", "weight": 100},
-      {"key": "rank_gap", "label": "전일", "weight": 100},
-      {"key": "trade_value_growth", "label": "금액(억): 거래대금/전일거래대금", "weight": 100},
-      {"key": "sell_wall_absorption", "label": "잔량비", "weight": 100},
-      {"key": "realtime_strength_hold_100", "label": "순간강도", "weight": 100},
-      {"key": "one_min_strength_growth", "label": "1분강도", "weight": 100},
-      {"key": "program_net", "label": "프로(억)", "weight": 100}
+      {
+        "key": "trade_value_rank",
+        "label": "순위",
+        "weight": 100
+      },
+      {
+        "key": "rank_gap",
+        "label": "전일",
+        "weight": 100
+      },
+      {
+        "key": "trade_value_growth",
+        "label": "금액(억): 거래대금/전일거래대금",
+        "weight": 100
+      },
+      {
+        "key": "sell_wall_absorption",
+        "label": "잔량비",
+        "weight": 100
+      },
+      {
+        "key": "realtime_strength_hold_100",
+        "label": "순간강도",
+        "weight": 100
+      },
+      {
+        "key": "five_min_strength",
+        "label": "5분강도",
+        "weight": 100
+      },
+      {
+        "key": "program_net",
+        "label": "프로(억)",
+        "weight": 100
+      }
     ],
     "grade_score_weights": {
       "entry_score": 0.3333333333,
@@ -72,8 +136,19 @@
     }
   },
   "funnel": {
-    "top50": {"take": 50, "score": "entry_score"},
-    "top20": {"from": "top50", "take": 20, "score": "confirmation_score"},
-    "top5": {"from": "top20", "take": 5, "score": "focus_score"}
+    "top50": {
+      "take": 50,
+      "score": "entry_score"
+    },
+    "top20": {
+      "from": "top50",
+      "take": 20,
+      "score": "confirmation_score"
+    },
+    "top5": {
+      "from": "top20",
+      "take": 5,
+      "score": "focus_score"
+    }
   }
 }

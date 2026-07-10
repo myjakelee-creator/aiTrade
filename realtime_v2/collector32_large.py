@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from realtime_v2.common import LARGE_TRADE_THRESHOLD_KRW, normalized_price
+from realtime_v2.strength5m_scheduler import install as install_strength5m_scheduler
 
 base = importlib.import_module("realtime_v2.collector32")
 
@@ -158,6 +159,7 @@ def _patched_stats(self) -> dict[str, Any]:
 
 
 base.EventSender.stats = _patched_stats
+install_strength5m_scheduler(base)
 
 
 if __name__ == "__main__":

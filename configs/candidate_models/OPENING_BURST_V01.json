@@ -1,44 +1,19 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "OPENING_BURST_V01",
-  "name": "장초반 폭발 확인형",
-  "runtime_status": "design_ready_not_loaded_yet",
-  "purpose": "09:00 직후 거래대금과 체결강도가 동시에 폭발하는 종목을 빠르게 감시 대상으로 올린다.",
+  "name": "장초반 폭발 확인형 · 5분강도",
+  "label": "폭발 확인형 · 5분강도",
+  "runtime_status": "design_ready_loaded_with_current_engine_mapping",
+  "purpose": "09:00 직후 거래대금과 체결강도가 동시에 폭발하는 종목을 감시하며 기존 1분강도 가속 항목은 키움 조회 기반 5분강도로 교체한다.",
   "grade_policy": {
     "mode": "absolute_market_calibrated",
     "distribution": "natural_not_forced",
     "base_bands": {
-      "A": 91,
-      "B": 81,
-      "C": 71,
-      "D": 61,
+      "A": 90,
+      "B": 80,
+      "C": 70,
+      "D": 60,
       "F": 0
-    },
-    "market_adjustment": {
-      "strong": {
-        "A": 91,
-        "B": 81,
-        "C": 71,
-        "D": 61
-      },
-      "neutral": {
-        "A": 91,
-        "B": 81,
-        "C": 71,
-        "D": 61
-      },
-      "weak": {
-        "A": 91,
-        "B": 81,
-        "C": 71,
-        "D": 61
-      },
-      "very_weak": {
-        "A": 91,
-        "B": 81,
-        "C": 71,
-        "D": 61
-      }
     },
     "a_grade_guards": [
       "price >= vwap_or_open",
@@ -51,8 +26,8 @@
     "score_all_rows_for_entry": true,
     "top50": "top 50 by entry_score from Top300",
     "top20": "top 20 by confirmation_score from Top50",
-    "top5": "top 5 by focus_score from Top20",
-    "refresh_behavior": "every refresh can promote or demote rows"
+    "top5": "score reference only; no separate visible lane",
+    "refresh_behavior": "existing display-order and lane safety controller owns movement"
   },
   "orderbook_policy": {
     "name": "aggressive_sell_wall_absorption",
@@ -116,7 +91,8 @@
     ],
     "focus_score": [
       {
-        "key": "one_min_strength_acceleration",
+        "key": "five_min_strength",
+        "label": "5분강도",
         "weight": 25
       },
       {
