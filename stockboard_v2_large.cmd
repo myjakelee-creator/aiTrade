@@ -108,6 +108,28 @@ function Stop-ProcessRows([object[]]$Rows, [string]$Label) {
     }
 }
 
+function Get-OpstarterProcessRows {
+    try {
+        return @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+            $name = [string]$_.Name
+            $cmd = [string]$_.CommandLine
+            return ($name -match '^(?i)opstarter.*\.exe$' -or $cmd -match '(?i)opstarter')
+        } | Select-Object ProcessId, Name, CommandLine)
+    } catch {
+        return @()
+    }
+}
+
+function Stop-OpenApiStarterArtifacts {
+    # Kiwoom OpenAPI sometimes leaves an opstarter error dialog/process after a
+    # fast restart.  Kill only opstarter, never HTS/Hero main windows.
+    $rows = @(Get-OpstarterProcessRows)
+    if ($rows.Count -gt 0) {
+        Stop-ProcessRows $rows "opstarter"
+        Start-Sleep -Milliseconds 500
+    }
+}
+
 function Stop-V2PythonAndAhkProcesses {
     try {
         $patterns = @(
@@ -161,10 +183,12 @@ function Stop-LargeProcesses {
     Stop-PidFile $WorkerPidFile "worker64"
     Stop-PidFile $ContextPidFile "context_snapshot_writer"
     Stop-V2PythonAndAhkProcesses
+    Stop-OpenApiStarterArtifacts
     Stop-Port 8765
     Stop-Port 8710
-    Start-Sleep -Milliseconds 300
+    Start-Sleep -Milliseconds 500
     Stop-OrphanStockBoardConsoles
+    Stop-OpenApiStarterArtifacts
     Clear-RuntimePidFiles
 }
 
@@ -231,7 +255,7 @@ function Start-V2Large([bool]$FastOpen = $false) {
     Set-Content -LiteralPath $ContextPidFile -Value $context.Id -Encoding ASCII
     Write-Host "CONTEXT_PID=$($context.Id)"
 
-    Write-Step "Starting 64-bit guarded worker with large-trade and bidask last-cache support"
+    Write-Step "Starting guarded worker with large-trade and bidask support"
     $worker = Start-Process -FilePath $Python64 -ArgumentList @("realtime_v2\worker64_guarded_large_bidask.py") -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $workerOut -RedirectStandardError $workerErr -PassThru
     Set-Content -LiteralPath $WorkerPidFile -Value $worker.Id -Encoding ASCII
     Write-Host "WORKER64_PID=$($worker.Id)"
@@ -241,6 +265,10 @@ function Start-V2Large([bool]$FastOpen = $false) {
     if (-not (Wait-WorkerReady 10)) {
         Write-Warning "worker did not respond yet; collector will still be started"
     }
+
+    Write-Step "Preparing Kiwoom OpenAPI starter"
+    Stop-OpenApiStarterArtifacts
+    Start-Sleep -Milliseconds 1200
 
     Write-Step "Starting 32-bit collector with large-trade and thin bidask scheduler"
     if (-not (Test-Path -LiteralPath $Python32)) { throw "32-bit Python not found: $Python32" }
@@ -275,6 +303,7 @@ function Start-V2Large([bool]$FastOpen = $false) {
 
     Write-Step "Waiting for OpenAPI login and registration"
     [void](Wait-CollectorOpenApiReady 75)
+    Stop-OpenApiStarterArtifacts
 
     Write-Step "Starting HTS bridge"
     if (Test-Path -LiteralPath $OldLauncher) {
@@ -297,6 +326,10 @@ function Status-V2Large {
         Write-Host "ORDERBOOK_COUNT=$($snapshot.status.orderbook_count)"
         Write-Host "BIDASK_CACHE_COUNT=$($snapshot.status.bidask_cache_count)"
         Write-Host "BIDASK_CACHE_APPLIED_ROWS=$($snapshot.status.bidask_cache_applied_rows)"
+        Write-Host "DISPLAY_HOLD_ACTIVE=$($snapshot.status.display_hold_active)"
+        Write-Host "DISPLAY_HOLD_APPLIED_ROWS=$($snapshot.status.display_hold_applied_rows)"
+        $opRows = @(Get-OpstarterProcessRows)
+        Write-Host "OPSTARTER_PROCESS_COUNT=$($opRows.Count)"
         $collectorStatus = $snapshot.status.collector_status
         $sender = $collectorStatus.sender_stats
         if ($sender) {
@@ -369,6 +402,11 @@ function Doctor-V2Large {
     if (Test-Path -LiteralPath $CollectorPidFile) { Add-Line "COLLECTOR_PID=$(Get-Content -LiteralPath $CollectorPidFile | Select-Object -First 1)" }
     Add-Line "HAS_COLLECTOR_LARGE_BIDASK=$(Test-Path -LiteralPath (Join-Path $ProjectRoot 'realtime_v2\collector32_large_bidask.py'))"
     Add-Line "HAS_WORKER_LARGE_BIDASK=$(Test-Path -LiteralPath (Join-Path $ProjectRoot 'realtime_v2\worker64_guarded_large_bidask.py'))"
+    $opRows = @(Get-OpstarterProcessRows)
+    Add-Line "OPSTARTER_PROCESS_COUNT=$($opRows.Count)"
+    foreach ($row in $opRows) {
+        Add-Line "OPSTARTER PID=$($row.ProcessId) NAME=$($row.Name) CMD=$($row.CommandLine)"
+    }
 
     try {
         & $Python64 -m py_compile `
@@ -377,7 +415,10 @@ function Doctor-V2Large {
             (Join-Path $ProjectRoot "realtime_v2\orderbook_thin_scheduler.py") `
             (Join-Path $ProjectRoot "realtime_v2\worker64_guarded_large.py") `
             (Join-Path $ProjectRoot "realtime_v2\worker64_guarded_large_bidask.py") `
-            (Join-Path $ProjectRoot "realtime_v2\bidask_last_cache_patch.py")
+            (Join-Path $ProjectRoot "realtime_v2\bidask_last_cache_patch.py") `
+            (Join-Path $ProjectRoot "realtime_v2\display_hold_policy_patch.py") `
+            (Join-Path $ProjectRoot "realtime_v2\display_hold_ohlc_price_patch.py") `
+            (Join-Path $ProjectRoot "realtime_v2\html_header_sort_patch.py")
         Add-Line "PY_COMPILE=True"
     } catch {
         Add-Line "PY_COMPILE=False"
@@ -405,6 +446,9 @@ function Doctor-V2Large {
         Add-Line "ORDERBOOK_COUNT=$($snapshot.status.orderbook_count)"
         Add-Line "BIDASK_CACHE_COUNT=$($snapshot.status.bidask_cache_count)"
         Add-Line "BIDASK_CACHE_APPLIED_ROWS=$($snapshot.status.bidask_cache_applied_rows)"
+        Add-Line "DISPLAY_HOLD_ACTIVE=$($snapshot.status.display_hold_active)"
+        Add-Line "DISPLAY_HOLD_APPLIED_ROWS=$($snapshot.status.display_hold_applied_rows)"
+        Add-Line "DISPLAY_HOLD_APPLIED_FIELDS=$($snapshot.status.display_hold_applied_fields)"
         $collectorStatus = $snapshot.status.collector_status
         if ($collectorStatus) {
             Add-Line "COLLECTOR_PROVIDER_STARTED=$($collectorStatus.provider_started)"
@@ -420,6 +464,9 @@ function Doctor-V2Large {
 
     Add-DoctorTail ${function:Add-Line} "worker64_large_*.err.log" "WORKER_LARGE_ERR_LOG"
     Add-DoctorTail ${function:Add-Line} "collector32_large_*.err.log" "COLLECTOR_LARGE_ERR_LOG"
+    Add-DoctorTail ${function:Add-Line} "display_hold*_error.txt" "DISPLAY_HOLD_ERROR_LOG"
+    Add-DoctorTail ${function:Add-Line} "bidask*_error.txt" "BIDASK_ERROR_LOG"
+    Add-DoctorTail ${function:Add-Line} "html_header_sort_patch_error.txt" "HEADER_SORT_ERROR_LOG"
 
     Set-Content -LiteralPath $DoctorReport -Value $lines -Encoding UTF8
     Write-Host ""
