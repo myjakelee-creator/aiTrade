@@ -12,6 +12,60 @@ if str(ROOT) not in sys.path:
 large = importlib.import_module("realtime_v2.worker64_guarded_large")
 base = large.base
 
+_CROSS_TABLE_NAV_MARKER = "STOCKBOARD_V2_CROSS_TABLE_NAV_20260710"
+_CROSS_TABLE_NAV_ANCHOR = (
+    "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});"
+    "loadCandidateModels();loadContext();markSortHeaders();connectStream();"
+)
+_CROSS_TABLE_NAV_PATCH = r"""
+  /* STOCKBOARD_V2_CROSS_TABLE_NAV_20260710 */
+  function __sbv2CrossTableNavRows(){
+    const rows = [];
+    const seen = new Set();
+    [focusBoardEl, poolBoardEl].forEach(table => {
+      const body = table && table.tBodies ? table.tBodies[0] : null;
+      if(!body) return;
+      body.querySelectorAll('tr[data-code]').forEach(row => {
+        const code = String(row.dataset.code || '');
+        if(!/^\d{6}$/.test(code) || seen.has(code)) return;
+        seen.add(code);
+        rows.push({row, table, code});
+      });
+    });
+    return rows;
+  }
+
+  function __sbv2MoveAcrossBoards(delta){
+    const rows = __sbv2CrossTableNavRows();
+    if(!rows.length) return false;
+    const active = document.activeElement;
+    let index = rows.findIndex(item => item.row === active || item.code === selectedCode);
+    if(index < 0) index = delta > 0 ? -1 : 0;
+    const next = rows[(index + delta + rows.length) % rows.length];
+    if(!next || !/^\d{6}$/.test(next.code)) return false;
+
+    if(typeof __sbv2LastNavTable !== 'undefined') __sbv2LastNavTable = next.table;
+    if(typeof __sbv2RefocusVisibleRow === 'function'){
+      __sbv2RefocusVisibleRow(next.table, next.code);
+    }else if(next.row && typeof next.row.focus === 'function'){
+      next.row.focus({preventScroll:true});
+      if(typeof next.row.scrollIntoView === 'function'){
+        next.row.scrollIntoView({block:'nearest', inline:'nearest'});
+      }
+    }
+    selectCodeAndLink(next.code, false, {focus:false});
+    return true;
+  }
+
+  if(typeof moveSelection === 'function'){
+    const __sbv2OriginalCrossTableMoveSelection = moveSelection;
+    moveSelection = function(delta){
+      if(__sbv2MoveAcrossBoards(delta)) return;
+      return __sbv2OriginalCrossTableMoveSelection(delta);
+    };
+  }
+"""
+
 
 def _runtime_dir() -> Path:
     try:
@@ -62,6 +116,30 @@ def _install_display_hold_ohlc_price_fail_open() -> None:
         _write_patch_error("display_hold_ohlc_price_patch_error.txt", error)
 
 
+def _install_cross_table_navigation_patch_fail_open() -> None:
+    try:
+        if getattr(large, "_cross_table_navigation_patch_installed", False):
+            return
+
+        original_ui_safety_patch = large._ui_safety_patch
+
+        def patched_ui_safety_patch(html: str) -> str:
+            patched = original_ui_safety_patch(html)
+            if _CROSS_TABLE_NAV_MARKER in patched or _CROSS_TABLE_NAV_ANCHOR not in patched:
+                return patched
+            return patched.replace(
+                _CROSS_TABLE_NAV_ANCHOR,
+                f"{_CROSS_TABLE_NAV_PATCH}\n{_CROSS_TABLE_NAV_ANCHOR}",
+                1,
+            )
+
+        large._ui_safety_patch = patched_ui_safety_patch
+        large._cross_table_navigation_patch_installed = True
+    except Exception as error:
+        # Keyboard navigation is UI-only; keep the worker alive on any failure.
+        _write_patch_error("cross_table_navigation_patch_error.txt", error)
+
+
 def _install_header_sort_patch_fail_open() -> None:
     try:
         from realtime_v2.html_header_sort_patch import install as install_header_sort
@@ -75,6 +153,7 @@ def _install_header_sort_patch_fail_open() -> None:
 _install_bidask_patch_fail_open()
 _install_display_hold_fail_open()
 _install_display_hold_ohlc_price_fail_open()
+_install_cross_table_navigation_patch_fail_open()
 _install_header_sort_patch_fail_open()
 
 if __name__ == "__main__":
