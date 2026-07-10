@@ -8,7 +8,6 @@ from typing import Any
 
 from realtime_v2.market_session import market_session_now
 from realtime_v2.strength5m_scheduler import (
-    _age as _strength_age,
     _code,
     _read_json_url,
     _refresh_selected,
@@ -112,6 +111,8 @@ class OrderbookThinScheduler(threading.Thread):
     def _market_accepts_query(self, session=None) -> bool:
         session = session or self._session()
         self.last_market_phase = session.phase
+        # Query during sessions where Kiwoom accepts realtime/TR requests.  After
+        # the market is fully closed we keep displaying the last valid value only.
         return bool(session.is_trading_day and session.accept_realtime)
 
     def _refresh(self) -> None:
@@ -133,6 +134,9 @@ class OrderbookThinScheduler(threading.Thread):
         if lock is None:
             return False
         with lock:
+            # Do not overlap with any active TR request.  Pending strength probes no
+            # longer block thin bidask forever; this lets missing ratios fill slowly
+            # between strength requests without increasing request burst size.
             if any(
                 (
                     getattr(provider, "_strength_probe_inflight", None),
@@ -141,8 +145,9 @@ class OrderbookThinScheduler(threading.Thread):
                 )
             ):
                 return False
+            # Orderbook/OPT10055/close queues are directly competing work.  Strength
+            # pending items are intentionally not treated as a hard block.
             queues = (
-                "_strength_probe_pending",
                 "_orderbook_probe_pending",
                 "_opt10055_probe_pending",
                 "_close_metrics_queue",
@@ -258,7 +263,6 @@ def install(base) -> None:
     provider_class = base.KiwoomOpenApiRealtimeProvider
     if getattr(provider_class, "_stockboard_orderbook_thin_installed", False):
         return
-
     original_register = provider_class.register_codes
     original_stop = provider_class.stop
     original_status = provider_class.status
