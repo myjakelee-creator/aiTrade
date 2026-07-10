@@ -20,9 +20,10 @@ SetBatchLines, -1
 ; - Never send keys to the foreground window.
 ; - Send only to a verified Edit control HWND.
 ; - If the target control is missing or ambiguous, do nothing and write status.
+; - Enter is disabled by default because ControlSend Enter can close HTS when Edit6 is not focused.
 
 TargetControl := "Edit6"
-SendEnterAfterSet := true
+SendEnterAfterSet := false
 NotifySuccess := false
 LastClipboard := Clipboard
 LastCommandId := ""
@@ -51,7 +52,7 @@ WatchClipboardCommand:
         if (commandId != "")
             LastCommandId := commandId
         LastSentCode := code
-        WriteStatus("ok", code, "sent via " . usedSpec . " / " . parseMode)
+        WriteStatus("ok", code, "sent via " . usedSpec . " / " . parseMode . " / " . message)
     } else {
         WriteStatus("error", code, message)
     }
@@ -119,17 +120,19 @@ SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
     }
 
     if (SendEnterAfterSet) {
-        ; Send Enter to the verified target control HWND directly.
-        ; Never send Enter to a window HWND or the current foreground window.
+        ; Disabled by default.  If re-enabled later, still send Enter only to the
+        ; verified Edit6 HWND and never to a window HWND or foreground window.
         ControlSend,, {Enter}, ahk_id %controlHwnd%
         if (ErrorLevel) {
             message := "Enter send failed: " . usedSpec
             TrayTip, StockBoard Kiwoom Link v2, %message%, 3
             return false
         }
+        message := "OK " . code . " / enter sent / " . usedSpec
+    } else {
+        message := "OK " . code . " / code set only, enter blocked for safety / " . usedSpec
     }
 
-    message := "OK " . code . " / " . usedSpec
     if (NotifySuccess) {
         TrayTip, StockBoard Kiwoom Link v2, %message%, 1
     }
