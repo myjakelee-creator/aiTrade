@@ -7,13 +7,10 @@ DetectHiddenWindows, Off
 SetBatchLines, -1
 
 ; StockBoard v2 -> clipboard command -> Kiwoom HTS bridge for AutoHotkey v1.
-; Accepted clipboard commands:
+; Accepted clipboard command only:
 ;   SBV2|<sequence>|005930
-;   SB|<sequence>|005930
-; Fallback accepted values:
-;   005930
-;   005930_AL
-;   005930_NX
+;
+; Plain 6-digit values and suffixed values are intentionally ignored.
 ;
 ; Safety policy:
 ; - Never activate HTS.
@@ -22,7 +19,7 @@ SetBatchLines, -1
 ; - Write the code only to one verified Edit6 HWND.
 ; - Enter is posted only to that Edit6 HWND.
 ; - After a verified HTS linkage, replace the StockBoard command in Clipboard with the plain 6-digit code.
-; - Suppress the bridge's own Clipboard write so the raw-code fallback cannot send the same code twice.
+; - The plain code written by this bridge is not a valid command and cannot trigger a duplicate send.
 ; - After HTS linkage, reactivate the previous browser/page window so ArrowUp/Down keeps working.
 ; - Clipboard can be busy while Chrome/Windows owns it; retry briefly and skip the tick instead of crashing.
 ; - Do not compare launcher PID with the elevated AHK PID.  RunAs can report a different PID.
@@ -36,8 +33,6 @@ LastClipboard := ""
 SafeReadClipboard(LastClipboard)
 LastCommandId := ""
 LastSentCode := ""
-LastBridgeClipboardCode := ""
-SuppressBridgeClipboardUntil := 0
 StatusFile := "C:\aiTrade\data\runtime\stockboard_v2\hts_link_status.txt"
 PidFile := "C:\aiTrade\data\runtime\stockboard_v2\stockboard_v2_ahk.pid"
 StopFile := "C:\aiTrade\data\runtime\stockboard_v2\stockboard_v2_ahk.stop"
@@ -73,33 +68,20 @@ WatchClipboardCommand:
     if (!ParseStockCommand(current, commandId, code, parseMode))
         return
 
-    ; A successful bridge operation writes the plain code back to Clipboard.
-    ; Do not treat that bridge-owned write as a new raw-code command.
-    if (parseMode = "raw_code"
-        && code = LastBridgeClipboardCode
-        && A_TickCount <= SuppressBridgeClipboardUntil)
-        return
-
     if (commandId != "" && commandId = LastCommandId)
         return
 
     result := SendCodeToKiwoom(code, usedSpec, message)
     if (result) {
-        if (commandId != "")
-            LastCommandId := commandId
+        LastCommandId := commandId
         LastSentCode := code
 
         clipboardNote := "clipboard unchanged"
         if (StoreSentCodeInClipboard) {
-            ; Set suppression before writing so a timer interruption cannot resend it.
-            LastBridgeClipboardCode := code
-            SuppressBridgeClipboardUntil := A_TickCount + 2000
             if (SafeWriteClipboard(code)) {
                 LastClipboard := code
                 clipboardNote := "clipboard saved " . code
             } else {
-                LastBridgeClipboardCode := ""
-                SuppressBridgeClipboardUntil := 0
                 clipboardNote := "clipboard save failed"
             }
         }
@@ -146,24 +128,10 @@ ParseStockCommand(rawText, ByRef commandId, ByRef code, ByRef parseMode) {
     code := ""
     parseMode := ""
 
-    if RegExMatch(text, "i)^SBV?2?\|(\d+)\|(\d{6})(?:_(?:AL|NX))?$", match) {
+    if RegExMatch(text, "^SBV2\|(\d+)\|(\d{6})$", match) {
         commandId := match1
         code := match2
-        parseMode := "stockboard_command"
-        return true
-    }
-
-    if RegExMatch(text, "^\d{6}$") {
-        commandId := "raw-" . A_TickCount
-        code := text
-        parseMode := "raw_code"
-        return true
-    }
-
-    if RegExMatch(text, "^(\d{6})_(AL|NX)$", match) {
-        commandId := "raw-" . A_TickCount
-        code := match1
-        parseMode := "raw_suffix_code"
+        parseMode := "stockboard_v2_command"
         return true
     }
 
