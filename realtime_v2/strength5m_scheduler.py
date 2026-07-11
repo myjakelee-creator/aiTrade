@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Any
 from urllib.request import urlopen
 
-from realtime_v2.market_session import market_session_now
+from realtime_v2.market_session import (
+    last_completed_trading_date,
+    market_session_now,
+    next_premarket_datetime,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SELECTED_PATH = ROOT / "data" / "runtime" / "stockboard_v2" / "selected_code.json"
@@ -157,6 +161,14 @@ def _age(row: dict[str, Any]) -> float | None:
     return max(0.0, (datetime.now() - parsed).total_seconds()) if parsed else None
 
 
+def _positive_strength(row: dict[str, Any]) -> float | None:
+    try:
+        value = float(row.get("strength_5m"))
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 def _clock_minutes(text: Any, fallback: str) -> int:
     value = str(text or fallback).strip()
     try:
@@ -180,6 +192,10 @@ def _clock_datetime(now: datetime, text: Any, fallback: str) -> datetime:
 class Strength5mScheduler(threading.Thread):
     NORMAL = {"s1": 30.0, "top20": 90.0, "hidden50": 300.0, "top300": 1200.0}
     OPENING = {"s1": 45.0, "top20": 120.0, "hidden50": 600.0, "top300": 1800.0}
+    PREOPEN_PHASES = {"after_wait", "aftermarket", "closed", "before_market", "weekend", "holiday"}
+    PREOPEN_TERMINAL_ERROR = {"error", "timeout", "failed", "unavailable", "not_connected"}
+    PREOPEN_EMPTY_STATUS = {"held_last_valid", "missing", "no_data", "empty", "blank"}
+    PREOPEN_RETRY_DELAYS = (300.0, 1800.0, 7200.0)
 
     def __init__(self, base, provider) -> None:
         super().__init__(name="StockBoardStrength5mScheduler", daemon=True)
@@ -201,6 +217,30 @@ class Strength5mScheduler(threading.Thread):
             self.normal_gap,
             float(os.getenv("STOCKBOARD_STRENGTH_5M_OPENING_GAP_SEC", "2")),
         )
+        self.preopen_after_close_gap = max(
+            self.normal_gap,
+            float(os.getenv("STOCKBOARD_STRENGTH_5M_PREOPEN_AFTER_CLOSE_GAP_SEC", "2")),
+        )
+        self.preopen_offday_gap = max(
+            self.preopen_after_close_gap,
+            float(os.getenv("STOCKBOARD_STRENGTH_5M_PREOPEN_OFFDAY_GAP_SEC", "10")),
+        )
+        self.preopen_final_gap = max(
+            self.normal_gap,
+            float(os.getenv("STOCKBOARD_STRENGTH_5M_PREOPEN_FINAL_GAP_SEC", "3")),
+        )
+        self.preopen_final_window_sec = max(
+            300.0,
+            float(os.getenv("STOCKBOARD_STRENGTH_5M_PREOPEN_FINAL_WINDOW_SEC", "1800")),
+        )
+        self.preopen_global_error_limit = max(
+            1,
+            int(os.getenv("STOCKBOARD_STRENGTH_5M_PREOPEN_GLOBAL_ERROR_LIMIT", "3")),
+        )
+        self.preopen_global_backoff_sec = max(
+            60.0,
+            float(os.getenv("STOCKBOARD_STRENGTH_5M_PREOPEN_GLOBAL_BACKOFF_SEC", "1800")),
+        )
         self.close_sweep_minutes = max(
             10,
             int(os.getenv("STOCKBOARD_STRENGTH_5M_CLOSE_SWEEP_MINUTES", "270")),
@@ -219,6 +259,24 @@ class Strength5mScheduler(threading.Thread):
         self.local_last: dict[str, float] = {}
         self.close_sweep_requested_at: dict[str, float] = {}
         self.close_sweep_attempts: dict[str, int] = {}
+        self.preopen_attempts: dict[str, int] = {}
+        self.preopen_retry_at: dict[str, float] = {}
+        self.preopen_requested_at: dict[str, float] = {}
+        self.preopen_observed_tokens: dict[str, tuple[Any, ...]] = {}
+        self.preopen_final_attempted: set[str] = set()
+        self.preopen_final_key = ""
+        self.preopen_global_backoff_until = 0.0
+        self.preopen_global_backoff_until_iso: str | None = None
+        self.preopen_consecutive_errors = 0
+        self.preopen_success_count = 0
+        self.preopen_empty_count = 0
+        self.preopen_error_count = 0
+        self.preopen_missing_count = 0
+        self.preopen_filled_count = 0
+        self.preopen_total_count = 0
+        self.preopen_mode = "normal_session"
+        self.preopen_current_pass = 0
+        self.next_premarket_at: str | None = None
         self.enqueue_count = self.busy_skips = self.snapshot_errors = 0
         self.market_closed_skips = 0
         self.close_sweep_enqueue_count = 0
@@ -234,6 +292,13 @@ class Strength5mScheduler(threading.Thread):
         self.last_market_phase = session.phase
         return bool(session.is_trading_day and session.accept_realtime)
 
+    def _preopen_window(self, session=None) -> bool:
+        session = session or self._session()
+        return str(session.phase or "").lower() in self.PREOPEN_PHASES
+
+    def _next_premarket(self, now: datetime | None = None) -> datetime:
+        return next_premarket_datetime(now or datetime.now())
+
     def opening(self, session=None) -> bool:
         session = session or self._session()
         windows = session.windows or {}
@@ -247,6 +312,15 @@ class Strength5mScheduler(threading.Thread):
 
     def gap(self, session=None) -> float:
         return self.opening_gap if self.opening(session) else self.normal_gap
+
+    def _preopen_gap(self, session, next_premarket: datetime, now: datetime | None = None) -> float:
+        now = now or datetime.now()
+        until_open = max(0.0, (next_premarket - now).total_seconds())
+        if until_open <= self.preopen_final_window_sec:
+            return self.preopen_final_gap
+        if str(session.phase or "").lower() in {"after_wait", "aftermarket"}:
+            return self.preopen_after_close_gap
+        return self.preopen_offday_gap
 
     def _close_sweep_cutoff(self, session, now: datetime | None = None) -> datetime | None:
         if not session or not session.is_trading_day:
@@ -278,7 +352,7 @@ class Strength5mScheduler(threading.Thread):
             self.snapshot_errors += 1
             self.last_error = f"snapshot: {error}"
 
-    def _idle(self, session=None) -> bool:
+    def _idle(self, session=None, gap_override: float | None = None) -> bool:
         provider = self.provider
         lock = getattr(provider, "_lock", None)
         if lock is None:
@@ -309,7 +383,8 @@ class Strength5mScheduler(threading.Thread):
                     "_close_metrics_last_request_at",
                 )
             )
-        return time.monotonic() - last >= self.gap(session)
+        required_gap = self.gap(session) if gap_override is None else max(self.normal_gap, float(gap_override))
+        return time.monotonic() - last >= required_gap
 
     def _close_sweep_due(
         self,
@@ -330,10 +405,7 @@ class Strength5mScheduler(threading.Thread):
             or row.get("last_valid_strength_at")
         )
         code = item["stock_code"]
-        try:
-            strength_value = float(row.get("strength_5m"))
-        except (TypeError, ValueError):
-            strength_value = 0.0
+        strength_value = _positive_strength(row) or 0.0
         incomplete_statuses = {
             "held_last_valid",
             "error",
@@ -385,6 +457,196 @@ class Strength5mScheduler(threading.Thread):
             else (age >= interval, age / max(interval, 1.0))
         )
 
+    def _preopen_missing_items(self, plan: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            item
+            for item in plan
+            if _positive_strength(item.get("row") if isinstance(item.get("row"), dict) else {}) is None
+        ]
+
+    def _retry_delay(self, attempt: int) -> float:
+        index = max(0, int(attempt) - 1)
+        if index >= len(self.PREOPEN_RETRY_DELAYS):
+            return self.PREOPEN_RETRY_DELAYS[-1]
+        return self.PREOPEN_RETRY_DELAYS[index]
+
+    def _reset_preopen_runtime(self) -> None:
+        self.preopen_attempts.clear()
+        self.preopen_retry_at.clear()
+        self.preopen_requested_at.clear()
+        self.preopen_observed_tokens.clear()
+        self.preopen_final_attempted.clear()
+        self.preopen_final_key = ""
+        self.preopen_global_backoff_until = 0.0
+        self.preopen_global_backoff_until_iso = None
+        self.preopen_consecutive_errors = 0
+        self.preopen_missing_count = 0
+        self.preopen_filled_count = 0
+        self.preopen_total_count = 0
+        self.preopen_current_pass = 0
+        self.next_premarket_at = None
+        self.preopen_mode = "normal_session"
+
+    def _enter_global_backoff(self) -> None:
+        self.preopen_global_backoff_until = time.monotonic() + self.preopen_global_backoff_sec
+        self.preopen_global_backoff_until_iso = (
+            datetime.now() + timedelta(seconds=self.preopen_global_backoff_sec)
+        ).isoformat(timespec="seconds")
+        self.preopen_consecutive_errors = 0
+
+    def _observe_preopen_results(self, plan: list[dict[str, Any]]) -> None:
+        now_mono = time.monotonic()
+        by_code = {item["stock_code"]: item for item in plan}
+        for code, requested_at in list(self.preopen_requested_at.items()):
+            item = by_code.get(code)
+            if not item:
+                continue
+            row = item.get("row") if isinstance(item.get("row"), dict) else {}
+            if _positive_strength(row) is not None:
+                self.preopen_success_count += 1
+                self.preopen_attempts.pop(code, None)
+                self.preopen_retry_at.pop(code, None)
+                self.preopen_requested_at.pop(code, None)
+                self.preopen_observed_tokens.pop(code, None)
+                self.preopen_consecutive_errors = 0
+                continue
+            if now_mono - requested_at < max(5.0, self.poll_sec):
+                continue
+            status = str(row.get("strength_status") or "").strip().lower()
+            token = (
+                self.preopen_attempts.get(code, 0),
+                status,
+                row.get("strength_snapshot_at"),
+                row.get("strength_completed_at"),
+            )
+            if self.preopen_observed_tokens.get(code) == token:
+                continue
+            self.preopen_observed_tokens[code] = token
+            if status in self.PREOPEN_TERMINAL_ERROR:
+                self.preopen_error_count += 1
+                self.preopen_consecutive_errors += 1
+                if self.preopen_consecutive_errors >= self.preopen_global_error_limit:
+                    self._enter_global_backoff()
+            elif status in self.PREOPEN_EMPTY_STATUS or not status:
+                self.preopen_empty_count += 1
+
+    def _prepare_final_pass(self, next_premarket: datetime, now: datetime) -> bool:
+        key = next_premarket.isoformat(timespec="minutes")
+        if key != self.preopen_final_key:
+            self.preopen_final_key = key
+            self.preopen_final_attempted.clear()
+        return (next_premarket - now).total_seconds() <= self.preopen_final_window_sec
+
+    def _preopen_candidate_due(
+        self,
+        item: dict[str, Any],
+        *,
+        final_window: bool,
+        now_mono: float | None = None,
+    ) -> tuple[bool, float]:
+        row = item.get("row") if isinstance(item.get("row"), dict) else {}
+        status = str(row.get("strength_status") or "").strip().lower()
+        if status in {"pending", "requested", "deferred"}:
+            return False, -1.0
+        code = item["stock_code"]
+        now_mono = time.monotonic() if now_mono is None else now_mono
+        if final_window and code not in self.preopen_final_attempted:
+            return True, float("inf")
+        due_at = float(self.preopen_retry_at.get(code, 0.0) or 0.0)
+        if now_mono < due_at:
+            return False, due_at - now_mono
+        attempt = int(self.preopen_attempts.get(code, 0) or 0)
+        return True, float("inf") if attempt == 0 else float(attempt)
+
+    def _mark_preopen_request(self, code: str, *, final_window: bool) -> None:
+        now_mono = time.monotonic()
+        attempt = int(self.preopen_attempts.get(code, 0) or 0) + 1
+        self.preopen_attempts[code] = attempt
+        self.preopen_requested_at[code] = now_mono
+        self.preopen_retry_at[code] = now_mono + self._retry_delay(attempt)
+        self.preopen_observed_tokens.pop(code, None)
+        if final_window:
+            self.preopen_final_attempted.add(code)
+        self.preopen_current_pass = max(
+            self.preopen_current_pass,
+            max(self.preopen_attempts.values(), default=0),
+        )
+
+    def _preopen_cycle(self, session, plan: list[dict[str, Any]]) -> None:
+        now = datetime.now()
+        next_premarket = self._next_premarket(now)
+        self.next_premarket_at = next_premarket.isoformat(timespec="seconds")
+        self._observe_preopen_results(plan)
+
+        missing = self._preopen_missing_items(plan)
+        self.preopen_total_count = len(plan)
+        self.preopen_missing_count = len(missing)
+        self.preopen_filled_count = max(0, len(plan) - len(missing))
+        if not missing:
+            self.preopen_mode = "preopen_fill_complete"
+            self.preopen_global_backoff_until = 0.0
+            self.preopen_global_backoff_until_iso = None
+            self.preopen_consecutive_errors = 0
+            return
+
+        now_mono = time.monotonic()
+        if now_mono < self.preopen_global_backoff_until:
+            self.preopen_mode = "preopen_fill_backoff"
+            return
+
+        final_window = self._prepare_final_pass(next_premarket, now)
+        gap = self._preopen_gap(session, next_premarket, now)
+        if not self._idle(session, gap_override=gap):
+            self.preopen_mode = "preopen_fill_active"
+            self.busy_skips += 1
+            return
+
+        lane_order = {"s1": 0, "top20": 1, "hidden50": 2, "top300": 3}
+        candidates = []
+        for index, item in enumerate(missing):
+            due, score = self._preopen_candidate_due(
+                item,
+                final_window=final_window,
+                now_mono=now_mono,
+            )
+            if due:
+                candidates.append((lane_order[item["lane"]], -score, index, item))
+        if not candidates:
+            self.preopen_mode = "preopen_fill_active"
+            return
+
+        _lane_priority, _score, _index, item = min(candidates)
+        code, lane = item["stock_code"], item["lane"]
+        source_trading_date = last_completed_trading_date(now) or None
+        response = self.provider.enqueue_strength_probe(
+            code,
+            priority="active" if lane in {"s1", "top20"} else "background",
+            force=True,
+            trading_date=source_trading_date,
+        )
+        status = str((response or {}).get("status") or "").strip().lower()
+        if status in {"pending", "requested"}:
+            self._mark_preopen_request(code, final_window=final_window)
+            self.local_last[code] = time.monotonic()
+            self.last_code, self.last_lane = code, lane
+            self.enqueue_count += 1
+            self.preopen_mode = "preopen_fill_active"
+            return
+        if status == "deferred":
+            self.preopen_mode = "preopen_fill_active"
+            return
+        if status in self.PREOPEN_TERMINAL_ERROR:
+            self.preopen_error_count += 1
+            self.preopen_consecutive_errors += 1
+            if self.preopen_consecutive_errors >= self.preopen_global_error_limit:
+                self._enter_global_backoff()
+                self.preopen_mode = "preopen_fill_backoff"
+            else:
+                self.preopen_mode = "preopen_fill_active"
+            return
+        self.preopen_empty_count += 1
+        self.preopen_mode = "preopen_fill_active"
+
     def cycle(self) -> None:
         self.last_cycle_at = datetime.now().isoformat(timespec="seconds")
         self._refresh()
@@ -392,6 +654,14 @@ class Strength5mScheduler(threading.Thread):
             return
 
         session = self._session()
+        plan = build_lane_plan(self.base, self.payload, self.selected)
+        if self._preopen_window(session):
+            self._preopen_cycle(session, plan)
+            return
+
+        if self.preopen_mode != "normal_session" or self.preopen_attempts:
+            self._reset_preopen_runtime()
+
         if not self._market_accepts_strength_query(session):
             self.market_closed_skips += 1
             return
@@ -401,20 +671,14 @@ class Strength5mScheduler(threading.Thread):
 
         lane_order = {"s1": 0, "top20": 1, "hidden50": 2, "top300": 3}
         candidates = []
-        for index, item in enumerate(
-            build_lane_plan(self.base, self.payload, self.selected)
-        ):
-            sweep_due, sweep_overdue = self._close_sweep_due(item, session)
-            if sweep_due:
-                candidates.append((0, lane_order[item["lane"]], -sweep_overdue, index, item))
-                continue
+        for index, item in enumerate(plan):
             due, overdue = self._normal_due(item, session)
             if due:
-                candidates.append((1, lane_order[item["lane"]], -overdue, index, item))
+                candidates.append((lane_order[item["lane"]], -overdue, index, item))
         if not candidates:
             return
 
-        priority, _lane_priority, _overdue, _index, item = min(candidates)
+        _lane_priority, _overdue, _index, item = min(candidates)
         code, lane = item["stock_code"], item["lane"]
         response = self.provider.enqueue_strength_probe(
             code,
@@ -426,16 +690,9 @@ class Strength5mScheduler(threading.Thread):
             "requested",
             "deferred",
         }:
-            now_mono = time.monotonic()
-            self.local_last[code] = now_mono
+            self.local_last[code] = time.monotonic()
             self.last_code, self.last_lane = code, lane
             self.enqueue_count += 1
-            if priority == 0:
-                self.close_sweep_requested_at[code] = now_mono
-                self.close_sweep_attempts[code] = (
-                    self.close_sweep_attempts.get(code, 0) + 1
-                )
-                self.close_sweep_enqueue_count += 1
 
     def run(self) -> None:
         while not self.stop_event.wait(0.25):
@@ -450,16 +707,40 @@ class Strength5mScheduler(threading.Thread):
 
     def stats(self) -> dict[str, Any]:
         session = self._session()
+        plan = build_lane_plan(self.base, self.payload, self.selected) if self.payload else []
+        if self._preopen_window(session):
+            missing_count = len(self._preopen_missing_items(plan))
+            total_count = len(plan)
+            filled_count = max(0, total_count - missing_count)
+        else:
+            missing_count = self.preopen_missing_count
+            total_count = self.preopen_total_count
+            filled_count = self.preopen_filled_count
         return {
             "enabled": True,
             "alive": self.is_alive(),
+            "mode": self.preopen_mode,
             "market_phase": session.phase,
             "market_accepts_query": self._market_accepts_strength_query(session),
+            "query_allowed": self._market_accepts_strength_query(session)
+            or self._preopen_window(session),
             "opening_burst": self.opening(session),
             "regular_close_sweep_active": self._close_sweep_cutoff(session) is not None,
             "regular_close_sweep_minutes": self.close_sweep_minutes,
             "regular_close_sweep_enqueue_count": self.close_sweep_enqueue_count,
             "regular_close_sweep_max_attempts": self.close_sweep_max_attempts,
+            "preopen_fill_active": self.preopen_mode == "preopen_fill_active",
+            "preopen_fill_complete": self.preopen_mode == "preopen_fill_complete",
+            "preopen_fill_backoff": self.preopen_mode == "preopen_fill_backoff",
+            "next_premarket_at": self.next_premarket_at,
+            "missing_count": missing_count,
+            "filled_count": filled_count,
+            "total_count": total_count,
+            "current_pass": self.preopen_current_pass,
+            "preopen_success_count": self.preopen_success_count,
+            "preopen_empty_count": self.preopen_empty_count,
+            "preopen_error_count": self.preopen_error_count,
+            "global_backoff_until": self.preopen_global_backoff_until_iso,
             "intervals_sec": self.intervals(session),
             "global_gap_sec": self.gap(session),
             "selected_code": self.selected or None,
