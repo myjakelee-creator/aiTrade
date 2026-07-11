@@ -92,7 +92,6 @@ def _install_bidask_patch_fail_open() -> None:
 
         install_bidask_last_cache(base)
     except Exception as error:
-        # The web worker must never die because an optional display/cache patch failed.
         _write_patch_error("bidask_worker_patch_error.txt", error)
 
 
@@ -102,7 +101,6 @@ def _install_display_hold_fail_open() -> None:
 
         install_display_hold(base)
     except Exception as error:
-        # Optional display carry-forward policy must never kill the worker.
         _write_patch_error("display_hold_patch_error.txt", error)
 
 
@@ -112,7 +110,6 @@ def _install_display_hold_ohlc_price_fail_open() -> None:
 
         install_ohlc_price_hold(base)
     except Exception as error:
-        # OHLC-derived close-price fallback is optional; keep worker alive on failure.
         _write_patch_error("display_hold_ohlc_price_patch_error.txt", error)
 
 
@@ -122,8 +119,16 @@ def _install_session_metric_hold_fail_open() -> None:
 
         install_session_metric_hold(base)
     except Exception as error:
-        # Cross-session display retention is optional; never let it stop the worker.
         _write_patch_error("session_metric_hold_patch_error.txt", error)
+
+
+def _install_execution_strength_alias_fail_open() -> None:
+    try:
+        from realtime_v2.execution_strength_alias_patch import install as install_execution_strength_alias
+
+        install_execution_strength_alias(base)
+    except Exception as error:
+        _write_patch_error("execution_strength_alias_patch_error.txt", error)
 
 
 def _install_cross_table_navigation_patch_fail_open() -> None:
@@ -146,7 +151,6 @@ def _install_cross_table_navigation_patch_fail_open() -> None:
         large._ui_safety_patch = patched_ui_safety_patch
         large._cross_table_navigation_patch_installed = True
     except Exception as error:
-        # Keyboard navigation is UI-only; keep the worker alive on any failure.
         _write_patch_error("cross_table_navigation_patch_error.txt", error)
 
 
@@ -156,7 +160,6 @@ def _install_header_sort_patch_fail_open() -> None:
 
         install_header_sort(base, large)
     except Exception as error:
-        # Sorting patch is UI-only; keep the web worker alive on any failure.
         _write_patch_error("html_header_sort_patch_error.txt", error)
 
 
@@ -164,6 +167,7 @@ _install_bidask_patch_fail_open()
 _install_display_hold_fail_open()
 _install_display_hold_ohlc_price_fail_open()
 _install_session_metric_hold_fail_open()
+_install_execution_strength_alias_fail_open()
 _install_cross_table_navigation_patch_fail_open()
 _install_header_sort_patch_fail_open()
 
