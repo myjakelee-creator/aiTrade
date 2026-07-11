@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# Install the Kiwoom/QAx main-thread mode before collector32 is imported.
+# Kiwoom/QAx must live on the collector main thread.
 from realtime_v2.qt_main_thread_openapi_patch import (
     install_collector_main,
     install_provider,
@@ -17,16 +17,17 @@ from realtime_v2.qt_main_thread_openapi_patch import (
 
 install_provider()
 
-# Install before collector32_large imports and starts the 5-minute-strength scheduler.
-from realtime_v2.strength5m_snapshot_fallback_patch import install as install_strength5m_snapshot_fallback
-from realtime_v2.strength5m_stale_status_patch import install as install_strength5m_stale_status
-from realtime_v2.strength5m_pending_watchdog_patch import install as install_strength5m_pending_watchdog
-from realtime_v2.strength5m_gap_policy_patch import install as install_strength5m_gap_policy
+# Install snapshot reading and the single definitive preopen controller before
+# collector32_large imports strength5m_scheduler.install.
+from realtime_v2.strength5m_snapshot_fallback_patch import (
+    install as install_strength5m_snapshot_fallback,
+)
+from realtime_v2.strength5m_definitive_preopen_patch import (
+    install as install_strength5m_definitive_preopen,
+)
 
 install_strength5m_snapshot_fallback()
-install_strength5m_stale_status()
-install_strength5m_pending_watchdog()
-install_strength5m_gap_policy()
+install_strength5m_definitive_preopen()
 
 large = importlib.import_module("realtime_v2.collector32_large")
 base = large.base
@@ -42,7 +43,9 @@ def _runtime_dir() -> Path:
 
 def _install_orderbook_thin_fail_open() -> None:
     try:
-        from realtime_v2.orderbook_thin_scheduler import install as install_orderbook_thin_scheduler
+        from realtime_v2.orderbook_thin_scheduler import (
+            install as install_orderbook_thin_scheduler,
+        )
 
         install_orderbook_thin_scheduler(base)
     except Exception as error:
