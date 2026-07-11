@@ -21,6 +21,8 @@ SetBatchLines, -1
 ; - Never send keys to the foreground window.
 ; - Write the code only to one verified Edit6 HWND.
 ; - Enter is posted only to that Edit6 HWND.
+; - After a verified HTS linkage, replace the StockBoard command in Clipboard with the plain 6-digit code.
+; - Suppress the bridge's own Clipboard write so the raw-code fallback cannot send the same code twice.
 ; - After HTS linkage, reactivate the previous browser/page window so ArrowUp/Down keeps working.
 ; - Clipboard can be busy while Chrome/Windows owns it; retry briefly and skip the tick instead of crashing.
 ; - Do not compare launcher PID with the elevated AHK PID.  RunAs can report a different PID.
@@ -29,10 +31,13 @@ SetBatchLines, -1
 TargetControl := "Edit6"
 SendEnterAfterSet := true
 NotifySuccess := false
+StoreSentCodeInClipboard := true
 LastClipboard := ""
 SafeReadClipboard(LastClipboard)
 LastCommandId := ""
 LastSentCode := ""
+LastBridgeClipboardCode := ""
+SuppressBridgeClipboardUntil := 0
 StatusFile := "C:\aiTrade\data\runtime\stockboard_v2\hts_link_status.txt"
 PidFile := "C:\aiTrade\data\runtime\stockboard_v2\stockboard_v2_ahk.pid"
 StopFile := "C:\aiTrade\data\runtime\stockboard_v2\stockboard_v2_ahk.stop"
@@ -68,6 +73,13 @@ WatchClipboardCommand:
     if (!ParseStockCommand(current, commandId, code, parseMode))
         return
 
+    ; A successful bridge operation writes the plain code back to Clipboard.
+    ; Do not treat that bridge-owned write as a new raw-code command.
+    if (parseMode = "raw_code"
+        && code = LastBridgeClipboardCode
+        && A_TickCount <= SuppressBridgeClipboardUntil)
+        return
+
     if (commandId != "" && commandId = LastCommandId)
         return
 
@@ -76,7 +88,23 @@ WatchClipboardCommand:
         if (commandId != "")
             LastCommandId := commandId
         LastSentCode := code
-        WriteStatus("ok", code, "sent via " . usedSpec . " / " . parseMode . " / " . message)
+
+        clipboardNote := "clipboard unchanged"
+        if (StoreSentCodeInClipboard) {
+            ; Set suppression before writing so a timer interruption cannot resend it.
+            LastBridgeClipboardCode := code
+            SuppressBridgeClipboardUntil := A_TickCount + 2000
+            if (SafeWriteClipboard(code)) {
+                LastClipboard := code
+                clipboardNote := "clipboard saved " . code
+            } else {
+                LastBridgeClipboardCode := ""
+                SuppressBridgeClipboardUntil := 0
+                clipboardNote := "clipboard save failed"
+            }
+        }
+
+        WriteStatus("ok", code, "sent via " . usedSpec . " / " . parseMode . " / " . message . " / " . clipboardNote)
     } else {
         WriteStatus("error", code, message)
     }
@@ -91,6 +119,23 @@ SafeReadClipboard(ByRef text) {
         } catch e {
             Sleep, 30
         }
+    }
+    return false
+}
+
+SafeWriteClipboard(text) {
+    Loop, 5 {
+        try {
+            Clipboard := text
+            ClipWait, 0.3
+            if (!ErrorLevel) {
+                verify := Clipboard
+                if (verify = text)
+                    return true
+            }
+        } catch e {
+        }
+        Sleep, 30
     }
     return false
 }
