@@ -43,6 +43,15 @@ large = importlib.import_module("realtime_v2.collector32_large")
 base = large.base
 install_collector_main(base)
 
+# The off-hours completion pass must be driven by its own Qt timer rather than by
+# incoming trade/orderbook ticks. Install this only after all provider wrappers
+# above are finalized.
+from realtime_v2.offhours_metric_timer_driver_patch import (
+    install as install_offhours_metric_timer_driver,
+)
+
+install_offhours_metric_timer_driver(base)
+
 
 def _runtime_dir() -> Path:
     try:
