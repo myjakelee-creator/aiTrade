@@ -1,7 +1,7 @@
 # StockBoard ThemeBoard v1 운영 명세
 
-최종 갱신: 2026-07-12  
-상태: 구현 완료 · 대표님 UI/HTS 확인 완료 · Draft PR #27 미병합
+최종 갱신: 2026-07-12 · SBV2 전용 HTS Clipboard 정책 반영  
+상태: 구현 완료 · 대표님 UI/기존 HTS 확인 완료 · strict bridge 재확인 대기 · Draft PR #27 미병합
 
 ## 1. 목적
 
@@ -30,7 +30,8 @@ ThemeBoard는 신규 OpenAPI 등록이나 별도 종목 수집을 하지 않고 
 | `config/stockboard_theme_master.json` | 테마 정의·종목 가중치 |
 | `stockboard_theme_engine.py` | 테마 유입·상태·주도주 계산 |
 | `realtime_v2/theme_board_patch.py` | 공용 cache·API·마감 보존 |
-| `docs/stockboard_theme_v1.html` | 반응형 표시·HTS 연동 |
+| `docs/stockboard_theme_v1.html` | 반응형 표시·HTS 연동 명령 생성 |
+| `scripts/stockboard_kiwoom_link_v1.ahk` | strict SBV2 명령 파싱·Kiwoom Edit6 전달·Clipboard 6자리 저장 |
 | `realtime_v2/worker64_guarded_large_bidask.py` | fail-open 패치 설치 |
 | `tests/test_stockboard_theme_engine.py` | 계산 검증 |
 | `tests/test_stockboard_theme_cache.py` | cache·HTTP 검증 |
@@ -231,7 +232,8 @@ Git에 커밋하지 않는다.
 모든 종목 클릭은 다음 클립보드 형식을 사용한다.
 
 ```text
-SBV2|<timestamp>|<6자리 종목코드>
+SBV2|<고유번호>|<6자리 종목코드>
+예: SBV2|17837976715774|035420
 ```
 
 지원 위치:
@@ -241,6 +243,33 @@ SBV2|<timestamp>|<6자리 종목코드>
 - 선택 테마 구성종목 카드
 
 종목 클릭 시 `stopPropagation()`으로 테마 선택 클릭과 분리한다.
+
+AHK strict 처리 정책:
+
+- 정확히 대문자 `SBV2|숫자 고유번호|6자리 코드` 형식만 처리한다.
+- 일반 `035420`, `035420_AL`, `035420_NX`, 구 `SB|...` 형식은 무시한다.
+- 동일 종목을 다시 클릭해도 고유번호가 달라 다시 처리된다.
+- Kiwoom의 유일한 검증된 `Edit6` HWND에 6자리 코드를 넣고 readback을 확인한다.
+- readback 성공 후 해당 Edit6 HWND에만 Enter를 전달한다.
+- 성공 후 Clipboard는 일반 6자리 코드 `035420`으로 바뀐다.
+- 일반 6자리 코드는 명령 형식이 아니므로 AHK가 다시 처리하지 않는다.
+- StockBoard와 ThemeBoard는 같은 AHK bridge를 사용한다.
+
+장점:
+
+```text
+일반 숫자 6자리를 복사해도 HTS가 임의로 바뀌지 않음
+AHK가 자신이 저장한 6자리 코드를 다시 명령으로 오인하지 않음
+명령 출처가 StockBoard/ThemeBoard 종목 클릭으로 한정됨
+```
+
+상태 파일:
+
+```text
+data/runtime/stockboard_v2/hts_link_status.txt
+```
+
+strict command-only 코드 반영은 완료됐다. 실제 재실행 확인은 휴장일 `ka10032 return_code=7 / 오류 1631`로 universe 생성이 중단되어 대기 중이며, 이 운영 이슈는 StockBoard v2 기준 문서에 기록한다.
 
 ## 10. 검증 상태
 
@@ -266,10 +295,11 @@ SBV2|<timestamp>|<6자리 종목코드>
 - 세로 태블릿 2열 정상
 - 순위·구성종목 밀도 정상
 - 장마감 값 유지 정상
-- 카드·순위·구성종목 HTS 연동 정상
+- strict 변경 전 카드·순위·구성종목 HTS 연동 정상
 
 남은 검증:
 
+- AHK strict `SBV2` 전용 처리와 성공 후 6자리 Clipboard 저장
 - 실제 다음 premarket에서 `LAST_CLOSE → LIVE`
 - 정규장 cache_version 지속 증가
 - StockBoard stream latency·queue·drop 무영향
