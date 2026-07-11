@@ -41,6 +41,15 @@ install_offhours_metric_resilience()
 
 large = importlib.import_module("realtime_v2.collector32_large")
 base = large.base
+
+# EventSender must survive one unserializable status/event and reconnect after any
+# transient sender-loop failure. Install after collector32_large finalizes its
+# EventSender extensions, but before the collector main creates the sender object.
+from realtime_v2.collector_sender_resilience_patch import (
+    install as install_collector_sender_resilience,
+)
+
+install_collector_sender_resilience(base)
 install_collector_main(base)
 
 # The off-hours completion pass must be driven by its own Qt timer rather than by
