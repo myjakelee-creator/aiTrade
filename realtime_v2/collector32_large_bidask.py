@@ -9,6 +9,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# Install the Kiwoom/QAx main-thread mode before collector32 is imported.
+from realtime_v2.qt_main_thread_openapi_patch import (
+    install_collector_main,
+    install_provider,
+)
+
+install_provider()
+
 # Install before collector32_large imports and starts the 5-minute-strength scheduler.
 from realtime_v2.strength5m_snapshot_fallback_patch import install as install_strength5m_snapshot_fallback
 from realtime_v2.strength5m_stale_status_patch import install as install_strength5m_stale_status
@@ -20,6 +28,7 @@ install_strength5m_pending_watchdog()
 
 large = importlib.import_module("realtime_v2.collector32_large")
 base = large.base
+install_collector_main(base)
 
 
 def _runtime_dir() -> Path:
