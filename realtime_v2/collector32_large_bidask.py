@@ -17,6 +17,15 @@ from realtime_v2.qt_main_thread_openapi_patch import (
 
 install_provider()
 
+# CommConnect must receive a real Windows HWND. Some PCs do not create a native
+# handle for an unshown QAxWidget automatically, which makes opstarter report
+# "핸들값이 없습니다". Install the guard before the provider is started.
+from realtime_v2.openapi_native_handle_patch import (
+    install as install_openapi_native_handle,
+)
+
+install_openapi_native_handle()
+
 # Install snapshot reading and the definitive preopen controller before
 # collector32_large imports strength5m_scheduler.install. Then replace its
 # strength-only drain with the unified metric controller and make the loop
