@@ -30,7 +30,6 @@ def install() -> None:
             if not hasattr(self, name):
                 setattr(self, name, value)
 
-    @staticmethod
     def age_sec(now_mono: float, value: Any) -> float | None:
         try:
             timestamp = float(value or 0.0)
