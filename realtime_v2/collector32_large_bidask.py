@@ -9,6 +9,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# Install before collector32_large imports and starts the 5-minute-strength scheduler.
+from realtime_v2.strength5m_snapshot_fallback_patch import install as install_strength5m_snapshot_fallback
+
+install_strength5m_snapshot_fallback()
+
 large = importlib.import_module("realtime_v2.collector32_large")
 base = large.base
 
