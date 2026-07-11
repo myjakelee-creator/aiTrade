@@ -143,7 +143,7 @@ def test_offhours_drain_completes_one_and_moves_to_next_without_pending_queue():
     drain.current_started = time.monotonic() - 1.0
     drain.tick()
 
-    assert drain.preopen_success_count if hasattr(drain, "preopen_success_count") else drain.success_count == 1
+    assert drain.success_count == 1
     assert provider._strength_probe_pending == deque()
     assert drain.current is None
 
