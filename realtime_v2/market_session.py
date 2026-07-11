@@ -95,6 +95,57 @@ def _windows_for_day(config: dict[str, Any], day_text: str) -> tuple[dict[str, s
     return windows, special
 
 
+def _is_trading_day(config: dict[str, Any], day: date) -> bool:
+    day_text = day.strftime("%Y%m%d")
+    if day.weekday() >= 5:
+        return False
+    holidays = set(str(value) for value in (config.get("holidays") or []))
+    _windows, special = _windows_for_day(config, day_text)
+    return day_text not in holidays and special.get("closed") is not True
+
+
+def next_premarket_datetime(now: datetime | None = None, *, max_days: int = 370) -> datetime:
+    """Return the next actual premarket boundary from the configured market calendar."""
+
+    current = now or datetime.now()
+    config = _load_config()
+    for offset in range(max(1, int(max_days)) + 1):
+        candidate_day = current.date() + timedelta(days=offset)
+        if not _is_trading_day(config, candidate_day):
+            continue
+        day_text = candidate_day.strftime("%Y%m%d")
+        windows, _special = _windows_for_day(config, day_text)
+        premarket = datetime.combine(
+            candidate_day,
+            _parse_time(windows.get("premarket_start"), DEFAULT_WINDOWS["premarket_start"]),
+        )
+        if premarket > current:
+            return premarket
+    raise RuntimeError("next premarket not found within configured search range")
+
+
+def last_completed_trading_date(now: datetime | None = None, *, max_days: int = 370) -> str:
+    """Return the most recent trading date whose regular session has completed."""
+
+    current = now or datetime.now()
+    config = _load_config()
+    for offset in range(max(1, int(max_days)) + 1):
+        candidate_day = current.date() - timedelta(days=offset)
+        if not _is_trading_day(config, candidate_day):
+            continue
+        if offset == 0:
+            day_text = candidate_day.strftime("%Y%m%d")
+            windows, _special = _windows_for_day(config, day_text)
+            regular_close = datetime.combine(
+                candidate_day,
+                _parse_time(windows.get("regular_close"), DEFAULT_WINDOWS["regular_close"]),
+            )
+            if current < regular_close:
+                continue
+        return candidate_day.strftime("%Y%m%d")
+    return ""
+
+
 def _in_range(current: time, start: time, end: time) -> bool:
     return start <= current < end
 
