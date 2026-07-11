@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from realtime_v2.offhours_metric_timer_driver_patch import (
     _driver_status,
     _driver_tick_once,
-    _pump_without_legacy_drain,
+    _unwrap_legacy_drain_pump,
 )
 
 
@@ -65,7 +65,6 @@ def test_timer_driver_runs_without_any_market_tick():
     status = _driver_status(provider)
     assert drain.tick_calls == 2
     assert status["market_tick_independent"] is True
-    assert status["legacy_pump_drain_suppressed"] is True
     assert status["timer_tick_count"] == 2
     assert status["drain_run_count"] == 2
     assert status["timer_last_source"] == "qt_timer"
@@ -135,17 +134,37 @@ def test_active_mode_switches_back_to_fast_timer():
     assert status["timer_last_mode"] == "strength_inflight"
 
 
-def test_legacy_main_pump_cannot_call_drain_and_restores_it_afterward():
+def test_legacy_drain_wrapper_is_unwrapped_without_hiding_qt_timer_state():
     drain = DummyDrain()
     provider = DummyProvider(drain)
-    seen = []
+    base_calls = []
 
-    def original_pump(current_provider):
-        seen.append(
+    def base_qt_pump(current_provider):
+        # The drain must remain visible while QApplication.processEvents would run.
+        base_calls.append(
             getattr(current_provider, "_stockboard_offhours_strength_drain", None)
         )
         return True
 
-    assert _pump_without_legacy_drain(provider, original_pump) is True
-    assert seen == [None]
-    assert provider._stockboard_offhours_strength_drain is drain
+    def make_legacy_wrapper(original_pump):
+        def pump(current_provider):
+            ok = original_pump(current_provider)
+            current_drain = getattr(
+                current_provider,
+                "_stockboard_offhours_strength_drain",
+                None,
+            )
+            if current_drain is not None:
+                current_drain.tick()
+            return ok
+
+        return pump
+
+    legacy_pump = make_legacy_wrapper(base_qt_pump)
+    unwrapped, changed = _unwrap_legacy_drain_pump(legacy_pump)
+
+    assert changed is True
+    assert unwrapped is base_qt_pump
+    assert unwrapped(provider) is True
+    assert base_calls == [drain]
+    assert drain.tick_calls == 0
