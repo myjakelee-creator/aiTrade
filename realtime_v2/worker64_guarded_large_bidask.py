@@ -163,6 +163,15 @@ def _install_header_sort_patch_fail_open() -> None:
         _write_patch_error("html_header_sort_patch_error.txt", error)
 
 
+def _install_theme_board_fail_open() -> None:
+    try:
+        from realtime_v2.theme_board_patch import install as install_theme_board
+
+        install_theme_board(base)
+    except Exception as error:
+        _write_patch_error("theme_board_patch_error.txt", error)
+
+
 _install_bidask_patch_fail_open()
 _install_display_hold_fail_open()
 _install_display_hold_ohlc_price_fail_open()
@@ -170,6 +179,7 @@ _install_session_metric_hold_fail_open()
 _install_execution_strength_alias_fail_open()
 _install_cross_table_navigation_patch_fail_open()
 _install_header_sort_patch_fail_open()
+_install_theme_board_fail_open()
 
 if __name__ == "__main__":
     raise SystemExit(base.main())
