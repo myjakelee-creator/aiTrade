@@ -226,6 +226,7 @@ def test_preopen_missing_scan_uses_displayed_strength_5m_only():
 def test_preopen_complete_stops_all_queries(monkeypatch):
     provider = DummyProvider()
     scheduler = Strength5mScheduler(DummyBase, provider)
+    scheduler.selected = ""
     scheduler.payload = {
         "rows": [
             {"stock_code": "000001", "strength_5m": 100.0},
