@@ -119,7 +119,7 @@ def test_offhours_drain_purges_pending_and_uses_direct_inflight():
 
     assert provider._strength_probe_pending == deque()
     assert provider._strength_probe_pending_codes == set()
-    assert drain.pending_purge_count == 1
+    assert drain.stats()["pending_purge_count"] == 1
     assert drain.enqueue_count == 1
     assert drain.current == "000001"
     assert provider._strength_probe_inflight["stock_code"] == "000001"
