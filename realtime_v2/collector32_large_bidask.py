@@ -18,8 +18,9 @@ from realtime_v2.qt_main_thread_openapi_patch import (
 install_provider()
 
 # Install snapshot reading and the definitive preopen controller before
-# collector32_large imports strength5m_scheduler.install.  Then replace its
-# strength-only drain with the unified off-hours metric completion controller.
+# collector32_large imports strength5m_scheduler.install. Then replace its
+# strength-only drain with the unified metric controller and make the loop
+# fail-open so one bad code can never require a reconnect.
 from realtime_v2.strength5m_snapshot_fallback_patch import (
     install as install_strength5m_snapshot_fallback,
 )
@@ -29,10 +30,14 @@ from realtime_v2.strength5m_definitive_preopen_patch import (
 from realtime_v2.offhours_metric_completion_patch import (
     install as install_offhours_metric_completion,
 )
+from realtime_v2.offhours_metric_resilience_patch import (
+    install as install_offhours_metric_resilience,
+)
 
 install_strength5m_snapshot_fallback()
 install_strength5m_definitive_preopen()
 install_offhours_metric_completion()
+install_offhours_metric_resilience()
 
 large = importlib.import_module("realtime_v2.collector32_large")
 base = large.base
