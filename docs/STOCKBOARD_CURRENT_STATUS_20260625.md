@@ -1,6 +1,6 @@
 # StockBoard Current Status
 
-작성 기준: 2026-07-05 장마감 검증 반영.
+작성 기준: 2026-07-11 휴장시간 빈칸 보충·독립 타이머·저부하 최적화 검증 반영.
 
 > 이 문서는 StockBoard의 현재 운영 상태를 빠르게 파악하기 위한 기준문서다. 새 PC 또는 새 채팅창에서는 이 문서, `docs/candidate_model_specs/NET_BUY_STRENGTH_V02.md`, `configs/candidate_models/NET_BUY_STRENGTH_V02.json`을 우선 확인한다.
 
@@ -8,7 +8,7 @@
 
 ## 0. 현재 한 줄 요약
 
-StockBoard는 `순매수 강도 v0.2` 전용 ranking engine, 전일 거래대금 cache/API 주입, 장중 700점/장마감 600점 분모 이원화까지 반영됐다. 장마감 검증에서는 1분강도 항목이 `display_only`로 계산 제외되고, `score_possible_points=600` 기준으로 등급이 계산되는 것까지 확인했다. 다음 핵심 과제는 정규장 장중에 실시간 1분강도가 실제 700점 분모로 들어오는지, 그리고 Top5가 금융주/프로그램 비율에 과도하게 쏠리는지 검증하는 것이다.
+StockBoard는 `순매수 강도 v0.2` 전용 ranking engine, 전일 거래대금 cache/API 주입, 장중 700점/장마감 600점 분모 이원화까지 반영됐다. 2026-07-11에는 휴장시간에 시장 틱이 없어도 5분강도·순간강도·잔량비 빈칸을 자동 보충하는 V2 통합 컨트롤러, Qt 메인 스레드 독립 타이머, collector→worker 상태 송신 fail-open, 완료 상태 저부하 최적화까지 실제 검증했다. 현재 휴장시간 세 지표 빈칸은 0개이며, 다음 핵심 과제는 노트북 동일 동작 확인과 정규장 장중 700점 분모/실시간 1분강도 검증이다.
 
 ---
 
@@ -19,11 +19,11 @@ StockBoard는 `순매수 강도 v0.2` 전용 ranking engine, 전일 거래대금
 | 프로젝트 | aiTrade / StockBoard |
 | 작업 경로 | `C:\aiTrade` |
 | 브랜치 | `hot-priority-integrated-20260630` |
-| 기준일 | 2026-07-05 |
+| 기준일 | 2026-07-11 |
 | 현재 선발기준 | `NET_BUY_STRENGTH_V02` / 화면명 `순매수 강도 v0.2` |
-| 표준 실행 | `stockboard_live.cmd` → `kiwoom_trade_value_rank.py` 경유 |
-| 핵심 테스트 | `tests/test_stockboard_ranking_engine.py`, `tests/test_stockboard_previous_trade_value.py` |
-| 다음 핵심 과제 | 정규장 장중 700점 분모/실시간 1분강도 검증 |
+| V2 표준 실행 | `.\stockboard_v2_large.cmd start-fast` / `http://127.0.0.1:8765/` |
+| 핵심 테스트 | ranking/previous trade value + off-hours metric/timer/sender resilience 테스트 |
+| 다음 핵심 과제 | 노트북 동일 검증, 정규장 장중 700점 분모/실시간 1분강도 검증 |
 
 ---
 
@@ -41,7 +41,7 @@ StockBoard는 `순매수 강도 v0.2` 전용 ranking engine, 전일 거래대금
 
 ---
 
-## 3. 2026-07-05 완료 작업 요약
+## 3. 완료 작업 요약
 
 | 구분 | 완료 내용 | 확인 상태 |
 |---|---|---|
@@ -53,6 +53,10 @@ StockBoard는 `순매수 강도 v0.2` 전용 ranking engine, 전일 거래대금
 | 분모 이원화 | 장중 700점, 장마감 600점 | 장마감 `score_possible_points=600` 확인 |
 | Top5 | 점수/분모/항목 breakdown 출력 확인 | 후보 산출 정상 |
 | UI 표시 | 1분강도 칸은 숫자만 표시하는 원상복구 완료 | 화면 확인 완료 |
+| 휴장시간 빈칸 보충 | 5분강도·순간강도·잔량비 통합 순차 조회 | 토요일 실제 빈칸 0개 확인 |
+| 틱 독립 실행 | 시장 틱 0건에서도 Qt 타이머로 자동 진행 | `market_tick_independent=True` 확인 |
+| 저부하 최적화 | 250ms 심박 + 완료 상태 drain 10초 주기 | 실측 상태값으로 확인 |
+| 상태 송신 안정화 | collector sender 직렬화/루프 fail-open | `SenderAlive=True`, 오류 0 확인 |
 
 ---
 
@@ -183,7 +187,13 @@ git pull --ff-only
 ```powershell
 cd C:\aiTrade
 
-python -m pytest tests/test_stockboard_ranking_engine.py tests/test_stockboard_previous_trade_value.py
+python -m pytest -q `
+  tests\test_stockboard_offhours_metric_timer_driver_patch.py `
+  tests\test_stockboard_collector_sender_resilience_patch.py `
+  tests\test_stockboard_offhours_metric_resilience_patch.py `
+  tests\test_stockboard_offhours_metric_completion_patch.py `
+  tests\test_stockboard_execution_strength_alias_patch.py `
+  tests\test_stockboard_qt_main_thread_openapi_patch.py
 ```
 
 ### 8.3 실행
@@ -191,11 +201,12 @@ python -m pytest tests/test_stockboard_ranking_engine.py tests/test_stockboard_p
 ```powershell
 cd C:\aiTrade
 
-.\stockboard_live.cmd stop
-.\stockboard_live.cmd
+.\stockboard_v2_large.cmd stop
+Start-Sleep -Seconds 5
+.\stockboard_v2_large.cmd start-fast
 ```
 
-브라우저는 캐시 문제 방지를 위해 `Ctrl+F5` 강력 새로고침한다.
+브라우저는 `http://127.0.0.1:8765/`를 사용한다.
 
 ---
 
@@ -284,13 +295,14 @@ foreach ($row in $top5) {
 
 | 우선순위 | TODO | 비고 |
 |---:|---|---|
-| 1 | 정규장 장중 700점 분모 확인 | `one_min_status=ok`, `score_possible_points=700` 확인 |
-| 2 | 금융/증권주 쏠림 진단 | 전일 점수/프로그램 비율이 과도한지 확인 |
-| 3 | 전일 점수 capped 영향 점검 | 100점 capped가 Top5를 과도하게 지배하는지 확인 |
-| 4 | 프로그램 점수 상한/완만화 필요 여부 판단 | 금융주 편향이 반복되면 검토 |
-| 5 | UI 툴팁 추가 개선 | 셀에는 숫자만 유지. 설명은 툴팁에만 표시 |
-| 6 | 틱데이터 저장/replay 최소 설계 | 장중 재현 가능성 확보 |
-| 7 | HTML render/main loop 추가 분리 | 장중 검증 이후. 당분간 보류 |
+| 1 | 노트북 동일 동작 확인 | `Driver=v3`, `SenderAlive=True`, 빈칸 0 확인 |
+| 2 | 정규장 장중 700점 분모 확인 | `one_min_status=ok`, `score_possible_points=700` 확인 |
+| 3 | 금융/증권주 쏠림 진단 | 전일 점수/프로그램 비율이 과도한지 확인 |
+| 4 | 전일 점수 capped 영향 점검 | 100점 capped가 Top5를 과도하게 지배하는지 확인 |
+| 5 | 프로그램 점수 상한/완만화 필요 여부 판단 | 금융주 편향이 반복되면 검토 |
+| 6 | UI 툴팁 추가 개선 | 셀에는 숫자만 유지. 설명은 툴팁에만 표시 |
+| 7 | 틱데이터 저장/replay 최소 설계 | 장중 재현 가능성 확보 |
+| 8 | HTML render/main loop 추가 분리 | 장중 검증 이후. 당분간 보류 |
 
 ---
 
@@ -303,6 +315,8 @@ foreach ($row in $top5) {
 | top100 refresh | 장중 `/api/top100` 자동 반복 호출 복구 금지 |
 | UI 계산 | HTML에서 등급/점수/가격을 새로 계산하지 말 것 |
 | 1분강도 표시 | 장마감에도 셀 안에는 숫자만 표시. `5분`, `5분참고` 문구를 셀에 직접 넣지 말 것 |
+| 휴장 보충 | 시장 틱을 트리거로 사용하지 말 것. 독립 Qt 타이머 유지 |
+| pending queue | 휴장시간 지표 보충을 provider pending queue에 다시 의존시키지 말 것 |
 | 문서 | 인계 목적 외 새 문서 남발 금지 |
 
 ---
@@ -314,10 +328,134 @@ foreach ($row in $top5) {
 | `stockboard_ranking_engine.py` | `NET_BUY_STRENGTH_V02` 전용 점수/등급/pool 계산 |
 | `stockboard_previous_trade_value.py` | 전일 거래대금 TR/cache/API row 주입 |
 | `stockboard_ranking_runtime_patch.py` | 표준 런처 경유 runtime patch 설치 |
-| `kiwoom_trade_value_rank.py` | 표준 진입점. patch 설치 후 server import |
+| `kiwoom_trade_value_rank.py` | ranking/server 진입점 |
+| `realtime_v2/collector32_large_bidask.py` | V2 32-bit OpenAPI collector 진입점과 patch 설치 순서 |
+| `realtime_v2/qt_main_thread_openapi_patch.py` | QApplication/QAxWidget 메인 스레드 실행 |
+| `realtime_v2/offhours_metric_completion_patch.py` | 5분강도·순간강도·잔량비 휴장시간 통합 보충 |
+| `realtime_v2/offhours_metric_resilience_patch.py` | 특정 종목 오류·stale gap 자동 복구 |
+| `realtime_v2/offhours_metric_timer_driver_patch.py` | 틱 독립 고정 250ms 심박과 mode별 drain 실행 주기 |
+| `realtime_v2/collector_sender_resilience_patch.py` | collector→worker 송신 스레드 fail-open |
+| `realtime_v2/execution_strength_alias_patch.py` | `realtime_strength_snapshot` → `execution_strength` 연결 |
+| `realtime_v2/session_metric_hold_patch.py` | 다음 실제 프리마켓 전까지 마지막 유효값 보존 |
 | `configs/candidate_models/NET_BUY_STRENGTH_V02.json` | 모델 설정/정책 |
 | `docs/candidate_model_specs/NET_BUY_STRENGTH_V02.md` | 선발기준 설계 문서 |
 | `tests/test_stockboard_ranking_engine.py` | 등급/분모/장마감 display_only 테스트 |
 | `tests/test_stockboard_previous_trade_value.py` | 전일 거래대금 계산/cache 테스트 |
-| `docs/stockboard_v0_3_0_sample.html` | 현재 화면 HTML |
+| `tests/test_stockboard_offhours_metric_completion_patch.py` | 휴장시간 통합 보충 테스트 |
+| `tests/test_stockboard_offhours_metric_timer_driver_patch.py` | 틱 독립 타이머·저부하 주기 테스트 |
+| `tests/test_stockboard_collector_sender_resilience_patch.py` | sender 직렬화/루프 복구 테스트 |
+| `docs/stockboard_v0_3_0_sample.html` | 구 화면 HTML 참고 |
 | `docs/assets/stockboard_tooltip.js` | 툴팁 기본 helper. 셀 텍스트 수정 금지 |
+
+---
+
+## 13. 2026-07-11 휴장시간 지표 완성 및 최적화
+
+### 13.1 목표와 범위
+
+장마감 이후, 주말, 공휴일, 지연개장 전 등 시장 틱이 없는 시간에도 다음 실제 프리마켓 전까지 화면의 빈칸을 자동 보충한다.
+
+| 지표 | 조회 원천 | 처리 |
+|---|---|---|
+| 5분강도 | `opt10046` | `strength_5m` 저장 |
+| 순간강도 | `opt10046` 현재 체결강도 | `execution_strength`와 last-valid 값으로 동기화 |
+| 잔량비 | `opt10004` | 매수/매도 잔량과 비율 저장 |
+
+가짜 값은 만들지 않는다. 한 종목이 응답하지 않아도 전체 큐를 막지 않고 다음 종목으로 진행한다.
+
+### 13.2 최종 실행 정책
+
+| 항목 | 정책 |
+|---|---|
+| 활성 phase | `closed`, `before_market`, `weekend`, `holiday` |
+| 중단 시점 | 실제 프리마켓 시작 시 자동 비활성 |
+| QAx 실행 | QApplication/QAxWidget와 TR 요청 모두 collector 메인 스레드 |
+| 시장 틱 의존 | 없음 |
+| provider pending queue | 사용하지 않음 |
+| TR 최소 간격 | 종목당 2초 |
+| 종목 timeout | 12초 후 해당 종목만 건너뜀 |
+| 재시도 | 5분 → 30분 → 2시간 반복 |
+| 물리 타이머 | 250ms 고정 심박 |
+| 실제 drain 실행 | 조회 중 250ms, provider 대기 1초, complete/비활성 10초 |
+| sender | 직렬화 오류 한 건만 폐기하고 스레드 계속 실행 |
+
+### 13.3 실제 검증 결과
+
+2026-07-11 토요일, 실시간 시장 틱 0건 상태에서 검증했다.
+
+| 상태값 | 확인값 | 판정 |
+|---|---:|---|
+| `driver` | `qt_timer_market_tick_independent_v3_fixed_heartbeat` | 최종 드라이버 적용 |
+| `market_tick_independent` | `True` | 틱 없이 실행 |
+| `legacy_pump_drain_suppressed` | `True` | 20ms 중복 drain 제거 |
+| `mode` | `complete` | 세 지표 빈칸 0 |
+| `timer_interval_ms` | `250` | 물리 심박 유지 |
+| `effective_drain_interval_ms` | `10000` | 완료 상태 저부하 |
+| `TimerTick` | 지속 증가 | Qt 타이머 생존 |
+| `DrainRun` | 약 10초마다 증가 | 무거운 검사 제한 |
+| `CollectorTs` | 계속 최신화 | collector→worker 상태 전송 정상 |
+| `SenderAlive` | `True` | sender 스레드 정상 |
+| `SerializeErrors` | `0` | 직렬화 오류 없음 |
+| `SenderRecover` | `0` | 복구 개입 없이 안정 |
+
+실제 관찰 예:
+
+```text
+15:26:22  DrainRun=9   NextDrain=3.141
+15:26:26  DrainRun=10  NextDrain=9.359
+15:26:32  DrainRun=10  NextDrain=2.313
+15:26:36  DrainRun=11  NextDrain=9.282
+```
+
+### 13.4 성능 영향
+
+| 상태 | 키움 TR | 실제 스냅샷/큐 검사 | 판정 |
+|---|---:|---:|---|
+| 빈칸 보충 중 | 최대 2초당 1건 | 빠른 주기 | 휴장시간 허용 |
+| complete | 0건 | 약 10초당 1회 | 부담 미미 |
+| 프리마켓·정규장 | 휴장 보충 TR 0건 | 비활성 확인만 | 장초반 영향 없음 |
+
+물리 타이머는 초당 약 4회 호출되지만 대부분 시간 비교 후 즉시 반환한다. 완료 상태에서 키움 TR은 발생하지 않으며, 09:00~09:10 거래량 폭탄 구간과 직접 경쟁하지 않는다.
+
+### 13.5 최종 검증 명령
+
+```powershell
+$r = Invoke-RestMethod 'http://127.0.0.1:8765/api/v2/snapshot?limit=300'
+$c = $r.status.collector_status
+$p = $c.status
+$s = $p.strength5m_scheduler
+$x = $c.sender_stats
+
+[pscustomobject]@{
+    CollectorTs     = $c.ts
+    Driver          = $s.driver
+    Mode            = $s.mode
+    PhysicalTimerMs = $s.timer_interval_ms
+    EffectiveMs     = $s.effective_drain_interval_ms
+    TimerTick       = $s.timer_tick_count
+    DrainRun        = $s.drain_run_count
+    DrainSkip       = $s.drain_skip_count
+    TickAge         = $s.timer_last_tick_age_sec
+    DrainAge        = $s.timer_last_drain_age_sec
+    NextDrain       = $s.next_drain_in_sec
+    SenderAlive     = $x.sender_thread_alive
+    SerializeErrors = $x.serialization_error_count
+    SenderRecover   = $x.sender_run_recovery_count
+    SenderError     = $x.sender_run_last_error
+}
+```
+
+정상 기준:
+
+```text
+Driver=qt_timer_market_tick_independent_v3_fixed_heartbeat
+Mode=complete
+PhysicalTimerMs=250
+EffectiveMs=10000
+TimerTick 계속 증가
+DrainRun 약 10초마다 증가
+CollectorTs 계속 최신화
+SenderAlive=True
+SerializeErrors=0
+SenderRecover=0
+```
