@@ -21,10 +21,13 @@ def _ensure_fields(provider) -> None:
     defaults = {
         "_offhours_metric_timer": None,
         "_offhours_metric_timer_active": False,
+        # Physical Qt heartbeat stays fixed. Heavy drain work is gated separately.
         "_offhours_metric_timer_interval_ms": 250,
         "_offhours_metric_timer_active_interval_ms": 250,
         "_offhours_metric_timer_wait_interval_ms": 1000,
         "_offhours_metric_timer_idle_interval_ms": 10000,
+        "_offhours_metric_timer_effective_drain_interval_ms": 250,
+        "_offhours_metric_timer_next_drain_monotonic": 0.0,
         "_offhours_metric_timer_tick_count": 0,
         "_offhours_metric_timer_last_tick_monotonic": 0.0,
         "_offhours_metric_timer_last_tick_at": None,
@@ -33,6 +36,7 @@ def _ensure_fields(provider) -> None:
         "_offhours_metric_timer_last_source": None,
         "_offhours_metric_timer_fallback_count": 0,
         "_offhours_metric_timer_drain_run_count": 0,
+        "_offhours_metric_timer_drain_skip_count": 0,
         "_offhours_metric_timer_last_drain_monotonic": 0.0,
         "_offhours_metric_timer_last_mode": None,
         "_offhours_metric_timer_interval_switch_count": 0,
@@ -63,33 +67,33 @@ def _mode_interval_ms(provider, drain) -> int:
     return active_ms
 
 
-def _set_timer_interval(provider, interval_ms: int) -> None:
+def _set_effective_interval(provider, interval_ms: int) -> None:
     _ensure_fields(provider)
     interval_ms = max(100, int(interval_ms))
     current = int(
-        getattr(provider, "_offhours_metric_timer_interval_ms", interval_ms)
+        getattr(
+            provider,
+            "_offhours_metric_timer_effective_drain_interval_ms",
+            interval_ms,
+        )
         or interval_ms
     )
-    if current == interval_ms:
-        return
-
-    timer = getattr(provider, "_offhours_metric_timer", None)
-    try:
-        if timer is not None:
-            timer.setInterval(interval_ms)
-    except Exception as error:
-        provider._offhours_metric_timer_error_count += 1
-        provider._offhours_metric_timer_last_error = (
-            f"timer_interval:{type(error).__name__}: {error}"
-        )
-        return
-
-    provider._offhours_metric_timer_interval_ms = interval_ms
-    provider._offhours_metric_timer_interval_switch_count += 1
+    if current != interval_ms:
+        provider._offhours_metric_timer_interval_switch_count += 1
+    provider._offhours_metric_timer_effective_drain_interval_ms = interval_ms
 
 
-def _driver_tick_once(provider, source: str = "qt_timer") -> bool:
-    """Run one completion tick without requiring a realtime market event."""
+def _driver_tick_once(
+    provider,
+    source: str = "qt_timer",
+    *,
+    force: bool = False,
+) -> bool:
+    """Run one market-tick-independent heartbeat and due drain cycle.
+
+    The QTimer itself always fires at the small fixed heartbeat. Expensive snapshot
+    and queue work runs only when the mode-specific cadence is due.
+    """
 
     _ensure_fields(provider)
     now_mono = time.monotonic()
@@ -106,6 +110,16 @@ def _driver_tick_once(provider, source: str = "qt_timer") -> bool:
     if not bool(getattr(provider, "_running", False)):
         return False
 
+    desired_before = _mode_interval_ms(provider, drain)
+    _set_effective_interval(provider, desired_before)
+    next_due = float(
+        getattr(provider, "_offhours_metric_timer_next_drain_monotonic", 0.0)
+        or 0.0
+    )
+    if not force and next_due > now_mono:
+        provider._offhours_metric_timer_drain_skip_count += 1
+        return True
+
     try:
         drain.tick()
         provider._offhours_metric_timer_drain_run_count += 1
@@ -114,7 +128,11 @@ def _driver_tick_once(provider, source: str = "qt_timer") -> bool:
             getattr(drain, "mode", "") or ""
         )
         provider._offhours_metric_timer_last_error = None
-        _set_timer_interval(provider, _mode_interval_ms(provider, drain))
+        desired_after = _mode_interval_ms(provider, drain)
+        _set_effective_interval(provider, desired_after)
+        provider._offhours_metric_timer_next_drain_monotonic = (
+            now_mono + desired_after / 1000.0
+        )
         return True
     except Exception as error:
         provider._offhours_metric_timer_error_count += 1
@@ -132,9 +150,10 @@ def _driver_tick_once(provider, source: str = "qt_timer") -> bool:
             drain.last_refresh_at = 0.0
         except Exception:
             pass
-        _set_timer_interval(
-            provider,
-            int(provider._offhours_metric_timer_wait_interval_ms),
+        wait_ms = int(provider._offhours_metric_timer_wait_interval_ms)
+        _set_effective_interval(provider, wait_ms)
+        provider._offhours_metric_timer_next_drain_monotonic = (
+            now_mono + wait_ms / 1000.0
         )
         return False
 
@@ -177,6 +196,10 @@ def _driver_status(provider) -> dict[str, Any]:
         getattr(provider, "_offhours_metric_timer_last_drain_monotonic", 0.0)
         or 0.0
     )
+    next_drain = float(
+        getattr(provider, "_offhours_metric_timer_next_drain_monotonic", 0.0)
+        or 0.0
+    )
     timer = getattr(provider, "_offhours_metric_timer", None)
     timer_active = bool(
         getattr(provider, "_offhours_metric_timer_active", False)
@@ -187,7 +210,7 @@ def _driver_status(provider) -> dict[str, Any]:
     except Exception:
         pass
     return {
-        "driver": "qt_timer_market_tick_independent_v2_optimized",
+        "driver": "qt_timer_market_tick_independent_v3_fixed_heartbeat",
         "market_tick_independent": True,
         "legacy_pump_drain_suppressed": bool(
             getattr(provider, "_offhours_metric_legacy_pump_unwrapped", False)
@@ -208,6 +231,15 @@ def _driver_status(provider) -> dict[str, Any]:
             getattr(provider, "_offhours_metric_timer_idle_interval_ms", 10000)
             or 10000
         ),
+        "effective_drain_interval_ms": int(
+            getattr(
+                provider,
+                "_offhours_metric_timer_effective_drain_interval_ms",
+                250,
+            )
+            or 250
+        ),
+        "next_drain_in_sec": round(max(0.0, next_drain - now_mono), 3),
         "timer_interval_switch_count": int(
             getattr(provider, "_offhours_metric_timer_interval_switch_count", 0)
             or 0
@@ -217,6 +249,9 @@ def _driver_status(provider) -> dict[str, Any]:
         ),
         "drain_run_count": int(
             getattr(provider, "_offhours_metric_timer_drain_run_count", 0) or 0
+        ),
+        "drain_skip_count": int(
+            getattr(provider, "_offhours_metric_timer_drain_skip_count", 0) or 0
         ),
         "timer_last_mode": getattr(
             provider, "_offhours_metric_timer_last_mode", None
@@ -250,7 +285,7 @@ def _driver_status(provider) -> dict[str, Any]:
 
 
 def install(base) -> None:
-    """Install an adaptive QTimer after the final provider wrappers are in place."""
+    """Install a fixed-heartbeat QTimer after final provider wrappers are in place."""
 
     provider_class = base.KiwoomOpenApiRealtimeProvider
     if getattr(provider_class, "_stockboard_offhours_timer_driver_installed", False):
@@ -262,15 +297,15 @@ def install(base) -> None:
     original_pump, legacy_pump_unwrapped = _unwrap_legacy_drain_pump(wrapped_pump)
     original_status = provider_class.status
 
-    active_interval_ms = max(
+    heartbeat_interval_ms = max(
         100,
         min(
-            2000,
+            1000,
             int(os.getenv("STOCKBOARD_OFFHOURS_METRIC_TIMER_MS", "250")),
         ),
     )
     wait_interval_ms = max(
-        active_interval_ms,
+        heartbeat_interval_ms,
         min(
             5000,
             int(os.getenv("STOCKBOARD_OFFHOURS_METRIC_WAIT_TIMER_MS", "1000")),
@@ -287,10 +322,14 @@ def install(base) -> None:
     def start_inline_qt(provider):
         started = original_start(provider)
         _ensure_fields(provider)
-        provider._offhours_metric_timer_active_interval_ms = active_interval_ms
+        provider._offhours_metric_timer_active_interval_ms = heartbeat_interval_ms
         provider._offhours_metric_timer_wait_interval_ms = wait_interval_ms
         provider._offhours_metric_timer_idle_interval_ms = idle_interval_ms
-        provider._offhours_metric_timer_interval_ms = active_interval_ms
+        provider._offhours_metric_timer_interval_ms = heartbeat_interval_ms
+        provider._offhours_metric_timer_effective_drain_interval_ms = (
+            heartbeat_interval_ms
+        )
+        provider._offhours_metric_timer_next_drain_monotonic = 0.0
         provider._offhours_metric_legacy_pump_unwrapped = legacy_pump_unwrapped
         if not started:
             return started
@@ -298,7 +337,7 @@ def install(base) -> None:
             from PyQt5.QtCore import QTimer
 
             timer = QTimer()
-            timer.setInterval(active_interval_ms)
+            timer.setInterval(heartbeat_interval_ms)
             timer.setSingleShot(False)
             timer.timeout.connect(
                 lambda p=provider: _driver_tick_once(p, "qt_timer")
@@ -332,30 +371,23 @@ def install(base) -> None:
         return original_stop(provider)
 
     def pump_inline_qt_once(provider):
-        # This calls the underlying Qt pump, not the legacy wrapper that also called
+        # Call the underlying Qt pump, not the legacy wrapper that also called
         # drain.tick. QTimer callbacks remain deliverable inside processEvents().
         ok = original_pump(provider)
         _ensure_fields(provider)
         provider._offhours_metric_legacy_pump_unwrapped = legacy_pump_unwrapped
-        # QTimer is the primary driver. The main loop only recovers a genuinely
-        # stalled timer and never performs a duplicate normal completion tick.
+        # The fixed QTimer is primary. Main loop only recovers a truly stalled
+        # heartbeat; it never performs a duplicate normal completion tick.
         now_mono = time.monotonic()
         last_tick = float(
             getattr(provider, "_offhours_metric_timer_last_tick_monotonic", 0.0)
             or 0.0
         )
-        current_interval_sec = max(
-            0.1,
-            float(
-                getattr(provider, "_offhours_metric_timer_interval_ms", active_interval_ms)
-                or active_interval_ms
-            )
-            / 1000.0,
-        )
-        stale_after = max(1.0, current_interval_sec * 1.6 + 0.5)
+        heartbeat_sec = max(0.1, heartbeat_interval_ms / 1000.0)
+        stale_after = max(1.5, heartbeat_sec * 5.0)
         if last_tick <= 0 or now_mono - last_tick > stale_after:
             provider._offhours_metric_timer_fallback_count += 1
-            _driver_tick_once(provider, "pump_fallback")
+            _driver_tick_once(provider, "pump_fallback", force=True)
         return ok
 
     def status(provider):
