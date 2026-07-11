@@ -36,6 +36,7 @@ def _ensure_fields(provider) -> None:
         "_offhours_metric_timer_last_drain_monotonic": 0.0,
         "_offhours_metric_timer_last_mode": None,
         "_offhours_metric_timer_interval_switch_count": 0,
+        "_offhours_metric_legacy_pump_unwrapped": False,
     }
     for name, value in defaults.items():
         if not hasattr(provider, name):
@@ -138,21 +139,31 @@ def _driver_tick_once(provider, source: str = "qt_timer") -> bool:
         return False
 
 
-def _pump_without_legacy_drain(provider, original_pump: Callable[[Any], bool]):
-    """Run the old provider pump while suppressing its duplicate drain.tick call."""
+def _unwrap_legacy_drain_pump(
+    pump: Callable[[Any], bool],
+) -> tuple[Callable[[Any], bool], bool]:
+    """Return the Qt pump below the old wrapper that called drain.tick every 20 ms.
 
-    drain_name = "_stockboard_offhours_strength_drain"
-    drain = getattr(provider, drain_name, None)
-    if drain is None:
-        return original_pump(provider)
+    The old wrapper closes over a callable named ``original_pump``. Calling that
+    underlying function preserves QApplication.processEvents/QTimer delivery while
+    removing only the duplicate off-hours completion call.
+    """
 
-    # The legacy wrapper calls drain.tick on every 20 ms collector pump. Hide the
-    # drain only for this same-thread call; the QTimer remains the sole primary driver.
-    setattr(provider, drain_name, None)
-    try:
-        return original_pump(provider)
-    finally:
-        setattr(provider, drain_name, drain)
+    freevars = tuple(getattr(getattr(pump, "__code__", None), "co_freevars", ()))
+    closure = tuple(getattr(pump, "__closure__", ()) or ())
+    if not freevars or len(freevars) != len(closure):
+        return pump, False
+
+    closed = {}
+    for name, cell in zip(freevars, closure):
+        try:
+            closed[name] = cell.cell_contents
+        except ValueError:
+            continue
+    candidate = closed.get("original_pump")
+    if callable(candidate) and candidate is not pump:
+        return candidate, True
+    return pump, False
 
 
 def _driver_status(provider) -> dict[str, Any]:
@@ -178,7 +189,9 @@ def _driver_status(provider) -> dict[str, Any]:
     return {
         "driver": "qt_timer_market_tick_independent_v2_optimized",
         "market_tick_independent": True,
-        "legacy_pump_drain_suppressed": True,
+        "legacy_pump_drain_suppressed": bool(
+            getattr(provider, "_offhours_metric_legacy_pump_unwrapped", False)
+        ),
         "timer_active": timer_active,
         "timer_interval_ms": int(
             getattr(provider, "_offhours_metric_timer_interval_ms", 250) or 250
@@ -245,7 +258,8 @@ def install(base) -> None:
 
     original_start = provider_class.start_inline_qt
     original_stop = provider_class.stop
-    original_pump = provider_class.pump_inline_qt_once
+    wrapped_pump = provider_class.pump_inline_qt_once
+    original_pump, legacy_pump_unwrapped = _unwrap_legacy_drain_pump(wrapped_pump)
     original_status = provider_class.status
 
     active_interval_ms = max(
@@ -277,6 +291,7 @@ def install(base) -> None:
         provider._offhours_metric_timer_wait_interval_ms = wait_interval_ms
         provider._offhours_metric_timer_idle_interval_ms = idle_interval_ms
         provider._offhours_metric_timer_interval_ms = active_interval_ms
+        provider._offhours_metric_legacy_pump_unwrapped = legacy_pump_unwrapped
         if not started:
             return started
         try:
@@ -317,8 +332,11 @@ def install(base) -> None:
         return original_stop(provider)
 
     def pump_inline_qt_once(provider):
-        ok = _pump_without_legacy_drain(provider, original_pump)
+        # This calls the underlying Qt pump, not the legacy wrapper that also called
+        # drain.tick. QTimer callbacks remain deliverable inside processEvents().
+        ok = original_pump(provider)
         _ensure_fields(provider)
+        provider._offhours_metric_legacy_pump_unwrapped = legacy_pump_unwrapped
         # QTimer is the primary driver. The main loop only recovers a genuinely
         # stalled timer and never performs a duplicate normal completion tick.
         now_mono = time.monotonic()
