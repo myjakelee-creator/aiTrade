@@ -21,10 +21,12 @@ install_provider()
 from realtime_v2.strength5m_snapshot_fallback_patch import install as install_strength5m_snapshot_fallback
 from realtime_v2.strength5m_stale_status_patch import install as install_strength5m_stale_status
 from realtime_v2.strength5m_pending_watchdog_patch import install as install_strength5m_pending_watchdog
+from realtime_v2.strength5m_gap_policy_patch import install as install_strength5m_gap_policy
 
 install_strength5m_snapshot_fallback()
 install_strength5m_stale_status()
 install_strength5m_pending_watchdog()
+install_strength5m_gap_policy()
 
 large = importlib.import_module("realtime_v2.collector32_large")
 base = large.base
