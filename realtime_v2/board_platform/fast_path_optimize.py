@@ -91,21 +91,23 @@ def install(actual_module: Any, base_module: Any) -> None:
         if _in_snapshot_rows():
             existing = getattr(self, "quotes", {}).get(normalized)
             if isinstance(existing, dict):
-                status = getattr(self, "status", None)
-                if isinstance(status, dict):
-                    status["fast_quote_existing_skip_count"] = int(
-                        status.get("fast_quote_existing_skip_count") or 0
-                    ) + 1
                 return existing
         return original_quote(self, code)
 
     @functools.wraps(original_rows)
     def optimized_rows(self, limit: int = 300):
+        existing_before = len(getattr(self, "quotes", {}) or {})
         _enter_snapshot_rows()
         try:
             return original_rows(self, limit)
         finally:
             _leave_snapshot_rows()
+            status = getattr(self, "status", None)
+            if isinstance(status, dict):
+                status["fast_quote_existing_skip_last"] = existing_before
+                status["fast_quote_existing_skip_total"] = int(
+                    status.get("fast_quote_existing_skip_total") or 0
+                ) + existing_before
 
     original_ohlc_loader = actual_module._load_ohlc_snapshot_if_needed
 
