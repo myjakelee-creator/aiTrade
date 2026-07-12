@@ -3,18 +3,17 @@ from __future__ import annotations
 import json
 import os
 import threading
-import time
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from realtime_v2.after_close_recovery import date_text, now_text
+from realtime_v2.after_close_recovery import date_text
 from realtime_v2.market_session import last_completed_trading_date, next_premarket_datetime
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE_FILE = ROOT / "data" / "runtime" / "stockboard_v2" / "after_close_recovery_state.json"
-STATE_VERSION = "after_close_recovery_state_v1"
+STATE_VERSION = "after_close_recovery_state_v2"
 RECOVERY_KEYS = (
     "minute_recovery_status",
     "minute_recovery_trade_status",
@@ -79,6 +78,7 @@ class AfterCloseRecoveryStateService(threading.Thread):
         self.last_error = None
         self.save_count = 0
         self.loaded_count = 0
+        self.expire_count = 0
         self.valid_until = None
         self.target_trading_date = None
 
@@ -161,6 +161,25 @@ class AfterCloseRecoveryStateService(threading.Thread):
             self.last_error = str(error)
             return False
 
+    def expire_if_due(self) -> bool:
+        valid_until = parse_iso(self.valid_until)
+        if valid_until is None or self.now_provider() < valid_until:
+            return False
+        with self.lock:
+            self.entries.clear()
+            self.dirty = False
+            self.valid_until = None
+            self.target_trading_date = None
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            self.last_error = str(error)
+            return False
+        self.expire_count += 1
+        return True
+
     def status(self):
         with self.lock:
             return {
@@ -170,6 +189,7 @@ class AfterCloseRecoveryStateService(threading.Thread):
                 "dirty": self.dirty,
                 "save_count": self.save_count,
                 "loaded_count": self.loaded_count,
+                "expire_count": self.expire_count,
                 "last_saved_at": self.last_saved_at,
                 "valid_until": self.valid_until,
                 "target_trading_date": self.target_trading_date,
@@ -183,11 +203,13 @@ class AfterCloseRecoveryStateService(threading.Thread):
             self.wake.clear()
             if self.stop_event.is_set():
                 break
-            self.save()
+            if not self.expire_if_due():
+                self.save()
             status = getattr(self.state, "status", None)
             if isinstance(status, dict):
                 status["after_close_recovery_state"] = self.status()
-        self.save(force=True)
+        if not self.expire_if_due():
+            self.save(force=True)
 
 
 def load_state(path: Path, now: datetime) -> dict[str, dict[str, Any]]:
@@ -266,15 +288,34 @@ def install(base) -> None:
         service.start()
 
     def server_close(self):
+        # Let ThemeBoard and the close sampler finish first. The sampler may add
+        # final exact values that must be included in the last state-file flush.
+        result = original_server_close(self)
         service = getattr(self, "after_close_recovery_state_service", None)
         if service:
             service.stop()
             service.join(timeout=3)
-        return original_server_close(self)
+        return result
 
     State.__init__ = state_init
     State._quote = quote_method
     State._apply_close_metrics = close_method
     base.WebServer.__init__ = server_init
     base.WebServer.server_close = server_close
+
+    try:
+        from realtime_v2.after_close_recovery import CloseWindowSamplerService
+
+        original_sampler_finalize = CloseWindowSamplerService._finalize
+
+        def sampler_finalize(self, key, end_at, trading_date):
+            original_sampler_finalize(self, key, end_at, trading_date)
+            service = getattr(self.state, "after_close_recovery_state_service", None)
+            if service:
+                service.mark_codes(self.codes)
+
+        CloseWindowSamplerService._finalize = sampler_finalize
+    except Exception:
+        pass
+
     base._after_close_recovery_state_installed = True
