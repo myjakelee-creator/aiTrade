@@ -276,15 +276,11 @@ function Wait-CollectorOpenApiReady([int]$TimeoutSec = 180) {
 function Build-Universe([string]$Python64) {
     Write-Step "Building v2 universe"
     & $Python64 (Join-Path $ProjectRoot "realtime_v2\build_universe.py") --limit 300 --rank-basis today
+    $exitCode = $LASTEXITCODE
 
-    if ($LASTEXITCODE -eq 0) { return }
+    if ($exitCode -eq 0) { return }
 
-    if (Test-Path -LiteralPath $UniverseFile) {
-        Write-Warning "build_universe failed with exit code $LASTEXITCODE; using existing universe.json"
-        return
-    }
-
-    throw "build_universe failed and no existing universe.json is available"
+    throw "build_universe failed with exit code $exitCode; live build and validated cached fallback are both unavailable"
 }
 
 function Start-V2([bool]$FastOpen) {
