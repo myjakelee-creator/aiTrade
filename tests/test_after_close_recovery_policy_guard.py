@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 
 from realtime_v2.after_close_recovery_hardening import install_module_hardening
 from realtime_v2.after_close_recovery_policy_guard import install as install_policy_guard
@@ -47,16 +46,19 @@ def test_all_p0_to_p6_orderbook_tasks_are_enqueued():
     coordinator.orderbook_all_lane_enqueue_count = 0
     coordinator.missing_orderbook_count = 0
     coordinator.target_date = lambda: "20260710"
-    coordinator._needs = lambda row: (False, False, bool(row["need_order"]), False, False)
+    coordinator._needs = lambda row: (
+        False,
+        False,
+        bool(row["need_order"]),
+        False,
+        False,
+    )
 
-    # Bypass the original refresh and exercise the policy wrapper's post-processing.
-    original_refresh = AfterCloseRecoveryCoordinator._refresh
-    base_refresh = original_refresh.__closure__[0].cell_contents if original_refresh.__closure__ else None
-    assert base_refresh is not None
+    # Make the wrapped original refresh return on its interval guard. The policy
+    # post-processing must still add every missing P0-P6 orderbook task.
     coordinator.last_refresh_at = 1.0
     coordinator.refresh_sec = 5.0
-    base_refresh(coordinator, 2.0)
-    original_refresh(coordinator, 2.0)
+    AfterCloseRecoveryCoordinator._refresh(coordinator, 2.0)
 
     tasks = list(coordinator.queue)
     assert len(tasks) == 7
