@@ -245,6 +245,9 @@ def _install_model_lane_fail_open() -> None:
                 reset_state["model_id"] = model_id
 
             def patched_model_enrich(rows, model_id=None):
+                for row in rows:
+                    if isinstance(row, dict):
+                        row["trade_value_rank"] = row.get("rank")
                 result = model_enrich(rows, model_id=model_id)
                 reset_display_order_for_new_model()
                 return result
