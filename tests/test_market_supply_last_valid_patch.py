@@ -1,6 +1,8 @@
+import json
 from pathlib import Path
 
 from realtime_v2.market_supply_last_valid_patch import (
+    _read_json_with_encoding,
     market_supply_valid,
     normalize_market_supply,
 )
@@ -66,6 +68,61 @@ def test_normalize_supports_uppercase_and_wrapped_values():
     assert normalized["kospi"]["market_index"] == "2800.1"
     assert normalized["kosdaq"]["decliners"] == "70"
     assert market_supply_valid(normalized)
+
+
+def test_normalize_recursively_finds_deep_market_rows():
+    normalized = normalize_market_supply(
+        {
+            "outer": {
+                "payload": {
+                    "items": [
+                        {
+                            "market_name": "KOSPI",
+                            "cur_prc": "2801.5",
+                            "flu_rt": "1.1",
+                            "rising": "510",
+                            "fall": "320",
+                        },
+                        {
+                            "market_name": "KOSDAQ",
+                            "cur_prc": "901.4",
+                            "flu_rt": "-0.2",
+                            "rising": "620",
+                            "fall": "710",
+                        },
+                    ]
+                }
+            }
+        }
+    )
+    assert normalized["kospi"]["market_index"] == "2801.5"
+    assert normalized["kosdaq"]["advancers"] == "620"
+    assert market_supply_valid(normalized)
+
+
+def test_read_json_supports_windows_powershell_utf16(tmp_path):
+    path = tmp_path / "market_supply_after.json"
+    payload = {
+        "KOSPI": {
+            "index": 2800.0,
+            "change_rate": 1.0,
+            "advance": 100,
+            "decline": 50,
+        },
+        "KOSDAQ": {
+            "index": 900.0,
+            "change_rate": -0.5,
+            "advance": 80,
+            "decline": 70,
+        },
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-16")
+
+    loaded, encoding = _read_json_with_encoding(path)
+
+    assert encoding == "utf-16"
+    assert loaded == payload
+    assert market_supply_valid(loaded)
 
 
 def test_worker_installs_market_supply_hold_on_actual_context_module():
