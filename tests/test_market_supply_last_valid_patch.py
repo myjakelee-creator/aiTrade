@@ -145,3 +145,16 @@ def test_context_patch_is_fail_open():
     assert '"market_supply_display_basis": "ORIGINAL_CONTEXT_ERROR"' in source
     assert 'payload["market_supply_display_basis"] = "PATCH_FAIL_OPEN"' in source
     assert "market_supply_patch_traceback" in source
+
+
+def test_context_writer_refuses_invalid_market_supply_overwrite():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "realtime_v2"
+        / "context_snapshot_writer.py"
+    ).read_text(encoding="utf-8")
+    assert "_read_json_with_encoding" in source
+    assert "market_supply_valid(normalized)" in source
+    assert "refusing to overwrite market_supply.json with invalid payload" in source
+    assert "MARKET_SUPPLY_LAST_VALID_FILE" in source
+    assert "hold_last_valid" in source
