@@ -32,6 +32,157 @@ from stockboard_previous_trade_value import previous_trade_value_from_daily_row 
 from stockboard_store import _load_tradable_stock_codes  # noqa: E402
 
 
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(str(os.getenv(name, str(default))).strip())
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def _env_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    try:
+        value = float(str(os.getenv(name, str(default))).strip())
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def _single_line_error(error: BaseException) -> str:
+    return " ".join(str(error).split())[:1000]
+
+
+def _fetch_seed_rows_with_retry(
+    rank_basis: str,
+    *,
+    retry_count: int | None = None,
+    retry_delay_sec: float | None = None,
+) -> tuple[str, list[Any], Any, int]:
+    attempts = retry_count
+    if attempts is None:
+        attempts = _env_int("STOCKBOARD_V2_UNIVERSE_RETRY_COUNT", 3, 1, 5)
+    attempts = max(1, min(5, int(attempts)))
+
+    base_delay = retry_delay_sec
+    if base_delay is None:
+        base_delay = _env_float("STOCKBOARD_V2_UNIVERSE_RETRY_DELAY_SEC", 1.0, 0.0, 10.0)
+    base_delay = max(0.0, min(10.0, float(base_delay)))
+
+    last_error: BaseException | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            token = issue_access_token()
+            rows, page_counts = fetch_trade_value_top100(token, rank_basis=rank_basis)
+            if not isinstance(rows, list) or not rows:
+                raise RuntimeError("ka10032 returned no seed rows")
+            return token, rows, page_counts, attempt
+        except Exception as error:
+            last_error = error
+            print(
+                "UNIVERSE_SEED_ATTEMPT="
+                f"{attempt}/{attempts} STATUS=ERROR ERROR={_single_line_error(error)}",
+                file=sys.stderr,
+                flush=True,
+            )
+            if attempt < attempts and base_delay > 0:
+                time.sleep(base_delay * (2 ** (attempt - 1)))
+
+    raise RuntimeError(
+        f"ka10032 seed universe failed after {attempts} attempts: "
+        f"{_single_line_error(last_error or RuntimeError('unknown error'))}"
+    ) from last_error
+
+
+def _validated_cached_items(payload: dict[str, Any], limit: int) -> tuple[list[dict[str, Any]], int]:
+    raw_items = payload.get("items")
+    if not isinstance(raw_items, list):
+        raise RuntimeError("cached universe items is not a list")
+
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    invalid_count = 0
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            invalid_count += 1
+            continue
+        code = normalize_code(raw_item.get("stock_code") or raw_item.get("code"))
+        if not code or code in seen:
+            invalid_count += 1
+            continue
+        item = dict(raw_item)
+        item["stock_code"] = code
+        item["stock_name"] = str(item.get("stock_name") or item.get("name") or code).strip() or code
+        items.append(item)
+        seen.add(code)
+        if len(items) >= limit:
+            break
+
+    configured_minimum = _env_int("STOCKBOARD_V2_UNIVERSE_FALLBACK_MIN_COUNT", 20, 1, 300)
+    minimum_count = min(max(1, int(limit)), configured_minimum)
+    if len(items) < minimum_count:
+        raise RuntimeError(
+            f"cached universe has only {len(items)} valid unique items; "
+            f"minimum required is {minimum_count}"
+        )
+    return items, invalid_count
+
+
+def _cached_universe_fallback(
+    output: Path,
+    *,
+    limit: int,
+    rank_basis: str,
+    build_error: BaseException,
+) -> dict[str, Any]:
+    if not output.is_file():
+        raise RuntimeError(f"cached universe file not found: {output}")
+    try:
+        cached = json.loads(output.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"cached universe unreadable: {error}") from error
+    if not isinstance(cached, dict):
+        raise RuntimeError("cached universe root is not an object")
+    if int(cached.get("schema_version") or 0) != 1:
+        raise RuntimeError(f"unsupported cached universe schema: {cached.get('schema_version')!r}")
+
+    items, invalid_count = _validated_cached_items(cached, limit)
+    original_source = cached.get("universe_original_source") or cached.get("source")
+    original_built_at = cached.get("universe_original_built_at") or cached.get("built_at")
+    original_trading_date = cached.get("universe_original_trading_date") or cached.get("trading_date")
+
+    fallback = dict(cached)
+    fallback.update(
+        source="cached_universe_fallback_after_build_error",
+        universe_source_status="stale_fallback",
+        universe_fallback_active=True,
+        universe_fallback_used_at=now_text(),
+        universe_fallback_reason=_single_line_error(build_error),
+        universe_original_source=original_source,
+        universe_original_built_at=original_built_at,
+        universe_original_trading_date=original_trading_date,
+        requested_rank_basis=rank_basis,
+        requested_limit=limit,
+        requested_trading_date=trading_date_text(),
+        fallback_valid_item_count=len(items),
+        fallback_invalid_item_count=invalid_count,
+        limit=limit,
+        count=len(items),
+        items=items,
+    )
+    return fallback
+
+
+def _atomic_write_codes(path: Path, items: list[dict[str, Any]]) -> None:
+    codes = [str(item.get("stock_code") or "").strip() for item in items]
+    codes = [code for code in codes if normalize_code(code)]
+    if not codes:
+        raise RuntimeError("no valid codes available for codes.txt")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text("\n".join(codes) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
 def _name_map_from_csv() -> dict[str, str]:
     candidates = [
         ROOT / "docs" / "tradable_stock_master.csv",
@@ -289,9 +440,18 @@ def _attach_previous_ranks(items: list[dict[str, Any]], query_date: str, access_
     return cached_attached, direct_attached
 
 
-def build_universe(limit: int, rank_basis: str) -> dict:
-    token = issue_access_token()
-    rows, page_counts = fetch_trade_value_top100(token, rank_basis=rank_basis)
+def build_universe(
+    limit: int,
+    rank_basis: str,
+    *,
+    seed_retry_count: int | None = None,
+    seed_retry_delay_sec: float | None = None,
+) -> dict:
+    token, rows, page_counts, attempt_count = _fetch_seed_rows_with_retry(
+        rank_basis,
+        retry_count=seed_retry_count,
+        retry_delay_sec=seed_retry_delay_sec,
+    )
     name_map = _name_map_from_csv()
     query_date = trading_date_text()
     try:
@@ -325,6 +485,8 @@ def build_universe(limit: int, rank_basis: str) -> dict:
         )
         if len(items) >= limit:
             break
+    if not items:
+        raise RuntimeError("ka10032 seed universe produced no tradable items")
     cached_previous_count, direct_previous_count = _attach_previous_ranks(items, query_date, token)
     missing_previous_count = len(
         [item for item in items if to_number(item.get("prev_trade_value_eok")) is None]
@@ -332,6 +494,10 @@ def build_universe(limit: int, rank_basis: str) -> dict:
     return {
         "schema_version": 1,
         "source": "ka10032_seed_universe_filtered_by_tradable_master",
+        "universe_source_status": "live",
+        "universe_fallback_active": False,
+        "seed_fetch_attempt_count": attempt_count,
+        "seed_fetch_last_error": None,
         "rank_basis": rank_basis,
         "built_at": now_text(),
         "trading_date": query_date,
@@ -349,26 +515,71 @@ def build_universe(limit: int, rank_basis: str) -> dict:
     }
 
 
+def _print_universe_summary(output: Path, codes_output: Path, payload: dict[str, Any]) -> None:
+    print(f"UNIVERSE_FILE={output}")
+    print(f"CODES_FILE={codes_output}")
+    print(f"UNIVERSE_COUNT={payload.get('count', 0)}")
+    print(f"UNIVERSE_SOURCE_STATUS={payload.get('universe_source_status', 'unknown')}")
+    print(f"UNIVERSE_FALLBACK_ACTIVE={bool(payload.get('universe_fallback_active'))}")
+    print(f"UNIVERSE_SOURCE={payload.get('source')}")
+    print(f"UNIVERSE_ORIGINAL_BUILT_AT={payload.get('universe_original_built_at') or payload.get('built_at')}")
+    print(f"UNIVERSE_ORIGINAL_TRADING_DATE={payload.get('universe_original_trading_date') or payload.get('trading_date')}")
+    if payload.get("universe_fallback_reason"):
+        print(f"UNIVERSE_FALLBACK_REASON={payload.get('universe_fallback_reason')}")
+    print(f"SEED_FETCH_ATTEMPTS={payload.get('seed_fetch_attempt_count', 0)}")
+    print(f"FILTERED_OUT_NOT_TRADABLE={payload.get('filtered_out_not_tradable', 0)}")
+    print(f"PREVIOUS_TRADE_VALUE_ATTACHED={payload.get('previous_trade_value_attached_count', 0)}")
+    print(f"PREVIOUS_TRADE_VALUE_CACHED={payload.get('previous_trade_value_cached_count', 0)}")
+    print(f"PREVIOUS_TRADE_VALUE_DIRECT_REGULAR={payload.get('previous_trade_value_direct_regular_count', 0)}")
+    print(f"PREVIOUS_TRADE_VALUE_MISSING={payload.get('previous_trade_value_missing_count', 0)}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build StockBoard v2 seed universe")
     parser.add_argument("--limit", type=int, default=300)
     parser.add_argument("--rank-basis", default="today", choices=["today", "auto"])
     parser.add_argument("--output", default=str(RUNTIME_DIR / "universe.json"))
+    parser.add_argument("--seed-retry-count", type=int, default=None)
+    parser.add_argument("--seed-retry-delay-sec", type=float, default=None)
     args = parser.parse_args()
 
-    payload = build_universe(max(1, int(args.limit)), args.rank_basis)
+    limit = max(1, int(args.limit))
     output = Path(args.output)
+    build_error: BaseException | None = None
+    try:
+        payload = build_universe(
+            limit,
+            args.rank_basis,
+            seed_retry_count=args.seed_retry_count,
+            seed_retry_delay_sec=args.seed_retry_delay_sec,
+        )
+    except Exception as error:
+        build_error = error
+        print(
+            f"UNIVERSE_LIVE_BUILD_STATUS=ERROR ERROR={_single_line_error(error)}",
+            file=sys.stderr,
+            flush=True,
+        )
+        try:
+            payload = _cached_universe_fallback(
+                output,
+                limit=limit,
+                rank_basis=args.rank_basis,
+                build_error=error,
+            )
+        except Exception as fallback_error:
+            raise RuntimeError(
+                "live universe build failed and cached fallback is unavailable: "
+                f"live={_single_line_error(error)}; "
+                f"fallback={_single_line_error(fallback_error)}"
+            ) from error
+
     atomic_write_json(output, payload)
     codes_output = output.with_name("codes.txt")
-    codes_output.write_text("\n".join(item["stock_code"] for item in payload["items"]) + "\n", encoding="utf-8")
-    print(f"UNIVERSE_FILE={output}")
-    print(f"CODES_FILE={codes_output}")
-    print(f"UNIVERSE_COUNT={payload['count']}")
-    print(f"FILTERED_OUT_NOT_TRADABLE={payload['filtered_out_not_tradable']}")
-    print(f"PREVIOUS_TRADE_VALUE_ATTACHED={payload['previous_trade_value_attached_count']}")
-    print(f"PREVIOUS_TRADE_VALUE_CACHED={payload['previous_trade_value_cached_count']}")
-    print(f"PREVIOUS_TRADE_VALUE_DIRECT_REGULAR={payload['previous_trade_value_direct_regular_count']}")
-    print(f"PREVIOUS_TRADE_VALUE_MISSING={payload['previous_trade_value_missing_count']}")
+    _atomic_write_codes(codes_output, payload["items"])
+    _print_universe_summary(output, codes_output, payload)
+    if build_error is not None:
+        print("UNIVERSE_STARTUP_CONTINUED_WITH_CACHE=True")
     return 0
 
 

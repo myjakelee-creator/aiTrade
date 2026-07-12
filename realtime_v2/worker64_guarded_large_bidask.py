@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import struct
 import sys
 import traceback
 from pathlib import Path
@@ -11,6 +12,7 @@ if str(ROOT) not in sys.path:
 
 large = importlib.import_module("realtime_v2.worker64_guarded_large")
 base = large.base
+guarded = getattr(large, "guarded", large)
 
 _CROSS_TABLE_NAV_MARKER = "STOCKBOARD_V2_CROSS_TABLE_NAV_20260710"
 _CROSS_TABLE_NAV_ANCHOR = (
@@ -163,6 +165,161 @@ def _install_header_sort_patch_fail_open() -> None:
         _write_patch_error("html_header_sort_patch_error.txt", error)
 
 
+def _install_theme_board_fail_open() -> None:
+    try:
+        from realtime_v2.theme_board_patch import install as install_theme_board
+
+        install_theme_board(base)
+    except Exception as error:
+        _write_patch_error("theme_board_patch_error.txt", error)
+
+
+def _install_market_supply_hold_fail_open() -> None:
+    try:
+        from realtime_v2.market_supply_last_valid_patch import install as install_market_supply_hold
+
+        install_market_supply_hold(guarded, base)
+    except Exception as error:
+        _write_patch_error("market_supply_last_valid_patch_error.txt", error)
+
+
+def _install_board_platform_fail_open() -> None:
+    try:
+        from realtime_v2.board_platform import install as install_board_platform
+
+        install_board_platform(base, large)
+    except Exception as error:
+        _write_patch_error("board_platform_patch_error.txt", error)
+
+
+def _install_model_lane_fail_open() -> None:
+    try:
+        from realtime_v2.board_platform.model_lane import install as install_model_lane
+        from realtime_v2.board_platform.stockboard_cache import (
+            StockBoardSnapshotCacheService,
+        )
+
+        if not hasattr(guarded, "enrich_candidate_model_fields"):
+            raise AttributeError(
+                "guarded worker module has no enrich_candidate_model_fields"
+            )
+
+        service = install_model_lane(guarded, base)
+
+        if not getattr(base.WebServer, "_stockboard_model_lane_state_bound", False):
+            original_server_init = base.WebServer.__init__
+
+            def patched_server_init(self, address, handler, state):
+                original_server_init(self, address, handler, state)
+                service.state = state
+
+            base.WebServer.__init__ = patched_server_init
+            base.WebServer._stockboard_model_lane_state_bound = True
+
+        if not getattr(guarded, "_stockboard_model_lane_display_reset_installed", False):
+            model_enrich = guarded.enrich_candidate_model_fields
+            reset_state = {"model_id": None}
+
+            def reset_display_order_for_new_model() -> None:
+                lane_status = service.status()
+                model_id = str(lane_status.get("model_id") or "")
+                if not model_id or model_id == reset_state["model_id"]:
+                    return
+                state = getattr(service, "state", None)
+                if state is None:
+                    return
+                controller = guarded._display_order_controller(state)
+                lock = getattr(controller, "_lock", None)
+                if lock is None:
+                    return
+                with lock:
+                    if getattr(controller, "paused", False):
+                        return
+                    controller.top_codes = []
+                    controller.pool_codes = []
+                    controller.frozen_codes = []
+                    controller.pending_freeze = False
+                    challenger = getattr(controller, "_challenger_since", None)
+                    if isinstance(challenger, dict):
+                        challenger.clear()
+                    incumbent = getattr(controller, "_incumbent_out_since", None)
+                    if isinstance(incumbent, dict):
+                        incumbent.clear()
+                    controller.updated_at = guarded.now_text()
+                    controller.version += 1
+                reset_state["model_id"] = model_id
+
+            def patched_model_enrich(rows, model_id=None):
+                for row in rows:
+                    if isinstance(row, dict):
+                        row["trade_value_rank"] = row.get("rank")
+                result = model_enrich(rows, model_id=model_id)
+                reset_display_order_for_new_model()
+                return result
+
+            guarded.enrich_candidate_model_fields = patched_model_enrich
+            guarded._stockboard_model_lane_display_reset_installed = True
+
+        if not getattr(
+            StockBoardSnapshotCacheService,
+            "_stockboard_model_lane_status_installed",
+            False,
+        ):
+            original_cache_status = StockBoardSnapshotCacheService.status
+
+            def patched_cache_status(self):
+                result = original_cache_status(self)
+                lane = getattr(self.state, "stockboard_model_lane", None)
+                if lane is None:
+                    lane = service
+                try:
+                    lane_status = lane.status()
+                except Exception as error:
+                    lane_status = {
+                        "state": "ERROR",
+                        "last_error": f"{type(error).__name__}: {error}",
+                    }
+                result.update(
+                    {
+                        "model_lane_state": lane_status.get("state"),
+                        "model_lane_model_id": lane_status.get("model_id"),
+                        "model_lane_compute_ms": lane_status.get("compute_ms"),
+                        "model_lane_age_ms": lane_status.get("age_ms"),
+                        "model_lane_interval_ms": lane_status.get("interval_ms"),
+                        "model_lane_compute_count": lane_status.get("compute_count"),
+                        "model_lane_reuse_count": lane_status.get("reuse_count"),
+                        "model_lane_coalesced": lane_status.get(
+                            "coalesced_submission_count"
+                        ),
+                        "model_lane_pending": lane_status.get("pending"),
+                        "model_lane_last_error": lane_status.get("last_error"),
+                    }
+                )
+                return result
+
+            StockBoardSnapshotCacheService.status = patched_cache_status
+            StockBoardSnapshotCacheService._stockboard_model_lane_status_installed = True
+    except Exception as error:
+        _write_patch_error("stockboard_model_lane_patch_error.txt", error)
+
+
+def _require_64bit_worker() -> None:
+    bits = struct.calcsize("P") * 8
+    if bits == 64:
+        return
+    message = (
+        f"StockBoard worker requires 64-bit Python, current interpreter is {bits}-bit: "
+        f"{sys.executable}"
+    )
+    try:
+        runtime = _runtime_dir()
+        runtime.mkdir(parents=True, exist_ok=True)
+        (runtime / "worker_python_bits_error.txt").write_text(message, encoding="utf-8")
+    except Exception:
+        pass
+    raise SystemExit(message)
+
+
 _install_bidask_patch_fail_open()
 _install_display_hold_fail_open()
 _install_display_hold_ohlc_price_fail_open()
@@ -170,6 +327,11 @@ _install_session_metric_hold_fail_open()
 _install_execution_strength_alias_fail_open()
 _install_cross_table_navigation_patch_fail_open()
 _install_header_sort_patch_fail_open()
+_install_theme_board_fail_open()
+_install_market_supply_hold_fail_open()
+_install_board_platform_fail_open()
+_install_model_lane_fail_open()
 
 if __name__ == "__main__":
+    _require_64bit_worker()
     raise SystemExit(base.main())
