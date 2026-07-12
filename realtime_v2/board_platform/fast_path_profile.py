@@ -4,7 +4,6 @@ import functools
 import os
 import threading
 import time
-from copy import deepcopy
 from typing import Any, Callable
 
 
@@ -38,8 +37,9 @@ _HELPER_STAGES = {
 _local = threading.local()
 _profile_lock = threading.RLock()
 _last_profile: dict[str, Any] = {}
-_rows_call_count = 0
+_snapshot_call_count = 0
 _sample_count = 0
+_MISSING = object()
 
 
 def _env_int(name: str, default: int) -> int:
@@ -89,6 +89,16 @@ def _round(value: Any) -> float:
         return 0.0
 
 
+def _restore_local(name: str, previous: Any) -> None:
+    if previous is _MISSING:
+        try:
+            delattr(_local, name)
+        except AttributeError:
+            pass
+    else:
+        setattr(_local, name, previous)
+
+
 def _publish_state_profile(state: Any, profile: dict[str, Any]) -> None:
     status = getattr(state, "status", None)
     if not isinstance(status, dict):
@@ -108,11 +118,14 @@ def _profile_payload(prefix: str, profile: dict[str, Any]) -> dict[str, Any]:
     result = {
         f"{prefix}_sample_count": profile.get("sample_count"),
         f"{prefix}_sample_every": profile.get("sample_every"),
+        f"{prefix}_sample_id": profile.get("sample_id"),
         f"{prefix}_row_count": profile.get("row_count"),
         f"{prefix}_rows_total_ms": profile.get("rows_total_ms"),
         f"{prefix}_snapshot_ms": profile.get("snapshot_ms"),
+        f"{prefix}_snapshot_overhead_ms": profile.get("snapshot_overhead_ms"),
         f"{prefix}_unaccounted_ms": profile.get("unaccounted_ms"),
         f"{prefix}_profile_at": profile.get("profile_at"),
+        f"{prefix}_consistent_snapshot": True,
     }
     for stage in _STAGE_KEYS:
         result[f"{prefix}_{stage}_ms"] = profile.get(f"{stage}_ms")
@@ -121,7 +134,7 @@ def _profile_payload(prefix: str, profile: dict[str, Any]) -> dict[str, Any]:
 
 
 def install(actual_module: Any, base_module: Any) -> None:
-    global _rows_call_count
+    global _snapshot_call_count
     global _sample_count
 
     if getattr(actual_module, "_stockboard_fast_path_profile_installed", False):
@@ -162,12 +175,9 @@ def install(actual_module: Any, base_module: Any) -> None:
 
     @functools.wraps(original_rows)
     def profiled_rows(self, limit: int = 300):
-        global _rows_call_count
         global _sample_count
 
-        with _profile_lock:
-            _rows_call_count += 1
-            should_sample = _rows_call_count % sample_every == 0
+        should_sample = bool(getattr(_local, "sample_current_snapshot", False))
         if not should_sample or _active_context() is not None:
             return original_rows(self, limit)
 
@@ -179,6 +189,7 @@ def install(actual_module: Any, base_module: Any) -> None:
             context[f"{stage}_ms"] = 0.0
             context[f"{stage}_calls"] = 0
 
+        previous_context = getattr(_local, "context", _MISSING)
         _local.context = context
         rows = None
         try:
@@ -186,24 +197,27 @@ def install(actual_module: Any, base_module: Any) -> None:
             return rows
         finally:
             rows_total_ms = (time.perf_counter() - context["started_at"]) * 1000.0
-            _local.context = None
-            accounted_ms = sum(float(context.get(f"{stage}_ms") or 0.0) for stage in _STAGE_KEYS)
+            _restore_local("context", previous_context)
+            accounted_ms = sum(
+                float(context.get(f"{stage}_ms") or 0.0)
+                for stage in _STAGE_KEYS
+            )
             with _profile_lock:
                 _sample_count += 1
-                profile = {
-                    "sample_count": _sample_count,
-                    "sample_every": sample_every,
-                    "row_count": len(rows) if isinstance(rows, list) else None,
-                    "rows_total_ms": _round(rows_total_ms),
-                    "unaccounted_ms": _round(max(0.0, rows_total_ms - accounted_ms)),
-                    "profile_at": time.time(),
-                }
-                for stage in _STAGE_KEYS:
-                    profile[f"{stage}_ms"] = _round(context.get(f"{stage}_ms"))
-                    profile[f"{stage}_calls"] = int(context.get(f"{stage}_calls") or 0)
-                _last_profile.clear()
-                _last_profile.update(profile)
-            _publish_state_profile(self, _profile_payload("fast_profile", profile))
+                sample_id = _sample_count
+            profile = {
+                "sample_count": sample_id,
+                "sample_id": sample_id,
+                "sample_every": sample_every,
+                "row_count": len(rows) if isinstance(rows, list) else None,
+                "rows_total_ms": _round(rows_total_ms),
+                "unaccounted_ms": _round(max(0.0, rows_total_ms - accounted_ms)),
+                "profile_at": time.time(),
+            }
+            for stage in _STAGE_KEYS:
+                profile[f"{stage}_ms"] = _round(context.get(f"{stage}_ms"))
+                profile[f"{stage}_calls"] = int(context.get(f"{stage}_calls") or 0)
+            _local.completed_rows_profile = profile
 
     state_class.rows = profiled_rows
 
@@ -211,22 +225,43 @@ def install(actual_module: Any, base_module: Any) -> None:
 
     @functools.wraps(original_snapshot)
     def profiled_snapshot(self, limit: int = 300):
-        started = time.perf_counter()
-        payload = original_snapshot(self, limit)
-        snapshot_ms = (time.perf_counter() - started) * 1000.0
+        global _snapshot_call_count
+
         with _profile_lock:
-            profile = deepcopy(_last_profile)
-            profile["snapshot_ms"] = _round(snapshot_ms)
-            if profile:
-                _last_profile["snapshot_ms"] = profile["snapshot_ms"]
-        if profile:
-            flat = _profile_payload("fast_profile", profile)
-            _publish_state_profile(self, flat)
-            if isinstance(payload, dict):
-                payload_status = dict(payload.get("status") or {})
-                payload_status.update(flat)
-                payload["status"] = payload_status
-        return payload
+            _snapshot_call_count += 1
+            should_sample = _snapshot_call_count % sample_every == 0
+
+        previous_sample = getattr(_local, "sample_current_snapshot", _MISSING)
+        previous_completed = getattr(_local, "completed_rows_profile", _MISSING)
+        _local.sample_current_snapshot = should_sample
+        _local.completed_rows_profile = None
+
+        started = time.perf_counter()
+        payload = None
+        try:
+            payload = original_snapshot(self, limit)
+            return payload
+        finally:
+            snapshot_ms = (time.perf_counter() - started) * 1000.0
+            profile = getattr(_local, "completed_rows_profile", None)
+            _restore_local("sample_current_snapshot", previous_sample)
+            _restore_local("completed_rows_profile", previous_completed)
+
+            if should_sample and isinstance(profile, dict):
+                profile = dict(profile)
+                profile["snapshot_ms"] = _round(snapshot_ms)
+                profile["snapshot_overhead_ms"] = _round(
+                    max(0.0, snapshot_ms - float(profile.get("rows_total_ms") or 0.0))
+                )
+                with _profile_lock:
+                    _last_profile.clear()
+                    _last_profile.update(profile)
+                flat = _profile_payload("fast_profile", profile)
+                _publish_state_profile(self, flat)
+                if isinstance(payload, dict):
+                    payload_status = dict(payload.get("status") or {})
+                    payload_status.update(flat)
+                    payload["status"] = payload_status
 
     state_class.snapshot = profiled_snapshot
 
@@ -242,6 +277,7 @@ def install(actual_module: Any, base_module: Any) -> None:
             if str(key).startswith("fast_profile_"):
                 result[key] = value
         result["fast_profile_enabled"] = True
+        result["fast_profile_consistent_snapshot"] = True
         return result
 
     StockBoardSnapshotCacheService.status = profiled_cache_status
