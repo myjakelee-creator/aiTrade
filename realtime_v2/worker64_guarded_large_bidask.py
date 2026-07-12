@@ -173,6 +173,15 @@ def _install_theme_board_fail_open() -> None:
         _write_patch_error("theme_board_patch_error.txt", error)
 
 
+def _install_market_supply_hold_fail_open() -> None:
+    try:
+        from realtime_v2.market_supply_last_valid_patch import install as install_market_supply_hold
+
+        install_market_supply_hold(large, base)
+    except Exception as error:
+        _write_patch_error("market_supply_last_valid_patch_error.txt", error)
+
+
 def _install_board_platform_fail_open() -> None:
     try:
         from realtime_v2.board_platform import install as install_board_platform
@@ -207,6 +216,7 @@ _install_execution_strength_alias_fail_open()
 _install_cross_table_navigation_patch_fail_open()
 _install_header_sort_patch_fail_open()
 _install_theme_board_fail_open()
+_install_market_supply_hold_fail_open()
 _install_board_platform_fail_open()
 
 if __name__ == "__main__":
