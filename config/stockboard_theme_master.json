@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-07-13",
+  "themes": [
+    {
+      "theme_id": "SEMICON_HBM",
+      "theme_name": "HBM·반도체 장비",
+      "aliases": ["HBM", "반도체 장비"],
+      "active": true,
+      "members": [
+        {"stock_code": "000660", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "005930", "role": "secondary", "share_weight": 1.0},
+        {"stock_code": "042700", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "058470", "role": "secondary", "share_weight": 1.0},
+        {"stock_code": "036930", "role": "secondary", "share_weight": 1.0},
+        {"stock_code": "039030", "role": "secondary", "share_weight": 1.0},
+        {"stock_code": "403870", "role": "secondary", "share_weight": 1.0}
+      ]
+    },
+    {
+      "theme_id": "POWER_GRID",
+      "theme_name": "전력기기·전력망",
+      "aliases": ["전력기기", "전력망"],
+      "active": true,
+      "members": [
+        {"stock_code": "267260", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "010120", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "298040", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "000500", "role": "secondary", "share_weight": 1.0},
+        {"stock_code": "001440", "role": "secondary", "share_weight": 1.0}
+      ]
+    },
+    {
+      "theme_id": "NUCLEAR_SMR",
+      "theme_name": "원전·SMR",
+      "aliases": ["원전", "SMR"],
+      "active": true,
+      "members": [
+        {"stock_code": "034020", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "052690", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "051600", "role": "secondary", "share_weight": 1.0},
+        {"stock_code": "000720", "role": "secondary", "share_weight": 1.0},
+        {"stock_code": "042370", "role": "secondary", "share_weight": 1.0},
+        {"stock_code": "006910", "role": "secondary", "share_weight": 1.0}
+      ]
+    },
+    {
+      "theme_id": "DEFENSE_AEROSPACE",
+      "theme_name": "방산·우주항공",
+      "aliases": ["방산", "우주항공"],
+      "active": true,
+      "members": [
+        {"stock_code": "012450", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "047810", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "079550", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "272210", "role": "secondary", "share_weight": 1.0},
+        {"stock_code": "064350", "role": "secondary", "share_weight": 1.0}
+      ]
+    },
+    {
+      "theme_id": "SECONDARY_BATTERY",
+      "theme_name": "2차전지",
+      "aliases": ["배터리", "양극재"],
+      "active": true,
+      "members": [
+        {"stock_code": "373220", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "006400", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "247540", "role": "secondary", "share_weight": 1.0},
+        {"stock_code": "086520", "role": "secondary", "share_weight": 1.0},
+        {"stock_code": "003670", "role": "secondary", "share_weight": 1.0}
+      ]
+    },
+    {
+      "theme_id": "BIO_HEALTHCARE",
+      "theme_name": "바이오·헬스케어",
+      "aliases": ["바이오", "헬스케어"],
+      "active": true,
+      "members": [
+        {"stock_code": "207940", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "068270", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "000100", "role": "secondary", "share_weight": 1.0},
+        {"stock_code": "326030", "role": "secondary", "share_weight": 1.0},
+        {"stock_code": "128940", "role": "secondary", "share_weight": 1.0}
+      ]
+    },
+    {
+      "theme_id": "ROBOT_AI",
+      "theme_name": "로봇·AI 자동화",
+      "aliases": ["로봇", "AI 자동화"],
+      "active": true,
+      "members": [
+        {"stock_code": "277810", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "454910", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "108490", "role": "secondary", "share_weight": 1.0},
+        {"stock_code": "056080", "role": "secondary", "share_weight": 1.0},
+        {"stock_code": "090710", "role": "secondary", "share_weight": 1.0}
+      ]
+    },
+    {
+      "theme_id": "SECURITIES_FINANCE",
+      "theme_name": "증권·금융",
+      "aliases": ["증권", "금융"],
+      "active": true,
+      "members": [
+        {"stock_code": "071050", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "016360", "role": "primary", "share_weight": 1.0},
+        {"stock_code": "006800", "role": "secondary", "share_weight": 1.0},
+        {"stock_code": "039490", "role": "secondary", "share_weight": 1.0},
+        {"stock_code": "005940", "role": "secondary", "share_weight": 1.0}
+      ]
+    }
+  ]
+}
