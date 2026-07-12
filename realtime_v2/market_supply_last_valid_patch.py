@@ -5,13 +5,194 @@ from pathlib import Path
 from typing import Any
 
 
+MARKET_ALIASES = {
+    "kospi": ("kospi", "KOSPI", "Kospi", "ks", "KS", "0", "001"),
+    "kosdaq": ("kosdaq", "KOSDAQ", "Kosdaq", "kq", "KQ", "1", "101"),
+}
+
+FIELD_ALIASES = {
+    "market_name": ("market_name", "market", "name", "label", "시장"),
+    "market_index": ("market_index", "index", "지수", "cur_prc", "current_index"),
+    "market_change_rate": (
+        "market_change_rate",
+        "change_rate",
+        "등락률",
+        "flu_rt",
+        "rate",
+    ),
+    "advancers": ("advancers", "advance", "상승", "rising", "up_count"),
+    "upper_limit_count": (
+        "upper_limit_count",
+        "upper_limit",
+        "상한",
+        "upl",
+    ),
+    "decliners": ("decliners", "decline", "하락", "fall", "down_count"),
+    "lower_limit_count": (
+        "lower_limit_count",
+        "lower_limit",
+        "하한",
+        "lst",
+    ),
+    "individual_eok": (
+        "individual_eok",
+        "individual",
+        "개인",
+        "ind_netprps",
+    ),
+    "foreign_futures_eok": (
+        "foreign_futures_eok",
+        "foreign_futures",
+        "외선",
+    ),
+    "foreign_spot_eok": (
+        "foreign_spot_eok",
+        "foreign",
+        "외인",
+        "frgnr_netprps",
+    ),
+    "institution_eok": (
+        "institution_eok",
+        "institution",
+        "기관",
+        "orgn_netprps",
+    ),
+    "program_market_eok": (
+        "program_market_eok",
+        "program",
+        "프로",
+        "all_netprps",
+    ),
+}
+
+
+META_KEYS = (
+    "schema_version",
+    "source",
+    "source_file",
+    "ts",
+    "copied_at",
+    "query_date",
+    "flow_date",
+    "errors",
+    "_status",
+)
+
+
 def _number(value: Any) -> float | None:
     try:
         if value in (None, ""):
             return None
-        return float(value)
+        return float(str(value).replace(",", "").strip())
     except (TypeError, ValueError):
         return None
+
+
+def _first(mapping: Any, keys: tuple[str, ...]) -> Any:
+    if not isinstance(mapping, dict):
+        return None
+    for key in keys:
+        value = mapping.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _market_from_rows(rows: Any) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    if not isinstance(rows, list):
+        return result
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(
+            _first(
+                row,
+                (
+                    "market_name",
+                    "market",
+                    "name",
+                    "label",
+                    "시장",
+                    "mrkt_tp",
+                    "market_type",
+                    "inds_cd",
+                ),
+            )
+            or ""
+        ).upper()
+        if "KOSDAQ" in name or name in {"1", "101", "KQ", "P10102", "P101_AL02"}:
+            result["kosdaq"] = row
+        elif "KOSPI" in name or name in {"0", "001", "KS", "P00101", "P001_AL01"}:
+            result["kospi"] = row
+    return result
+
+
+def _unwrap_market_supply(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+
+    candidates: list[dict[str, Any]] = [payload]
+    for key in ("market_supply", "values", "result", "payload", "data"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            candidates.append(value)
+
+    for candidate in candidates:
+        if any(alias in candidate for aliases in MARKET_ALIASES.values() for alias in aliases):
+            return candidate
+        for rows_key in ("markets", "rows", "items", "data", "output"):
+            rows = candidate.get(rows_key)
+            normalized_rows = _market_from_rows(rows)
+            if normalized_rows:
+                merged = dict(candidate)
+                merged.update(normalized_rows)
+                return merged
+
+    normalized_rows = _market_from_rows(payload.get("markets"))
+    return normalized_rows or payload
+
+
+def _normalize_entry(entry: Any, market_name: str) -> dict[str, Any]:
+    source = entry if isinstance(entry, dict) else {}
+    result = dict(source)
+    for canonical, aliases in FIELD_ALIASES.items():
+        value = _first(source, aliases)
+        if value not in (None, ""):
+            result[canonical] = value
+    result.setdefault("market_name", market_name)
+    return result
+
+
+def normalize_market_supply(payload: Any) -> dict[str, Any]:
+    container = _unwrap_market_supply(payload)
+    result: dict[str, Any] = {}
+
+    for canonical, aliases in MARKET_ALIASES.items():
+        raw_entry = None
+        for alias in aliases:
+            value = container.get(alias) if isinstance(container, dict) else None
+            if isinstance(value, dict):
+                raw_entry = value
+                break
+        if raw_entry is None:
+            rows = _market_from_rows(
+                container.get("markets")
+                if isinstance(container, dict)
+                else None
+            )
+            raw_entry = rows.get(canonical)
+        result[canonical] = _normalize_entry(
+            raw_entry,
+            "KOSPI" if canonical == "kospi" else "KOSDAQ",
+        )
+
+    if isinstance(container, dict):
+        for key in META_KEYS:
+            if key in container:
+                result[key] = container.get(key)
+    return result
 
 
 def _entry_valid(entry: Any) -> bool:
@@ -32,7 +213,10 @@ def _entry_valid(entry: Any) -> bool:
 
 
 def market_supply_valid(payload: Any) -> bool:
-    return isinstance(payload, dict) and _entry_valid(payload.get("kospi")) and _entry_valid(payload.get("kosdaq"))
+    normalized = normalize_market_supply(payload)
+    return _entry_valid(normalized.get("kospi")) and _entry_valid(
+        normalized.get("kosdaq")
+    )
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -53,56 +237,108 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+def _sorted_files(directory: Path, pattern: str) -> list[Path]:
+    try:
+        paths = [path for path in directory.glob(pattern) if path.is_file()]
+    except OSError:
+        return []
+    return sorted(
+        paths,
+        key=lambda path: path.stat().st_mtime if path.exists() else 0,
+        reverse=True,
+    )
+
+
 def _fallback_candidates(root: Path, runtime: Path) -> list[Path]:
-    candidates = [runtime / "market_supply_last_valid.json"]
-    candidates.extend(sorted(runtime.glob("market_supply_after_*.json"), key=lambda path: path.stat().st_mtime, reverse=True))
-    candidates.extend(sorted(runtime.glob("market_supply_before_*.json"), key=lambda path: path.stat().st_mtime, reverse=True))
+    candidates = [
+        runtime / "market_supply_last_valid.json",
+        runtime / "market_supply.json",
+    ]
+    candidates.extend(_sorted_files(runtime, "market_supply_after_*.json"))
+    candidates.extend(_sorted_files(runtime, "market_supply_before_*.json"))
+
     legacy_runtime = root / "data" / "runtime"
-    candidates.extend(sorted(legacy_runtime.glob("market_supply_after_*.json"), key=lambda path: path.stat().st_mtime, reverse=True))
-    candidates.extend(sorted(legacy_runtime.glob("market_supply_before_*.json"), key=lambda path: path.stat().st_mtime, reverse=True))
+    candidates.extend(_sorted_files(legacy_runtime, "market_supply_after_*.json"))
+    candidates.extend(_sorted_files(legacy_runtime, "market_supply_before_*.json"))
+    candidates.append(legacy_runtime / "market_supply.json")
+
     assets = root / "docs" / "assets"
-    candidates.extend(sorted(assets.glob("stockboard_market_supply*.json"), key=lambda path: path.stat().st_mtime, reverse=True))
-    candidates.extend(sorted(assets.glob("market_supply*.json"), key=lambda path: path.stat().st_mtime, reverse=True))
+    candidates.extend(_sorted_files(assets, "stockboard_market_supply*.json"))
+    candidates.extend(_sorted_files(assets, "market_supply*.json"))
     return candidates
 
 
-def _load_last_valid(root: Path, runtime: Path) -> tuple[dict[str, Any] | None, str | None]:
+def _load_last_valid(
+    root: Path, runtime: Path
+) -> tuple[dict[str, Any] | None, str | None]:
     seen: set[Path] = set()
     for path in _fallback_candidates(root, runtime):
-        resolved = path.resolve()
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
         if resolved in seen:
             continue
         seen.add(resolved)
         payload = _read_json(path)
-        if market_supply_valid(payload):
-            return payload, str(path)
+        normalized = normalize_market_supply(payload)
+        if market_supply_valid(normalized):
+            return normalized, str(path)
     return None, None
 
 
-def install(large_module, base_module) -> None:
-    if getattr(large_module, "_market_supply_last_valid_patch_installed", False):
+def _context_module(wrapper_module: Any) -> Any:
+    if hasattr(wrapper_module, "_runtime_context_payload"):
+        return wrapper_module
+    guarded = getattr(wrapper_module, "guarded", None)
+    if guarded is not None and hasattr(guarded, "_runtime_context_payload"):
+        return guarded
+    raise AttributeError("runtime context provider module was not found")
+
+
+def install(wrapper_module: Any, base_module: Any) -> None:
+    if getattr(wrapper_module, "_market_supply_last_valid_patch_installed", False):
         return
 
-    original = large_module._runtime_context_payload
-    root = Path(getattr(base_module, "ROOT", Path(__file__).resolve().parents[1]))
-    runtime = Path(getattr(base_module, "RUNTIME_DIR", root / "data" / "runtime" / "stockboard_v2"))
+    context_module = _context_module(wrapper_module)
+    original = context_module._runtime_context_payload
+    root = Path(
+        getattr(base_module, "ROOT", Path(__file__).resolve().parents[1])
+    )
+    runtime = Path(
+        getattr(
+            base_module,
+            "RUNTIME_DIR",
+            root / "data" / "runtime" / "stockboard_v2",
+        )
+    )
     last_valid_path = runtime / "market_supply_last_valid.json"
 
     def patched_runtime_context_payload() -> dict[str, Any]:
         payload = original()
         payload = payload if isinstance(payload, dict) else {}
-        market_supply = payload.get("market_supply")
+        raw_market_supply = payload.get("market_supply")
+        normalized = normalize_market_supply(raw_market_supply)
 
-        if market_supply_valid(market_supply):
+        payload["market_supply_original_keys"] = (
+            sorted(str(key) for key in raw_market_supply.keys())[:30]
+            if isinstance(raw_market_supply, dict)
+            else []
+        )
+
+        if market_supply_valid(normalized):
+            payload["market_supply"] = normalized
             try:
-                snapshot = dict(market_supply)
+                snapshot = dict(normalized)
                 snapshot["last_valid_saved_at"] = payload.get("ts")
                 _atomic_write_json(last_valid_path, snapshot)
             except Exception:
                 pass
             payload["market_supply_display_basis"] = "CURRENT_VALID"
             payload["market_supply_display_source"] = str(
-                market_supply.get("source") or market_supply.get("source_file") or "runtime_current"
+                normalized.get("source")
+                or normalized.get("source_file")
+                or "runtime_current"
             )
             return payload
 
@@ -117,9 +353,11 @@ def install(large_module, base_module) -> None:
             except Exception:
                 pass
         else:
+            payload["market_supply"] = normalized
             payload["market_supply_display_basis"] = "UNAVAILABLE"
             payload["market_supply_display_source"] = None
         return payload
 
-    large_module._runtime_context_payload = patched_runtime_context_payload
-    large_module._market_supply_last_valid_patch_installed = True
+    context_module._runtime_context_payload = patched_runtime_context_payload
+    wrapper_module._market_supply_last_valid_patch_installed = True
+    wrapper_module._market_supply_context_module = context_module.__name__
