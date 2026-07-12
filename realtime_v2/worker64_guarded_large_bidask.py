@@ -195,8 +195,102 @@ def _install_board_platform_fail_open() -> None:
 def _install_model_lane_fail_open() -> None:
     try:
         from realtime_v2.board_platform.model_lane import install as install_model_lane
+        from realtime_v2.board_platform.stockboard_cache import (
+            StockBoardSnapshotCacheService,
+        )
 
-        install_model_lane(large, base)
+        service = install_model_lane(large, base)
+
+        if not getattr(base.WebServer, "_stockboard_model_lane_state_bound", False):
+            original_server_init = base.WebServer.__init__
+
+            def patched_server_init(self, address, handler, state):
+                original_server_init(self, address, handler, state)
+                service.state = state
+
+            base.WebServer.__init__ = patched_server_init
+            base.WebServer._stockboard_model_lane_state_bound = True
+
+        if not getattr(large, "_stockboard_model_lane_display_reset_installed", False):
+            model_enrich = large.enrich_candidate_model_fields
+            reset_state = {"model_id": None}
+
+            def reset_display_order_for_new_model() -> None:
+                lane_status = service.status()
+                model_id = str(lane_status.get("model_id") or "")
+                if not model_id or model_id == reset_state["model_id"]:
+                    return
+                state = getattr(service, "state", None)
+                if state is None:
+                    return
+                controller = large._display_order_controller(state)
+                lock = getattr(controller, "_lock", None)
+                if lock is None:
+                    return
+                with lock:
+                    if getattr(controller, "paused", False):
+                        return
+                    controller.top_codes = []
+                    controller.pool_codes = []
+                    controller.frozen_codes = []
+                    controller.pending_freeze = False
+                    challenger = getattr(controller, "_challenger_since", None)
+                    if isinstance(challenger, dict):
+                        challenger.clear()
+                    incumbent = getattr(controller, "_incumbent_out_since", None)
+                    if isinstance(incumbent, dict):
+                        incumbent.clear()
+                    controller.updated_at = large.now_text()
+                    controller.version += 1
+                reset_state["model_id"] = model_id
+
+            def patched_model_enrich(rows, model_id=None):
+                result = model_enrich(rows, model_id=model_id)
+                reset_display_order_for_new_model()
+                return result
+
+            large.enrich_candidate_model_fields = patched_model_enrich
+            large._stockboard_model_lane_display_reset_installed = True
+
+        if not getattr(
+            StockBoardSnapshotCacheService,
+            "_stockboard_model_lane_status_installed",
+            False,
+        ):
+            original_cache_status = StockBoardSnapshotCacheService.status
+
+            def patched_cache_status(self):
+                result = original_cache_status(self)
+                lane = getattr(self.state, "stockboard_model_lane", None)
+                if lane is None:
+                    lane = service
+                try:
+                    lane_status = lane.status()
+                except Exception as error:
+                    lane_status = {
+                        "state": "ERROR",
+                        "last_error": f"{type(error).__name__}: {error}",
+                    }
+                result.update(
+                    {
+                        "model_lane_state": lane_status.get("state"),
+                        "model_lane_model_id": lane_status.get("model_id"),
+                        "model_lane_compute_ms": lane_status.get("compute_ms"),
+                        "model_lane_age_ms": lane_status.get("age_ms"),
+                        "model_lane_interval_ms": lane_status.get("interval_ms"),
+                        "model_lane_compute_count": lane_status.get("compute_count"),
+                        "model_lane_reuse_count": lane_status.get("reuse_count"),
+                        "model_lane_coalesced": lane_status.get(
+                            "coalesced_submission_count"
+                        ),
+                        "model_lane_pending": lane_status.get("pending"),
+                        "model_lane_last_error": lane_status.get("last_error"),
+                    }
+                )
+                return result
+
+            StockBoardSnapshotCacheService.status = patched_cache_status
+            StockBoardSnapshotCacheService._stockboard_model_lane_status_installed = True
     except Exception as error:
         _write_patch_error("stockboard_model_lane_patch_error.txt", error)
 
