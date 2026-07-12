@@ -80,6 +80,17 @@ def test_legacy_stockboard_topbar_is_force_hidden_over_id_important_rule():
     assert "height:0!important" in SHELL_CSS
 
 
+def test_bottleneck_shows_category_only_without_duplicate_metric_value():
+    from realtime_v2.board_platform.assets import SHELL_JS
+
+    assert "const bottleneckLabels" in SHELL_JS
+    assert "STOCK_COMPUTE:'StockBoard" in SHELL_JS
+    assert "SERIALIZE:'StockBoard" in SHELL_JS
+    assert "WORKER_CPU:'Worker CPU'" in SHELL_JS
+    assert "data.bottleneck" in SHELL_JS
+    assert "bottleneckLabels[String(bottleneckCode||'')]" in SHELL_JS
+
+
 def test_speed_metrics_have_identical_order_on_all_boards():
     from realtime_v2.board_platform.assets import SHELL_JS
 
