@@ -103,6 +103,15 @@ def test_model_lane_coalesces_latest_submissions():
     assert by_code["005930"]["price"] == 130
 
 
+def test_model_lane_waits_when_idle_or_already_completed():
+    service = StockBoardModelLaneService(_fake_engine)
+    assert service._remaining_delay_locked() == 0.5
+
+    service.submit(_rows(), "MODEL_A")
+    assert service.compute_once(force=True) is True
+    assert service._remaining_delay_locked() == 0.5
+
+
 def test_model_lane_worker_install_is_fail_open_and_after_board_platform():
     source = (
         Path(__file__).resolve().parents[1]
@@ -118,5 +127,6 @@ def test_model_lane_worker_install_is_fail_open_and_after_board_platform():
     assert 'controller.top_codes = []' in source
     assert 'controller.pool_codes = []' in source
     assert 'if getattr(controller, "paused", False)' in source
+    assert 'row["trade_value_rank"] = row.get("rank")' in source
     assert '"model_lane_compute_ms"' in source
     assert '"model_lane_reuse_count"' in source
