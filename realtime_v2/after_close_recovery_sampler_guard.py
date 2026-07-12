@@ -5,7 +5,7 @@ from typing import Any
 
 from realtime_v2 import after_close_recovery as recovery
 
-GUARD_VERSION = "after_close_recovery_sampler_guard_v1"
+GUARD_VERSION = "after_close_recovery_sampler_guard_v2"
 
 
 def _metadata_current_exact(row: dict[str, Any], target_date: str) -> bool:
@@ -56,8 +56,17 @@ def install_worker_guard(base) -> None:
     if getattr(base, "_after_close_recovery_worker_guard_installed", False):
         return
     State = base.State
+    original_quote = State._quote
+    original_trade = State._apply_trade
     original_close = State._apply_close_metrics
     original_program = State.apply_program_net_values
+
+    def metadata_dict(row):
+        metadata = row.get("source_metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            row["source_metadata"] = metadata
+        return metadata
 
     def persist_metadata(state, code):
         row = state.quotes.get(code)
@@ -67,10 +76,74 @@ def install_worker_guard(base) -> None:
         if not isinstance(metadata, dict) or not metadata:
             return
         entry = state.daily_values_by_code.setdefault(code, {})
-        entry["source_metadata"] = deepcopy(metadata)
-        if row.get("minute_recovery_trading_date"):
-            entry["minute_recovery_trading_date"] = row["minute_recovery_trading_date"]
+        next_metadata = deepcopy(metadata)
+        next_date = row.get("minute_recovery_trading_date")
+        changed = entry.get("source_metadata") != next_metadata
+        changed = changed or (
+            next_date
+            and entry.get("minute_recovery_trading_date") != next_date
+        )
+        if not changed:
+            return
+        entry["source_metadata"] = next_metadata
+        if next_date:
+            entry["minute_recovery_trading_date"] = next_date
         state._mark_daily_dirty()
+
+    def quote_method(self, code):
+        row = original_quote(self, code)
+        metadata = metadata_dict(row)
+        basis = row.get("large_trade_updated_at") or row.get("received_at")
+        for field in ("large_trade_net_count", "large_trade_net_sum_eok"):
+            if row.get(field) in (None, "") or field in metadata:
+                continue
+            metadata[field] = recovery.source_value(
+                row[field],
+                "PERSISTED_LAST_VALID",
+                "HELD",
+                basis or recovery.now_text(),
+                base.trading_date_text(),
+                "AL_OR_DECLARED",
+                0.8,
+                False,
+            )
+        return row
+
+    def trade_method(self, event):
+        original_trade(self, event)
+        values = base.merged_event_values(event)
+        code = base.normalize_code(event.get("stock_code") or values.get("stock_code"))
+        row = self.quotes.get(code) if code else None
+        if not isinstance(row, dict):
+            return
+        basis = row.get("large_trade_updated_at")
+        if not basis:
+            return
+        metadata = metadata_dict(row)
+        changed = False
+        for field in ("large_trade_net_count", "large_trade_net_sum_eok"):
+            if row.get(field) in (None, ""):
+                continue
+            candidate = recovery.source_value(
+                row[field],
+                "COLLECTOR_AGGREGATE",
+                "LIVE",
+                basis,
+                base.trading_date_text(),
+                "AL_OR_DECLARED",
+                1.0,
+                False,
+            )
+            preferred = recovery.prefer_source_value(
+                metadata.get(field),
+                candidate,
+                allow_rollover=True,
+            )
+            if preferred != metadata.get(field):
+                metadata[field] = preferred
+                changed = True
+        if changed:
+            persist_metadata(self, code)
 
     def close_method(self, event):
         original_close(self, event)
@@ -88,6 +161,8 @@ def install_worker_guard(base) -> None:
                     persist_metadata(self, code)
         return result
 
+    State._quote = quote_method
+    State._apply_trade = trade_method
     State._apply_close_metrics = close_method
     State.apply_program_net_values = program_method
     base._after_close_recovery_worker_guard_installed = True
