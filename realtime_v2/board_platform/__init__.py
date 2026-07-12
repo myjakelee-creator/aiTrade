@@ -17,6 +17,7 @@ def install(base, large):
     import realtime_v2.session_metric_hold_patch as session_metric_module
     from realtime_v2.after_close_recovery import install_worker
     from realtime_v2.after_close_recovery_hardening import install_worker_hardening
+    from realtime_v2.after_close_recovery_sampler_guard import install_worker_guard
 
     install_market_session_cache(market_session_module)
     install_display_hold_fast(display_hold_module)
@@ -30,6 +31,7 @@ def install(base, large):
     install_hot_path_cprofile(base)
     install_worker(base, large)
     install_worker_hardening(base, large)
+    install_worker_guard(base)
 
 
 __all__ = ["install"]
