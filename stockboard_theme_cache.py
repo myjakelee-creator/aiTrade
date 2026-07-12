@@ -167,9 +167,18 @@ class ThemeBoardCacheService:
     def snapshot(self, *, include_details: bool = False) -> dict[str, Any]:
         with self.lock:
             self.metrics["theme_cache_hit_count"] += 1
-            payload = deepcopy(self.cache)
-            if not include_details:
-                payload.pop("details", None)
+            if include_details:
+                payload = deepcopy(self.cache)
+            else:
+                payload = {
+                    key: deepcopy(value)
+                    for key, value in self.cache.items()
+                    if key != "details"
+                }
+                for theme in payload.get("themes") or []:
+                    if isinstance(theme, dict):
+                        theme.pop("score_items", None)
+                        theme.pop("target_status", None)
             self._publish_status()
             return payload
 
