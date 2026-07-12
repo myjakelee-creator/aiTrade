@@ -1,24 +1,7 @@
 from __future__ import annotations
 
 import functools
-import threading
 from typing import Any
-
-
-_local = threading.local()
-
-
-def _in_snapshot_rows() -> bool:
-    return bool(getattr(_local, "snapshot_rows_depth", 0))
-
-
-def _enter_snapshot_rows() -> None:
-    _local.snapshot_rows_depth = int(getattr(_local, "snapshot_rows_depth", 0)) + 1
-
-
-def _leave_snapshot_rows() -> None:
-    depth = max(0, int(getattr(_local, "snapshot_rows_depth", 1)) - 1)
-    _local.snapshot_rows_depth = depth
 
 
 def _bulk_apply_ohlc(actual_module: Any, state: Any) -> int:
@@ -70,12 +53,14 @@ def _bulk_apply_strength(actual_module: Any, state: Any) -> int:
 
 
 def install(actual_module: Any, base_module: Any) -> None:
-    """Remove repeated quote enrichment from the fast snapshot path.
+    """Avoid repeated static enrichment for already-initialized quotes.
 
-    Universe load and event handlers still call the original guarded _quote().
-    During State.rows() only, already-existing quotes are returned directly;
-    missing quotes still use the original initializer. OHLC/strength snapshot
-    changes are applied to all existing quotes once when the source mtime changes.
+    The guarded quote initializer applies previous-day values plus cached OHLC and
+    strength data. Those values are static between snapshot-file changes, so doing
+    the same work for every trade, orderbook event, and board snapshot only holds
+    the worker lock longer. Existing quotes now return immediately. New quotes keep
+    the original complete initialization path. When an OHLC/strength file mtime
+    changes, the new snapshot is bulk-applied to all existing quotes exactly once.
     """
 
     if getattr(actual_module, "_stockboard_fast_path_optimize_installed", False):
@@ -83,31 +68,14 @@ def install(actual_module: Any, base_module: Any) -> None:
 
     state_class = base_module.State
     original_quote = state_class._quote
-    original_rows = state_class.rows
 
     @functools.wraps(original_quote)
     def optimized_quote(self, code):
         normalized = actual_module.normalize_code(code)
-        if _in_snapshot_rows():
-            existing = getattr(self, "quotes", {}).get(normalized)
-            if isinstance(existing, dict):
-                return existing
+        existing = getattr(self, "quotes", {}).get(normalized)
+        if isinstance(existing, dict):
+            return existing
         return original_quote(self, code)
-
-    @functools.wraps(original_rows)
-    def optimized_rows(self, limit: int = 300):
-        existing_before = len(getattr(self, "quotes", {}) or {})
-        _enter_snapshot_rows()
-        try:
-            return original_rows(self, limit)
-        finally:
-            _leave_snapshot_rows()
-            status = getattr(self, "status", None)
-            if isinstance(status, dict):
-                status["fast_quote_existing_skip_last"] = existing_before
-                status["fast_quote_existing_skip_total"] = int(
-                    status.get("fast_quote_existing_skip_total") or 0
-                ) + existing_before
 
     original_ohlc_loader = actual_module._load_ohlc_snapshot_if_needed
 
@@ -144,7 +112,6 @@ def install(actual_module: Any, base_module: Any) -> None:
         return result
 
     state_class._quote = optimized_quote
-    state_class.rows = optimized_rows
     actual_module._load_ohlc_snapshot_if_needed = optimized_ohlc_loader
     actual_module._load_strength_snapshot_if_needed = optimized_strength_loader
     actual_module._stockboard_fast_path_optimize_installed = True
