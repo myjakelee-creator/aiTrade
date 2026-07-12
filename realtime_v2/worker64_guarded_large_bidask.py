@@ -192,6 +192,15 @@ def _install_board_platform_fail_open() -> None:
         _write_patch_error("board_platform_patch_error.txt", error)
 
 
+def _install_model_lane_fail_open() -> None:
+    try:
+        from realtime_v2.board_platform.model_lane import install as install_model_lane
+
+        install_model_lane(large, base)
+    except Exception as error:
+        _write_patch_error("stockboard_model_lane_patch_error.txt", error)
+
+
 def _require_64bit_worker() -> None:
     bits = struct.calcsize("P") * 8
     if bits == 64:
@@ -219,6 +228,7 @@ _install_header_sort_patch_fail_open()
 _install_theme_board_fail_open()
 _install_market_supply_hold_fail_open()
 _install_board_platform_fail_open()
+_install_model_lane_fail_open()
 
 if __name__ == "__main__":
     _require_64bit_worker()
