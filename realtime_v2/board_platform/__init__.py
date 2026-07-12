@@ -16,6 +16,7 @@ def install(base, large):
     import realtime_v2.market_session as market_session_module
     import realtime_v2.session_metric_hold_patch as session_metric_module
     from realtime_v2.after_close_recovery import install_worker
+    from realtime_v2.after_close_recovery_hardening import install_worker_hardening
 
     install_market_session_cache(market_session_module)
     install_display_hold_fast(display_hold_module)
@@ -28,6 +29,7 @@ def install(base, large):
     install_fast_path_profile(actual_module, base)
     install_hot_path_cprofile(base)
     install_worker(base, large)
+    install_worker_hardening(base, large)
 
 
 __all__ = ["install"]
