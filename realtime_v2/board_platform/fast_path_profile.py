@@ -19,6 +19,7 @@ _STAGE_KEYS = (
     "strength_policy",
     "orderbook_policy",
     "afterclose_restore",
+    "model_submit",
     "model_merge",
     "display_order",
 )
@@ -165,6 +166,9 @@ def install(actual_module: Any, base_module: Any) -> None:
     try:
         from realtime_v2.board_platform.model_lane import StockBoardModelLaneService
 
+        submit_method = getattr(StockBoardModelLaneService, "submit", None)
+        if callable(submit_method):
+            StockBoardModelLaneService.submit = _timed("model_submit", submit_method)
         apply_method = getattr(StockBoardModelLaneService, "apply", None)
         if callable(apply_method):
             StockBoardModelLaneService.apply = _timed("model_merge", apply_method)
