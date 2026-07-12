@@ -36,7 +36,12 @@ def _entry_name(filename: str, line: int, function: str) -> str:
     return f"{short}:{line}:{function}"
 
 
-def _build_payload(profile: cProfile.Profile, elapsed_ms: float, row_count: int | None) -> dict[str, Any]:
+def _build_payload(
+    profile: cProfile.Profile,
+    elapsed_ms: float,
+    row_count: int | None,
+    thread_name: str,
+) -> dict[str, Any]:
     stats = pstats.Stats(profile)
     entries: list[dict[str, Any]] = []
     lock_candidate_ms = 0.0
@@ -73,6 +78,7 @@ def _build_payload(profile: cProfile.Profile, elapsed_ms: float, row_count: int 
         "hot_profile_elapsed_ms": round(float(elapsed_ms), 3),
         "hot_profile_row_count": row_count,
         "hot_profile_lock_candidate_ms": round(lock_candidate_ms, 3),
+        "hot_profile_thread": thread_name,
         "hot_profile_top": entries[:top_limit],
         "hot_profile_at": time.time(),
     }
@@ -103,12 +109,20 @@ def install(base_module: Any) -> None:
 
     sample_every = _env_int("STOCKBOARD_CPROFILE_EVERY", 20, minimum=1)
     max_samples = _env_int("STOCKBOARD_CPROFILE_MAX_SAMPLES", 1, minimum=1)
+    target_thread = str(
+        os.getenv("STOCKBOARD_CPROFILE_THREAD", "stockboard-v2-shared-snapshot-cache")
+    ).strip()
     original_rows = state_class.rows
 
     @functools.wraps(original_rows)
     def profiled_rows(self, limit: int = 300):
         global _rows_call_count
         global _sample_count
+
+        current_thread = threading.current_thread().name
+        eligible_thread = target_thread in {"", "*"} or current_thread == target_thread
+        if not eligible_thread:
+            return original_rows(self, limit)
 
         with _profile_lock:
             _rows_call_count += 1
@@ -135,6 +149,7 @@ def install(base_module: Any) -> None:
                     profiler,
                     elapsed_ms,
                     len(rows) if isinstance(rows, list) else None,
+                    current_thread,
                 )
                 payload["hot_profile_sample_count"] = _sample_count
                 _last_payload.clear()
@@ -162,6 +177,7 @@ def install(base_module: Any) -> None:
                     "hot_profile_done": False,
                     "hot_profile_sample_count": 0,
                     "hot_profile_sample_every": sample_every,
+                    "hot_profile_target_thread": target_thread,
                     "hot_profile_top": [],
                 }
             )
