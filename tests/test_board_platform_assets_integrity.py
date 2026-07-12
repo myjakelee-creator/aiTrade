@@ -55,6 +55,14 @@ def test_stockboard_local_toolbar_keeps_only_real_controls():
     assert "bar.querySelector('.small')" not in SHELL_JS
 
 
+def test_themeboard_local_toolbar_does_not_show_basis_or_hts_helper():
+    from realtime_v2.board_platform.assets import SHELL_JS
+
+    assert "basisStatus" not in SHELL_JS
+    assert "copyStatus" not in SHELL_JS
+    assert "boardId==='themeboard'" not in SHELL_JS
+
+
 def test_common_header_removes_duplicate_board_clock_and_status_text():
     from realtime_v2.board_platform.assets import SHELL_JS
 
