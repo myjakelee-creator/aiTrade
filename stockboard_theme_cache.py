@@ -9,6 +9,20 @@ from typing import Any
 from stockboard_theme_engine import ThemeBoardEngine
 from stockboard_theme_master import DEFAULT_THEME_MASTER_PATH, load_theme_master
 
+_THEME_ROW_KEYS = (
+    "stock_code",
+    "stock_name",
+    "trade_value_eok",
+    "price",
+    "change_rate",
+    "execution_strength",
+    "strength_5m",
+    "program_net",
+    "large_trade_net_sum_eok",
+    "large_trade_net_count",
+    "ohlc",
+)
+
 
 class ThemeBoardCacheService:
     def __init__(
@@ -37,8 +51,10 @@ class ThemeBoardCacheService:
             "themes": [],
             "status": {"ready": False, "last_error": None},
         }
-        known_codes = set(getattr(state, "name_by_code", {}) or {}) or None
-        self.master = load_theme_master(self.master_path, known_codes=known_codes)
+        # Keep the full theme master.  The worker universe is only the current
+        # Top300 pool, so using it as a validator would remove off-pool members
+        # and falsely inflate theme coverage.
+        self.master = load_theme_master(self.master_path)
         self.engine = ThemeBoardEngine(self.master)
         self.metrics = {
             "theme_calculate_count": 0,
@@ -68,44 +84,49 @@ class ThemeBoardCacheService:
         self.stop_event.set()
 
     def _run(self) -> None:
-        self.refresh_now(force=True)
-        while not self.stop_event.wait(self.interval_sec):
-            self.refresh_now(force=False)
+        while not self.stop_event.is_set():
+            self.refresh_now(force=self.cache_version == 0)
+            if self.stop_event.wait(self.interval_sec):
+                break
+
+    def _copy_state_input(self) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        state_lock = getattr(self.state, "lock", None)
+
+        def copy_now() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            names = dict(getattr(self.state, "name_by_code", {}) or {})
+            status = dict(getattr(self.state, "status", {}) or {})
+            copied_rows: list[dict[str, Any]] = []
+            for code, raw in (getattr(self.state, "quotes", {}) or {}).items():
+                if not isinstance(raw, dict):
+                    continue
+                row = {key: raw.get(key) for key in _THEME_ROW_KEYS}
+                row["stock_code"] = str(row.get("stock_code") or code)
+                row["stock_name"] = row.get("stock_name") or names.get(code) or code
+                if isinstance(row.get("ohlc"), dict):
+                    row["ohlc"] = dict(row["ohlc"])
+                copied_rows.append(row)
+            return copied_rows, status
+
+        if state_lock is None:
+            return copy_now()
+        with state_lock:
+            return copy_now()
 
     def _snapshot_rows(self) -> tuple[list[dict[str, Any]], str, tuple[Any, ...]]:
-        state_lock = getattr(self.state, "lock", None)
-        if state_lock is None:
-            quotes = dict(getattr(self.state, "quotes", {}) or {})
-            status = dict(getattr(self.state, "status", {}) or {})
-        else:
-            with state_lock:
-                quotes = dict(getattr(self.state, "quotes", {}) or {})
-                status = dict(getattr(self.state, "status", {}) or {})
-
-        rows: list[dict[str, Any]] = []
-        signature_parts: list[Any] = []
-        names = getattr(self.state, "name_by_code", {}) or {}
-        for code, raw in quotes.items():
-            if not isinstance(raw, dict):
-                continue
-            row = dict(raw)
-            row["stock_code"] = str(row.get("stock_code") or code)
-            row["stock_name"] = row.get("stock_name") or names.get(code) or code
-            if isinstance(row.get("ohlc"), dict):
-                row["ohlc"] = dict(row["ohlc"])
-            rows.append(row)
-            signature_parts.append(
-                (
-                    row["stock_code"],
-                    row.get("trade_value_eok"),
-                    row.get("price"),
-                    row.get("change_rate"),
-                    row.get("execution_strength"),
-                    row.get("strength_5m"),
-                    row.get("program_net"),
-                    row.get("large_trade_net_sum_eok"),
-                )
+        rows, status = self._copy_state_input()
+        signature_parts = [
+            (
+                row["stock_code"],
+                row.get("trade_value_eok"),
+                row.get("price"),
+                row.get("change_rate"),
+                row.get("execution_strength"),
+                row.get("strength_5m"),
+                row.get("program_net"),
+                row.get("large_trade_net_sum_eok"),
             )
+            for row in rows
+        ]
         signature_parts.sort(key=lambda item: item[0])
         trading_date = str(
             status.get("market_trading_date")
@@ -117,16 +138,16 @@ class ThemeBoardCacheService:
         return rows, trading_date, signature
 
     def refresh_now(self, *, force: bool = False) -> dict[str, Any]:
-        rows, trading_date, signature = self._snapshot_rows()
-        with self.lock:
-            if not force and signature == self.last_input_signature:
-                self.metrics["theme_cache_hit_count"] += 1
-                self._publish_status()
-                return self._payload_unlocked(include_details=False)
-            self.last_input_signature = signature
-            self.input_version += 1
-
         try:
+            rows, trading_date, signature = self._snapshot_rows()
+            with self.lock:
+                if not force and signature == self.last_input_signature:
+                    self.metrics["theme_cache_hit_count"] += 1
+                    self._publish_status()
+                    return self._payload_unlocked(include_details=False)
+                self.last_input_signature = signature
+                self.input_version += 1
+
             result = self.engine.update(rows, trading_date=trading_date)
             calculate_ms = float(result.get("calculate_ms") or 0.0)
             with self.lock:
