@@ -177,7 +177,8 @@ def _install_market_supply_hold_fail_open() -> None:
     try:
         from realtime_v2.market_supply_last_valid_patch import install as install_market_supply_hold
 
-        install_market_supply_hold(large, base)
+        context_module = getattr(large, "guarded", large)
+        install_market_supply_hold(context_module, base)
     except Exception as error:
         _write_patch_error("market_supply_last_valid_patch_error.txt", error)
 
