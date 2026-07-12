@@ -12,6 +12,10 @@ def test_board_platform_installs_fast_profile_on_actual_guarded_module():
     assert "install_http_patch(base, large)" in source
     assert 'actual_module = getattr(large, "guarded", large)' in source
     assert "install_fast_path_profile(actual_module, base)" in source
+    assert "install_model_lane_merge_optimize()" in source
+    assert source.index("install_model_lane_merge_optimize()") < source.index(
+        "install_fast_path_profile(actual_module, base)"
+    )
 
 
 def test_fast_profile_exposes_stage_breakdown_without_market_logic_changes():
@@ -38,5 +42,9 @@ def test_fast_profile_exposes_stage_breakdown_without_market_logic_changes():
 
     assert 'STOCKBOARD_FAST_PROFILE_EVERY", 5' in source
     assert 'result["fast_profile_enabled"] = True' in source
-    assert "fast_profile_unaccounted_ms" not in source
+    assert 'result["fast_profile_consistent_snapshot"] = True' in source
+    assert 'f"{prefix}_snapshot_overhead_ms"' in source
+    assert 'f"{prefix}_sample_id"' in source
+    assert '_local.sample_current_snapshot = should_sample' in source
+    assert '_local.completed_rows_profile = None' in source
     assert '_profile_payload("fast_profile", profile)' in source
