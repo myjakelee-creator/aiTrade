@@ -17,10 +17,16 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from realtime_v2.common import RUNTIME_DIR, atomic_write_json, normalize_code, now_text, to_number, trading_date_text  # noqa: E402
+from realtime_v2.market_supply_last_valid_patch import (  # noqa: E402
+    _read_json_with_encoding,
+    market_supply_valid,
+    normalize_market_supply,
+)
 
 OUTPUT_DIR = RUNTIME_DIR
 US_MARKET_FILE = OUTPUT_DIR / "us_market.json"
 MARKET_SUPPLY_FILE = OUTPUT_DIR / "market_supply.json"
+MARKET_SUPPLY_LAST_VALID_FILE = OUTPUT_DIR / "market_supply_last_valid.json"
 OHLC_SNAPSHOT_FILE = OUTPUT_DIR / "ohlc_snapshot.json"
 STATUS_FILE = OUTPUT_DIR / "context_snapshot_status.json"
 
@@ -40,30 +46,25 @@ YAHOO_SYMBOLS = {
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
-    try:
-        if path.is_file():
-            payload = json.loads(path.read_text(encoding="utf-8-sig"))
-            if isinstance(payload, dict):
-                return payload
-    except (OSError, json.JSONDecodeError):
-        return None
-    return None
+    payload, _encoding = _read_json_with_encoding(path)
+    return payload if isinstance(payload, dict) else None
 
 
-def _latest_file(patterns: list[str]) -> Path | None:
+def _market_supply_candidates(patterns: list[str]) -> list[Path]:
     candidates: list[Path] = []
     for pattern in patterns:
         candidates.extend(ROOT.glob(pattern))
     candidates = [path for path in candidates if path.is_file()]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda path: path.stat().st_mtime)
+    return sorted(
+        candidates,
+        key=lambda path: path.stat().st_mtime if path.exists() else 0.0,
+        reverse=True,
+    )
 
 
 def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_json(path, payload)
-
 
 
 def fetch_yahoo_snapshot(timeout: float = 5.0) -> dict[str, Any]:
@@ -105,12 +106,12 @@ def fetch_yahoo_snapshot(timeout: float = 5.0) -> dict[str, Any]:
     }
 
 
-
 def fetch_live_market_supply_snapshot() -> dict[str, Any]:
-    """Fetch live KOSPI/KOSDAQ market supply for StockBoard v2 top panel.
+    """Fetch and validate live KOSPI/KOSDAQ context.
 
-    v2 previously copied old snapshot files only. During regular session this
-    should use the proven old StockBoard fetch_market_supply() path first.
+    Invalid authentication payloads often keep the expected keys while every
+    market value is None. Such payloads must raise so the last valid snapshot is
+    preserved instead of being overwritten.
     """
     global _MARKET_SUPPLY_ACCESS_TOKEN
 
@@ -122,41 +123,58 @@ def fetch_live_market_supply_snapshot() -> dict[str, Any]:
     try:
         payload = fetch_market_supply(_MARKET_SUPPLY_ACCESS_TOKEN, trading_date_text())
     except Exception:
-        # Token may have expired. Refresh once.
         _MARKET_SUPPLY_ACCESS_TOKEN = issue_access_token()
         payload = fetch_market_supply(_MARKET_SUPPLY_ACCESS_TOKEN, trading_date_text())
 
     if not isinstance(payload, dict):
         raise RuntimeError("fetch_market_supply returned non-dict payload")
 
-    payload.setdefault("schema_version", 1)
-    payload["source"] = "kiwoom_fetch_market_supply"
-    payload["ts"] = now_text()
-    payload["copied_at"] = now_text()
-    return payload
+    normalized = normalize_market_supply(payload)
+    if not market_supply_valid(normalized):
+        errors = payload.get("_status", {}).get("errors") if isinstance(payload.get("_status"), dict) else None
+        raise RuntimeError(
+            f"live market_supply invalid; preserving last valid snapshot; errors={str(errors)[:500]}"
+        )
+
+    normalized.setdefault("schema_version", 1)
+    normalized["source"] = "kiwoom_fetch_market_supply"
+    normalized["ts"] = now_text()
+    normalized["copied_at"] = now_text()
+    normalized["source_encoding"] = "runtime_object"
+    return normalized
 
 
 def copy_latest_market_supply_snapshot() -> dict[str, Any]:
-    latest = _latest_file(
-        [
-            "data/runtime/market_supply_after_*.json",
-            "data/runtime/market_supply_before_*.json",
-            "docs/assets/market_supply*.json",
-            "docs/assets/stockboard_market_supply*.json",
-        ]
+    """Return the newest valid market snapshot, including UTF-16 files."""
+    candidates = [MARKET_SUPPLY_LAST_VALID_FILE]
+    candidates.extend(
+        _market_supply_candidates(
+            [
+                "data/runtime/market_supply_after_*.json",
+                "data/runtime/market_supply_before_*.json",
+                "docs/assets/market_supply*.json",
+                "docs/assets/stockboard_market_supply*.json",
+            ]
+        )
     )
-    if latest is None:
-        return {
-            "schema_version": 1,
-            "source": "missing",
-            "ts": now_text(),
-            "message": "no market_supply snapshot source file found",
-        }
-    payload = _read_json(latest) or {}
-    payload.setdefault("schema_version", 1)
-    payload["source_file"] = str(latest)
-    payload["copied_at"] = now_text()
-    return payload
+
+    checked: list[str] = []
+    for path in candidates:
+        if not path.is_file():
+            continue
+        checked.append(str(path))
+        payload, encoding = _read_json_with_encoding(path)
+        normalized = normalize_market_supply(payload)
+        if not market_supply_valid(normalized):
+            continue
+        normalized.setdefault("schema_version", 1)
+        normalized["source_file"] = str(path)
+        normalized["source_encoding"] = encoding
+        normalized["copied_at"] = now_text()
+        normalized["fallback_checked"] = checked
+        return normalized
+
+    raise RuntimeError(f"no valid market_supply snapshot found; checked={checked}")
 
 
 def _num(value: Any) -> float | None:
@@ -226,10 +244,6 @@ def fetch_ohlc_bootstrap(codes_file: Path, limit: int = 300, sleep_sec: float = 
 
     for code in codes:
         found = False
-
-        # ???(_AL) ??:
-        # - ????/NXT ??? ?? ??? ??? ?? OHLC? ?? ??
-        # - _AL ?? ?? ?? ? ???? 6?? ??? ???? fallback
         for query_code, source_name in (
             (f"{code}_AL", "ka10086_AL_current_row"),
             (code, "ka10086_regular_current_row"),
@@ -301,10 +315,17 @@ def fetch_ohlc_bootstrap(codes_file: Path, limit: int = 300, sleep_sec: float = 
     }
 
 
-
 def write_status(status: dict[str, Any]) -> None:
     status["ts"] = now_text()
     _atomic_write(STATUS_FILE, status)
+
+
+def _persist_valid_market_supply(payload: dict[str, Any]) -> None:
+    normalized = normalize_market_supply(payload)
+    if not market_supply_valid(normalized):
+        raise RuntimeError("refusing to overwrite market_supply.json with invalid payload")
+    _atomic_write(MARKET_SUPPLY_FILE, normalized)
+    _atomic_write(MARKET_SUPPLY_LAST_VALID_FILE, normalized)
 
 
 def main() -> int:
@@ -353,9 +374,12 @@ def main() -> int:
                     status["market_supply_status"] = "fallback_file"
                     status["market_supply_live_error"] = str(live_error)
                     status["market_supply_source_file"] = market_payload.get("source_file")
-                _atomic_write(MARKET_SUPPLY_FILE, market_payload)
+                    status["market_supply_source_encoding"] = market_payload.get("source_encoding")
+
+                _persist_valid_market_supply(market_payload)
+                status.pop("market_supply_error", None)
             except Exception as error:
-                status["market_supply_status"] = "error"
+                status["market_supply_status"] = "hold_last_valid"
                 status["market_supply_error"] = str(error)
 
             write_status(status)
