@@ -62,7 +62,6 @@ def _stream_shared(handler, service: StockBoardSnapshotCacheService, query) -> N
     ).strip()
     if model_id:
         service.set_candidate_model(model_id)
-        service.refresh(force=True)
 
     handler.send_response(200)
     handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -80,12 +79,15 @@ def _stream_shared(handler, service: StockBoardSnapshotCacheService, query) -> N
     last_version = -1
     last_sent_at = 0.0
     try:
-        service.refresh(force=not bool(service.payload_bytes))
+        service.request_refresh(force=not bool(service.payload_bytes))
         while True:
             now = time.monotonic()
             version, body = service.get_bytes()
             if limit != 300:
-                payload = service.get_payload(limit=limit, refresh_if_changed=False)
+                payload = service.get_payload(
+                    limit=limit,
+                    refresh_if_changed=False,
+                )
                 body = json.dumps(
                     payload, ensure_ascii=False, separators=(",", ":")
                 ).encode("utf-8")
@@ -241,14 +243,14 @@ def install(base, large) -> None:
                 except (TypeError, ValueError):
                     limit = 300
                 payload = service.get_payload(
-                    limit=max(1, min(1000, limit))
+                    limit=max(1, min(1000, limit)),
+                    refresh_if_changed=True,
                 )
                 _send_json(self, payload)
                 return
         if parsed.path == "/api/v2/stream":
             return patched_stream(self, query)
         return original_do_get(self)
-
 
     def patched_write_status_loop(state, output_path, stop_event):
         while not stop_event.wait(1.0):
