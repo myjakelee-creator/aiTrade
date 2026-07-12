@@ -24,7 +24,7 @@ SHELL_CSS = r"""
 #bp-local-toolbar{height:30px;display:flex;align-items:center;gap:4px;padding:3px 6px;box-sizing:border-box;overflow-x:auto;overflow-y:hidden;white-space:nowrap;background:#f8fafc;scrollbar-width:thin}
 #bp-local-toolbar>*{flex:0 0 auto!important;margin:0!important;white-space:nowrap!important;max-width:none!important}
 #bp-local-toolbar .bp-local-label{display:inline-flex;align-items:center;min-height:21px;padding:1px 6px;border:1px solid #cbd5e1;border-radius:3px;background:#fff;color:#64748b;font-weight:800}
-.bp-native-topbar-hidden{display:none!important}
+#topbar.topbar.bp-native-topbar-hidden,.topbar.bp-native-topbar-hidden{display:none!important;height:0!important;min-height:0!important;max-height:0!important;padding:0!important;margin:0!important;border:0!important;overflow:hidden!important}
 .bp-board-hub{max-width:1100px;margin:0 auto;padding:8px}
 .bp-board-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
 .bp-board-card{padding:8px;border:1px solid #cbd5e1;border-radius:5px;background:#fff}
