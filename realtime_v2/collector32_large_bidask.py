@@ -40,6 +40,7 @@ from realtime_v2.offhours_metric_completion_patch import (
     install as install_offhours_metric_completion,
 )
 from realtime_v2.after_close_recovery_hardening import install_module_hardening
+from realtime_v2.after_close_recovery_sampler_guard import install_module_guard
 from realtime_v2.after_close_recovery import prepare_collector
 from realtime_v2.offhours_metric_resilience_patch import (
     install as install_offhours_metric_resilience,
@@ -49,6 +50,7 @@ install_strength5m_snapshot_fallback()
 install_strength5m_definitive_preopen()
 install_offhours_metric_completion()
 install_module_hardening()
+install_module_guard()
 prepare_collector()
 install_offhours_metric_resilience()
 
