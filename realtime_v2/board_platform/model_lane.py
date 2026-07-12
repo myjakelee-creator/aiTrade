@@ -229,10 +229,15 @@ class StockBoardModelLaneService(threading.Thread):
         return self.apply(rows, model_id)
 
     def _remaining_delay_locked(self, now_mono: float | None = None) -> float:
+        if not self.pending_rows:
+            return 0.5
+        if (
+            not self.force_requested
+            and self.submission_version <= self.completed_submission_version
+        ):
+            return 0.5
         if self.force_requested or not self.result_overlays:
             return 0.0
-        if self.submission_version <= self.completed_submission_version:
-            return 0.5
         now_mono = time.monotonic() if now_mono is None else float(now_mono)
         return max(
             0.0,
