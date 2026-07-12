@@ -122,7 +122,7 @@ class ThemeBoardCacheService:
             if not force and signature == self.last_input_signature:
                 self.metrics["theme_cache_hit_count"] += 1
                 self._publish_status()
-                return deepcopy(self.cache)
+                return self._payload_unlocked(include_details=False)
             self.last_input_signature = signature
             self.input_version += 1
 
@@ -156,37 +156,37 @@ class ThemeBoardCacheService:
                     },
                 }
                 self._publish_status()
-                return deepcopy(self.cache)
+                return self._payload_unlocked(include_details=False)
         except Exception as error:
             with self.lock:
                 self.metrics["theme_last_error"] = f"{type(error).__name__}: {error}"
                 self.cache.setdefault("status", {})["last_error"] = self.metrics["theme_last_error"]
                 self._publish_status()
-                return deepcopy(self.cache)
+                return self._payload_unlocked(include_details=False)
+
+    def _payload_unlocked(self, *, include_details: bool) -> dict[str, Any]:
+        if include_details:
+            return deepcopy(self.cache)
+        payload = {
+            key: deepcopy(value)
+            for key, value in self.cache.items()
+            if key != "details"
+        }
+        for theme in payload.get("themes") or []:
+            if isinstance(theme, dict):
+                theme.pop("score_items", None)
+                theme.pop("target_status", None)
+        return payload
 
     def snapshot(self, *, include_details: bool = False) -> dict[str, Any]:
         with self.lock:
             self.metrics["theme_cache_hit_count"] += 1
-            if include_details:
-                payload = deepcopy(self.cache)
-            else:
-                payload = {
-                    key: deepcopy(value)
-                    for key, value in self.cache.items()
-                    if key != "details"
-                }
-                for theme in payload.get("themes") or []:
-                    if isinstance(theme, dict):
-                        theme.pop("score_items", None)
-                        theme.pop("target_status", None)
-            self._publish_status()
-            return payload
+            return self._payload_unlocked(include_details=include_details)
 
     def theme_detail(self, theme_id: str) -> dict[str, Any] | None:
         with self.lock:
             self.metrics["theme_cache_hit_count"] += 1
             detail = (self.cache.get("details") or {}).get(str(theme_id or "").strip().upper())
-            self._publish_status()
             return deepcopy(detail) if isinstance(detail, dict) else None
 
     def _publish_status(self) -> None:
