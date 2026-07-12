@@ -1,7 +1,7 @@
 # StockBoard Board Platform 공통 상단·속도·시장수급 복구 구현
 
 최종 갱신: 2026-07-12  
-상태: 구현 완료 · PC1 구조/복구 검증 완료 · 정규장 09:00 실전 성능 검증 필요
+상태: 공통 상단·시장수급 복구·비동기 Model lane 구현 완료 · PC1 실전 성능 검증 필요
 
 ## 1. 목적과 절대 원칙
 
@@ -167,10 +167,11 @@ state.snapshot(300)
 ```text
 client 수와 계산 횟수 분리
 입력 상태가 바뀌지 않으면 재계산 생략
-candidate model 변경 시 즉시 재계산
+candidate model 변경 시 scheduler 갱신 요청
 payload bytes 사전 직렬화
 cache version 변경 때만 SSE 전송
 latest-state-only, 계산 backlog 생성 금지
+REST/SSE/상태 writer의 동기 전체 계산 금지
 ```
 
 ### 5.1 적응형 계산 주기
@@ -184,6 +185,34 @@ latest-state-only, 계산 backlog 생성 금지
 | 보호모드에서 60ms 이하 5회 | 정상 복귀 |
 
 장개시 09:00~09:10에는 화면 점수 재계산 빈도보다 collector 수신 안정성을 우선한다.
+
+### 5.2 scheduler 단일 계산 권한
+
+기존에는 background cache 외에도 REST snapshot 요청과 1초 상태파일 writer가 이벤트 변경 때 전체 snapshot을 즉시 실행할 수 있었다.
+
+최종 구조:
+
+```text
+전체 snapshot 계산 권한
+→ StockBoardSnapshotCacheService scheduler 단독
+
+REST / SSE / 상태파일
+→ 최신 완성 cache 읽기
+→ refresh 요청 신호만 전달
+→ 요청 스레드에서 후보모델/정렬/직렬화 실행 금지
+```
+
+진단값:
+
+```text
+scheduler_only
+compute_success_count
+compute_rate_limit_skip_count
+refresh_request_count
+coalesced_event_count
+last_event_delta
+remaining_compute_delay_ms
+```
 
 ## 6. KOSPI·KOSDAQ 빈 화면 원인과 해결
 
@@ -318,7 +347,7 @@ ORIGINAL_CONTEXT_ERROR 원래 context 생성 오류
 
 `/api/v2/context`는 복구기 오류 때문에 연결을 끊지 않으며 오류 내용을 JSON 진단 필드로 반환한다.
 
-## 8. context_snapshot_writer 덮어쓰기 방지
+## 8. context_snapshot_writer 덮어쓰기 방지와 토큰 복구
 
 기존 writer는 `fetch_market_supply()`가 dict를 반환하면 내부 값이 전부 None이어도 성공으로 보고 `market_supply.json`을 덮어썼다.
 
@@ -330,7 +359,9 @@ live payload 유효
 → market_supply_last_valid.json 저장
 
 live payload 무효/인증 실패
-→ 현재 정상 market_supply.json 유지
+→ 인증 실패 문구 검사
+→ 토큰 폐기 및 1회 재발급/재시도
+→ 재시도 실패 시 현재 정상 market_supply.json 유지
 → UTF-16 after/before 포함 fallback 탐색
 → 유효 fallback만 UTF-8로 저장
 → 무효 payload는 절대 정상값을 덮지 않음
@@ -379,12 +410,81 @@ provider_started = True
 
 `opstarter`를 강제 종료하지 않는다.
 
-## 11. 주요 구현 파일
+## 11. 비동기 Rank/Model lane 분리
+
+### 11.1 기존 결합 병목
+
+`worker64_guarded_large._guarded_rows()`는 빠른 행 구성과 느린 후보모델 계산을 한 함수에서 연속 실행했다.
+
+```text
+quotes 복사
+→ 거래대금 정렬
+→ rank / rank_change / amount_ratio
+→ enrich_candidate_model_fields(300행)
+→ 점수 4그룹 / grade guard / Funnel 50·20·5
+→ DisplayOrder
+```
+
+관찰된 300ms대 계산의 핵심은 `enrich_candidate_model_fields()`였다.
+
+### 11.2 최종 구조
+
+```text
+Fast/Rank lane
+→ 최신 가격·등락률·거래대금·순위·강도·호가 계산
+→ 최신 준비 행을 Model lane에 제출
+→ 직전 완성 모델 필드를 즉시 결합
+→ DisplayOrder 및 브라우저 전송
+
+Model lane background
+→ 제출된 최신 300행만 보관
+→ 중간 계산 backlog 없음
+→ 기본 1000ms 간격
+→ 기존 enrich_candidate_model_fields() 그대로 실행
+→ 완료 결과를 원자적으로 교체
+```
+
+후보모델 공식, 점수, 등급, grade guard, Funnel 50/20/5 계산식은 변경하지 않았다.
+
+### 11.3 호환성과 안전장치
+
+```text
+현재 price/rank/rank_change/amount_ratio가 모델 cache에 의해 덮이지 않음
+trade_value_rank는 최신 Fast rank로 유지
+모델 변경 직후 이전 모델 점수 재사용 금지
+새 모델 완료 전 MODEL_PENDING
+첫 모델 완료 또는 실제 모델 변경 때만 DisplayOrder lane 1회 재초기화
+수동 행 고정 중에는 lane 재초기화 금지
+Model lane thread는 worker 종료 시 함께 종료
+입력 없음/새 버전 없음일 때 0.5초 대기
+```
+
+### 11.4 Model lane 진단값
+
+`/api/v2/boards/performance?board_id=stockboard`의 `boards.stockboard`에 다음을 포함한다.
+
+```text
+model_lane_state
+model_lane_model_id
+model_lane_compute_ms
+model_lane_age_ms
+model_lane_interval_ms
+model_lane_compute_count
+model_lane_reuse_count
+model_lane_coalesced
+model_lane_pending
+model_lane_last_error
+```
+
+상단 `계산`은 Fast/Rank snapshot 경로 시간을 표시한다. Model lane 자체 시간은 위 API 진단값으로 별도 확인한다.
+
+## 12. 주요 구현 파일
 
 ```text
 realtime_v2/board_platform/__init__.py
 realtime_v2/board_platform/registry.py
 realtime_v2/board_platform/stockboard_cache.py
+realtime_v2/board_platform/model_lane.py
 realtime_v2/board_platform/performance.py
 realtime_v2/board_platform/assets.py
 realtime_v2/board_platform/http_patch.py
@@ -402,12 +502,13 @@ tests/test_board_platform_stockboard_cache.py
 tests/test_board_platform_performance.py
 tests/test_board_platform_http_patch.py
 tests/test_board_platform_assets_integrity.py
+tests/test_stockboard_model_lane.py
 tests/test_market_supply_last_valid_patch.py
 tests/test_context_snapshot_writer_market_supply_guard.py
 tests/test_stockboard_v2_safe_launcher.py
 ```
 
-## 12. 완료된 PC1 검증
+## 13. 완료된 PC1 검증
 
 ```text
 64비트 worker 실행 확인
@@ -428,30 +529,33 @@ UTF-16 after 스냅샷 VALID True 확인
 시장수급 writer 무효값 덮어쓰기 방지 구현
 ```
 
-## 13. 남은 실전 검증
+## 14. 남은 실전 검증
 
 ```text
 공통 상단 최종 화면 육안 확인
 KOSPI·KOSDAQ LAST_VALID_HOLD 실제 표시 확인
 market_supply_last_valid.json 생성 확인
-정규장 REST 인증 정상화
+정규장 REST 인증 정상화 및 CURRENT_VALID 확인
+비동기 Model lane py_compile/단위 테스트
+Fast 계산시간과 Model 계산시간 분리 확인
+Model lane READY, last_error 없음 확인
+후보5·등급·Funnel 결과가 기존과 동일한지 확인
+모델 변경 시 MODEL_PENDING 후 새 모델 정상 전환 확인
 09:00~09:10 E2E·pending·drop·CPU 측정
 StockBoard 창 2개에서 cache 계산이 client 수에 비례하지 않는지 확인
-StockBoard 계산 300ms대 병목 개선: Fast/Rank/Model/Context lane 분리
 ```
 
-## 14. 다음 성능 개선 순서
+## 15. 다음 성능 개선 순서
 
 ```text
 1. Dirty-row StockBoard payload
 2. Fast lane 50~100ms: 현재가·등락률·체결강도·거래대금
-3. Rank lane 250~500ms: 거래대금 순위
-4. Model lane 500~1000ms: 후보모델·등급·Funnel
-5. Context lane 5~30초: 프로그램·OHLC·시장정보
-6. BoardDataHub 한 번 복사
-7. 서버 완성 row diff
-8. 브라우저 가상화
-9. 장마감 OpenAPI 중앙조정기
+3. Rank lane 250~500ms: 거래대금 순위 전체 재정렬 제한
+4. Context lane 5~30초: 프로그램·OHLC·시장정보
+5. BoardDataHub 한 번 복사
+6. 서버 완성 row diff
+7. 브라우저 가상화
+8. 장마감 OpenAPI 중앙조정기
 ```
 
 현재 Draft PR #27은 미병합 상태를 유지한다.
