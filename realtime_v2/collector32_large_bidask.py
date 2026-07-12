@@ -39,6 +39,7 @@ from realtime_v2.strength5m_definitive_preopen_patch import (
 from realtime_v2.offhours_metric_completion_patch import (
     install as install_offhours_metric_completion,
 )
+from realtime_v2.after_close_recovery_hardening import install_module_hardening
 from realtime_v2.after_close_recovery import prepare_collector
 from realtime_v2.offhours_metric_resilience_patch import (
     install as install_offhours_metric_resilience,
@@ -47,6 +48,7 @@ from realtime_v2.offhours_metric_resilience_patch import (
 install_strength5m_snapshot_fallback()
 install_strength5m_definitive_preopen()
 install_offhours_metric_completion()
+install_module_hardening()
 prepare_collector()
 install_offhours_metric_resilience()
 
@@ -60,9 +62,11 @@ from realtime_v2.collector_sender_resilience_patch import (
     install as install_collector_sender_resilience,
 )
 from realtime_v2.after_close_recovery import install_collector
+from realtime_v2.after_close_recovery_hardening import install_collector_hardening
 
 install_collector_sender_resilience(base)
 install_collector(base)
+install_collector_hardening(base)
 install_collector_main(base)
 
 # The after-close coordinator must be driven by its own Qt timer rather than by
