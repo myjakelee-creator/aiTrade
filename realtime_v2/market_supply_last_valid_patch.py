@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import threading
 import traceback
+from collections import deque
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 MARKET_ALIASES = {
@@ -12,8 +13,20 @@ MARKET_ALIASES = {
     "kosdaq": ("kosdaq", "KOSDAQ", "Kosdaq", "kq", "KQ", "1", "101"),
 }
 
+MARKET_NAME_KEYS = (
+    "market_name",
+    "market",
+    "name",
+    "label",
+    "시장",
+    "mrkt_tp",
+    "market_type",
+    "inds_cd",
+    "index_code",
+)
+
 FIELD_ALIASES = {
-    "market_name": ("market_name", "market", "name", "label", "시장"),
+    "market_name": MARKET_NAME_KEYS,
     "market_index": (
         "market_index",
         "index",
@@ -21,6 +34,7 @@ FIELD_ALIASES = {
         "지수",
         "cur_prc",
         "current_index",
+        "stck_prpr",
     ),
     "market_change_rate": (
         "market_change_rate",
@@ -29,6 +43,7 @@ FIELD_ALIASES = {
         "등락률",
         "flu_rt",
         "rate",
+        "prdy_ctrt",
     ),
     "advancers": (
         "advancers",
@@ -37,12 +52,14 @@ FIELD_ALIASES = {
         "상승",
         "rising",
         "up_count",
+        "rise_count",
     ),
     "upper_limit_count": (
         "upper_limit_count",
         "upper_limit",
         "상한",
         "upl",
+        "upper_count",
     ),
     "decliners": (
         "decliners",
@@ -51,12 +68,14 @@ FIELD_ALIASES = {
         "하락",
         "fall",
         "down_count",
+        "fall_count",
     ),
     "lower_limit_count": (
         "lower_limit_count",
         "lower_limit",
         "하한",
         "lst",
+        "lower_count",
     ),
     "individual_eok": (
         "individual_eok",
@@ -101,6 +120,13 @@ META_KEYS = (
     "_status",
 )
 
+CORE_FIELDS = (
+    "market_index",
+    "market_change_rate",
+    "advancers",
+    "decliners",
+)
+
 _WRITE_LOCK = threading.RLock()
 
 
@@ -123,91 +149,29 @@ def _first(mapping: Any, keys: tuple[str, ...]) -> Any:
     return None
 
 
-def _market_from_rows(rows: Any) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    if not isinstance(rows, list):
-        return result
-
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        name = str(
-            _first(
-                row,
-                (
-                    "market_name",
-                    "market",
-                    "name",
-                    "label",
-                    "시장",
-                    "mrkt_tp",
-                    "market_type",
-                    "inds_cd",
-                ),
-            )
-            or ""
-        ).upper()
-        if "KOSDAQ" in name or name in {
-            "1",
-            "101",
-            "KQ",
-            "P10102",
-            "P101_AL02",
-        }:
-            result["kosdaq"] = row
-        elif "KOSPI" in name or name in {
-            "0",
-            "001",
-            "KS",
-            "P00101",
-            "P001_AL01",
-        }:
-            result["kospi"] = row
-    return result
-
-
-def _unwrap_market_supply(payload: Any) -> dict[str, Any]:
-    if not isinstance(payload, dict):
-        return {}
-
-    queue: list[dict[str, Any]] = [payload]
-    seen: set[int] = set()
-    wrapper_keys = (
-        "market_supply",
-        "values",
-        "result",
-        "payload",
-        "data",
-        "output",
-    )
-
-    while queue:
-        candidate = queue.pop(0)
-        candidate_id = id(candidate)
-        if candidate_id in seen:
-            continue
-        seen.add(candidate_id)
-
-        if any(
-            alias in candidate
-            for aliases in MARKET_ALIASES.values()
-            for alias in aliases
-        ):
-            return candidate
-
-        for rows_key in ("markets", "rows", "items", "data", "output"):
-            normalized_rows = _market_from_rows(candidate.get(rows_key))
-            if normalized_rows:
-                merged = dict(candidate)
-                merged.update(normalized_rows)
-                return merged
-
-        for key in wrapper_keys:
-            value = candidate.get(key)
-            if isinstance(value, dict):
-                queue.append(value)
-
-    return payload
+def _market_kind(value: Any) -> str | None:
+    text = str(value or "").strip().upper().replace(" ", "")
+    if not text:
+        return None
+    if "KOSDAQ" in text or text in {
+        "1",
+        "101",
+        "KQ",
+        "P10102",
+        "P101_AL02",
+        "코스닥",
+    }:
+        return "kosdaq"
+    if "KOSPI" in text or text in {
+        "0",
+        "001",
+        "KS",
+        "P00101",
+        "P001_AL01",
+        "코스피",
+    }:
+        return "kospi"
+    return None
 
 
 def _normalize_entry(entry: Any, market_name: str) -> dict[str, Any]:
@@ -221,32 +185,100 @@ def _normalize_entry(entry: Any, market_name: str) -> dict[str, Any]:
     return result
 
 
-def normalize_market_supply(payload: Any) -> dict[str, Any]:
-    container = _unwrap_market_supply(payload)
-    result: dict[str, Any] = {}
-    rows = _market_from_rows(
-        container.get("markets") if isinstance(container, dict) else None
-    )
+def _entry_score(entry: Any) -> int:
+    if not isinstance(entry, dict):
+        return -1
+    normalized = _normalize_entry(entry, "")
+    score = 0
+    for key in CORE_FIELDS:
+        if _number(normalized.get(key)) is not None:
+            score += 10
+    for key in (
+        "upper_limit_count",
+        "lower_limit_count",
+        "individual_eok",
+        "foreign_spot_eok",
+        "institution_eok",
+        "program_market_eok",
+    ):
+        if _number(normalized.get(key)) is not None:
+            score += 1
+    if normalized.get("available") is True:
+        score += 2
+    return score
 
-    for canonical, aliases in MARKET_ALIASES.items():
-        raw_entry = None
-        if isinstance(container, dict):
+
+def _iter_nodes(payload: Any, max_nodes: int = 20_000) -> Iterator[tuple[str, Any]]:
+    queue: deque[tuple[str, Any]] = deque([("$", payload)])
+    seen: set[int] = set()
+    count = 0
+    while queue and count < max_nodes:
+        path, node = queue.popleft()
+        if isinstance(node, (dict, list)):
+            node_id = id(node)
+            if node_id in seen:
+                continue
+            seen.add(node_id)
+        count += 1
+        yield path, node
+        if isinstance(node, dict):
+            for key, child in node.items():
+                if isinstance(child, (dict, list)):
+                    queue.append((f"{path}.{key}", child))
+        elif isinstance(node, list):
+            for index, child in enumerate(node):
+                if isinstance(child, (dict, list)):
+                    queue.append((f"{path}[{index}]", child))
+
+
+def _find_market_entries(payload: Any) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+    best: dict[str, tuple[int, dict[str, Any], str]] = {}
+
+    def consider(kind: str | None, entry: Any, path: str) -> None:
+        if kind not in {"kospi", "kosdaq"} or not isinstance(entry, dict):
+            return
+        score = _entry_score(entry)
+        previous = best.get(kind)
+        if previous is None or score > previous[0]:
+            best[kind] = (score, entry, path)
+
+    for path, node in _iter_nodes(payload):
+        if not isinstance(node, dict):
+            continue
+
+        for kind, aliases in MARKET_ALIASES.items():
             for alias in aliases:
-                value = container.get(alias)
-                if isinstance(value, dict):
-                    raw_entry = value
-                    break
-        if raw_entry is None:
-            raw_entry = rows.get(canonical)
-        result[canonical] = _normalize_entry(
-            raw_entry,
-            "KOSPI" if canonical == "kospi" else "KOSDAQ",
-        )
+                entry = node.get(alias)
+                if isinstance(entry, dict):
+                    consider(kind, entry, f"{path}.{alias}")
 
-    if isinstance(container, dict):
+        explicit_kind = _market_kind(_first(node, MARKET_NAME_KEYS))
+        consider(explicit_kind, node, path)
+
+        for key, child in node.items():
+            if isinstance(child, dict):
+                consider(_market_kind(key), child, f"{path}.{key}")
+
+    entries = {
+        kind: _normalize_entry(value[1], "KOSPI" if kind == "kospi" else "KOSDAQ")
+        for kind, value in best.items()
+    }
+    paths = {kind: value[2] for kind, value in best.items()}
+    return entries, paths
+
+
+def normalize_market_supply(payload: Any) -> dict[str, Any]:
+    entries, paths = _find_market_entries(payload)
+    result: dict[str, Any] = {
+        "kospi": entries.get("kospi", {"market_name": "KOSPI"}),
+        "kosdaq": entries.get("kosdaq", {"market_name": "KOSDAQ"}),
+    }
+    if isinstance(payload, dict):
         for key in META_KEYS:
-            if key in container:
-                result[key] = container.get(key)
+            if key in payload:
+                result[key] = payload.get(key)
+    if paths:
+        result["normalized_paths"] = paths
     return result
 
 
@@ -274,19 +306,46 @@ def market_supply_valid(payload: Any) -> bool:
     )
 
 
-def _read_json(path: Path) -> dict[str, Any] | None:
+def _decode_json_bytes(raw: bytes) -> tuple[dict[str, Any] | None, str | None]:
+    if not raw:
+        return None, None
+
+    encodings: list[str] = []
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        encodings.append("utf-16")
+    if raw.startswith(b"\xef\xbb\xbf"):
+        encodings.append("utf-8-sig")
+    encodings.extend(("utf-8-sig", "utf-16", "cp949"))
+
+    tried: set[str] = set()
+    for encoding in encodings:
+        if encoding in tried:
+            continue
+        tried.add(encoding)
+        try:
+            payload = json.loads(raw.decode(encoding))
+        except (UnicodeError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            return payload, encoding
+    return None, None
+
+
+def _read_json_with_encoding(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8-sig"))
-        return payload if isinstance(payload, dict) else None
-    except (OSError, json.JSONDecodeError, UnicodeError):
-        return None
+        return _decode_json_bytes(path.read_bytes())
+    except OSError:
+        return None, None
+
+
+def _read_json(path: Path) -> dict[str, Any] | None:
+    payload, _encoding = _read_json_with_encoding(path)
+    return payload
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(
-        f".{path.name}.{threading.get_ident()}.tmp"
-    )
+    temporary = path.with_name(f".{path.name}.{threading.get_ident()}.tmp")
     with _WRITE_LOCK:
         temporary.write_text(
             json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
@@ -332,9 +391,9 @@ def _fallback_candidates(root: Path, runtime: Path) -> list[Path]:
 def _load_last_valid(
     root: Path,
     runtime: Path,
-) -> tuple[dict[str, Any] | None, str | None, list[str]]:
+) -> tuple[dict[str, Any] | None, str | None, list[dict[str, Any]]]:
     seen: set[Path] = set()
-    checked: list[str] = []
+    diagnostics: list[dict[str, Any]] = []
     for path in _fallback_candidates(root, runtime):
         try:
             resolved = path.resolve()
@@ -343,15 +402,24 @@ def _load_last_valid(
         if resolved in seen:
             continue
         seen.add(resolved)
-        checked.append(str(path))
-        try:
-            payload = _read_json(path)
-            normalized = normalize_market_supply(payload)
-            if market_supply_valid(normalized):
-                return normalized, str(path), checked
-        except Exception:
-            continue
-    return None, None, checked
+
+        payload, encoding = _read_json_with_encoding(path)
+        normalized = normalize_market_supply(payload)
+        valid = market_supply_valid(normalized)
+        diagnostics.append(
+            {
+                "path": str(path),
+                "exists": path.is_file(),
+                "encoding": encoding,
+                "valid": valid,
+                "normalized_paths": normalized.get("normalized_paths") or {},
+            }
+        )
+        if valid:
+            normalized["source_file"] = str(path)
+            normalized["source_encoding"] = encoding
+            return normalized, str(path), diagnostics
+    return None, None, diagnostics
 
 
 def install(context_module: Any, base_module: Any) -> None:
@@ -418,8 +486,8 @@ def install(context_module: Any, base_module: Any) -> None:
                 payload["market_supply_patch_error"] = None
                 return payload
 
-            fallback, source, checked = _load_last_valid(root, runtime)
-            payload["market_supply_fallback_checked"] = checked
+            fallback, source, diagnostics = _load_last_valid(root, runtime)
+            payload["market_supply_fallback_diagnostics"] = diagnostics
             if fallback is not None:
                 payload["market_supply"] = fallback
                 payload["market_supply_display_basis"] = "LAST_VALID_HOLD"
@@ -438,8 +506,6 @@ def install(context_module: Any, base_module: Any) -> None:
             payload["market_supply_patch_error"] = None
             return payload
         except Exception as error:
-            # Context API must never terminate its request thread because of this
-            # optional display fallback. Return the original payload with diagnostics.
             payload["market_supply_display_basis"] = "PATCH_FAIL_OPEN"
             payload["market_supply_display_source"] = None
             payload["market_supply_patch_error"] = (
