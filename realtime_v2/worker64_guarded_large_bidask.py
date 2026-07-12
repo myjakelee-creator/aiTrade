@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 
 large = importlib.import_module("realtime_v2.worker64_guarded_large")
 base = large.base
+guarded = getattr(large, "guarded", large)
 
 _CROSS_TABLE_NAV_MARKER = "STOCKBOARD_V2_CROSS_TABLE_NAV_20260710"
 _CROSS_TABLE_NAV_ANCHOR = (
@@ -177,8 +178,7 @@ def _install_market_supply_hold_fail_open() -> None:
     try:
         from realtime_v2.market_supply_last_valid_patch import install as install_market_supply_hold
 
-        context_module = getattr(large, "guarded", large)
-        install_market_supply_hold(context_module, base)
+        install_market_supply_hold(guarded, base)
     except Exception as error:
         _write_patch_error("market_supply_last_valid_patch_error.txt", error)
 
@@ -199,7 +199,12 @@ def _install_model_lane_fail_open() -> None:
             StockBoardSnapshotCacheService,
         )
 
-        service = install_model_lane(large, base)
+        if not hasattr(guarded, "enrich_candidate_model_fields"):
+            raise AttributeError(
+                "guarded worker module has no enrich_candidate_model_fields"
+            )
+
+        service = install_model_lane(guarded, base)
 
         if not getattr(base.WebServer, "_stockboard_model_lane_state_bound", False):
             original_server_init = base.WebServer.__init__
@@ -211,8 +216,8 @@ def _install_model_lane_fail_open() -> None:
             base.WebServer.__init__ = patched_server_init
             base.WebServer._stockboard_model_lane_state_bound = True
 
-        if not getattr(large, "_stockboard_model_lane_display_reset_installed", False):
-            model_enrich = large.enrich_candidate_model_fields
+        if not getattr(guarded, "_stockboard_model_lane_display_reset_installed", False):
+            model_enrich = guarded.enrich_candidate_model_fields
             reset_state = {"model_id": None}
 
             def reset_display_order_for_new_model() -> None:
@@ -223,7 +228,7 @@ def _install_model_lane_fail_open() -> None:
                 state = getattr(service, "state", None)
                 if state is None:
                     return
-                controller = large._display_order_controller(state)
+                controller = guarded._display_order_controller(state)
                 lock = getattr(controller, "_lock", None)
                 if lock is None:
                     return
@@ -240,7 +245,7 @@ def _install_model_lane_fail_open() -> None:
                     incumbent = getattr(controller, "_incumbent_out_since", None)
                     if isinstance(incumbent, dict):
                         incumbent.clear()
-                    controller.updated_at = large.now_text()
+                    controller.updated_at = guarded.now_text()
                     controller.version += 1
                 reset_state["model_id"] = model_id
 
@@ -252,8 +257,8 @@ def _install_model_lane_fail_open() -> None:
                 reset_display_order_for_new_model()
                 return result
 
-            large.enrich_candidate_model_fields = patched_model_enrich
-            large._stockboard_model_lane_display_reset_installed = True
+            guarded.enrich_candidate_model_fields = patched_model_enrich
+            guarded._stockboard_model_lane_display_reset_installed = True
 
         if not getattr(
             StockBoardSnapshotCacheService,
