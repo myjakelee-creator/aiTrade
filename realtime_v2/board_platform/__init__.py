@@ -1,5 +1,13 @@
 """Shared Board Platform services for StockBoard, ThemeBoard and future boards."""
 
-from .http_patch import install
+from .fast_path_profile import install as install_fast_path_profile
+from .http_patch import install as install_http_patch
+
+
+def install(base, large):
+    install_http_patch(base, large)
+    actual_module = getattr(large, "guarded", large)
+    install_fast_path_profile(actual_module, base)
+
 
 __all__ = ["install"]
