@@ -33,13 +33,35 @@ def test_shell_uses_one_common_fixed_header_for_every_board():
     assert "flex-wrap:wrap" in SHELL_CSS
 
 
-def test_shell_moves_board_specific_controls_below_common_rows():
+def test_common_header_text_uses_same_12px_size():
+    from realtime_v2.board_platform.assets import SHELL_CSS
+
+    assert "font:12px" in SHELL_CSS
+    assert "#bp-common-header *{font-size:12px!important}" in SHELL_CSS
+    assert "font-size:10px" not in SHELL_CSS
+    assert "font-size:11px" not in SHELL_CSS
+
+
+def test_stockboard_local_toolbar_keeps_only_real_controls():
     from realtime_v2.board_platform.assets import SHELL_JS
 
     assert "moveLocalControls" in SHELL_JS
+    assert "ui-zoom-toggle" in SHELL_JS
+    assert "column-minimize-toggle" in SHELL_JS
+    assert "row-position-toggle" in SHELL_JS
     assert "candidate-model-selector" in SHELL_JS
-    assert "basisStatus" in SHELL_JS
-    assert "copyStatus" in SHELL_JS
+    assert "copy-status" not in SHELL_JS
+    assert "metric-mode-status" not in SHELL_JS
+    assert "bar.querySelector('.small')" not in SHELL_JS
+
+
+def test_common_header_removes_duplicate_board_clock_and_status_text():
+    from realtime_v2.board_platform.assets import SHELL_JS
+
+    assert "bp-current-board" not in SHELL_JS
+    assert "bp-common-clock" not in SHELL_JS
+    assert "bp-common-status" not in SHELL_JS
+    assert "mirrorStatus" not in SHELL_JS
 
 
 def test_speed_metrics_have_identical_order_on_all_boards():
