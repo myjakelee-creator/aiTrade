@@ -22,6 +22,7 @@ def install(base, large):
         install_theme_format_guard,
         install_worker_guard,
     )
+    from realtime_v2.after_close_recovery_state import install as install_recovery_state
     from realtime_v2.after_close_theme_recovery import install as install_theme_recovery
 
     install_market_session_cache(market_session_module)
@@ -40,6 +41,7 @@ def install(base, large):
     install_policy_guard()
     install_theme_format_guard()
     install_theme_recovery(base)
+    install_recovery_state(base)
 
 
 __all__ = ["install"]
