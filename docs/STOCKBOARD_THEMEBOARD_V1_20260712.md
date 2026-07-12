@@ -1,7 +1,7 @@
 # StockBoard ThemeBoard v1 운영 명세
 
-최종 갱신: 2026-07-12 · SBV2 전용 HTS Clipboard 정책 반영  
-상태: 구현 완료 · 대표님 UI/기존 HTS 확인 완료 · strict bridge 재확인 대기 · Draft PR #27 미병합
+최종 갱신: 2026-07-12 · strict SBV2 HTS 연동 실전 확인 반영  
+상태: 구현 완료 · 대표님 UI/HTS 확인 완료 · Draft PR #27 미병합
 
 ## 1. 목적
 
@@ -12,7 +12,7 @@ StockBoard: 종목 단위 관찰·선발
 ThemeBoard: 테마 단위 돈쏠림·주도주 관찰
 ```
 
-ThemeBoard는 신규 OpenAPI 등록이나 별도 종목 수집을 하지 않고 StockBoard v2 worker가 이미 보유한 종목 데이터를 읽는다.
+ThemeBoard는 신규 OpenAPI 등록이나 별도 종목 수집을 하지 않고 StockBoard v2 worker의 공용 종목 상태를 읽는다.
 
 ## 2. URL·브랜치·파일
 
@@ -23,16 +23,15 @@ ThemeBoard는 신규 OpenAPI 등록이나 별도 종목 수집을 하지 않고 
 | Draft PR | `#27` |
 | 병합 대상 | `hot-priority-integrated-20260630` |
 
-관련 파일:
+주요 파일:
 
 | 파일 | 역할 |
 |---|---|
 | `config/stockboard_theme_master.json` | 테마 정의·종목 가중치 |
 | `stockboard_theme_engine.py` | 테마 유입·상태·주도주 계산 |
-| `realtime_v2/theme_board_patch.py` | 공용 cache·API·마감 보존 |
-| `docs/stockboard_theme_v1.html` | 반응형 표시·HTS 연동 명령 생성 |
-| `scripts/stockboard_kiwoom_link_v1.ahk` | strict SBV2 명령 파싱·Kiwoom Edit6 전달·Clipboard 6자리 저장 |
-| `realtime_v2/worker64_guarded_large_bidask.py` | fail-open 패치 설치 |
+| `realtime_v2/theme_board_patch.py` | 공용 cache·API·마감 hold |
+| `docs/stockboard_theme_v1.html` | 반응형 표시·HTS 연동 |
+| `scripts/stockboard_kiwoom_link_v1.ahk` | strict SBV2 → Kiwoom Edit6 bridge |
 | `tests/test_stockboard_theme_engine.py` | 계산 검증 |
 | `tests/test_stockboard_theme_cache.py` | cache·HTTP 검증 |
 | `tests/test_stockboard_theme_cache_heartbeat_guard.py` | heartbeat·lock 경합 검증 |
@@ -59,11 +58,11 @@ HBM·반도체 장비
 - 종목당 순위 대상 테마 최대 3개
 - 최소 가중치 0.15
 - 한 종목의 활성 순위 테마 가중치 합은 1.0
-- 현재 테마별 기본 최소 활성 종목 수 3
-- 마스터에 있어도 현재 worker universe에 없는 종목은 계산하지 않음
+- 테마별 기본 최소 활성 종목 수 3
+- 현재 worker universe에 없는 종목은 계산하지 않음
 - ThemeBoard 때문에 실시간 등록 종목을 늘리지 않음
 
-현재 마스터는 초기 실전 시제품이며, 테마 구성 정확성은 장중 HTS 비교를 통해 계속 조정한다.
+현재 마스터는 초기 실전 시제품이다. 장중 HTS 비교를 통해 구성종목과 가중치를 계속 보정한다.
 
 ## 4. UI
 
@@ -72,15 +71,13 @@ HBM·반도체 장비
 - 테마 카드 10개
 - 데스크톱 4열
 - 1180px 이하 3열
-- 900px 이하 세로 태블릿 2열, 2×5 균형
+- 900px 이하 세로 태블릿 2열
 - 520px 이하 1열
 - 카드에 1분·5분 유입, 누적대금, 점유율, 확산, 주도주 표시
-- 카드 주도종목 이름 클릭 시 Kiwoom HTS/S1 연동
+- 주도종목 이름 클릭 시 Kiwoom HTS/S1 연동
 - 카드의 다른 영역 클릭 시 해당 테마 선택
 
 ### 테마 돈쏠림 순위
-
-한 테마를 한 행 2열로 압축한다.
 
 ```text
 왼쪽: 테마명·상태·확산·1분·5분·누적·점유·가속·집중
@@ -100,31 +97,20 @@ HBM·반도체 장비
 |---|---|
 | `/theme` | ThemeBoard HTML |
 | `/api/v2/themes/stream` | 공용 SSE snapshot |
-| `/api/v2/themes/snapshot` | 현재 전체 테마 snapshot |
+| `/api/v2/themes/snapshot` | 전체 테마 snapshot |
 | `/api/v2/themes/detail?theme_id=...` | 선택 테마 구성종목 |
 | `/api/v2/themes/status` | cache·성능·마감 hold 상태 |
 
-HTML은 다음을 하지 않는다.
-
-```text
-테마 합산
-점수 계산
-정렬
-상태 판정
-주도주 선정
-마감 fallback 계산
-```
-
-서버가 `text`, `tone`, `class`, `bar_pct`, 표시 순서를 완성해 전달한다.
+HTML은 테마 합산, 점수, 정렬, 상태, 주도주 선정, 마감 fallback을 계산하지 않는다. 서버가 표시 순서와 `text/tone/class/bar_pct`를 완성한다.
 
 ## 6. 계산 원천
 
-worker에서 짧게 복사하는 주요 필드:
+worker에서 복사하는 주요 필드:
 
 ```text
 stock_code / stock_name / price / change_rate / trade_value_eok
 amount_ratio / execution_strength / strength_5m
-program_net / large_trade_net_count / freshness 필드
+program_net / large_trade_net_count / freshness
 ```
 
 테마 누적 거래대금:
@@ -133,25 +119,14 @@ program_net / large_trade_net_count / freshness 필드
 Σ(종목 누적 거래대금 × 테마 가중치)
 ```
 
-현재 1분·5분 유입:
+현재 유입:
 
 ```text
 1분 = 현재 테마 누적대금 − 60초 전 누적대금
 5분 = 현재 테마 누적대금 − 300초 전 누적대금
 ```
 
-테마 점수 구성:
-
-```text
-1분·5분 유입 percentile
-+ 유입 가속
-+ 시장 점유
-+ 상승·하락 확산
-+ 주도주 지원
-− 1위 종목 과도 집중 penalty
-```
-
-상태:
+테마 상태:
 
 ```text
 WAIT_DATA / SURGE / RISING / COOLING / STEADY
@@ -171,15 +146,14 @@ WAIT_DATA / SURGE / RISING / COOLING / STEADY
 
 ## 7. 공용 cache·성능 보호
 
-- ThemeBoard 클라이언트 0명: 계산 0회
+- ThemeBoard client 0명: 계산 0회
 - 탭이 여러 개여도 producer 1개
-- 직렬화된 payload를 모든 클라이언트가 공유
-- worker lock은 `acquire(False)` 비차단
+- 직렬화 payload 공유
+- worker lock `acquire(False)` 비차단
 - lock이 바쁘면 즉시 양보
 - 계산·정렬·JSON·파일 저장은 lock 밖
 - heartbeat만 바뀌면 quote 복사하지 않음
 - 계산 30ms 초과 시 저속 모드
-- detail payload는 표시 대상 테마만 준비
 - ThemeBoard 실패 시 기존 StockBoard worker 계속 실행
 
 대표님 PC 관찰값:
@@ -200,8 +174,6 @@ runtime 파일:
 data/runtime/stockboard_v2/theme_last_close.json
 ```
 
-Git에 커밋하지 않는다.
-
 보존 정책:
 
 ```text
@@ -211,11 +183,9 @@ Git에 커밋하지 않는다.
 다음 실제 premarket: hold 해제 후 LIVE 전환
 ```
 
-다음 프리마켓 경계는 `realtime_v2/market_session.py`와 `config/stockboard_market_calendar.json`을 사용한다. 특별일·지연 개장·휴장일을 건너뛴다.
+다음 프리마켓 경계는 `market_session.py`와 시장 달력을 사용한다. 재시작 후에도 유효기간이 남아 있으면 snapshot과 detail을 복원한다.
 
-재시작 후에도 유효기간이 남아 있으면 snapshot과 detail을 복원한다.
-
-표시 fallback은 기존 worker 필드에서 다음 순서를 사용한다.
+표시 fallback:
 
 ```text
 현재 정상값
@@ -225,11 +195,11 @@ Git에 커밋하지 않는다.
 → 전일 표시 fallback
 ```
 
-정확한 장마감 1분·5분 거래대금 복구는 현재 미구현이며 통합 설계 문서에서 다룬다.
+정확한 장마감 1분·5분 거래대금 복구는 아직 미구현이다.
 
 ## 9. HTS/S1 연동
 
-모든 종목 클릭은 다음 클립보드 형식을 사용한다.
+모든 종목 클릭 명령:
 
 ```text
 SBV2|<고유번호>|<6자리 종목코드>
@@ -238,29 +208,27 @@ SBV2|<고유번호>|<6자리 종목코드>
 
 지원 위치:
 
-- 상위 테마 레이더의 주도종목 이름
-- 테마 순위의 주도종목 카드
-- 선택 테마 구성종목 카드
+- 상위 테마 레이더 주도종목
+- 테마 순위 주도종목
+- 선택 테마 구성종목
 
-종목 클릭 시 `stopPropagation()`으로 테마 선택 클릭과 분리한다.
+AHK strict 정책:
 
-AHK strict 처리 정책:
-
-- 정확히 대문자 `SBV2|숫자 고유번호|6자리 코드` 형식만 처리한다.
-- 일반 `035420`, `035420_AL`, `035420_NX`, 구 `SB|...` 형식은 무시한다.
-- 동일 종목을 다시 클릭해도 고유번호가 달라 다시 처리된다.
-- Kiwoom의 유일한 검증된 `Edit6` HWND에 6자리 코드를 넣고 readback을 확인한다.
+- 정확히 대문자 `SBV2|숫자 고유번호|6자리 코드`만 처리한다.
+- 일반 `035420`, `035420_AL`, `035420_NX`, 구 `SB|...`는 무시한다.
+- 동일 종목 재클릭도 고유번호가 달라 다시 처리한다.
+- 유일한 검증된 Kiwoom `Edit6` HWND에 6자리 코드를 입력한다.
 - readback 성공 후 해당 Edit6 HWND에만 Enter를 전달한다.
-- 성공 후 Clipboard는 일반 6자리 코드 `035420`으로 바뀐다.
-- 일반 6자리 코드는 명령 형식이 아니므로 AHK가 다시 처리하지 않는다.
+- 성공 후 Clipboard를 일반 6자리 코드로 바꾼다.
+- 일반 6자리 코드는 명령이 아니므로 중복 처리하지 않는다.
 - StockBoard와 ThemeBoard는 같은 AHK bridge를 사용한다.
 
-장점:
+대표님 실전 관찰:
 
 ```text
-일반 숫자 6자리를 복사해도 HTS가 임의로 바뀌지 않음
-AHK가 자신이 저장한 6자리 코드를 다시 명령으로 오인하지 않음
-명령 출처가 StockBoard/ThemeBoard 종목 클릭으로 한정됨
+ThemeBoard/StockBoard 종목 클릭
+→ Kiwoom HTS 종목 전환 정상
+→ Clipboard 일반 6자리 저장 정상
 ```
 
 상태 파일:
@@ -268,8 +236,6 @@ AHK가 자신이 저장한 6자리 코드를 다시 명령으로 오인하지 �
 ```text
 data/runtime/stockboard_v2/hts_link_status.txt
 ```
-
-strict command-only 코드 반영은 완료됐다. 실제 재실행 확인은 휴장일 `ka10032 return_code=7 / 오류 1631`로 universe 생성이 중단되어 대기 중이며, 이 운영 이슈는 StockBoard v2 기준 문서에 기록한다.
 
 ## 10. 검증 상태
 
@@ -279,14 +245,14 @@ strict command-only 코드 반영은 완료됐다. 실제 재실행 확인은 �
 - 10개 테마
 - 가중 거래대금 중복 방지
 - 상태·순위·집중도
-- 클라이언트 0 계산 없음
-- 다중 클라이언트 공용 cache
+- client 0 계산 없음
+- 다중 client 공용 cache
 - heartbeat pre-lock skip
 - worker lock 비차단
 - HTTP route
 - 잘못된 master fail-open
 - Friday close → Monday premarket hold
-- HTML 계산 금지 검사
+- HTML 계산 금지
 
 대표님 확인:
 
@@ -295,27 +261,27 @@ strict command-only 코드 반영은 완료됐다. 실제 재실행 확인은 �
 - 세로 태블릿 2열 정상
 - 순위·구성종목 밀도 정상
 - 장마감 값 유지 정상
-- strict 변경 전 카드·순위·구성종목 HTS 연동 정상
+- strict SBV2 카드·순위·구성종목 HTS 연동 정상 관찰
 
-남은 검증:
+남은 실전 검증:
 
-- AHK strict `SBV2` 전용 처리와 성공 후 6자리 Clipboard 저장
 - 실제 다음 premarket에서 `LAST_CLOSE → LIVE`
-- 정규장 cache_version 지속 증가
+- 정규장 `cache_version` 지속 증가
 - StockBoard stream latency·queue·drop 무영향
-- 테마 마스터 실전 정확성 확대
+- 테마 master 실전 정확성 확대
 
-## 11. 다음 개선
+## 11. 설계됐지만 아직 구현하지 않은 것
 
-다음 개선은 `docs/STOCKBOARD_UNIFIED_DATA_COLLECTION_RECOVERY_DESIGN_20260712.md`를 따른다.
+통합 장마감 복구 설계의 ThemeBoard 관련 미구현 항목:
 
-특히 장마감 1분·5분 거래대금은 다음 우선순위로 설계한다.
+- 15:24:50~15:30:10 정규장 마감 sampler
+- 19:54:50~20:00:10 통합장 마감 sampler
+- 정확한 1분·5분 마감 유입 저장
+- 종목별 source·basis_time·quality·is_estimated·market_scope·coverage
+- 분봉 실제 거래대금 fallback
+- 실제 필드가 없을 때 각 1분봉 `종가×거래량` 근사
+- 부분 복구 Coverage 표시
+- `거래없음/직전값/복구실패` 구분
+- 중앙 `AfterCloseRecoveryCoordinator`와 한 번에 TR 1개 보장
 
-```text
-장중 마감 sampler 정확값
-→ 저장된 마지막 완성값
-→ 분봉 실제 거래대금
-→ 각 1분봉 종가 × 거래량 근사
-```
-
-정확값과 추정값은 source·quality·is_estimated로 구분한다.
+구현 순서는 `docs/STOCKBOARD_UNIFIED_DATA_COLLECTION_RECOVERY_DESIGN_20260712.md`를 따른다.
