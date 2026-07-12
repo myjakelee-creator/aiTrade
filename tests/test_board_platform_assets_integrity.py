@@ -64,6 +64,14 @@ def test_common_header_removes_duplicate_board_clock_and_status_text():
     assert "mirrorStatus" not in SHELL_JS
 
 
+def test_legacy_stockboard_topbar_is_force_hidden_over_id_important_rule():
+    from realtime_v2.board_platform.assets import SHELL_CSS
+
+    assert "#topbar.topbar.bp-native-topbar-hidden" in SHELL_CSS
+    assert "display:none!important" in SHELL_CSS
+    assert "height:0!important" in SHELL_CSS
+
+
 def test_speed_metrics_have_identical_order_on_all_boards():
     from realtime_v2.board_platform.assets import SHELL_JS
 
