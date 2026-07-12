@@ -56,17 +56,20 @@ def test_model_lane_reuses_model_fields_without_overwriting_fast_fields():
     current = _rows(price_a=111, price_b=222)
     current[0]["rank"] = 2
     current[1]["rank"] = 1
+    current[0]["trade_value_rank"] = 2
+    current[1]["trade_value_rank"] = 1
     result = service.apply(current, "MODEL_A")
 
     assert [row["stock_code"] for row in result] == ["000660", "005930"]
     by_code = {row["stock_code"]: row for row in result}
     assert by_code["000660"]["price"] == 222
     assert by_code["000660"]["rank"] == 1
+    assert by_code["000660"]["trade_value_rank"] == 1
     assert by_code["000660"]["candidate_score"] == 90
     assert by_code["005930"]["price"] == 111
     assert by_code["005930"]["rank"] == 2
-    assert "_source_rank" not in by_code["005930"]
     assert by_code["005930"]["trade_value_rank"] == 2
+    assert "_source_rank" not in by_code["005930"]
 
 
 def test_model_change_does_not_reuse_previous_model_fields():
@@ -109,6 +112,6 @@ def test_model_lane_worker_install_is_fail_open_and_after_board_platform():
 
     assert "_install_model_lane_fail_open()" in source
     assert "stockboard_model_lane_patch_error.txt" in source
-    assert source.index("_install_board_platform_fail_open()") < source.rindex(
+    assert source.rindex("_install_board_platform_fail_open()") < source.rindex(
         "_install_model_lane_fail_open()"
     )
