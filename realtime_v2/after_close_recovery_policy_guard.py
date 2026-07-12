@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import time
-
 from realtime_v2 import after_close_recovery as recovery
 
-POLICY_GUARD_VERSION = "after_close_recovery_policy_guard_v1"
+POLICY_GUARD_VERSION = "after_close_recovery_policy_guard_v2"
 
 
 def install() -> None:
@@ -21,8 +19,22 @@ def install() -> None:
     sampler._nearest = nearest_before
 
     coordinator = recovery.AfterCloseRecoveryCoordinator
+    original_build_plan = coordinator._build_plan
     original_refresh = coordinator._refresh
     original_stats = coordinator.stats
+
+    def build_plan(self, payload):
+        plan = original_build_plan(self, payload)
+        rows = payload.get("rows", []) if isinstance(payload, dict) else []
+        valid_codes = {
+            self.base.normalize_code(row.get("stock_code"))
+            for row in rows
+            if isinstance(row, dict)
+            and self.base.normalize_code(row.get("stock_code"))
+        }
+        filtered = [item for item in plan if item.get("stock_code") in valid_codes]
+        self.outside_universe_filtered_count = len(plan) - len(filtered)
+        return filtered
 
     def refresh(self, now_mono):
         original_refresh(self, now_mono)
@@ -38,7 +50,6 @@ def install() -> None:
         missing_total = 0
         for item in self.plan:
             code = item["stock_code"]
-            lane = item["lane"]
             row = item["row"]
             try:
                 need_order = bool(self._needs(row)[2])
@@ -77,10 +88,14 @@ def install() -> None:
                 "orderbook_all_lane_enqueue_count": int(
                     getattr(self, "orderbook_all_lane_enqueue_count", 0)
                 ),
+                "outside_universe_filtered_count": int(
+                    getattr(self, "outside_universe_filtered_count", 0)
+                ),
             }
         )
         return result
 
+    coordinator._build_plan = build_plan
     coordinator._refresh = refresh
     coordinator.stats = stats
     recovery._after_close_recovery_policy_guard_installed = True
