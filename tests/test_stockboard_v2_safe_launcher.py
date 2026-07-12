@@ -26,3 +26,12 @@ def test_safe_launcher_never_force_kills_opstarter():
     assert 'Stop-ProcessRows $rows "opstarter"' not in script
     assert "Stop-OpenApiStarterArtifacts" not in script
     assert "Do not terminate opstarter" in script
+
+
+def test_safe_launcher_trusts_only_build_universe_validated_fallback():
+    script = (ROOT / "scripts" / "stockboard_v2_large_safe.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "validated cached fallback are both unavailable" in script
+    assert "using existing universe.json" not in script
+    assert 'if (Test-Path -LiteralPath $UniverseFile)' not in script
