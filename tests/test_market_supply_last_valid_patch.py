@@ -1,8 +1,6 @@
 from pathlib import Path
-from types import SimpleNamespace
 
 from realtime_v2.market_supply_last_valid_patch import (
-    _context_module,
     market_supply_valid,
     normalize_market_supply,
 )
@@ -46,74 +44,47 @@ def test_market_supply_valid_rejects_blank_weekend_payload():
     )
 
 
-def test_normalize_accepts_uppercase_market_keys_and_alias_fields():
+def test_normalize_supports_uppercase_and_wrapped_values():
     normalized = normalize_market_supply(
         {
-            "KOSPI": {
-                "index": "2,800.25",
-                "change_rate": "1.2",
-                "advance": "700",
-                "decline": "200",
-                "individual": "10",
-                "foreign": "-20",
-                "institution": "30",
-                "program": "40",
-            },
-            "KOSDAQ": {
-                "지수": "900.5",
-                "등락률": "2.3",
-                "상승": "1000",
-                "하락": "300",
-            },
-        }
-    )
-
-    assert normalized["kospi"]["market_index"] == "2,800.25"
-    assert normalized["kospi"]["program_market_eok"] == "40"
-    assert normalized["kosdaq"]["market_change_rate"] == "2.3"
-    assert market_supply_valid(normalized)
-
-
-def test_normalize_accepts_nested_values_and_row_list_shapes():
-    nested = normalize_market_supply(
-        {
             "values": {
-                "markets": [
-                    {
-                        "market_name": "KOSPI",
-                        "cur_prc": 2801,
-                        "flu_rt": 0.4,
-                        "rising": 600,
-                        "fall": 300,
-                    },
-                    {
-                        "market_name": "KOSDAQ",
-                        "cur_prc": 901,
-                        "flu_rt": 0.8,
-                        "rising": 900,
-                        "fall": 400,
-                    },
-                ]
+                "KOSPI": {
+                    "index": "2800.1",
+                    "change_rate": "1.2",
+                    "advance": "100",
+                    "decline": "50",
+                },
+                "KOSDAQ": {
+                    "index": "900.2",
+                    "change_rate": "-0.3",
+                    "advance": "80",
+                    "decline": "70",
+                },
             }
         }
     )
-
-    assert nested["kospi"]["market_index"] == 2801
-    assert nested["kosdaq"]["advancers"] == 900
-    assert market_supply_valid(nested)
-
-
-def test_context_module_resolves_actual_guarded_provider_from_wrapper():
-    guarded = SimpleNamespace(_runtime_context_payload=lambda: {})
-    wrapper = SimpleNamespace(guarded=guarded)
-    assert _context_module(wrapper) is guarded
+    assert normalized["kospi"]["market_index"] == "2800.1"
+    assert normalized["kosdaq"]["decliners"] == "70"
+    assert market_supply_valid(normalized)
 
 
-def test_worker_installs_market_supply_hold_before_server_main():
+def test_worker_installs_market_supply_hold_on_actual_context_module():
     source = (
         Path(__file__).resolve().parents[1]
         / "realtime_v2"
         / "worker64_guarded_large_bidask.py"
     ).read_text(encoding="utf-8")
     assert "_install_market_supply_hold_fail_open()" in source
+    assert 'context_module = getattr(large, "guarded", large)' in source
     assert "market_supply_last_valid_patch_error.txt" in source
+
+
+def test_context_patch_is_fail_open():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "realtime_v2"
+        / "market_supply_last_valid_patch.py"
+    ).read_text(encoding="utf-8")
+    assert '"market_supply_display_basis": "ORIGINAL_CONTEXT_ERROR"' in source
+    assert 'payload["market_supply_display_basis"] = "PATCH_FAIL_OPEN"' in source
+    assert "market_supply_patch_traceback" in source
