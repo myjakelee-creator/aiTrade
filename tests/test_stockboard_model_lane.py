@@ -124,6 +124,13 @@ def test_model_lane_worker_install_is_fail_open_and_after_board_platform():
     assert source.rindex("_install_board_platform_fail_open()") < source.rindex(
         "_install_model_lane_fail_open()"
     )
+    assert 'guarded = getattr(large, "guarded", large)' in source
+    assert "install_model_lane(guarded, base)" in source
+    assert "install_model_lane(large, base)" not in source
+    assert 'hasattr(guarded, "enrich_candidate_model_fields")' in source
+    assert "guarded.enrich_candidate_model_fields" in source
+    assert "guarded._display_order_controller" in source
+    assert "guarded.now_text()" in source
     assert 'controller.top_codes = []' in source
     assert 'controller.pool_codes = []' in source
     assert 'if getattr(controller, "paused", False)' in source
