@@ -44,6 +44,17 @@ const metricSpec=[
  ['bottleneck','\uBCD1\uBAA9'],['freshness','E2E'],['recv','\uC218\uC2E0'],['pending','\uB300\uAE30'],['drops','\uB4DC\uB86D'],['worker_queue','WorkerQ'],['cpu','CPU'],['bits','Worker'],
  ['compute','\uACC4\uC0B0'],['serialize','\uC9C1\uB82C'],['copy','\uBCF5\uC0AC'],['cache_age','\uCE90\uC2DC'],['clients','\uC811\uC18D'],['payload','Payload'],['api_rtt','API'],['browser_render','\uB80C\uB354']
 ];
+const bottleneckLabels={
+ WORKER_32BIT:'Worker 32bit',
+ DROP:'\uB4DC\uB86D \uC99D\uAC00',
+ COLLECTOR_QUEUE:'Collector \uB300\uAE30',
+ STALE:'\uC774\uBCA4\uD2B8 \uC9C0\uC5F0',
+ WORKER_CPU:'Worker CPU',
+ STOCK_COMPUTE:'StockBoard \uACC4\uC0B0',
+ SERIALIZE:'StockBoard \uC9C1\uB82C\uD654',
+ THEME:'ThemeBoard \uACC4\uC0B0/\uBCF5\uC0AC',
+ NORMAL:'\uC815\uC0C1'
+};
 let renderSamples=[];
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function nativeTopbar(){return document.querySelector('#topbar.topbar')||document.querySelector('.topbar');}
@@ -75,14 +86,16 @@ function buildShell(){
 }
 function hookRender(){const fn=window.render;if(typeof fn!=='function'||fn.__bpMeasured)return false;function wrapped(){const start=performance.now();try{return fn.apply(this,arguments);}finally{const ms=performance.now()-start;renderSamples.push(ms);if(renderSamples.length>40)renderSamples.shift();}}wrapped.__bpMeasured=true;window.render=wrapped;return true;}
 function renderClientMetric(){if(!renderSamples.length)return {key:'browser_render',label:'\uB80C\uB354',text:'-',tone:'muted'};const last=renderSamples[renderSamples.length-1];const ordered=renderSamples.slice().sort((a,b)=>a-b);const p95=ordered[Math.min(ordered.length-1,Math.floor(ordered.length*.95))];const tone=p95<=16?'good':p95<=40?'warn':'bad';return {key:'browser_render',label:'\uB80C\uB354',text:`${last.toFixed(1)}ms p95 ${p95.toFixed(1)}`,tone};}
-function drawMetrics(metrics,rtt){
+function drawMetrics(metrics,rtt,bottleneckCode){
  const el=document.getElementById('bp-speed-strip');if(!el)return;
  const map=new Map((Array.isArray(metrics)?metrics:[]).map(m=>[String(m.key||''),m]));
+ const bottleneck=map.get('bottleneck');
+ if(bottleneck){map.set('bottleneck',{...bottleneck,text:bottleneckLabels[String(bottleneckCode||'')]||bottleneck.text||'-'});}
  map.set('api_rtt',{key:'api_rtt',label:'API',text:`${rtt.toFixed(1)}ms`,tone:rtt<=10?'good':rtt<=50?'warn':'bad'});map.set('browser_render',renderClientMetric());
  const normalized=metricSpec.map(([key,label])=>{const m=map.get(key)||{};return {key,label,text:m.text==null||m.text===''?'-':m.text,tone:m.tone||'muted'};});
  el.innerHTML=normalized.map(m=>`<span class="bp-speed ${esc(m.tone)}"><b>${esc(m.label)}</b> ${esc(m.text)}</span>`).join('');
 }
-async function pollPerformance(){const start=performance.now();try{const response=await fetch(`/api/v2/boards/performance?board_id=${encodeURIComponent(boardId)}`,{cache:'no-store'});if(!response.ok)throw new Error(String(response.status));const data=await response.json();drawMetrics(data.display_metrics||[],performance.now()-start);}catch(_e){const el=document.getElementById('bp-speed-strip');if(el)el.innerHTML='<span class="bp-speed bad"><b>\uC18D\uB3C4</b> API \uC5F0\uACB0 \uC2E4\uD328</span>';}setTimeout(pollPerformance,document.hidden?5000:2000);}
+async function pollPerformance(){const start=performance.now();try{const response=await fetch(`/api/v2/boards/performance?board_id=${encodeURIComponent(boardId)}`,{cache:'no-store'});if(!response.ok)throw new Error(String(response.status));const data=await response.json();drawMetrics(data.display_metrics||[],performance.now()-start,data.bottleneck);}catch(_e){const el=document.getElementById('bp-speed-strip');if(el)el.innerHTML='<span class="bp-speed bad"><b>\uC18D\uB3C4</b> API \uC5F0\uACB0 \uC2E4\uD328</span>';}setTimeout(pollPerformance,document.hidden?5000:2000);}
 async function loadHub(){const grid=document.getElementById('bp-board-grid');if(!grid)return;try{const data=await fetch('/api/v2/boards',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error(String(r.status));return r.json();});grid.innerHTML=(data.boards||[]).filter(b=>b.board_id!=='boards').map(b=>`<section class="bp-board-card ${b.enabled?'':'disabled'}"><h2>${esc(b.label)}</h2><p>${esc(b.description)}</p><p>\uC0C1\uD0DC <b>${esc(b.state||'-')}</b> &middot; \uC811\uC18D ${esc(b.clients||0)} &middot; cache ${esc(b.cache_version||0)}</p><p>\uAC31\uC2E0 ${esc(b.last_updated_at||'-')}</p><div class="bp-board-actions">${b.enabled?`<a href="${esc(b.url)}">\uC5F4\uAE30</a><button type="button" data-pop="${esc(b.url)}">\uC0C8 \uCC3D</button>`:'<span>\uC900\uBE44\uC911</span>'}</div></section>`).join('');grid.querySelectorAll('[data-pop]').forEach(btn=>btn.addEventListener('click',()=>window.open(btn.dataset.pop,'_blank','noopener')));}catch(_e){grid.innerHTML='<section class="bp-board-card"><h2>Board Hub \uC624\uB958</h2><p>\uC0C1\uD0DC API\uB97C \uC77D\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.</p></section>';}setTimeout(loadHub,5000);}
 function start(){buildShell();let tries=0;const timer=setInterval(()=>{tries++;if(hookRender()||tries>20)clearInterval(timer);},250);pollPerformance();loadHub();}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();
