@@ -52,8 +52,6 @@ function moveLocalControls(local){
  if(boardId==='stockboard'){
   ['ui-zoom-toggle','column-minimize-toggle','row-position-toggle'].forEach(id=>appendNode(local,document.getElementById(id)));
   const selector=document.getElementById('candidate-model-selector');appendNode(local,selector&&(selector.closest('label')||selector));
- }else if(boardId==='themeboard'){
-  ['basisStatus','copyStatus'].forEach(id=>appendNode(local,document.getElementById(id)));
  }
  if(!local.children.length){const label=document.createElement('span');label.className='bp-local-label';label.textContent='\uBCF4\uB4DC \uC81C\uC5B4 -';local.appendChild(label);}
 }
