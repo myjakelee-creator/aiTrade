@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import struct
 import sys
 import traceback
 from pathlib import Path
@@ -172,6 +173,32 @@ def _install_theme_board_fail_open() -> None:
         _write_patch_error("theme_board_patch_error.txt", error)
 
 
+def _install_board_platform_fail_open() -> None:
+    try:
+        from realtime_v2.board_platform import install as install_board_platform
+
+        install_board_platform(base, large)
+    except Exception as error:
+        _write_patch_error("board_platform_patch_error.txt", error)
+
+
+def _require_64bit_worker() -> None:
+    bits = struct.calcsize("P") * 8
+    if bits == 64:
+        return
+    message = (
+        f"StockBoard worker requires 64-bit Python, current interpreter is {bits}-bit: "
+        f"{sys.executable}"
+    )
+    try:
+        runtime = _runtime_dir()
+        runtime.mkdir(parents=True, exist_ok=True)
+        (runtime / "worker_python_bits_error.txt").write_text(message, encoding="utf-8")
+    except Exception:
+        pass
+    raise SystemExit(message)
+
+
 _install_bidask_patch_fail_open()
 _install_display_hold_fail_open()
 _install_display_hold_ohlc_price_fail_open()
@@ -180,6 +207,8 @@ _install_execution_strength_alias_fail_open()
 _install_cross_table_navigation_patch_fail_open()
 _install_header_sort_patch_fail_open()
 _install_theme_board_fail_open()
+_install_board_platform_fail_open()
 
 if __name__ == "__main__":
+    _require_64bit_worker()
     raise SystemExit(base.main())
