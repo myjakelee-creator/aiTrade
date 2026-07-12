@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from realtime_v2 import after_close_recovery as recovery
 
-POLICY_GUARD_VERSION = "after_close_recovery_policy_guard_v3"
+POLICY_GUARD_VERSION = "after_close_recovery_policy_guard_v4"
 
 
 def install() -> None:
@@ -121,7 +121,7 @@ def install() -> None:
             ):
                 if not needed:
                     continue
-                label = terminal_label(row, kind)
+                label = self._terminal_label(row, kind)
                 labels[kind] = label
                 failed += int(label == "복구실패")
                 held += int(label == "직전값")
@@ -162,7 +162,7 @@ def install() -> None:
             and target_date
             and getattr(self, "terminal_marked_date", None) != target_date
         ):
-            mark_terminal(self, target_date)
+            self._mark_terminal(target_date)
 
     def stats(self):
         result = original_stats(self)
@@ -196,6 +196,8 @@ def install() -> None:
 
     coordinator._build_plan = build_plan
     coordinator._refresh = refresh
+    coordinator._terminal_label = terminal_label
+    coordinator._mark_terminal = mark_terminal
     coordinator.tick = tick
     coordinator.stats = stats
     recovery._after_close_recovery_policy_guard_installed = True
