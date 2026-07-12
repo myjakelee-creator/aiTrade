@@ -115,3 +115,8 @@ def test_model_lane_worker_install_is_fail_open_and_after_board_platform():
     assert source.rindex("_install_board_platform_fail_open()") < source.rindex(
         "_install_model_lane_fail_open()"
     )
+    assert 'controller.top_codes = []' in source
+    assert 'controller.pool_codes = []' in source
+    assert 'if getattr(controller, "paused", False)' in source
+    assert '"model_lane_compute_ms"' in source
+    assert '"model_lane_reuse_count"' in source
