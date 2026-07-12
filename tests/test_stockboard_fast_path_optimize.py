@@ -61,7 +61,7 @@ def _actual_module():
     )
 
 
-def test_existing_quotes_are_not_reenriched_during_rows():
+def test_existing_quotes_reuse_original_object_without_reenrichment():
     actual = _actual_module()
     state_class = _state_class()
     base = SimpleNamespace(State=state_class)
@@ -72,10 +72,10 @@ def test_existing_quotes_are_not_reenriched_during_rows():
 
     assert len(rows) == 2
     assert state.original_quote_calls == 0
-    assert state.status["fast_quote_existing_skip_last"] == 2
 
-    state._quote("005930")
-    assert state.original_quote_calls == 1
+    existing = state._quote("005930")
+    assert existing is state.quotes["005930"]
+    assert state.original_quote_calls == 0
 
 
 def test_missing_quote_still_uses_original_initializer():
@@ -111,3 +111,18 @@ def test_snapshot_file_changes_are_bulk_applied_once():
     assert state.status["fast_strength_bulk_apply_last"] == 2
     assert state.quotes["005930"]["ohlc_snapshot_applied_at"] == 2
     assert state.quotes["000660"]["strength_5m"] == 2
+
+
+def test_board_platform_installs_optimization_before_profiler():
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "realtime_v2"
+        / "board_platform"
+        / "__init__.py"
+    ).read_text(encoding="utf-8")
+
+    assert source.index("install_fast_path_optimize(actual_module, base)") < source.index(
+        "install_fast_path_profile(actual_module, base)"
+    )
