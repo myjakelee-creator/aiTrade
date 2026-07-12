@@ -15,6 +15,7 @@ def install(base, large):
     import realtime_v2.display_hold_policy_patch as display_hold_module
     import realtime_v2.market_session as market_session_module
     import realtime_v2.session_metric_hold_patch as session_metric_module
+    from realtime_v2.after_close_recovery import install_worker
 
     install_market_session_cache(market_session_module)
     install_display_hold_fast(display_hold_module)
@@ -26,6 +27,7 @@ def install(base, large):
     install_model_lane_merge_optimize()
     install_fast_path_profile(actual_module, base)
     install_hot_path_cprofile(base)
+    install_worker(base, large)
 
 
 __all__ = ["install"]
