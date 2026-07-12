@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 from realtime_v2.after_close_recovery_hardening import install_module_hardening
 from realtime_v2.after_close_recovery_policy_guard import install as install_policy_guard
@@ -66,6 +67,34 @@ def test_all_p0_to_p6_orderbook_tasks_are_enqueued():
     assert tasks[-1] == ("orderbook", "000006")
     assert coordinator.missing_orderbook_count == 7
     assert coordinator.orderbook_all_lane_enqueue_count == 7
+
+
+def test_theme_master_codes_outside_current_universe_are_filtered():
+    coordinator = AfterCloseRecoveryCoordinator.__new__(AfterCloseRecoveryCoordinator)
+    coordinator.base = SimpleNamespace(
+        normalize_code=lambda value: str(value or "")
+        if len(str(value or "")) == 6
+        else ""
+    )
+    coordinator.scheduler_module = SimpleNamespace(
+        _load_selected=lambda _base: "000001",
+        _model_rank=lambda row, fallback: int(row.get("model_rank") or fallback),
+    )
+    coordinator.theme_members = {
+        "T1": (("000002", 0.5), ("999999", 0.5)),
+    }
+    coordinator._theme_data = lambda: {
+        "themes": [{"theme_id": "T1", "leaders": []}]
+    }
+    rows = [
+        {"stock_code": "000001", "model_rank": 1},
+        {"stock_code": "000002", "model_rank": 2},
+    ]
+
+    plan = coordinator._build_plan({"rows": rows})
+    codes = [item["stock_code"] for item in plan]
+    assert codes == ["000001", "000002"]
+    assert coordinator.outside_universe_filtered_count == 1
 
 
 def test_runtime_installs_policy_guard_in_collector_and_worker():
