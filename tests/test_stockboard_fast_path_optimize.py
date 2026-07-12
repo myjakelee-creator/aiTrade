@@ -6,29 +6,32 @@ from types import SimpleNamespace
 from realtime_v2.board_platform.fast_path_optimize import install
 
 
-class FakeState:
-    def __init__(self):
-        self.lock = threading.RLock()
-        self.seed_rank_by_code = {"005930": 1, "000660": 2}
-        self.quotes = {
-            "005930": {"stock_code": "005930", "price": 100},
-            "000660": {"stock_code": "000660", "price": 200},
-        }
-        self.status = {}
-        self.original_quote_calls = 0
-        self.ohlc_snapshot_mtime = 1
-        self.strength_snapshot_mtime = 1
-        self.strength_snapshot_by_code = {}
+def _state_class():
+    class FakeState:
+        def __init__(self):
+            self.lock = threading.RLock()
+            self.seed_rank_by_code = {"005930": 1, "000660": 2}
+            self.quotes = {
+                "005930": {"stock_code": "005930", "price": 100},
+                "000660": {"stock_code": "000660", "price": 200},
+            }
+            self.status = {}
+            self.original_quote_calls = 0
+            self.ohlc_snapshot_mtime = 1
+            self.strength_snapshot_mtime = 1
+            self.strength_snapshot_by_code = {}
 
-    def _quote(self, code):
-        self.original_quote_calls += 1
-        return self.quotes.setdefault(code, {"stock_code": code})
+        def _quote(self, code):
+            self.original_quote_calls += 1
+            return self.quotes.setdefault(code, {"stock_code": code})
 
-    def rows(self, limit=300):
-        with self.lock:
-            for code in list(self.seed_rank_by_code):
-                self._quote(code)
-            return list(self.quotes.values())[:limit]
+        def rows(self, limit=300):
+            with self.lock:
+                for code in list(self.seed_rank_by_code):
+                    self._quote(code)
+                return list(self.quotes.values())[:limit]
+
+    return FakeState
 
 
 def _actual_module():
@@ -60,10 +63,11 @@ def _actual_module():
 
 def test_existing_quotes_are_not_reenriched_during_rows():
     actual = _actual_module()
-    base = SimpleNamespace(State=FakeState)
+    state_class = _state_class()
+    base = SimpleNamespace(State=state_class)
     install(actual, base)
 
-    state = FakeState()
+    state = state_class()
     rows = state.rows()
 
     assert len(rows) == 2
@@ -76,14 +80,11 @@ def test_existing_quotes_are_not_reenriched_during_rows():
 
 def test_missing_quote_still_uses_original_initializer():
     actual = _actual_module()
-
-    class LocalState(FakeState):
-        pass
-
-    base = SimpleNamespace(State=LocalState)
+    state_class = _state_class()
+    base = SimpleNamespace(State=state_class)
     install(actual, base)
 
-    state = LocalState()
+    state = state_class()
     state.seed_rank_by_code["035420"] = 3
     state.rows()
 
@@ -93,14 +94,11 @@ def test_missing_quote_still_uses_original_initializer():
 
 def test_snapshot_file_changes_are_bulk_applied_once():
     actual = _actual_module()
-
-    class LocalState(FakeState):
-        pass
-
-    base = SimpleNamespace(State=LocalState)
+    state_class = _state_class()
+    base = SimpleNamespace(State=state_class)
     install(actual, base)
 
-    state = LocalState()
+    state = state_class()
     state.strength_snapshot_by_code = {
         "005930": {"strength_5m": 120},
         "000660": {"strength_5m": 130},
