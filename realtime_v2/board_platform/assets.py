@@ -6,20 +6,16 @@ from __future__ import annotations
 
 SHELL_CSS = r"""
 #bp-common-header{position:sticky;top:0;left:0;z-index:1000;width:100vw;max-width:100vw;height:104px;min-height:104px;max-height:104px;box-sizing:border-box;background:#dce7f1;border-bottom:1px solid #94a3b8;color:#111827;font:12px "Malgun Gothic",Arial,sans-serif;overflow:hidden}
+#bp-common-header *{font-size:12px!important}
 #bp-common-main{height:28px;display:flex;align-items:center;gap:4px;padding:3px 6px;box-sizing:border-box;overflow-x:auto;overflow-y:hidden;white-space:nowrap;border-bottom:1px solid rgba(100,116,139,.28)}
-#bp-common-brand{font-weight:900;font-size:13px;flex:0 0 auto}
+#bp-common-brand{font-weight:900;flex:0 0 auto}
 #bp-shell-nav{display:inline-flex;align-items:center;gap:3px;flex:0 0 auto}
-#bp-shell-nav .bp-tab,#bp-shell-nav .bp-popout{display:inline-flex;align-items:center;justify-content:center;min-height:21px;padding:1px 6px;border:1px solid #9aa8b5;border-radius:3px;background:#edf3f8;color:#111827;text-decoration:none;font:800 11px "Malgun Gothic",Arial,sans-serif;white-space:nowrap}
+#bp-shell-nav .bp-tab,#bp-shell-nav .bp-popout{display:inline-flex;align-items:center;justify-content:center;min-height:21px;padding:1px 6px;border:1px solid #9aa8b5;border-radius:3px;background:#edf3f8;color:#111827;text-decoration:none;font-weight:800;white-space:nowrap}
 #bp-shell-nav .bp-tab.active{color:#fff;border-color:#1d4ed8;background:#1d4ed8}
 #bp-shell-nav .bp-tab.disabled{color:#94a3b8;background:#f1f5f9;cursor:not-allowed}
 #bp-shell-nav .bp-popout{background:#fff;cursor:pointer}
-#bp-current-board,#bp-common-clock,#bp-common-status{display:inline-flex;align-items:center;min-height:21px;padding:1px 6px;border:1px solid #9aa8b5;border-radius:3px;background:#fff;white-space:nowrap;flex:0 0 auto}
-#bp-current-board{font-weight:900;color:#1d4ed8}
-#bp-common-status.good{color:#067a2a;border-color:#86efac;background:#f0fdf4;font-weight:900}
-#bp-common-status.warn{color:#92400e;border-color:#facc15;background:#fef9c3;font-weight:900}
-#bp-common-status.bad{color:#b91c1c;border-color:#fca5a5;background:#fef2f2;font-weight:900}
 #bp-speed-strip{height:46px;display:flex;flex-wrap:wrap;align-content:flex-start;gap:3px;padding:3px 6px;box-sizing:border-box;overflow-x:hidden;overflow-y:auto;border-bottom:1px solid rgba(100,116,139,.28);background:#eaf1f7;scrollbar-width:thin}
-#bp-speed-strip .bp-speed{display:inline-flex;align-items:center;gap:3px;min-height:18px;padding:0 4px;border:1px solid #cbd5e1;border-radius:3px;background:#fff;color:#334155;font:700 10px "Malgun Gothic",Arial,sans-serif;white-space:nowrap;flex:0 0 auto}
+#bp-speed-strip .bp-speed{display:inline-flex;align-items:center;gap:3px;min-height:18px;padding:0 4px;border:1px solid #cbd5e1;border-radius:3px;background:#fff;color:#334155;font-weight:700;white-space:nowrap;flex:0 0 auto}
 #bp-speed-strip .bp-speed b{font-weight:900}
 #bp-speed-strip .good,#bp-speed-strip .green{color:#067a2a;border-color:#86efac;background:#f0fdf4}
 #bp-speed-strip .warn,#bp-speed-strip .yellow{color:#92400e;border-color:#facc15;background:#fef9c3}
@@ -34,7 +30,7 @@ SHELL_CSS = r"""
 .bp-board-card{padding:8px;border:1px solid #cbd5e1;border-radius:5px;background:#fff}
 .bp-board-card h2{margin:0 0 4px;font-size:15px}.bp-board-card p{margin:3px 0;color:#475569}
 .bp-board-actions{display:flex;gap:4px;margin-top:6px;align-items:center}
-.bp-board-actions a,.bp-board-actions button{padding:3px 8px;border:1px solid #94a3b8;border-radius:3px;background:#fff;color:#111827;text-decoration:none;font:700 12px "Malgun Gothic",Arial,sans-serif}
+.bp-board-actions a,.bp-board-actions button{padding:3px 8px;border:1px solid #94a3b8;border-radius:3px;background:#fff;color:#111827;text-decoration:none;font-weight:700}
 .bp-board-card.disabled{opacity:.6}
 @media(max-width:700px){.bp-board-grid{grid-template-columns:1fr}}
 """
@@ -44,7 +40,6 @@ SHELL_JS = r"""
 'use strict';
 const path=location.pathname;
 const boardId=path==='/theme'||path==='/stockboard_theme_v1.html'?'themeboard':path==='/strategy'?'strategyboard':path==='/boards'?'boards':'stockboard';
-const boardLabels={stockboard:'StockBoard',themeboard:'ThemeBoard',strategyboard:'StrategyBoard',boards:'Boards'};
 const metricSpec=[
  ['bottleneck','\uBCD1\uBAA9'],['freshness','E2E'],['recv','\uC218\uC2E0'],['pending','\uB300\uAE30'],['drops','\uB4DC\uB86D'],['worker_queue','WorkerQ'],['cpu','CPU'],['bits','Worker'],
  ['compute','\uACC4\uC0B0'],['serialize','\uC9C1\uB82C'],['copy','\uBCF5\uC0AC'],['cache_age','\uCE90\uC2DC'],['clients','\uC811\uC18D'],['payload','Payload'],['api_rtt','API'],['browser_render','\uB80C\uB354']
@@ -52,37 +47,27 @@ const metricSpec=[
 let renderSamples=[];
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function nativeTopbar(){return document.querySelector('#topbar.topbar')||document.querySelector('.topbar');}
-function statusTone(node){const cls=String(node&&node.className||'').toLowerCase();return cls.includes('bad')||cls.includes('red')?'bad':cls.includes('warn')||cls.includes('yellow')?'warn':'good';}
 function appendNode(local,node){if(node&&node!==local&&!local.contains(node))local.appendChild(node);}
-function moveLocalControls(bar,local){
+function moveLocalControls(local){
  if(boardId==='stockboard'){
   ['ui-zoom-toggle','column-minimize-toggle','row-position-toggle'].forEach(id=>appendNode(local,document.getElementById(id)));
   const selector=document.getElementById('candidate-model-selector');appendNode(local,selector&&(selector.closest('label')||selector));
-  ['copy-status','metric-mode-status'].forEach(id=>appendNode(local,document.getElementById(id)));
-  appendNode(local,bar&&bar.querySelector('.small'));
  }else if(boardId==='themeboard'){
   ['basisStatus','copyStatus'].forEach(id=>appendNode(local,document.getElementById(id)));
  }
  if(!local.children.length){const label=document.createElement('span');label.className='bp-local-label';label.textContent='\uBCF4\uB4DC \uC81C\uC5B4 -';local.appendChild(label);}
-}
-function mirrorStatus(source,target){
- function sync(){if(!source){target.textContent='\uC0C1\uD0DC READY';target.className='good';return;}target.textContent=source.textContent||'\uC0C1\uD0DC -';target.className=statusTone(source);}
- sync();if(source)new MutationObserver(sync).observe(source,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['class']});
 }
 function buildShell(){
  const bar=nativeTopbar();
  let header=document.getElementById('bp-common-header');
  if(!header){
   header=document.createElement('header');header.id='bp-common-header';
-  header.innerHTML='<div id="bp-common-main"><span id="bp-common-brand">aiTrade</span><span id="bp-shell-nav"></span><span id="bp-current-board"></span><span id="bp-common-clock">-</span><span id="bp-common-status" class="warn">\uC0C1\uD0DC \uB300\uAE30</span></div><div id="bp-speed-strip"><span class="bp-speed muted"><b>\uC18D\uB3C4</b> \uC218\uC2E0 \uB300\uAE30</span></div><div id="bp-local-toolbar"></div>';
+  header.innerHTML='<div id="bp-common-main"><span id="bp-common-brand">aiTrade</span><span id="bp-shell-nav"></span></div><div id="bp-speed-strip"><span class="bp-speed muted"><b>\uC18D\uB3C4</b> \uC218\uC2E0 \uB300\uAE30</span></div><div id="bp-local-toolbar"></div>';
   document.body.insertBefore(header,document.body.firstChild);
  }
  document.body.classList.add('bp-shell-ready');
- document.getElementById('bp-current-board').textContent=boardLabels[boardId]||boardId;
- const local=document.getElementById('bp-local-toolbar');moveLocalControls(bar,local);
- const nativeStatus=bar&&bar.querySelector('#status');mirrorStatus(nativeStatus,document.getElementById('bp-common-status'));
+ moveLocalControls(document.getElementById('bp-local-toolbar'));
  if(bar)bar.classList.add('bp-native-topbar-hidden');
- const clock=document.getElementById('bp-common-clock');const tick=()=>clock.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});tick();setInterval(tick,500);
  const nav=document.getElementById('bp-shell-nav');
  fetch('/api/v2/boards',{cache:'no-store'}).then(r=>r.json()).then(data=>{
   const boards=Array.isArray(data.boards)?data.boards:[];
