@@ -284,11 +284,17 @@ def _install_board_data_hub_fail_open() -> None:
         from realtime_v2.theme_projection_summary_momentum_patch import (
             install as install_theme_summary_momentum,
         )
+        from realtime_v2 import (
+            theme_projection_flow_history_patch as theme_flow_module,
+        )
+        from realtime_v2.theme_flow_async_persist_patch import (
+            install as install_theme_flow_async_persist,
+        )
 
-        # Install the summary core before the existing hub module imports and wraps
-        # ThemeProjectionBuilder. The existing flow/continuity wrappers then enrich
-        # the summary input without forcing all-theme member detail construction.
+        # Install the summary core and non-blocking flow persistence before the
+        # existing hub module imports and wraps ThemeProjectionBuilder.
         install_theme_summary_split(theme_projection_module)
+        install_theme_flow_async_persist(theme_flow_module)
 
         from realtime_v2.worker_board_data_hub_patch import install as install_board_data_hub
 
