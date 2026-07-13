@@ -5,6 +5,12 @@ from pathlib import Path
 from typing import Any
 
 from realtime_v2 import theme_projection_engine as theme_projection_module
+from realtime_v2.theme_leader_detail_display_patch import (
+    install as install_theme_leader_detail_display,
+)
+from realtime_v2.theme_leader_selection_patch import (
+    install as install_theme_leader_selection,
+)
 from realtime_v2.theme_projection_dual_rank_patch import (
     install as install_theme_dual_rank,
 )
@@ -20,10 +26,12 @@ from realtime_v2.worker_theme_dual_rank_ui_patch import (
 )
 
 
-# ThemeSelectedDetailRuntime imports and installs the leader wrapper first. Install
-# dual ranking next, then one final accounting wrapper so named phases are not counted
-# again as ``other_ms``.
+# Dual rank must complete first so the leader wrapper can precisely score only the
+# union of the top momentum and money views. Selected detail remains always precise.
+# Performance accounting is installed last and sees the final named phase timings.
 install_theme_dual_rank(theme_projection_module)
+install_theme_leader_selection(theme_projection_module)
+install_theme_leader_detail_display(theme_projection_module)
 install_theme_performance_accounting(theme_projection_module)
 
 
@@ -103,6 +111,9 @@ def install(base) -> None:
             self.status["theme_dual_server_rankings_enabled"] = True
             self.status["theme_default_view"] = "momentum"
             self.status["theme_browser_sort_allowed"] = False
+            self.status["theme_leader_precision_scope"] = (
+                "top_momentum_money_union_plus_selected_detail"
+            )
 
     def patched_snapshot(self, limit: int = 300) -> dict[str, Any]:
         payload = original_snapshot(self, limit)
@@ -233,6 +244,7 @@ def install(base) -> None:
                 "calculate_ms": raw_payload.get("calculate_ms"),
                 "theme": raw_payload.get("theme"),
                 "policy": raw_payload.get("policy"),
+                "leader_detail_status": raw_payload.get("leader_detail_status"),
             }
         )
 
