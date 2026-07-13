@@ -14,7 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 # Critical-path collector: keep the production QAx process as close as possible
-# to the verified minimal smoke test.  Do not import the large provider or any
+# to the verified minimal smoke test. Do not import the large provider or any
 # provider/timer/TR/off-hours patch stack here.
 base = importlib.import_module("realtime_v2.collector32")
 
@@ -34,8 +34,16 @@ _REALTIME_BATCH_SIZE = 100
 _REALTIME_SCREEN_START = 5100
 
 
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(str(os.getenv(name, default)).strip())
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
 class MinimalCollectorStatus:
-    def __init__(self) -> None:
+    def __init__(self, trade_value_sample_interval_ms: int) -> None:
         self.lock = threading.RLock()
         self.running = False
         self.login_state = "not_requested"
@@ -51,6 +59,9 @@ class MinimalCollectorStatus:
         self.trade_event_received_count = 0
         self.realdata_last_received_at: str | None = None
         self.trade_event_last_received_at: str | None = None
+        self.trade_value_sample_interval_ms = trade_value_sample_interval_ms
+        self.trade_value_sample_count = 0
+        self.trade_value_sample_skip_count = 0
         self.last_error: str | None = None
         self.openapi_native_handle_ready = False
         self.openapi_native_hwnd: int | None = None
@@ -79,6 +90,9 @@ class MinimalCollectorStatus:
                 "trade_event_received_count": self.trade_event_received_count,
                 "realdata_last_received_at": self.realdata_last_received_at,
                 "trade_event_last_received_at": self.trade_event_last_received_at,
+                "trade_value_sample_interval_ms": self.trade_value_sample_interval_ms,
+                "trade_value_sample_count": self.trade_value_sample_count,
+                "trade_value_sample_skip_count": self.trade_value_sample_skip_count,
                 "openapi_native_handle_ready": self.openapi_native_handle_ready,
                 "openapi_native_hwnd": self.openapi_native_hwnd,
                 "openapi_native_handle_error": self.openapi_native_handle_error,
@@ -162,7 +176,13 @@ def main() -> int:
     codes = base.load_codes(args.codes_file, args.codes, args.limit, args.suffix)
     sender = base.EventSender(args.host, args.event_port, flush_ms=args.flush_ms)
     sender.start()
-    state = MinimalCollectorStatus()
+    trade_value_sample_interval_ms = _env_int(
+        "STOCKBOARD_TRADE_VALUE_SAMPLE_MS", 500, 100, 5000
+    )
+    trade_value_sample_interval_sec = trade_value_sample_interval_ms / 1000.0
+    state = MinimalCollectorStatus(trade_value_sample_interval_ms)
+    trade_value_last_sample_mono_by_code: dict[str, float] = {}
+    trade_value_last_raw_by_code: dict[str, str] = {}
 
     from PyQt5.QtCore import QCoreApplication, QTimer
     from PyQt5.QtWidgets import QApplication
@@ -188,6 +208,10 @@ def main() -> int:
     )
     print("collector_mode=minimal_qax_critical_v1", flush=True)
     print(f"native_hwnd={hwnd}", flush=True)
+    print(
+        f"trade_value_sample_interval_ms={trade_value_sample_interval_ms}",
+        flush=True,
+    )
 
     def publish_status() -> None:
         status = state.status()
@@ -286,13 +310,39 @@ def main() -> int:
             return
 
         try:
+            # Price/rate/trade-time stay on the critical path. Cumulative trade
+            # value is intentionally sampled because it may be slower without
+            # delaying the decision-critical price lane at the 09:00 burst.
             price_raw = _real_text(control, str(received_code), 10)
             change_rate_raw = _real_text(control, str(received_code), 12)
             trade_time_raw = _real_text(control, str(received_code), 20)
-            cumulative_value_raw = _real_text(control, str(received_code), 14)
+
+            sample_now = time.monotonic()
+            last_sample = trade_value_last_sample_mono_by_code.get(normalized_code)
+            should_sample_value = (
+                last_sample is None
+                or sample_now - last_sample >= trade_value_sample_interval_sec
+                or normalized_code not in trade_value_last_raw_by_code
+            )
+            if should_sample_value:
+                cumulative_value_raw = _real_text(
+                    control, str(received_code), 14
+                )
+                trade_value_last_sample_mono_by_code[normalized_code] = sample_now
+                trade_value_last_raw_by_code[normalized_code] = cumulative_value_raw
+                with state.lock:
+                    state.trade_value_sample_count += 1
+            else:
+                cumulative_value_raw = trade_value_last_raw_by_code.get(
+                    normalized_code, ""
+                )
+                with state.lock:
+                    state.trade_value_sample_skip_count += 1
         except Exception as error:
             with state.lock:
-                state.last_error = f"GetCommRealData failed: {type(error).__name__}: {error}"
+                state.last_error = (
+                    f"GetCommRealData failed: {type(error).__name__}: {error}"
+                )
             return
 
         with state.lock:
@@ -348,7 +398,11 @@ def main() -> int:
         return 1
 
     publish_status()
-    print("qt_event_loop=exec_ minimal_callback_fids=10,12,20,14", flush=True)
+    print(
+        "qt_event_loop=exec_ critical_fids=10,12,20 "
+        f"sampled_fid14_ms={trade_value_sample_interval_ms}",
+        flush=True,
+    )
 
     app_result = 0
     try:
