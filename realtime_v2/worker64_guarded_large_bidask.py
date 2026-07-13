@@ -266,6 +266,24 @@ def _install_display50_fast_price_patch_fail_open() -> None:
         _write_patch_error("display50_fast_price_patch_error.txt", error)
 
 
+def _install_board_data_hub_fail_open() -> None:
+    try:
+        from realtime_v2.worker_board_data_hub_patch import install as install_board_data_hub
+
+        install_board_data_hub(base)
+    except Exception as error:
+        _write_patch_error("board_data_hub_patch_error.txt", error)
+
+
+def _install_tr_singleflight_fail_open() -> None:
+    try:
+        from realtime_v2.worker_tr_singleflight_patch import install as install_tr_singleflight
+
+        install_tr_singleflight(base)
+    except Exception as error:
+        _write_patch_error("tr_singleflight_patch_error.txt", error)
+
+
 def _install_opening_burst_cache_fail_open() -> None:
     try:
         from realtime_v2.worker_opening_burst_cache_patch import (
@@ -286,7 +304,11 @@ _install_event_freshness_fail_open()
 _install_cross_table_navigation_patch_fail_open()
 _install_header_sort_patch_fail_open()
 _install_display50_fast_price_patch_fail_open()
-# Install last so it caches the final ranking/display/hold snapshot implementation.
+# Hub must wrap the final heavy snapshot implementation before the opening-burst
+# cache captures it. TR single-flight is installed before worker threads start.
+_install_board_data_hub_fail_open()
+_install_tr_singleflight_fail_open()
+# Install last so it caches the final ranking/display/hold/hub snapshot implementation.
 _install_opening_burst_cache_fail_open()
 
 if __name__ == "__main__":
