@@ -18,18 +18,23 @@ if str(ROOT) not in sys.path:
 # provider/timer/TR/off-hours patch stack here.
 base = importlib.import_module("realtime_v2.collector32")
 
+from realtime_v2.collector_large_trade_patch import (
+    install as install_collector_large_trade,
+)
 from realtime_v2.collector_sender_resilience_patch import (
     install as install_collector_sender_resilience,
 )
 from realtime_v2.collector_sender_ordering_patch import (
     install as install_collector_sender_ordering,
 )
+from realtime_v2.common import LARGE_TRADE_THRESHOLD_KRW
 
 install_collector_sender_resilience(base)
 install_collector_sender_ordering(base)
+install_collector_large_trade(base)
 
 
-_REALTIME_FIDS = "10;12;20;14"
+_REALTIME_FIDS = "10;12;20;15;14"
 _REALTIME_BATCH_SIZE = 100
 _REALTIME_SCREEN_START = 5100
 
@@ -62,6 +67,7 @@ class MinimalCollectorStatus:
         self.trade_value_sample_interval_ms = trade_value_sample_interval_ms
         self.trade_value_sample_count = 0
         self.trade_value_sample_skip_count = 0
+        self.trade_qty_read_count = 0
         self.last_error: str | None = None
         self.openapi_native_handle_ready = False
         self.openapi_native_hwnd: int | None = None
@@ -73,7 +79,7 @@ class MinimalCollectorStatus:
             return {
                 "available": True,
                 "running": self.running,
-                "collector_mode": "minimal_qax_critical_v1",
+                "collector_mode": "minimal_qax_critical_large_trade_v1",
                 "started_at": self.started_at,
                 "login_requested": self.login_state != "not_requested",
                 "login_state": self.login_state,
@@ -93,6 +99,10 @@ class MinimalCollectorStatus:
                 "trade_value_sample_interval_ms": self.trade_value_sample_interval_ms,
                 "trade_value_sample_count": self.trade_value_sample_count,
                 "trade_value_sample_skip_count": self.trade_value_sample_skip_count,
+                "trade_qty_read_count": self.trade_qty_read_count,
+                "large_trade_enabled": True,
+                "large_trade_input_fid": 15,
+                "large_trade_threshold_krw": LARGE_TRADE_THRESHOLD_KRW,
                 "openapi_native_handle_ready": self.openapi_native_handle_ready,
                 "openapi_native_hwnd": self.openapi_native_hwnd,
                 "openapi_native_handle_error": self.openapi_native_handle_error,
@@ -171,8 +181,9 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    # Orderbook, strength, close-metric and auxiliary TR work are deliberately
-    # excluded until this price/rate/value lane passes a long-running QAx test.
+    # Orderbook, strength, close-metric and auxiliary TR work remain excluded.
+    # Signed FID 15 is the only added live field: it restores exact large-trade
+    # aggregation without adding a second QAx owner, timer, provider or TR path.
     codes = base.load_codes(args.codes_file, args.codes, args.limit, args.suffix)
     sender = base.EventSender(args.host, args.event_port, flush_ms=args.flush_ms)
     sender.start()
@@ -206,10 +217,11 @@ def main() -> int:
         f"orderbook=False flush_ms={args.flush_ms}",
         flush=True,
     )
-    print("collector_mode=minimal_qax_critical_v1", flush=True)
+    print("collector_mode=minimal_qax_critical_large_trade_v1", flush=True)
     print(f"native_hwnd={hwnd}", flush=True)
     print(
-        f"trade_value_sample_interval_ms={trade_value_sample_interval_ms}",
+        f"trade_value_sample_interval_ms={trade_value_sample_interval_ms} "
+        f"large_trade_threshold_krw={LARGE_TRADE_THRESHOLD_KRW}",
         flush=True,
     )
 
@@ -232,7 +244,7 @@ def main() -> int:
                     and status.get("realreg_succeeded") is True
                     and int(status.get("realreg_code_count") or 0) > 0
                 ),
-                "collector_mode": "minimal_qax_critical_v1",
+                "collector_mode": "minimal_qax_critical_large_trade_v1",
             },
         )
 
@@ -310,12 +322,13 @@ def main() -> int:
             return
 
         try:
-            # Price/rate/trade-time stay on the critical path. Cumulative trade
-            # value is intentionally sampled because it may be slower without
-            # delaying the decision-critical price lane at the 09:00 burst.
+            # Price/rate/time and signed trade quantity stay on the critical path.
+            # Cumulative trade value remains sampled so restoring large trades adds
+            # only one QAx read to the normal callback.
             price_raw = _real_text(control, str(received_code), 10)
             change_rate_raw = _real_text(control, str(received_code), 12)
             trade_time_raw = _real_text(control, str(received_code), 20)
+            trade_qty_raw = _real_text(control, str(received_code), 15)
 
             sample_now = time.monotonic()
             last_sample = trade_value_last_sample_mono_by_code.get(normalized_code)
@@ -348,6 +361,7 @@ def main() -> int:
         with state.lock:
             state.trade_event_received_count += 1
             state.trade_event_last_received_at = now
+            state.trade_qty_read_count += 1
 
         sender.publish_trade(
             {
@@ -360,6 +374,8 @@ def main() -> int:
                     "change_rate": change_rate_raw,
                     "trade_time": trade_time_raw,
                     "fid20_trade_time": trade_time_raw,
+                    "trade_qty": trade_qty_raw,
+                    "cntg_vol": trade_qty_raw,
                     "cumulative_value": cumulative_value_raw,
                     "price_received_at": now,
                     "trade_received_at": now,
@@ -370,6 +386,7 @@ def main() -> int:
                         "price_raw": price_raw,
                         "change_rate_raw": change_rate_raw,
                         "trade_time_raw": trade_time_raw,
+                        "trade_qty_raw": trade_qty_raw,
                         "cumulative_value_raw": cumulative_value_raw,
                     },
                 },
@@ -399,7 +416,7 @@ def main() -> int:
 
     publish_status()
     print(
-        "qt_event_loop=exec_ critical_fids=10,12,20 "
+        "qt_event_loop=exec_ critical_fids=10,12,20,15 "
         f"sampled_fid14_ms={trade_value_sample_interval_ms}",
         flush=True,
     )
