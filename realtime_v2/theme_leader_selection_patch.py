@@ -8,6 +8,20 @@ from typing import Any
 
 HISTORY_WINDOW_SEC = 310.0
 
+# source key, payload component key, weight, positive-only, minimum
+_METRIC_SPECS = (
+    ("change_rate", "change_rate_rank", 30.0, False, None),
+    ("stock_change_momentum_1m", "change_momentum_1m_rank", 15.0, True, None),
+    ("stock_change_persistence_5m", "change_persistence_5m_rank", 10.0, True, None),
+    ("amount_ratio", "amount_ratio_rank", 20.0, True, None),
+    ("trade_value_1m_eok", "trade_value_1m_rank", 9.0, True, None),
+    ("trade_value_5m_eok", "trade_value_5m_rank", 6.0, True, None),
+    ("execution_strength", "execution_strength_rank", 3.0, False, 100.0),
+    ("strength_5m", "strength_5m_rank", 2.0, False, 100.0),
+    ("program_net", "program_net_rank", 2.5, True, None),
+    ("large_trade_net_sum_eok", "large_trade_rank", 2.5, True, None),
+)
+
 
 def _number(value: Any) -> float | None:
     try:
@@ -31,56 +45,28 @@ def _blocked(row: dict[str, Any]) -> set[str]:
     return set()
 
 
-def _weighted_score(components: list[tuple[float | None, float]]) -> tuple[float, float]:
-    score_sum = 0.0
-    weight_sum = 0.0
-    for value, weight in components:
-        if value is None or weight <= 0:
-            continue
-        score_sum += max(0.0, min(100.0, float(value))) * float(weight)
-        weight_sum += float(weight)
-    if weight_sum <= 0:
-        return 0.0, 0.0
-    return round(score_sum / weight_sum, 2), round(weight_sum, 2)
-
-
-def _minmax_rank(
-    records: list[dict[str, Any]],
-    key: str,
+def _eligible(
+    value: float | None,
     *,
-    positive_only: bool = False,
-    minimum: float | None = None,
-) -> dict[str, float]:
-    values: list[tuple[str, float]] = []
-    for record in records:
-        value = _number(record.get(key))
-        if value is None:
-            continue
-        if positive_only and value <= 0:
-            continue
-        if minimum is not None and value < minimum:
-            continue
-        values.append((str(record.get("stock_code") or ""), float(value)))
-    if not values:
-        return {}
-    low = min(value for _code_value, value in values)
-    high = max(value for _code_value, value in values)
-    if high <= low:
-        return {stock_code: 100.0 for stock_code, _value in values}
-    scale = 100.0 / (high - low)
-    return {
-        stock_code: round((value - low) * scale, 4)
-        for stock_code, value in values
-    }
+    positive_only: bool,
+    minimum: float | None,
+) -> bool:
+    if value is None:
+        return False
+    if positive_only and value <= 0:
+        return False
+    if minimum is not None and value < minimum:
+        return False
+    return True
 
 
 def install(theme_module) -> None:
     """Select Theme leaders from price strength, persistence and relative money.
 
     One compact stock metric record is extracted for each shared Feature row and reused
-    across every overlapping Theme. Theme membership is still visited once to assemble
-    each Theme's small record list, but repeated raw-row parsing and repeated history
-    scans are removed. Missing metrics are dynamically reweighted.
+    across every overlapping Theme. Per-theme relative ranks are calculated with one
+    min/max scan and one score scan instead of ten independent list/dict passes.
+    Missing metrics are dynamically reweighted.
     """
 
     builder_class = theme_module.ThemeProjectionBuilder
@@ -103,26 +89,35 @@ def install(theme_module) -> None:
         ] = {}
         self._theme_leader_member_codes_by_theme: dict[str, tuple[str, ...]] = {}
 
-    def history_delta(
+    def history_deltas(
         self,
         stock_code: str,
         now_ts: float,
-        seconds: int,
-    ) -> float | None:
+    ) -> tuple[float | None, float | None]:
         history = self._theme_leader_history_by_code.get(stock_code)
         if not history:
-            return None
-        target = now_ts - float(seconds)
+            return None, None
+        latest = float(history[-1][1])
+        target_one = now_ts - 60.0
+        target_five = now_ts - 300.0
+        one = None
+        five = None
         for point_ts, point_value in reversed(history):
-            if point_ts <= target:
-                return round(float(history[-1][1]) - float(point_value), 6)
-        return None
+            if one is None and point_ts <= target_one:
+                one = round(latest - float(point_value), 6)
+            if point_ts <= target_five:
+                five = round(latest - float(point_value), 6)
+                break
+        return one, five
 
     def member_codes(
         self,
         theme_id: str,
         theme: dict[str, Any],
     ) -> tuple[str, ...]:
+        cached = self._theme_leader_member_codes_by_theme.get(theme_id)
+        if cached is not None:
+            return cached
         raw_members = theme.get("members") or []
         codes = tuple(
             stock_code
@@ -130,38 +125,25 @@ def install(theme_module) -> None:
             if isinstance(member, dict)
             and (stock_code := _code(member.get("stock_code")))
         )
-        cached = self._theme_leader_member_codes_by_theme.get(theme_id)
-        if cached != codes:
-            self._theme_leader_member_codes_by_theme[theme_id] = codes
+        self._theme_leader_member_codes_by_theme[theme_id] = codes
         return codes
 
     def extract_stock_metrics(
         self,
         by_code: dict[str, dict[str, Any]],
         now_ts: float,
-    ) -> tuple[
-        dict[str, dict[str, Any]],
-        dict[str, float | None],
-        dict[str, float | None],
-    ]:
-        one_delta_by_code = {
-            stock_code: history_delta(self, stock_code, now_ts, 60)
-            for stock_code in by_code
-        }
-        five_delta_by_code = {
-            stock_code: history_delta(self, stock_code, now_ts, 300)
-            for stock_code in by_code
-        }
+    ) -> dict[str, dict[str, Any]]:
         metrics: dict[str, dict[str, Any]] = {}
         for stock_code, row in by_code.items():
+            one_delta, five_delta = history_deltas(self, stock_code, now_ts)
             groups = _blocked(row)
             metrics[stock_code] = {
                 "stock_code": stock_code,
                 "stock_name": row.get("stock_name") or stock_code,
                 "row": row,
                 "change_rate": _number(row.get("change_rate")),
-                "stock_change_momentum_1m": one_delta_by_code.get(stock_code),
-                "stock_change_persistence_5m": five_delta_by_code.get(stock_code),
+                "stock_change_momentum_1m": one_delta,
+                "stock_change_persistence_5m": five_delta,
                 "amount_ratio": theme_module._first_number(
                     row, "amount_ratio", "trade_value_ratio"
                 ),
@@ -192,93 +174,109 @@ def install(theme_module) -> None:
                 ),
                 "blocked_groups": sorted(groups),
             }
-        return metrics, one_delta_by_code, five_delta_by_code
+        return metrics
 
     def score_records(
-        records: list[dict[str, Any]],
+        base_records: list[dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-        change_rank = _minmax_rank(records, "change_rate")
-        one_change_rank = _minmax_rank(
-            records, "stock_change_momentum_1m", positive_only=True
-        )
-        five_change_rank = _minmax_rank(
-            records, "stock_change_persistence_5m", positive_only=True
-        )
-        amount_rank = _minmax_rank(records, "amount_ratio", positive_only=True)
-        one_money_rank = _minmax_rank(
-            records, "trade_value_1m_eok", positive_only=True
-        )
-        five_money_rank = _minmax_rank(
-            records, "trade_value_5m_eok", positive_only=True
-        )
-        execution_rank = _minmax_rank(
-            records, "execution_strength", minimum=100.0
-        )
-        strength5_rank = _minmax_rank(records, "strength_5m", minimum=100.0)
-        program_rank = _minmax_rank(records, "program_net", positive_only=True)
-        large_rank = _minmax_rank(
-            records, "large_trade_net_sum_eok", positive_only=True
-        )
+        metric_count = len(_METRIC_SPECS)
+        lows = [float("inf")] * metric_count
+        highs = [float("-inf")] * metric_count
+        counts = [0] * metric_count
 
+        # Pass 1: all metric ranges together.
+        for record in base_records:
+            for index, (key, _component, _weight, positive_only, minimum) in enumerate(
+                _METRIC_SPECS
+            ):
+                value = _number(record.get(key))
+                if not _eligible(
+                    value,
+                    positive_only=positive_only,
+                    minimum=minimum,
+                ):
+                    continue
+                numeric = float(value)
+                if numeric < lows[index]:
+                    lows[index] = numeric
+                if numeric > highs[index]:
+                    highs[index] = numeric
+                counts[index] += 1
+
+        scored_records: list[dict[str, Any]] = []
         scored_by_code: dict[str, dict[str, Any]] = {}
-        for record in records:
-            stock_code = str(record.get("stock_code") or "")
-            components = {
-                "change_rate_rank": change_rank.get(stock_code),
-                "change_momentum_1m_rank": one_change_rank.get(stock_code),
-                "change_persistence_5m_rank": five_change_rank.get(stock_code),
-                "amount_ratio_rank": amount_rank.get(stock_code),
-                "trade_value_1m_rank": one_money_rank.get(stock_code),
-                "trade_value_5m_rank": five_money_rank.get(stock_code),
-                "execution_strength_rank": execution_rank.get(stock_code),
-                "strength_5m_rank": strength5_rank.get(stock_code),
-                "program_net_rank": program_rank.get(stock_code),
-                "large_trade_rank": large_rank.get(stock_code),
-            }
-            score, active_weight = _weighted_score(
-                [
-                    (components["change_rate_rank"], 30.0),
-                    (components["change_momentum_1m_rank"], 15.0),
-                    (components["change_persistence_5m_rank"], 10.0),
-                    (components["amount_ratio_rank"], 20.0),
-                    (components["trade_value_1m_rank"], 9.0),
-                    (components["trade_value_5m_rank"], 6.0),
-                    (components["execution_strength_rank"], 3.0),
-                    (components["strength_5m_rank"], 2.0),
-                    (components["program_net_rank"], 2.5),
-                    (components["large_trade_rank"], 2.5),
-                ]
-            )
-            rate = _number(record.get("change_rate"))
+
+        # Pass 2: normalize and score directly, without ten rank dictionaries.
+        for base_record in base_records:
+            components: dict[str, float | None] = {}
+            score_sum = 0.0
+            weight_sum = 0.0
+            for index, (key, component, weight, positive_only, minimum) in enumerate(
+                _METRIC_SPECS
+            ):
+                value = _number(base_record.get(key))
+                if counts[index] <= 0 or not _eligible(
+                    value,
+                    positive_only=positive_only,
+                    minimum=minimum,
+                ):
+                    normalized = None
+                elif highs[index] <= lows[index]:
+                    normalized = 100.0
+                else:
+                    normalized = round(
+                        (float(value) - lows[index])
+                        * 100.0
+                        / (highs[index] - lows[index]),
+                        4,
+                    )
+                components[component] = normalized
+                if normalized is not None:
+                    score_sum += normalized * weight
+                    weight_sum += weight
+
+            score = score_sum / weight_sum if weight_sum > 0 else 0.0
+            rate = _number(base_record.get("change_rate"))
             if rate is None or rate <= 0:
                 score = min(score, 39.0)
+
+            record = dict(base_record)
             record.update(
                 {
                     "leadership_score": round(score, 2),
                     "leadership_score_text": f"{score:.1f}",
-                    "leadership_metric_weight": active_weight,
+                    "leadership_metric_weight": round(weight_sum, 2),
                     "leadership_components": components,
                     "leadership_basis": (
-                        "price_momentum_amount_flow_precomputed_minmax_v2"
+                        "price_momentum_amount_flow_two_pass_minmax_v3"
                     ),
                 }
             )
-            scored_by_code[stock_code] = record
+            scored_records.append(record)
+            scored_by_code[str(record.get("stock_code") or "")] = record
 
-        records.sort(
+        scored_records.sort(
             key=lambda record: (
                 -int((_number(record.get("change_rate")) or 0.0) > 0),
                 -float(record.get("leadership_score") or 0.0),
-                -float(record.get("change_rate") or -999.0),
-                -float(record.get("stock_change_momentum_1m") or -999.0),
-                -float(record.get("amount_ratio") or 0.0),
-                -float(record.get("trade_value_1m_eok") or 0.0),
+                -float(
+                    _number(record.get("change_rate"))
+                    if _number(record.get("change_rate")) is not None
+                    else -999.0
+                ),
+                -float(
+                    _number(record.get("stock_change_momentum_1m"))
+                    if _number(record.get("stock_change_momentum_1m")) is not None
+                    else -999.0
+                ),
+                -float(_number(record.get("amount_ratio")) or 0.0),
+                -float(_number(record.get("trade_value_1m_eok")) or 0.0),
                 str(record.get("stock_code") or ""),
             )
         )
 
         positive_leader_assigned = False
-        for index, record in enumerate(records):
+        for index, record in enumerate(scored_records):
             rate = _number(record.get("change_rate")) or 0.0
             score = float(record.get("leadership_score") or 0.0)
             if not positive_leader_assigned and rate > 0:
@@ -295,7 +293,7 @@ def install(theme_module) -> None:
             record["leadership_rank"] = index + 1
 
         leaders: list[dict[str, Any]] = []
-        for record in records[:3]:
+        for record in scored_records[:3]:
             row = record.get("row") if isinstance(record.get("row"), dict) else {}
             one = record.get("stock_change_momentum_1m")
             five = record.get("stock_change_persistence_5m")
@@ -384,8 +382,10 @@ def install(theme_module) -> None:
         now_ts = _number((meta or {}).get("snapshot_epoch")) or time.time()
 
         with self._theme_summary_split_lock:
-            by_code = dict(self._theme_latest_flow_rows_by_code)
-            mapping_by_id = dict(self._theme_latest_mapping_by_id)
+            # Borrow the completed references read-only. This builder is serialized by
+            # its latest-only worker; copying both dictionaries added measurable cost.
+            by_code = self._theme_latest_flow_rows_by_code
+            mapping_by_id = self._theme_latest_mapping_by_id
 
         cutoff = now_ts - HISTORY_WINDOW_SEC
         with self._theme_leader_lock:
@@ -415,9 +415,7 @@ def install(theme_module) -> None:
                     while history and history[0][0] < cutoff:
                         history.popleft()
 
-            stock_metrics, _one_delta, _five_delta = extract_stock_metrics(
-                self, by_code, now_ts
-            )
+            stock_metrics = extract_stock_metrics(self, by_code, now_ts)
             leader_maps: dict[str, dict[str, dict[str, Any]]] = {}
             for summary in summaries:
                 if not isinstance(summary, dict):
@@ -426,12 +424,12 @@ def install(theme_module) -> None:
                 theme = mapping_by_id.get(theme_id)
                 if not isinstance(theme, dict):
                     continue
-                records = [
-                    dict(stock_metrics[stock_code])
+                base_records = [
+                    stock_metrics[stock_code]
                     for stock_code in member_codes(self, theme_id, theme)
                     if stock_code in stock_metrics
                 ]
-                leaders, scored_by_code = score_records(records)
+                leaders, scored_by_code = score_records(base_records)
                 leader_maps[theme_id] = scored_by_code
                 summary["leaders"] = leaders
                 summary["top_stock_code"] = (
@@ -508,7 +506,8 @@ def install(theme_module) -> None:
             "summary_extra_member_passes": 1,
             "stock_metric_extract_passes": 1,
             "per_theme_raw_metric_reparse": False,
-            "rank_method": "within_theme_minmax",
+            "rank_method": "within_theme_two_pass_minmax",
+            "rank_metric_passes_per_theme": 2,
             "positive_stock_precedence": True,
         }
         policy = payload.setdefault("policy", {})
@@ -520,6 +519,9 @@ def install(theme_module) -> None:
             policy["theme_leader_dynamic_reweight"] = True
             policy["theme_leader_additional_tr_allowed"] = False
             policy["theme_leader_positive_stock_precedence"] = True
+            policy["theme_leader_rank_implementation"] = (
+                "two_pass_minmax_no_rank_dicts"
+            )
         return payload
 
     def build_selected_detail(
