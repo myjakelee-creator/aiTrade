@@ -37,10 +37,22 @@ if "%ACTION%"=="" (
 set "SAFE=%~dp0scripts\stockboard_v2_large_safe.ps1"
 set "PREFLIGHT=%~dp0scripts\stockboard_v2_openapi_preflight.ps1"
 
-if /I "%ACTION%"=="start" set "START_ACTION=start"& goto prepare_start
-if /I "%ACTION%"=="restart" set "START_ACTION=start"& goto prepare_start
-if /I "%ACTION%"=="start-fast" set "START_ACTION=start-fast"& goto prepare_start
-if /I "%ACTION%"=="restart-fast" set "START_ACTION=start-fast"& goto prepare_start
+if /I "%ACTION%"=="start" (
+  set "START_ACTION=start"
+  goto prepare_start
+)
+if /I "%ACTION%"=="restart" (
+  set "START_ACTION=start"
+  goto prepare_start
+)
+if /I "%ACTION%"=="start-fast" (
+  set "START_ACTION=start-fast"
+  goto prepare_start
+)
+if /I "%ACTION%"=="restart-fast" (
+  set "START_ACTION=start-fast"
+  goto prepare_start
+)
 
 goto direct_action
 
