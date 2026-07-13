@@ -39,25 +39,38 @@ def test_qapplication_and_qaxwidget_are_created_directly_on_main_thread():
 
 def test_registration_runs_inside_login_success_callback():
     source = source_text()
-    on_connect = source[source.index("def on_event_connect"):source.index("def on_receive_real_data")]
+    on_connect = source[
+        source.index("def on_event_connect"):source.index("def on_receive_real_data")
+    ]
     assert 'state.login_state = "connected"' in on_connect
     assert "SetRealReg(QString, QString, QString, QString)" in on_connect
     assert "collector_ready=True" in on_connect
 
 
-def test_critical_callback_reads_only_price_rate_time_and_value():
+def test_critical_callback_reads_price_rate_time_and_samples_trade_value():
     source = source_text()
     assert '_REALTIME_FIDS = "10;12;20;14"' in source
-    callback = source[source.index("def on_receive_real_data"):source.index("control.OnEventConnect.connect")]
+    callback = source[
+        source.index("def on_receive_real_data"):source.index(
+            "control.OnEventConnect.connect"
+        )
+    ]
     for fid in (10, 12, 20, 14):
         assert f", {fid})" in callback
+    assert "STOCKBOARD_TRADE_VALUE_SAMPLE_MS" in source
+    assert "trade_value_sample_skip_count" in source
+    assert "should_sample_value" in callback
     for heavy_fid in (13, 15, 228, 41, 51, 121, 125):
         assert f", {heavy_fid})" not in callback
 
 
 def test_callback_only_enqueues_latest_trade_and_never_does_socket_io():
     source = source_text()
-    callback = source[source.index("def on_receive_real_data"):source.index("control.OnEventConnect.connect")]
+    callback = source[
+        source.index("def on_receive_real_data"):source.index(
+            "control.OnEventConnect.connect"
+        )
+    ]
     assert "sender.publish_trade(" in callback
     assert "sendall" not in callback
     assert "socket" not in callback
