@@ -140,13 +140,19 @@ def install(base) -> None:
     def theme_projection(hub):
         return hub.projection_snapshot("theme") if hub is not None else None
 
-    def theme_payload(projection: dict[str, Any] | None) -> dict[str, Any] | None:
+    def theme_payload(
+        projection: dict[str, Any] | None,
+        *,
+        include_details: bool = False,
+    ) -> dict[str, Any] | None:
         if not isinstance(projection, dict):
             return None
         payload = projection.get("payload")
         if not isinstance(payload, dict):
             return None
         result = dict(payload)
+        if not include_details:
+            result.pop("details", None)
         result.update(
             {
                 "projection": "theme",
@@ -288,8 +294,17 @@ def install(base) -> None:
                 (query.get("theme_id") or [""])[0] or ""
             ).strip()
             projection = theme_projection(hub)
-            payload = theme_payload(projection)
-            details = payload.get("details") if isinstance(payload, dict) else None
+            raw_payload = (
+                projection.get("payload")
+                if isinstance(projection, dict)
+                and isinstance(projection.get("payload"), dict)
+                else None
+            )
+            details = (
+                raw_payload.get("details")
+                if isinstance(raw_payload, dict)
+                else None
+            )
             detail = details.get(selected_id) if isinstance(details, dict) else None
             if not isinstance(detail, dict):
                 self._json(
