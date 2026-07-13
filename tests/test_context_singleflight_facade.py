@@ -22,6 +22,8 @@ def test_singleflight_writer_uses_preserved_base_without_recursion():
     assert "coordinator.execute(" in source
     assert 'tr_code="market_supply_bundle"' in source
     assert 'tr_code="ka10086_ohlc_bootstrap_bundle"' in source
+    assert 'payload["context_owner"] = "tr_singleflight"' in source
+    assert 'payload["tr_singleflight"] = coordinator.status()' in source
 
 
 def test_preserved_base_contains_only_original_context_implementation():
