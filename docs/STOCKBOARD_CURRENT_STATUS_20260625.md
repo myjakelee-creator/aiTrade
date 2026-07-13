@@ -1,461 +1,377 @@
-# StockBoard Current Status
+# StockBoard / ThemeBoard Current Status
 
-작성 기준: 2026-07-11 휴장시간 빈칸 보충·독립 타이머·저부하 최적화 검증 반영.
+최종 갱신: 2026-07-13 KST  
+문서 역할: aiTrade 보드 계열의 단일 현재상태 기준문서  
+작업 브랜치: `fix/restore-stable-collector-20260713`  
+기준 브랜치: `hot-priority-integrated-20260630`  
+Draft PR: `#35`
 
-> 이 문서는 StockBoard의 현재 운영 상태를 빠르게 파악하기 위한 기준문서다. 새 PC 또는 새 채팅창에서는 이 문서, `docs/candidate_model_specs/NET_BUY_STRENGTH_V02.md`, `configs/candidate_models/NET_BUY_STRENGTH_V02.json`을 우선 확인한다.
-
----
-
-## 0. 현재 한 줄 요약
-
-StockBoard는 `순매수 강도 v0.2` 전용 ranking engine, 전일 거래대금 cache/API 주입, 장중 700점/장마감 600점 분모 이원화까지 반영됐다. 2026-07-11에는 휴장시간에 시장 틱이 없어도 5분강도·순간강도·잔량비 빈칸을 자동 보충하는 V2 통합 컨트롤러, Qt 메인 스레드 독립 타이머, collector→worker 상태 송신 fail-open, 완료 상태 저부하 최적화까지 실제 검증했다. 현재 휴장시간 세 지표 빈칸은 0개이며, 다음 핵심 과제는 노트북 동일 동작 확인과 정규장 장중 700점 분모/실시간 1분강도 검증이다.
+> 과거 세부 작업 이력은 Git history와 PR 기록에서 확인한다. 이 문서는 현재 운영 구조, 실제 검증 결과, 미검증 위험과 다음 우선순위만 유지한다.
 
 ---
 
-## 1. 기준 정보
+## 0. 현재 한 줄 결론
 
-| 항목 | 내용 |
-|---|---|
-| 프로젝트 | aiTrade / StockBoard |
-| 작업 경로 | `C:\aiTrade` |
-| 브랜치 | `hot-priority-integrated-20260630` |
-| 기준일 | 2026-07-11 |
-| 현재 선발기준 | `NET_BUY_STRENGTH_V02` / 화면명 `순매수 강도 v0.2` |
-| V2 표준 실행 | `.\stockboard_v2_large.cmd start-fast` / `http://127.0.0.1:8765/` |
-| 핵심 테스트 | ranking/previous trade value + off-hours metric/timer/sender resilience 테스트 |
-| 다음 핵심 과제 | 노트북 동일 검증, 정규장 장중 700점 분모/실시간 1분강도 검증 |
+StockBoard의 최소 QAx 실시간 가격 경로, 대량체결 집계, BoardDataHub 공용 FeatureSnapshot, ThemeBoard/StrategyProjection, 개장폭주 background cache가 같은 검증 브랜치에 연결돼 있다. 2026-07-13 애프터마켓 실제 PC 검증에서 잔량비·순간강도·5분강도·프로그램·대량체결 continuity cache 188종목이 생성됐고 재접속 행에 값이 복원됐다. 다만 20:00 이후 `closed`, 주말, 공휴일, 지연개장 전 구간을 각각 시간 경계에서 직접 관찰한 검증은 아직 남아 있다.
+
+ThemeBoard는 현재 10개 수동 테마만 포함하므로 제습기·정유·해운처럼 마스터 밖에서 급등하는 테마를 발견하지 못한다. 또한 누적 거래대금 비중 때문에 하락 중인 대형 반도체 테마가 상위에 고정될 수 있다. 최종 목표를 `돈이 큰 테마` 단일 순위가 아니라 `장개시 후 가장 빠르게 상승하고 상승을 지속하는 테마와 주도주` 탐지로 변경한다.
 
 ---
 
-## 2. 대표님 운영 원칙
+## 1. 운영 구조
+
+```text
+32-bit minimal QAx collector
+  FID 10 현재가
+  FID 12 등락률
+  FID 20 체결시각
+  FID 15 signed 체결량
+  FID 14 누적거래대금 500ms 샘플
+        ↓ latest-only + aggregate
+64-bit worker Canonical State
+        ↓ final continuity read layer
+BoardDataHub shared FeatureSnapshot
+        ├─ StockBoard
+        ├─ ThemeProjection latest-only 1초
+        └─ StrategyProjection latest-only
+```
+
+운영 원칙:
 
 | 항목 | 원칙 |
 |---|---|
-| 언어 | 한국어 존댓말 |
-| 답변 | 표와 단계 중심 |
-| 문서 | 새 문서 남발 금지, 기존 핵심 문서 최소 갱신 |
-| Git | `git add .` 금지, 의미 있는 단위로만 커밋 |
-| 보고 | 변경 파일, 검증 명령, 미검증 항목, 커밋 상태 분리 보고 |
-| 코드 수정 | 검증 가능한 작은 패치 단위 선호 |
-| UI | 표시 전용. 계산은 Python/server/ranking engine 쪽에서 처리 |
+| 실시간 owner | 32비트 최소 QAx collector 한 개 |
+| Canonical State | 64비트 worker State 한 개 |
+| 공통 계산 | 한 번 계산한 완료 FeatureSnapshot을 세 보드가 공유 |
+| ThemeBoard·StrategyBoard TR | 금지 |
+| HTML 계산 | 금지, 표시·선택·HTS 연동만 허용 |
+| 개장폭주 보호 | latest-only queue, background heavy snapshot, UI 50종목 |
+| 문서 | 새 문서 남발 금지, 이 기준문서 최소 갱신 |
+| Git | PC 실전 검증 전 Draft PR 유지, 병합 금지 |
 
 ---
 
-## 3. 완료 작업 요약
+## 2. 2026-07-13 데이터 continuity 실제 검증
 
-| 구분 | 완료 내용 | 확인 상태 |
-|---|---|---|
-| 선발기준 | `순매수 강도 v0.2` 전용 ranking engine 구현 | API/화면 반영 확인 |
-| 등급정책 | A90, B80, C70, D60, F59 정책 고정 | 테스트 반영 |
-| 전일 거래대금 | `ka10086` 기반 `prev_trade_value_eok` cache/API 주입 | 179개 row 주입 확인 |
-| 금액 점수 | `trade_value_eok / prev_trade_value_eok` 비율 줄세우기 | SK하이닉스 1.656배, 73.03점 확인 |
-| 장마감 1분강도 | `strength_5m`는 표시값으로만 유지, 계산 제외 | `display_only`, `possible_points=0` 확인 |
-| 분모 이원화 | 장중 700점, 장마감 600점 | 장마감 `score_possible_points=600` 확인 |
-| Top5 | 점수/분모/항목 breakdown 출력 확인 | 후보 산출 정상 |
-| UI 표시 | 1분강도 칸은 숫자만 표시하는 원상복구 완료 | 화면 확인 완료 |
-| 휴장시간 빈칸 보충 | 5분강도·순간강도·잔량비 통합 순차 조회 | 토요일 실제 빈칸 0개 확인 |
-| 틱 독립 실행 | 시장 틱 0건에서도 Qt 타이머로 자동 진행 | `market_tick_independent=True` 확인 |
-| 저부하 최적화 | 250ms 심박 + 완료 상태 drain 10초 주기 | 실측 상태값으로 확인 |
-| 상태 송신 안정화 | collector sender 직렬화/루프 fail-open | `SenderAlive=True`, 오류 0 확인 |
+### 2.1 상태 API
 
----
-
-## 4. 순매수 강도 v0.2 최종 계산 정책
-
-| 항목 | 장중 점수 | 장마감 점수 | 비고 |
-|---|---:|---:|---|
-| 순위 | 100 | 100 | 필터 통과 N개 기준 100~0점 |
-| 전일 | 100 | 100 | `min(max(prev_rank-rank,0),100)` |
-| 금액(억) | 100 | 100 | `trade_value_eok / prev_trade_value_eok` 비율 줄세우기 |
-| 잔량비 | 100 | 100 | `ask_volume / (bid_volume + ask_volume) × 100` |
-| 순간강도 | 100 | 100 | 체결강도 0~200을 0~100점 환산 |
-| 1분강도 | 100 | 0 | 장중 실시간 1분값만 계산, 장마감은 계산 제외 |
-| 프로(억) | 100 | 100 | `program_net / trade_value_eok`, 순매수 0 이하는 0점 |
-| 총 분모 | 700 | 600 | `score_total_points / score_possible_points × 100` |
-
-중요:
+대표님 PC 애프터마켓 관찰값:
 
 ```text
-장마감에는 1분강도 칸에 5분강도 참고값을 숫자로만 표시한다.
-하지만 점수 계산에서는 1분강도를 제외한다.
-따라서 장마감 등급은 600점 분모로 계산한다.
-```
-
----
-
-## 5. 전일 거래대금 주입 상태
-
-| 항목 | 기준 |
-|---|---|
-| cache 파일 | `data/runtime/previous_trade_value_YYYYMMDD.json` |
-| 원천 우선순위 | `ka10086_amt_mn` → 전일 종가×전일 거래량 계산 → cache → fallback |
-| missing 처리 | 0 저장 금지 |
-| 최종 실패 | 금액(억) 항목 60점 fallback, 화면/툴팁에 미확인 표시 필요 |
-| 검증 결과 | cache 생성 및 API row 주입 확인 |
-
-검증 예시:
-
-| 종목 | 오늘 거래대금 | 전일 거래대금 | 상태 |
-|---|---:|---:|---|
-| SK하이닉스 | 294,414.76억 | 177,745.37억 | `ok / ka10086_amt_mn` |
-| 삼성전자 | 171,834.63억 | 113,628.82억 | `ok / ka10086_amt_mn` |
-
----
-
-## 6. 장마감 검증 결과
-
-### 6.1 SK하이닉스 breakdown
-
-| 항목 | 점수 | 분모 | 상태 |
-|---|---:|---:|---|
-| 순위 | 100.0 | 100 | 계산 포함 |
-| 전일 | 0.0 | 100 | 계산 포함 |
-| 금액(억) | 73.03 | 100 | 계산 포함 |
-| 잔량비 | 94.96 | 100 | 계산 포함 |
-| 순간강도 | 54.47 | 100 | 계산 포함 |
-| 1분강도 | 0.0 | 0 | `display_only` |
-| 프로(억) | 0.0 | 100 | `nonpositive` |
-
-계산:
-
-```text
-322.46 / 600 = 53.74 → F54
-```
-
-### 6.2 장마감 Top5 관찰값
-
-| 후보 | 등급 | 점수 | 분모 | 핵심 |
-|---:|---|---:|---:|---|
-| 1 | 한국금융지주 | B86 | 600 | 전일상승 + 금액 + 잔량비 + 순간강도 + 프로그램 강함 |
-| 2 | 삼성증권 | B83 | 600 | 금액/잔량비/프로그램 강함 |
-| 3 | 인텍플러스 | C79 | 600 | 전일상승 + 금액 + 강도 + 프로그램 양호 |
-| 4 | 미래에셋증권 | C77 | 600 | 순위/금액/잔량비/프로그램 고르게 양호 |
-| 5 | 한화시스템 | C75 | 600 | 전일상승 + 금액 + 잔량비 + 프로그램 양호 |
-
-주의:
-
-```text
-금융/증권주가 Top5에 다수 올라오는 현상이 관찰됐다.
-현재는 계산 오류로 보지 말고, 정규장 장중 데이터에서 프로그램 비율/전일상승 점수 쏠림을 추가 검증한다.
-```
-
----
-
-## 7. 현재 화면 그룹 / lane 구조
-
-| 화면명 | 내부명 | 설명 |
-|---|---|---|
-| Top5 | `candidateRows` / `top5` | 유력 후보 5종목 |
-| S1 | `selectedRow` | 선택 종목 1개 |
-| Top15 | `top20Rows` | Top5 제외 후 실제 15종목 |
-| Top30 | `top50Rows` | Top20 제외 후 실제 30종목 |
-| Top300 | `top300Rows` / `trading-board` | 전체 pool |
-
-| Lane | 대상 | API | 목적 |
-|---|---|---|---|
-| HOT | Top5 + S1 + Top15 | `/api/hot_realtime_patch` | 핵심 후보 빠른 갱신 |
-| MID | Top30 | `/api/realtime_patch?codes=...` | 넓은 후보군 중간 갱신 |
-| POOL | Top300 | `/api/realtime_patch` | 전체 pool 갱신 |
-
-금지:
-
-```text
-/api/top100 전체 자동 반복 재조회는 장중 복구하지 않는다.
-장중 실시간 갱신은 patch API 중심으로 유지한다.
-```
-
----
-
-## 8. 다른 PC에서 이어가기 절차
-
-### 8.1 repo 동기화
-
-```powershell
-cd C:\aiTrade
-
-git status --short
-
-git fetch origin
-
-git checkout hot-priority-integrated-20260630
-
-git pull --ff-only
-```
-
-### 8.2 기본 테스트
-
-```powershell
-cd C:\aiTrade
-
-python -m pytest -q `
-  tests\test_stockboard_offhours_metric_timer_driver_patch.py `
-  tests\test_stockboard_collector_sender_resilience_patch.py `
-  tests\test_stockboard_offhours_metric_resilience_patch.py `
-  tests\test_stockboard_offhours_metric_completion_patch.py `
-  tests\test_stockboard_execution_strength_alias_patch.py `
-  tests\test_stockboard_qt_main_thread_openapi_patch.py
-```
-
-### 8.3 실행
-
-```powershell
-cd C:\aiTrade
-
-.\stockboard_v2_large.cmd stop
-Start-Sleep -Seconds 5
-.\stockboard_v2_large.cmd start-fast
-```
-
-브라우저는 `http://127.0.0.1:8765/`를 사용한다.
-
----
-
-## 9. 다음 장중 검증 명령
-
-### 9.1 API row / 분모 / 전일대금 확인
-
-```powershell
-cd C:\aiTrade
-
-$response = Invoke-RestMethod "http://127.0.0.1:8000/api/top100?candidate_model=NET_BUY_STRENGTH_V02"
-
-$flatRows = New-Object System.Collections.ArrayList
-function Add-FlatRow($item) {
-    if ($null -eq $item) { return }
-    if ($item -is [System.Array]) {
-        foreach ($sub in $item) { Add-FlatRow $sub }
-    } else {
-        [void]$flatRows.Add($item)
-    }
-}
-Add-FlatRow $response
-
-$flatRows |
-  Select-Object -First 20 stock_code,stock_name,candidate_grade_text,score_percent,score_total_points,score_possible_points,prev_trade_value_eok,program_net |
-  Format-Table -Auto
-```
-
-### 9.2 1분강도 상태 확인
-
-```powershell
-$items = foreach ($row in $flatRows) {
-    $one = $row.score_breakdown.net_buy_strength.items |
-      Where-Object { $_.key -eq "one_min_strength" } |
-      Select-Object -First 1
-
-    [PSCustomObject]@{
-        stock_code = $row.stock_code
-        stock_name = $row.stock_name
-        grade = $row.candidate_grade_text
-        score = $row.score_percent
-        one_min_points = $one.points
-        one_min_possible = $one.possible_points
-        one_min_status = $one.status
-        one_min_source = $one.source
-        one_min_value = $one.value
-    }
-}
-
-$items |
-  Group-Object one_min_status |
-  Sort-Object Count -Descending |
-  Select-Object Count,Name |
-  Format-Table -Auto
+metric_continuity_enabled              : True
+metric_continuity_phase                : aftermarket
+metric_continuity_reference_date       : 20260713
+metric_continuity_valid_until          : 2026-07-14T08:00:00
+metric_continuity_cache_count          : 188
+metric_continuity_applied_rows         : 81
+metric_continuity_applied_fields       : 810
+metric_continuity_scoring_blocked_rows : 154
 ```
 
 판정:
 
-| 상태 | 의미 |
+| 항목 | 판정 |
 |---|---|
-| `ok` | 장중 실시간 1분강도 계산 포함, 분모 700 기대 |
-| `display_only` | 장마감 5분강도 표시 전용, 분모 600 기대 |
-| `fallback` | 정규장인데 실시간 1분값 없음, 중립 50점 |
-| `missing` | 의도하지 않은 상태. 원인 조사 필요 |
+| continuity 설치 | 정상 |
+| 기준 거래일 | 2026-07-13 정상 |
+| 다음 실제 프리마켓 | 2026-07-14 08:00 정상 |
+| cache population | 188종목 정상 |
+| 재접속 복원 | 81행·810필드 실제 적용 확인 |
+| 전일값 점수 혼입 차단 | 154행에서 차단 동작 확인 |
 
-### 9.3 후보 Top5 breakdown
+`metric_continuity_scoring_blocked_rows=154`는 빈칸 오류가 아니다. 화면에는 마지막 유효값을 유지하되 날짜가 이전 세션인 그룹은 후보·테마 점수에서 제외한다는 뜻이다. 다만 이 수가 높으므로 다음 정규장에서 당일 잔량비·강도·프로그램 원천이 얼마나 빠르게 current-session으로 교체되는지 별도 확인한다.
 
-```powershell
-$top5 = $flatRows |
-  Where-Object { $_.is_candidate -eq $true -or $_.candidate_rank -ne $null } |
-  Sort-Object candidate_rank |
-  Select-Object -First 5
+### 2.2 실제 필드 표시
 
-foreach ($row in $top5) {
-    ""
-    "===== $($row.candidate_rank)위 $($row.stock_code) $($row.stock_name) / $($row.candidate_grade_text) / $($row.score_percent)점 / 분모 $($row.score_possible_points) ====="
-    $row.score_breakdown.net_buy_strength.items |
-      Select-Object label,points,possible_points,status,value,source |
-      Format-Table -Auto
-}
+확인된 대상:
+
+```text
+bid_ask_ratio
+execution_strength
+strength_5m
+program_net
+large_trade_net_count
+large_trade_net_sum_eok
+metric_continuity_basis
+```
+
+S-Oil, OCI홀딩스, HLB, 한화오션, 삼성SDI, LG에너지솔루션, HMM, 에코프로 등 상위 행에서 잔량비·순간강도·5분강도·프로그램 값이 표시됐다. 대량체결이 없는 종목의 `0 / 0.0`은 누락이 아니라 정상 0이다.
+
+### 2.3 ThemeProjection continuity
+
+```text
+enabled              : True
+phase                : aftermarket
+reference_date       : 20260713
+valid_until          : 2026-07-14T08:00:00
+cache_count          : 188
+applied_rows         : 81
+scoring_blocked_rows : 154
+
+tracked_code_count   : 188
+held_code_count      : 0
+one_min_ready_count  : 188
+five_min_ready_count : 188
+market_phase         : aftermarket
+hold_active          : False
+```
+
+`aftermarket`은 아직 거래가 진행되는 세션이므로 `hold_active=False`가 정상이다. 20:00 이후 `closed`에서 `hold_active=True`로 전환되고 마지막 1분·5분 유입값을 유지하는지 시간 경계 직접 검증이 남아 있다.
+
+### 2.4 runtime 파일
+
+```text
+data/runtime/stockboard_v2/board_metric_continuity.json
+  Length: 378493
+  LastWriteTime: 2026-07-13 19:29:18
+
+data/runtime/stockboard_v2/theme_flow_history_hold.json
+  Length: 17703
+  LastWriteTime: 2026-07-13 19:29:20
+```
+
+판정: 원자적 snapshot 파일 생성과 갱신이 실제 확인됐다.
+
+### 2.5 현재 검증 수준
+
+| 조건 | 상태 |
+|---|---|
+| 애프터마켓 중 값 저장 | 실제 확인 |
+| 애프터마켓 재접속 후 복원 | 실제 확인 |
+| StockBoard 공용 행 복원 | 실제 확인 |
+| ThemeBoard 공용 FeatureSnapshot 전달 | 실제 확인 |
+| StrategyProjection 필드 전달 | 코드·정적 구조 반영, UI 미구현 |
+| 20:00 `closed` 전환 | 직접 시간경계 검증 필요 |
+| 프로세스 완전 종료 후 재시작 | 추가 확인 필요 |
+| 토·일요일 | 기존 휴장 보충은 확인됐으나 새 continuity 통합경로 재확인 필요 |
+| 공휴일·임시휴장 | 캘린더 구조 반영, 실제 날짜 검증 필요 |
+| 지연개장 | `special_days/open_delay_minutes` 구조 반영, 실제 날짜 검증 필요 |
+
+따라서 **데이터 보존 1차 운영 검증은 성공**으로 판정한다. 모든 달력 조건의 최종 완료 판정은 각 경계 검증 후 내린다.
+
+---
+
+## 3. 세션별 보존·초기화 정책
+
+| 구간 | snapshot형 지표: 잔량비·순간강도·5분강도 | 누적형 지표: 프로그램·대량체결 |
+|---|---|---|
+| 정규장·애프터마켓 | current-session 값 우선 | 당일 누적값 |
+| 장마감 후 | 마지막 유효값 유지 | 마지막 당일 누적값 유지 |
+| 주말·공휴일·지연개장 전 | 직전 거래일 값 유지 | 직전 거래일 값 유지 |
+| 실제 새 프리마켓 시작 | 전일값 표시 가능, 점수 제외 | 0/new-session-wait 후 당일값으로 교체 |
+| 새 당일 원천 도착 | current-session으로 교체, 점수 허용 | 당일 누적 재개 |
+
+시장 캘린더 원천:
+
+```text
+config/stockboard_market_calendar.json
+```
+
+기본 시간:
+
+```text
+프리마켓 08:00
+장전 동시호가 08:30
+정규장 09:00
+장마감 동시호가 15:20
+정규장 종료 15:30
+애프터마켓 15:40~20:00
+```
+
+주말은 자동 휴장이다. 공휴일은 `holidays`, 임시휴장·수능 지연개장 등은 `special_days`의 `closed`, `open_delay_minutes`, 명시적 `windows`로 처리한다.
+
+---
+
+## 4. ThemeBoard 현재 결함
+
+### 4.1 테마 universe
+
+현재 정식 마스터는 다음 10개뿐이다.
+
+```text
+HBM·반도체 장비
+종합반도체
+전력기기·전선
+로봇·자동화
+조선·기자재
+방산·우주
+원전·SMR
+바이오·신약
+2차전지 소재
+자동차·부품
+```
+
+따라서 제습기·정유·해운 등 마스터에 없는 테마는 아무리 급등해도 순위에 나타나지 않는다. 10개는 최종 universe가 아니라 fallback 샘플로 격하해야 한다.
+
+### 4.2 기존 순위 왜곡
+
+기존 점수는 1분·5분·누적 거래대금의 상대순위 비중이 높다. 삼성전자·SK하이닉스처럼 거래대금 절대규모가 큰 종목이 포함된 반도체 테마는 구성종목 평균 등락률이 음수여도 상위에 남을 수 있다.
+
+이 결과는 대표님의 목적과 다르다.
+
+```text
+기존: 돈의 절대규모가 큰 테마
+목표: 장개시 후 가장 급등하고, 여러 종목으로 확산되며, 상승을 지속하고, 실제 돈이 확인되는 테마
 ```
 
 ---
 
-## 10. 남은 TODO 핵심
+## 5. ThemeBoard 새 기준 확정안
 
-| 우선순위 | TODO | 비고 |
-|---:|---|---|
-| 1 | 노트북 동일 동작 확인 | `Driver=v3`, `SenderAlive=True`, 빈칸 0 확인 |
-| 2 | 정규장 장중 700점 분모 확인 | `one_min_status=ok`, `score_possible_points=700` 확인 |
-| 3 | 금융/증권주 쏠림 진단 | 전일 점수/프로그램 비율이 과도한지 확인 |
-| 4 | 전일 점수 capped 영향 점검 | 100점 capped가 Top5를 과도하게 지배하는지 확인 |
-| 5 | 프로그램 점수 상한/완만화 필요 여부 판단 | 금융주 편향이 반복되면 검토 |
-| 6 | UI 툴팁 추가 개선 | 셀에는 숫자만 유지. 설명은 툴팁에만 표시 |
-| 7 | 틱데이터 저장/replay 최소 설계 | 장중 재현 가능성 확보 |
-| 8 | HTML render/main loop 추가 분리 | 장중 검증 이후. 당분간 보류 |
+### 5.1 화면을 두 순위로 분리
 
----
-
-## 11. 금지 루프
-
-| 항목 | 금지 |
+| 순위 | 역할 |
 |---|---|
-| 가격/FID | FID10/FID12 정규화부터 다시 의심하지 말 것 |
-| KRX/NXT/통합장 | `_AL` 통합 표시 원천 유지 |
-| top100 refresh | 장중 `/api/top100` 자동 반복 호출 복구 금지 |
-| UI 계산 | HTML에서 등급/점수/가격을 새로 계산하지 말 것 |
-| 1분강도 표시 | 장마감에도 셀 안에는 숫자만 표시. `5분`, `5분참고` 문구를 셀에 직접 넣지 말 것 |
-| 휴장 보충 | 시장 틱을 트리거로 사용하지 말 것. 독립 Qt 타이머 유지 |
-| pending queue | 휴장시간 지표 보충을 provider pending queue에 다시 의존시키지 말 것 |
-| 문서 | 인계 목적 외 새 문서 남발 금지 |
+| 상승탄력 순위 | 기본·주순위. 어느 테마가 지금 가장 강하게 오르는지 탐지 |
+| 돈쏠림 순위 | 보조순위. 실제 거래대금과 수급이 어디에 몰리는지 확인 |
+
+ThemeBoard 첫 화면과 레이더는 `상승탄력 순위`를 기본으로 한다. 거래대금은 순위의 주인이 아니라 상승의 신뢰도를 확인하는 보조 원천으로 사용한다.
+
+### 5.2 상승탄력 주순위
+
+초기 확정안:
+
+| 구성 | 비중 | 의미 |
+|---|---:|---|
+| 구성종목 단순 평균 등락률 상대순위 | 40 | 키움 테마순위와 같은 핵심 방향 |
+| 상승 종목 확산도 | 20 | 한 종목만 상승하는 가짜 테마 억제 |
+| 평균 등락률 최근 1분 변화 | 15 | 지금 가속하는 테마 탐지 |
+| 평균 등락률 최근 5분 지속성 | 10 | 급등 후 즉시 반납하는 테마 억제 |
+| 최근 1분 거래대금 유입 상대순위 | 10 | 실제 돈 유입 확인 |
+| 프로그램·대량체결 확인 | 5 | 수급 확인 |
+
+운영 규칙:
+
+```text
+평균 등락률 음수 테마는 돈이 아무리 커도 상승탄력 상위 고정 금지
+Coverage 60% 미만은 WAIT_DATA 또는 점수 상한 적용
+한 종목 급등만으로 전체 테마 1위가 되지 않도록 breadth 적용
+최근 1분 상승 후 5분 방향도 유지될 때 SURGE 판정
+누적 거래대금 절대규모는 돈쏠림 보조순위에 유지
+```
+
+### 5.3 주도주 선발
+
+테마 내부 종목 정렬 우선순위:
+
+```text
+현재 등락률
++ 최근 1분·5분 상승 지속성
++ 최근 거래대금 유입
++ 순간강도·5분강도
++ 프로그램·대량체결
+```
+
+역할:
+
+| 역할 | 기준 |
+|---|---|
+| 주도 | 테마 상승과 거래를 동시에 이끄는 1위 |
+| 동반 | 주도주와 같은 방향으로 강하게 확산 |
+| 후발 | 상승 중이지만 속도·수급이 한 단계 낮음 |
+| 관찰 | 테마 소속이나 상승 확인 부족 |
+
+### 5.4 전체 테마 마스터 정책
+
+최종 정책:
+
+```text
+Kiwoom 또는 검증된 광범위 테마 catalog를 매 거래일 갱신
+runtime 동적 master를 1순위
+수동 10개 config는 장애 시 fallback만 사용
+ThemeBoard 자체 OpenAPI/TR 호출은 계속 금지
+테마 catalog 갱신은 별도 저빈도 context/bootstrap 단계에서 수행
+```
+
+현재 loader가 지원하는 runtime 후보 경로를 실제 주원천으로 연결하고, 정적 10개 파일의 우선순위를 낮춘다. 정확한 Kiwoom 전체 테마 구성종목 수집 방식은 최소 QAx collector 안정성을 훼손하지 않는 별도 단계로 구현한다.
 
 ---
 
-## 12. 관련 파일
+## 6. 다음 우선순위
+
+| 우선순위 | 작업 | 완료 기준 |
+|---:|---|---|
+| 1 | 20:00 `closed` continuity 확인 | `hold_active=True`, 값·파일 유지 |
+| 2 | 완전 종료 후 재시작 확인 | 5개 지표 빈칸 0, 기준일·basis 정상 |
+| 3 | 전체 테마 catalog 연결 | 제습기·정유·해운 등 마스터 밖 테마 표시 |
+| 4 | 상승탄력 주순위 구현 | 평균등락률 중심 정렬, 반도체 하락일 상위 고정 제거 |
+| 5 | 테마 평균등락률 1분·5분 history | 급등 지속·반납 구분 |
+| 6 | 주도주 정렬 변경 | 등락률·지속성·유입 순 |
+| 7 | 09:00~09:10 실전 부하 검증 | collector/worker queue 누적 없음 |
+| 8 | StrategyBoard UI | 같은 continuity/FeatureSnapshot 표시 |
+
+---
+
+## 7. 핵심 검증 명령
+
+```powershell
+cd C:\aiTrade
+
+$r = Invoke-RestMethod `
+  "http://127.0.0.1:8765/api/v2/snapshot?limit=50&ts=$([DateTimeOffset]::Now.ToUnixTimeMilliseconds())"
+
+$r.status |
+Select-Object `
+  metric_continuity_enabled,
+  metric_continuity_phase,
+  metric_continuity_reference_date,
+  metric_continuity_valid_until,
+  metric_continuity_cache_count,
+  metric_continuity_applied_rows,
+  metric_continuity_applied_fields,
+  metric_continuity_scoring_blocked_rows |
+Format-List
+
+$r.rows |
+Select-Object -First 20 `
+  stock_code,stock_name,bid_ask_ratio,execution_strength,strength_5m,
+  program_net,large_trade_net_count,large_trade_net_sum_eok,
+  metric_continuity_basis |
+Format-Table -Auto
+
+$t = Invoke-RestMethod `
+  "http://127.0.0.1:8765/api/v2/hub/theme?ts=$([DateTimeOffset]::Now.ToUnixTimeMilliseconds())"
+
+$t.metric_continuity_status | Format-List
+$t.flow_history_status | Format-List
+```
+
+20:00 이후 기대값:
+
+```text
+metric_continuity_phase : closed
+flow_history_status.hold_active : True
+valid_until : 다음 실제 거래일 프리마켓
+잔량비·순간강도·5분강도·프로그램·대량체결 빈칸 없음
+```
+
+---
+
+## 8. 관련 핵심 파일
 
 | 파일 | 역할 |
 |---|---|
-| `stockboard_ranking_engine.py` | `NET_BUY_STRENGTH_V02` 전용 점수/등급/pool 계산 |
-| `stockboard_previous_trade_value.py` | 전일 거래대금 TR/cache/API row 주입 |
-| `stockboard_ranking_runtime_patch.py` | 표준 런처 경유 runtime patch 설치 |
-| `kiwoom_trade_value_rank.py` | ranking/server 진입점 |
-| `realtime_v2/collector32_large_bidask.py` | V2 32-bit OpenAPI collector 진입점과 patch 설치 순서 |
-| `realtime_v2/qt_main_thread_openapi_patch.py` | QApplication/QAxWidget 메인 스레드 실행 |
-| `realtime_v2/offhours_metric_completion_patch.py` | 5분강도·순간강도·잔량비 휴장시간 통합 보충 |
-| `realtime_v2/offhours_metric_resilience_patch.py` | 특정 종목 오류·stale gap 자동 복구 |
-| `realtime_v2/offhours_metric_timer_driver_patch.py` | 틱 독립 고정 250ms 심박과 mode별 drain 실행 주기 |
-| `realtime_v2/collector_sender_resilience_patch.py` | collector→worker 송신 스레드 fail-open |
-| `realtime_v2/execution_strength_alias_patch.py` | `realtime_strength_snapshot` → `execution_strength` 연결 |
-| `realtime_v2/session_metric_hold_patch.py` | 다음 실제 프리마켓 전까지 마지막 유효값 보존 |
-| `configs/candidate_models/NET_BUY_STRENGTH_V02.json` | 모델 설정/정책 |
-| `docs/candidate_model_specs/NET_BUY_STRENGTH_V02.md` | 선발기준 설계 문서 |
-| `tests/test_stockboard_ranking_engine.py` | 등급/분모/장마감 display_only 테스트 |
-| `tests/test_stockboard_previous_trade_value.py` | 전일 거래대금 계산/cache 테스트 |
-| `tests/test_stockboard_offhours_metric_completion_patch.py` | 휴장시간 통합 보충 테스트 |
-| `tests/test_stockboard_offhours_metric_timer_driver_patch.py` | 틱 독립 타이머·저부하 주기 테스트 |
-| `tests/test_stockboard_collector_sender_resilience_patch.py` | sender 직렬화/루프 복구 테스트 |
-| `docs/stockboard_v0_3_0_sample.html` | 구 화면 HTML 참고 |
-| `docs/assets/stockboard_tooltip.js` | 툴팁 기본 helper. 셀 텍스트 수정 금지 |
+| `realtime_v2/collector32_large_bidask.py` | 최소 32비트 QAx collector |
+| `realtime_v2/collector_large_trade_patch.py` | FID15 대량체결 aggregate |
+| `realtime_v2/board_metric_continuity_patch.py` | 세 보드 공통 metric continuity |
+| `realtime_v2/theme_projection_flow_history_patch.py` | 테마 1분·5분 유입 history·hold |
+| `realtime_v2/theme_projection_continuity_guard_patch.py` | 전일 보존값 표시, 점수 제외 |
+| `realtime_v2/board_data_hub.py` | 공용 Canonical/Feature/Projection read model |
+| `realtime_v2/theme_projection_engine.py` | ThemeProjection 계산 |
+| `realtime_v2/strategy_projection_engine.py` | StrategyProjection 분류 |
+| `config/stockboard_market_calendar.json` | 휴장·지연개장 포함 시장 캘린더 |
+| `config/stockboard_theme_master.json` | 현재 10개 fallback 테마 마스터 |
+| `docs/themeboard.html` | 계산 없는 ThemeBoard 표시 UI |
 
 ---
 
-## 13. 2026-07-11 휴장시간 지표 완성 및 최적화
-
-### 13.1 목표와 범위
-
-장마감 이후, 주말, 공휴일, 지연개장 전 등 시장 틱이 없는 시간에도 다음 실제 프리마켓 전까지 화면의 빈칸을 자동 보충한다.
-
-| 지표 | 조회 원천 | 처리 |
-|---|---|---|
-| 5분강도 | `opt10046` | `strength_5m` 저장 |
-| 순간강도 | `opt10046` 현재 체결강도 | `execution_strength`와 last-valid 값으로 동기화 |
-| 잔량비 | `opt10004` | 매수/매도 잔량과 비율 저장 |
-
-가짜 값은 만들지 않는다. 한 종목이 응답하지 않아도 전체 큐를 막지 않고 다음 종목으로 진행한다.
-
-### 13.2 최종 실행 정책
-
-| 항목 | 정책 |
-|---|---|
-| 활성 phase | `closed`, `before_market`, `weekend`, `holiday` |
-| 중단 시점 | 실제 프리마켓 시작 시 자동 비활성 |
-| QAx 실행 | QApplication/QAxWidget와 TR 요청 모두 collector 메인 스레드 |
-| 시장 틱 의존 | 없음 |
-| provider pending queue | 사용하지 않음 |
-| TR 최소 간격 | 종목당 2초 |
-| 종목 timeout | 12초 후 해당 종목만 건너뜀 |
-| 재시도 | 5분 → 30분 → 2시간 반복 |
-| 물리 타이머 | 250ms 고정 심박 |
-| 실제 drain 실행 | 조회 중 250ms, provider 대기 1초, complete/비활성 10초 |
-| sender | 직렬화 오류 한 건만 폐기하고 스레드 계속 실행 |
-
-### 13.3 실제 검증 결과
-
-2026-07-11 토요일, 실시간 시장 틱 0건 상태에서 검증했다.
-
-| 상태값 | 확인값 | 판정 |
-|---|---:|---|
-| `driver` | `qt_timer_market_tick_independent_v3_fixed_heartbeat` | 최종 드라이버 적용 |
-| `market_tick_independent` | `True` | 틱 없이 실행 |
-| `legacy_pump_drain_suppressed` | `True` | 20ms 중복 drain 제거 |
-| `mode` | `complete` | 세 지표 빈칸 0 |
-| `timer_interval_ms` | `250` | 물리 심박 유지 |
-| `effective_drain_interval_ms` | `10000` | 완료 상태 저부하 |
-| `TimerTick` | 지속 증가 | Qt 타이머 생존 |
-| `DrainRun` | 약 10초마다 증가 | 무거운 검사 제한 |
-| `CollectorTs` | 계속 최신화 | collector→worker 상태 전송 정상 |
-| `SenderAlive` | `True` | sender 스레드 정상 |
-| `SerializeErrors` | `0` | 직렬화 오류 없음 |
-| `SenderRecover` | `0` | 복구 개입 없이 안정 |
-
-실제 관찰 예:
+## 9. 미검증·금지사항
 
 ```text
-15:26:22  DrainRun=9   NextDrain=3.141
-15:26:26  DrainRun=10  NextDrain=9.359
-15:26:32  DrainRun=10  NextDrain=2.313
-15:26:36  DrainRun=11  NextDrain=9.282
-```
-
-### 13.4 성능 영향
-
-| 상태 | 키움 TR | 실제 스냅샷/큐 검사 | 판정 |
-|---|---:|---:|---|
-| 빈칸 보충 중 | 최대 2초당 1건 | 빠른 주기 | 휴장시간 허용 |
-| complete | 0건 | 약 10초당 1회 | 부담 미미 |
-| 프리마켓·정규장 | 휴장 보충 TR 0건 | 비활성 확인만 | 장초반 영향 없음 |
-
-물리 타이머는 초당 약 4회 호출되지만 대부분 시간 비교 후 즉시 반환한다. 완료 상태에서 키움 TR은 발생하지 않으며, 09:00~09:10 거래량 폭탄 구간과 직접 경쟁하지 않는다.
-
-### 13.5 최종 검증 명령
-
-```powershell
-$r = Invoke-RestMethod 'http://127.0.0.1:8765/api/v2/snapshot?limit=300'
-$c = $r.status.collector_status
-$p = $c.status
-$s = $p.strength5m_scheduler
-$x = $c.sender_stats
-
-[pscustomobject]@{
-    CollectorTs     = $c.ts
-    Driver          = $s.driver
-    Mode            = $s.mode
-    PhysicalTimerMs = $s.timer_interval_ms
-    EffectiveMs     = $s.effective_drain_interval_ms
-    TimerTick       = $s.timer_tick_count
-    DrainRun        = $s.drain_run_count
-    DrainSkip       = $s.drain_skip_count
-    TickAge         = $s.timer_last_tick_age_sec
-    DrainAge        = $s.timer_last_drain_age_sec
-    NextDrain       = $s.next_drain_in_sec
-    SenderAlive     = $x.sender_thread_alive
-    SerializeErrors = $x.serialization_error_count
-    SenderRecover   = $x.sender_run_recovery_count
-    SenderError     = $x.sender_run_last_error
-}
-```
-
-정상 기준:
-
-```text
-Driver=qt_timer_market_tick_independent_v3_fixed_heartbeat
-Mode=complete
-PhysicalTimerMs=250
-EffectiveMs=10000
-TimerTick 계속 증가
-DrainRun 약 10초마다 증가
-CollectorTs 계속 최신화
-SenderAlive=True
-SerializeErrors=0
-SenderRecover=0
+PC 실전 검증 전 PR 병합 금지
+ThemeBoard 또는 HTML에서 직접 TR 호출 금지
+HTML에서 점수·정렬·Coverage 계산 금지
+최소 collector에 무거운 테마 전체조회·보조 TR을 즉시 추가하지 말 것
+10개 fallback만 늘려서 전체 테마 문제를 해결했다고 주장하지 말 것
+애프터마켓 검증만으로 주말·공휴일·지연개장까지 완료라고 주장하지 말 것
 ```
