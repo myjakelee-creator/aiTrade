@@ -8,7 +8,7 @@ from realtime_v2.common import trading_date_text
 from realtime_v2.tr_singleflight import get_shared_tr_coordinator
 
 
-base = importlib.import_module("realtime_v2.context_snapshot_writer")
+base = importlib.import_module("realtime_v2.context_snapshot_writer_base")
 coordinator = get_shared_tr_coordinator()
 
 _original_fetch_yahoo_snapshot = base.fetch_yahoo_snapshot
@@ -50,7 +50,11 @@ def fetch_live_market_supply_snapshot():
     )
 
 
-def fetch_ohlc_bootstrap(codes_file: Path, limit: int = 300, sleep_sec: float = 0.12):
+def fetch_ohlc_bootstrap(
+    codes_file: Path,
+    limit: int = 300,
+    sleep_sec: float = 0.12,
+):
     path = Path(codes_file)
     trade_date = trading_date_text()
     return coordinator.execute(
@@ -64,7 +68,10 @@ def fetch_ohlc_bootstrap(codes_file: Path, limit: int = 300, sleep_sec: float = 
         trading_date=trade_date,
         market_session="daily_bootstrap",
         ttl_sec=6 * 60 * 60,
-        wait_timeout_sec=max(120.0, float(limit or 300) * max(0.05, float(sleep_sec)) * 3.0),
+        wait_timeout_sec=max(
+            120.0,
+            float(limit or 300) * max(0.05, float(sleep_sec)) * 3.0,
+        ),
         lease_timeout_sec=30 * 60,
         fetcher=lambda: _original_fetch_ohlc_bootstrap(path, limit, sleep_sec),
     )
@@ -74,6 +81,8 @@ base.fetch_yahoo_snapshot = fetch_yahoo_snapshot
 base.fetch_live_market_supply_snapshot = fetch_live_market_supply_snapshot
 base.fetch_ohlc_bootstrap = fetch_ohlc_bootstrap
 
+main = base.main
+
 
 if __name__ == "__main__":
-    raise SystemExit(base.main())
+    raise SystemExit(main())
