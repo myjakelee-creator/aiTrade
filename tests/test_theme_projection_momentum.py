@@ -47,9 +47,9 @@ def test_theme_momentum_uses_median_amount_ratio_and_light_history(monkeypatch, 
     patch.install(module)
     builder = module.ThemeProjectionBuilder()
 
-    first = builder(1, ({"avg_change_rate": 1.0},), {"snapshot_epoch": 0.0, "trading_date": "20260714"})
-    second = builder(2, ({"avg_change_rate": 2.0},), {"snapshot_epoch": 61.0, "trading_date": "20260714"})
-    third = builder(3, ({"avg_change_rate": 4.0},), {"snapshot_epoch": 301.0, "trading_date": "20260714"})
+    first = builder(1, ({"avg_change_rate": 1.0},), {"snapshot_epoch": 1000.0, "trading_date": "20260714"})
+    second = builder(2, ({"avg_change_rate": 2.0},), {"snapshot_epoch": 1061.0, "trading_date": "20260714"})
+    third = builder(3, ({"avg_change_rate": 4.0},), {"snapshot_epoch": 1301.0, "trading_date": "20260714"})
 
     assert first["details"]["T1"]["median_change_rate"] == 3.0
     assert first["details"]["T1"]["theme_amount_ratio"] == 4.0
