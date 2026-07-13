@@ -31,6 +31,7 @@ def test_large_launcher_uses_safe_powershell_entrypoint_and_preflight():
     assert r"scripts\stockboard_v2_large_safe.ps1" in wrapper
     assert r"scripts\stockboard_v2_openapi_preflight.ps1" in wrapper
     assert r"scripts\start_context_singleflight.ps1" in wrapper
+    assert "start_stockboard_context_singleflight.ps1" not in wrapper
     assert "Stop-OpenApiStarterArtifacts" not in wrapper
 
 
@@ -44,17 +45,25 @@ def test_start_flow_requires_verified_context_after_stockboard_start():
     assert 'if errorlevel 1 goto failed' in wrapper
 
 
-def test_context_launcher_starts_direct_entrypoint_and_checks_readiness():
+def test_context_launcher_starts_module_and_checks_readiness():
     script = _context_launcher()
-    assert 'context_snapshot_writer_singleflight.py' in script
-    assert 'context_snapshot_writer.py' in script
-    assert 'context_snapshot_writer_base.py' in script
+    assert '$ModuleName = "realtime_v2.context_snapshot_writer_singleflight"' in script
+    assert '-ArgumentList @("-m", $ModuleName' in script
+    assert 'singleflight_explicit_loop_v3' in script
+    assert 'Remove-Item -LiteralPath $StatusFile' in script
     assert 'CONTEXT_SINGLEFLIGHT_READY=True' in script
     assert '$owner -eq $ExpectedOwner' in script
     assert '$runtime -eq $ExpectedRuntime' in script
     assert '$statusPid -eq [int]$process.Id' in script
     assert 'Context single-flight writer exited before readiness.' in script
     assert 'Context single-flight readiness was not confirmed within 20 seconds.' in script
+
+
+def test_context_launcher_detects_path_and_module_process_variants():
+    script = _context_launcher()
+    assert "realtime_v2[\\\\.]context_snapshot_writer" in script
+    assert "(_base|_singleflight)?" in script
+    assert "Stop-Process -Id $pidNumber -Force" in script
 
 
 def test_wrapper_applies_safe_opening_burst_defaults_without_shrinking_universe():
