@@ -133,7 +133,7 @@ def test_worker_bootstraps_split_before_hub_and_installs_detail_cache():
     hub_import_index = entry.index(
         "from realtime_v2.worker_board_data_hub_patch import install as install_board_data_hub"
     )
-    detail_install_index = entry.index("_install_theme_selected_detail_fail_open()")
+    detail_install_index = entry.rindex("_install_theme_selected_detail_fail_open()")
     hub_call_index = entry.rindex("_install_board_data_hub_fail_open()")
     assert split_index < hub_import_index
     assert hub_call_index < detail_install_index
