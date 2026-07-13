@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from http import HTTPStatus
 from typing import Any
 
 from realtime_v2.board_data_hub import BoardDataHub
-from realtime_v2.common import normalize_code, now_text
+from realtime_v2.common import now_text
 from realtime_v2.tr_singleflight import get_shared_tr_coordinator
 
 
@@ -43,13 +42,14 @@ def install(base) -> None:
         hub = getattr(self, "board_data_hub", None)
         if hub is None:
             return
+        event_kwargs = event.get("kwargs") if isinstance(event.get("kwargs"), dict) else {}
         hub.mark_state_change(
             event_type=event_type,
             at=event.get("ts") or now_text(),
             stock_code=(
                 event.get("stock_code")
                 or event.get("received_code")
-                or (event.get("kwargs") or {}).get("stock_code")
+                or event_kwargs.get("stock_code")
             ),
         )
 
