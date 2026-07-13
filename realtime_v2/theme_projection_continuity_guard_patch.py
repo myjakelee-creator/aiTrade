@@ -20,6 +20,10 @@ def _number(value: Any) -> float | None:
     return number if number == number else None
 
 
+def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
+    return max(low, min(high, float(value)))
+
+
 def _blocked_groups(row: dict[str, Any]) -> set[str]:
     raw = row.get("metric_scoring_blocked_groups")
     if isinstance(raw, (list, tuple, set)):
@@ -38,29 +42,69 @@ def _basis_text(row: dict[str, Any]) -> str:
     return basis or "-"
 
 
-def _weighted_total(
-    members: list[dict[str, Any]],
-    key: str,
-) -> float | None:
-    values: list[tuple[float, float]] = []
-    for member in members:
-        value = _number(member.get(key))
-        weight = _number(member.get("master_weight")) or 1.0
-        if value is None or weight <= 0:
-            continue
-        values.append((value, weight))
-    if not values:
-        return None
-    return round(sum(value * weight for value, weight in values), 4)
+def _leadership_score(
+    member: dict[str, Any],
+    blocked: set[str],
+) -> float:
+    """Reproduce ThemeProjectionBuilder leadership scoring from one projected row.
+
+    The previous implementation cloned the raw row and called the full member projector a
+    second time whenever held metrics were blocked. During close/weekend operation most
+    rows are blocked, so that doubled formatting and dict-allocation work. This function
+    applies the same score formula directly to the already-projected display row.
+    """
+
+    score = 0.0
+    weight = 0.0
+
+    candidate = _number(member.get("candidate_score"))
+    if candidate is not None:
+        score += _clamp(candidate) * 45.0
+        weight += 45.0
+
+    change_rate = _number(member.get("change_rate"))
+    if change_rate is not None:
+        score += _clamp((change_rate + 5.0) * 10.0) * 20.0
+        weight += 20.0
+
+    amount_ratio = _number(member.get("amount_ratio"))
+    if amount_ratio is not None:
+        score += _clamp(amount_ratio * 20.0) * 15.0
+        weight += 15.0
+
+    execution = None if "execution" in blocked else _number(
+        member.get("execution_strength")
+    )
+    if execution is not None:
+        score += _clamp((execution - 70.0) / 1.3) * 10.0
+        weight += 10.0
+
+    program = None if "program" in blocked else _number(member.get("program_net"))
+    large = None if "large_trade" in blocked else _number(
+        member.get("large_trade_net_sum_eok")
+    )
+    if program is not None or large is not None:
+        flow = 0.0
+        divisor = 0
+        if program is not None:
+            flow += _clamp(50.0 + program * 2.0)
+            divisor += 1
+        if large is not None:
+            flow += _clamp(50.0 + large * 10.0)
+            divisor += 1
+        score += (flow / max(1, divisor)) * 10.0
+        weight += 10.0
+
+    return round(score / weight if weight > 0 else 0.0, 2)
 
 
 def install(theme_module) -> None:
     """Keep held metrics visible while excluding prior-session values from scores.
 
-    Board metric continuity is applied to the shared FeatureSnapshot after the
-    StockBoard candidate engine has completed. ThemeBoard therefore needs this
-    explicit guard because it computes its own theme/leadership score. The guard
-    never fetches data and never changes the display values delivered to the UI.
+    Board metric continuity is applied to the shared FeatureSnapshot after the StockBoard
+    candidate engine has completed. ThemeBoard therefore needs this explicit guard because
+    it computes its own theme/leadership score. The guard never fetches data and never
+    changes the display values delivered to the UI.
     """
 
     builder_class = theme_module.ThemeProjectionBuilder
@@ -80,19 +124,10 @@ def install(theme_module) -> None:
         display_member = original_member_row(self, row, member)
         blocked = _blocked_groups(row)
 
-        score_row = dict(row)
-        if "execution" in blocked:
-            score_row["execution_strength"] = None
-        if "program" in blocked:
-            score_row["program_net"] = None
-        if "large_trade" in blocked:
-            score_row["large_trade_net_sum_eok"] = None
-            score_row["large_trade_net_count"] = None
-
         if blocked:
-            score_member = original_member_row(self, score_row, member)
-            display_member["leadership_score"] = score_member.get(
-                "leadership_score"
+            display_member["leadership_score"] = _leadership_score(
+                display_member,
+                blocked,
             )
 
         display_member["_theme_score_program_net"] = (
@@ -129,22 +164,41 @@ def install(theme_module) -> None:
         result = original_aggregate_theme(self, theme, by_code)
         members = result.get("members") if isinstance(result, dict) else None
         members = members if isinstance(members, list) else []
-        result["_theme_score_program_net_eok"] = _weighted_total(
-            members, "_theme_score_program_net"
+
+        program_total = 0.0
+        large_total = 0.0
+        program_found = False
+        large_found = False
+        held_count = 0
+        for member in members:
+            if not isinstance(member, dict):
+                continue
+            weight = _number(member.get("master_weight")) or 1.0
+            if weight <= 0:
+                continue
+
+            program = _number(member.get("_theme_score_program_net"))
+            if program is not None:
+                program_total += program * weight
+                program_found = True
+
+            large = _number(member.get("_theme_score_large_trade_net"))
+            if large is not None:
+                large_total += large * weight
+                large_found = True
+
+            if member.get("metric_scoring_blocked_groups"):
+                held_count += 1
+
+        result["_theme_score_program_net_eok"] = (
+            round(program_total, 4) if program_found else None
         )
-        result["_theme_score_large_trade_net_eok"] = _weighted_total(
-            members, "_theme_score_large_trade_net"
+        result["_theme_score_large_trade_net_eok"] = (
+            round(large_total, 4) if large_found else None
         )
-        held_members = [
-            member
-            for member in members
-            if member.get("metric_scoring_blocked_groups")
-        ]
-        result["held_member_count"] = len(held_members)
+        result["held_member_count"] = held_count
         result["data_basis_text"] = (
-            "전일 보존값 포함·점수 제외"
-            if held_members
-            else "현재/마감 보존값"
+            "전일 보존값 포함·점수 제외" if held_count else "현재/마감 보존값"
         )
         return result
 
@@ -186,17 +240,15 @@ def install(theme_module) -> None:
             policy["held_metric_display_allowed"] = True
             policy["previous_session_metric_scoring_allowed"] = False
             policy["continuity_input"] = "shared_feature_snapshot_only"
+            policy["continuity_member_reprojection_allowed"] = False
 
         details = payload.get("details")
         if isinstance(details, dict):
             for theme in details.values():
                 if not isinstance(theme, dict):
                     continue
-                for key in (
-                    "_theme_score_program_net_eok",
-                    "_theme_score_large_trade_net_eok",
-                ):
-                    theme.pop(key, None)
+                theme.pop("_theme_score_program_net_eok", None)
+                theme.pop("_theme_score_large_trade_net_eok", None)
                 members = theme.get("members")
                 if not isinstance(members, list):
                     continue
@@ -213,6 +265,13 @@ def install(theme_module) -> None:
                     continue
                 theme.pop("_theme_score_program_net_eok", None)
                 theme.pop("_theme_score_large_trade_net_eok", None)
+
+        payload["continuity_guard_status"] = {
+            "enabled": True,
+            "member_reprojection_count": 0,
+            "aggregate_member_passes": 1,
+            "mode": "single_projection_direct_leadership_rescore",
+        }
         return payload
 
     builder_class._member_row = member_row
