@@ -42,15 +42,13 @@ def _display_version(state) -> int:
 
 
 def install(base) -> None:
-    """Cache expensive ranking snapshots while overlaying price/rate at full speed.
+    """Move expensive candidate/ranking snapshots off the HTTP/SSE request path.
 
-    The StockBoard SSE endpoint may ask for a snapshot every 100 ms.  Building one
-    currently deep-copies the full universe, recalculates ranking/features/funnel,
-    and applies display-order logic.  At the 09:00 burst that work competes with
-    event ingestion.  This patch rebuilds the full internal snapshot at most every
-    500 ms (or immediately for model/display-order changes), then serves each SSE
-    request from the cached ranking with only the decision-critical live fields
-    overlaid from the current quote store.
+    A background thread owns full-universe deepcopy, feature scoring, funnel ranking,
+    and display-order calculation. HTTP/SSE callers always receive the most recent
+    completed heavy snapshot and only overlay the decision-critical live fields.
+    Rebuild requests are coalesced to a single pending job, so the 09:00 burst cannot
+    create a stale calculation backlog.
     """
 
     state_class = base.State
@@ -66,25 +64,15 @@ def install(base) -> None:
     status_write_interval_sec = _env_int(
         "STOCKBOARD_STATUS_WRITE_INTERVAL_SEC", 5, 1, 60
     )
+    background_poll_ms = _env_int(
+        "STOCKBOARD_BACKGROUND_REBUILD_POLL_MS", 50, 10, 500
+    )
     heavy_interval_sec = heavy_interval_ms / 1000.0
     heavy_max_age_sec = heavy_max_age_ms / 1000.0
+    background_poll_sec = background_poll_ms / 1000.0
 
     original_init = state_class.__init__
     original_snapshot = state_class.snapshot
-
-    def patched_init(self, *args, **kwargs):
-        original_init(self, *args, **kwargs)
-        self._opening_burst_cache_lock = threading.RLock()
-        self._opening_burst_cache_meta: dict[str, Any] | None = None
-        self._opening_burst_cache_rows: list[dict[str, Any]] = []
-        self._opening_burst_cache_built_mono = 0.0
-        self._opening_burst_cache_built_at: str | None = None
-        self._opening_burst_cache_signature: tuple[Any, ...] | None = None
-        self._opening_burst_cache_build_count = 0
-        self._opening_burst_cache_reuse_count = 0
-        self._opening_burst_cache_last_build_ms: float | None = None
-        self._opening_burst_cache_last_overlay_ms: float | None = None
-        self._opening_burst_cache_last_error: str | None = None
 
     def signature(self) -> tuple[Any, ...]:
         with self.lock:
@@ -103,8 +91,44 @@ def install(base) -> None:
             _display_version(self),
         )
 
-    def rebuild_locked(self) -> None:
+    def request_background_rebuild(
+        self,
+        *,
+        reason: str,
+        current_signature: tuple[Any, ...] | None = None,
+        force: bool = False,
+    ) -> None:
+        current_signature = current_signature or signature(self)
+        with self._opening_burst_cache_lock:
+            if self._opening_burst_cache_build_inflight:
+                if not self._opening_burst_cache_pending:
+                    self._opening_burst_cache_request_count += 1
+                else:
+                    self._opening_burst_cache_coalesced_request_count += 1
+                self._opening_burst_cache_pending = True
+            elif self._opening_burst_cache_pending:
+                self._opening_burst_cache_coalesced_request_count += 1
+            else:
+                self._opening_burst_cache_pending = True
+                self._opening_burst_cache_request_count += 1
+                self._opening_burst_cache_pending_since_mono = time.monotonic()
+
+            self._opening_burst_cache_requested_signature = current_signature
+            self._opening_burst_cache_requested_reason = reason
+            self._opening_burst_cache_force_immediate = bool(
+                self._opening_burst_cache_force_immediate or force
+            )
+            self._opening_burst_cache_last_request_at = now_text()
+        self._opening_burst_cache_wakeup.set()
+
+    def heavy_build(self) -> tuple[
+        dict[str, Any],
+        list[dict[str, Any]],
+        tuple[Any, ...],
+        float,
+    ]:
         start = time.perf_counter()
+        source_signature = signature(self)
         with self.lock:
             universe_count = int(
                 self.status.get("universe_count") or len(self.quotes) or 0
@@ -114,36 +138,183 @@ def install(base) -> None:
         rows = payload.get("rows") if isinstance(payload, dict) else None
         if not isinstance(rows, list):
             raise RuntimeError("heavy snapshot did not return rows")
-
         meta = dict(payload)
         meta.pop("rows", None)
         meta.pop("row_count", None)
-        finished = time.monotonic()
-        self._opening_burst_cache_meta = meta
-        self._opening_burst_cache_rows = rows
-        self._opening_burst_cache_built_mono = finished
-        self._opening_burst_cache_built_at = now_text()
-        self._opening_burst_cache_signature = signature(self)
-        self._opening_burst_cache_build_count += 1
-        self._opening_burst_cache_last_build_ms = round(
-            (time.perf_counter() - start) * 1000.0, 3
-        )
-        self._opening_burst_cache_last_error = None
+        build_ms = round((time.perf_counter() - start) * 1000.0, 3)
+        return meta, rows, source_signature, build_ms
 
-    def should_rebuild_locked(self, now_mono: float, current_signature) -> bool:
-        if self._opening_burst_cache_meta is None:
-            return True
-        age = max(0.0, now_mono - self._opening_burst_cache_built_mono)
-        previous = self._opening_burst_cache_signature
-        if previous is None:
-            return True
-        # Model/universe/display-order changes must be reflected immediately.
+    def background_loop(self) -> None:
+        while not self._opening_burst_cache_stop_event.is_set():
+            self._opening_burst_cache_wakeup.wait(timeout=background_poll_sec)
+            self._opening_burst_cache_wakeup.clear()
+            if self._opening_burst_cache_stop_event.is_set():
+                break
+
+            while not self._opening_burst_cache_stop_event.is_set():
+                with self._opening_burst_cache_lock:
+                    pending = bool(self._opening_burst_cache_pending)
+                    force = bool(self._opening_burst_cache_force_immediate)
+                    cache_ready = self._opening_burst_cache_meta is not None
+                    built_mono = float(self._opening_burst_cache_built_mono or 0.0)
+                if not pending:
+                    break
+
+                delay = 0.0
+                if cache_ready and not force:
+                    delay = max(
+                        0.0,
+                        heavy_interval_sec - (time.monotonic() - built_mono),
+                    )
+                if delay > 0:
+                    if self._opening_burst_cache_wakeup.wait(timeout=delay):
+                        self._opening_burst_cache_wakeup.clear()
+                        continue
+                    if self._opening_burst_cache_stop_event.is_set():
+                        break
+
+                with self._opening_burst_cache_lock:
+                    if not self._opening_burst_cache_pending:
+                        continue
+                    build_token = int(self._opening_burst_cache_request_count)
+                    build_reason = self._opening_burst_cache_requested_reason
+                    self._opening_burst_cache_pending = False
+                    self._opening_burst_cache_force_immediate = False
+                    self._opening_burst_cache_build_inflight = True
+                    self._opening_burst_cache_last_build_started_at = now_text()
+
+                try:
+                    meta, rows, source_signature, build_ms = heavy_build(self)
+                    finished_mono = time.monotonic()
+                    with self._opening_burst_cache_lock:
+                        self._opening_burst_cache_meta = meta
+                        self._opening_burst_cache_rows = rows
+                        self._opening_burst_cache_built_mono = finished_mono
+                        self._opening_burst_cache_built_at = now_text()
+                        self._opening_burst_cache_signature = source_signature
+                        self._opening_burst_cache_build_count += 1
+                        self._opening_burst_cache_background_build_count += 1
+                        self._opening_burst_cache_last_build_ms = build_ms
+                        self._opening_burst_cache_last_build_reason = build_reason
+                        self._opening_burst_cache_last_error = None
+                        self._opening_burst_cache_last_completed_request_count = build_token
+                        self._opening_burst_cache_pending_since_mono = None
+                        self._opening_burst_cache_ready_event.set()
+                except Exception as error:
+                    with self._opening_burst_cache_lock:
+                        self._opening_burst_cache_last_error = (
+                            f"{type(error).__name__}: {error}"
+                        )
+                        self._opening_burst_cache_background_error_count += 1
+                        if self._opening_burst_cache_meta is None:
+                            self._opening_burst_cache_pending = True
+                finally:
+                    with self._opening_burst_cache_lock:
+                        self._opening_burst_cache_build_inflight = False
+                        pending_again = bool(self._opening_burst_cache_pending)
+
+                if pending_again:
+                    continue
+                break
+
+    def start_background_thread(self) -> None:
+        with self._opening_burst_cache_lock:
+            thread = self._opening_burst_cache_thread
+            if thread is not None and thread.is_alive():
+                return
+            self._opening_burst_cache_thread = threading.Thread(
+                target=background_loop,
+                args=(self,),
+                name="stockboard-candidate-background",
+                daemon=True,
+            )
+            thread = self._opening_burst_cache_thread
+        thread.start()
+
+    def patched_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self._opening_burst_cache_lock = threading.RLock()
+        self._opening_burst_cache_meta: dict[str, Any] | None = None
+        self._opening_burst_cache_rows: list[dict[str, Any]] = []
+        self._opening_burst_cache_built_mono = 0.0
+        self._opening_burst_cache_built_at: str | None = None
+        self._opening_burst_cache_signature: tuple[Any, ...] | None = None
+        self._opening_burst_cache_build_count = 0
+        self._opening_burst_cache_reuse_count = 0
+        self._opening_burst_cache_last_build_ms: float | None = None
+        self._opening_burst_cache_last_overlay_ms: float | None = None
+        self._opening_burst_cache_last_error: str | None = None
+        self._opening_burst_cache_pending = False
+        self._opening_burst_cache_pending_since_mono: float | None = None
+        self._opening_burst_cache_force_immediate = False
+        self._opening_burst_cache_build_inflight = False
+        self._opening_burst_cache_requested_signature: tuple[Any, ...] | None = None
+        self._opening_burst_cache_requested_reason: str | None = None
+        self._opening_burst_cache_last_request_at: str | None = None
+        self._opening_burst_cache_last_build_started_at: str | None = None
+        self._opening_burst_cache_last_build_reason: str | None = None
+        self._opening_burst_cache_request_count = 0
+        self._opening_burst_cache_coalesced_request_count = 0
+        self._opening_burst_cache_last_completed_request_count = 0
+        self._opening_burst_cache_background_build_count = 0
+        self._opening_burst_cache_background_error_count = 0
+        self._opening_burst_cache_last_overlay_ms = None
+        self._opening_burst_cache_wakeup = threading.Event()
+        self._opening_burst_cache_stop_event = threading.Event()
+        self._opening_burst_cache_ready_event = threading.Event()
+        self._opening_burst_cache_thread: threading.Thread | None = None
+        start_background_thread(self)
+        request_background_rebuild(
+            self,
+            reason="startup",
+            current_signature=signature(self),
+            force=True,
+        )
+
+    def schedule_reason(self, current_signature, now_mono: float):
+        with self._opening_burst_cache_lock:
+            meta_ready = self._opening_burst_cache_meta is not None
+            previous = self._opening_burst_cache_signature
+            age = max(
+                0.0,
+                now_mono - float(self._opening_burst_cache_built_mono or 0.0),
+            )
+        if not meta_ready or previous is None:
+            return "cold_start", True
         if current_signature[3:] != previous[3:]:
-            return True
+            return "structure_change", True
         if age >= heavy_max_age_sec:
-            return True
-        # Trade/orderbook/event changes trigger at most one heavy build per interval.
-        return age >= heavy_interval_sec and current_signature[:3] != previous[:3]
+            return "max_age", True
+        if age >= heavy_interval_sec and current_signature[:3] != previous[:3]:
+            return "event_change", False
+        return None, False
+
+    def bootstrap_payload(self, requested_limit: int) -> dict[str, Any]:
+        with self.lock:
+            rows = [deepcopy(row) for row in self.quotes.values()]
+            current_status = deepcopy(self.status)
+        try:
+            current_status.update(self.logger_stats())
+        except Exception:
+            pass
+        rows.sort(
+            key=lambda row: (
+                -(float(row.get("trade_value_eok") or 0.0)),
+                int(row.get("seed_rank") or 999999),
+                str(row.get("stock_code") or ""),
+            )
+        )
+        rows = rows[:requested_limit]
+        for index, row in enumerate(rows, start=1):
+            row.setdefault("rank", index)
+        return {
+            "schema_version": 1,
+            "source": "stockboard_v2_background_warmup",
+            "ts": now_text(),
+            "status": current_status,
+            "row_count": len(rows),
+            "rows": rows,
+        }
 
     def live_overlays(self, codes: list[str]):
         overlays: dict[str, dict[str, Any]] = {}
@@ -170,34 +341,53 @@ def install(base) -> None:
         except (TypeError, ValueError):
             requested_limit = 300
 
-        cache_hit = True
+        start_background_thread(self)
         current_signature = signature(self)
         now_mono = time.monotonic()
-        with self._opening_burst_cache_lock:
-            if should_rebuild_locked(self, now_mono, current_signature):
-                cache_hit = False
-                try:
-                    rebuild_locked(self)
-                except Exception as error:
-                    self._opening_burst_cache_last_error = (
-                        f"{type(error).__name__}: {error}"
-                    )
-                    if self._opening_burst_cache_meta is None:
-                        raise
-            else:
-                self._opening_burst_cache_reuse_count += 1
+        reason, force = schedule_reason(self, current_signature, now_mono)
+        if reason:
+            request_background_rebuild(
+                self,
+                reason=reason,
+                current_signature=current_signature,
+                force=force,
+            )
 
-            meta = deepcopy(self._opening_burst_cache_meta or {})
-            cached_rows = self._opening_burst_cache_rows[:requested_limit]
-            rows = [deepcopy(row) for row in cached_rows]
-            built_mono = self._opening_burst_cache_built_mono
-            built_at = self._opening_burst_cache_built_at
-            source_signature = self._opening_burst_cache_signature
+        with self._opening_burst_cache_lock:
+            cache_ready = self._opening_burst_cache_meta is not None
+            if cache_ready:
+                meta = deepcopy(self._opening_burst_cache_meta or {})
+                cached_rows = self._opening_burst_cache_rows[:requested_limit]
+                rows = [deepcopy(row) for row in cached_rows]
+                built_mono = self._opening_burst_cache_built_mono
+                built_at = self._opening_burst_cache_built_at
+                source_signature = self._opening_burst_cache_signature
+                self._opening_burst_cache_reuse_count += 1
+            else:
+                meta = {}
+                rows = []
+                built_mono = 0.0
+                built_at = None
+                source_signature = None
             build_count = self._opening_burst_cache_build_count
             reuse_count = self._opening_burst_cache_reuse_count
             last_build_ms = self._opening_burst_cache_last_build_ms
             last_error = self._opening_burst_cache_last_error
             internal_row_count = len(self._opening_burst_cache_rows)
+            pending = self._opening_burst_cache_pending
+            build_inflight = self._opening_burst_cache_build_inflight
+            pending_reason = self._opening_burst_cache_requested_reason
+            request_count = self._opening_burst_cache_request_count
+            coalesced_count = self._opening_burst_cache_coalesced_request_count
+            background_build_count = self._opening_burst_cache_background_build_count
+            background_error_count = self._opening_burst_cache_background_error_count
+            thread = self._opening_burst_cache_thread
+
+        if not cache_ready:
+            warmup = bootstrap_payload(self, requested_limit)
+            meta = dict(warmup)
+            rows = list(meta.pop("rows", []))
+            meta.pop("row_count", None)
 
         overlay_start = time.perf_counter()
         codes = [normalize_code(row.get("stock_code")) for row in rows]
@@ -218,15 +408,30 @@ def install(base) -> None:
         with self._opening_burst_cache_lock:
             self._opening_burst_cache_last_overlay_ms = overlay_ms
 
-        cache_age_ms = round(
-            max(0.0, time.monotonic() - built_mono) * 1000.0, 3
-        ) if built_mono else None
+        cache_age_ms = (
+            round(max(0.0, time.monotonic() - built_mono) * 1000.0, 3)
+            if built_mono
+            else None
+        )
         metrics = {
             "opening_burst_cache_enabled": True,
+            "opening_burst_background_enabled": True,
+            "opening_burst_background_thread_alive": bool(
+                thread is not None and thread.is_alive()
+            ),
+            "opening_burst_background_ready": cache_ready,
+            "opening_burst_background_pending": bool(pending),
+            "opening_burst_background_build_inflight": bool(build_inflight),
+            "opening_burst_background_pending_reason": pending_reason,
+            "opening_burst_background_request_count": request_count,
+            "opening_burst_background_coalesced_request_count": coalesced_count,
+            "opening_burst_background_build_count": background_build_count,
+            "opening_burst_background_error_count": background_error_count,
             "opening_burst_heavy_interval_ms": heavy_interval_ms,
             "opening_burst_heavy_max_age_ms": heavy_max_age_ms,
+            "opening_burst_background_poll_ms": background_poll_ms,
             "opening_burst_status_write_interval_sec": status_write_interval_sec,
-            "opening_burst_cache_hit": cache_hit,
+            "opening_burst_cache_hit": cache_ready,
             "opening_burst_cache_build_count": build_count,
             "opening_burst_cache_reuse_count": reuse_count,
             "opening_burst_cache_last_build_ms": last_build_ms,
@@ -264,6 +469,11 @@ def install(base) -> None:
                     state.status["status_write_last_error"] = (
                         f"{type(error).__name__}: {error}"
                     )
+        try:
+            state._opening_burst_cache_stop_event.set()
+            state._opening_burst_cache_wakeup.set()
+        except Exception:
+            pass
 
     state_class.__init__ = patched_init
     state_class.snapshot = patched_snapshot
