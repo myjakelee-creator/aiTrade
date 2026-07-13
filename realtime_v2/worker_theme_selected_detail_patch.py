@@ -4,7 +4,20 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import Any
 
+from realtime_v2 import theme_projection_engine as theme_projection_module
+from realtime_v2.theme_projection_dual_rank_patch import (
+    install as install_theme_dual_rank,
+)
 from realtime_v2.theme_selected_detail_runtime import ThemeSelectedDetailRuntime
+from realtime_v2.worker_theme_dual_rank_ui_patch import (
+    install as install_theme_dual_rank_ui,
+)
+
+
+# The hub runtime is instantiated later, when State starts. Installing the final
+# dual ranking wrapper here therefore affects the same shared summary builder
+# without changing the collector or the BoardDataHub publish path.
+install_theme_dual_rank(theme_projection_module)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,6 +93,9 @@ def install(base) -> None:
             self.status["theme_selected_detail_queue"] = "latest_only_depth_1"
             self.status["theme_selected_detail_http_calculation_allowed"] = False
             self.status["theme_all_member_detail_generation_allowed"] = False
+            self.status["theme_dual_server_rankings_enabled"] = True
+            self.status["theme_default_view"] = "momentum"
+            self.status["theme_browser_sort_allowed"] = False
 
     def patched_snapshot(self, limit: int = 300) -> dict[str, Any]:
         payload = original_snapshot(self, limit)
@@ -217,3 +233,7 @@ def install(base) -> None:
     state_class.snapshot = patched_snapshot
     base.WebHandler.do_GET = patched_do_get
     state_class._stockboard_theme_selected_detail_installed = True
+
+    # Install last so the Theme page uses the display-only server ranking switch
+    # while the detail API above remains the underlying cache source.
+    install_theme_dual_rank_ui(base)
