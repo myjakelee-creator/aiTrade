@@ -67,6 +67,12 @@ class ThemeSelectedDetailRuntime:
     def select(self, theme_id: str) -> bool:
         changed = self.builder.select(theme_id)
         feature_version = self.hub.borrow_feature_snapshot()[0]
+        if changed:
+            # A selection change must rebuild even when the shared Feature version
+            # has not changed. Reset only this detail worker's completed marker;
+            # the published projection still uses the current real Feature version.
+            with self.worker._lock:
+                self.worker._completed_feature_version = 0
         if feature_version > 0:
             self.worker.submit(feature_version)
         return changed
@@ -75,6 +81,9 @@ class ThemeSelectedDetailRuntime:
         if self.builder.selected():
             self.worker.submit(feature_version)
 
+    def stop(self) -> None:
+        self.worker.stop()
+
     def status(self) -> dict[str, Any]:
         status = self.worker.status()
         status.update(
@@ -82,6 +91,7 @@ class ThemeSelectedDetailRuntime:
                 "projection_mode": "selected_theme_detail_only",
                 "selected_theme_id": self.builder.selected() or None,
                 "all_theme_detail_generation_allowed": False,
+                "same_feature_selection_rebuild_enabled": True,
             }
         )
         return status
