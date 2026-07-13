@@ -266,6 +266,15 @@ def _install_display50_fast_price_patch_fail_open() -> None:
         _write_patch_error("display50_fast_price_patch_error.txt", error)
 
 
+def _install_shared_board_shell_fail_open() -> None:
+    try:
+        from realtime_v2.worker_board_shell_patch import install as install_board_shell
+
+        install_board_shell(large)
+    except Exception as error:
+        _write_patch_error("board_shell_patch_error.txt", error)
+
+
 def _install_board_data_hub_fail_open() -> None:
     try:
         from realtime_v2.worker_board_data_hub_patch import install as install_board_data_hub
@@ -304,6 +313,7 @@ _install_event_freshness_fail_open()
 _install_cross_table_navigation_patch_fail_open()
 _install_header_sort_patch_fail_open()
 _install_display50_fast_price_patch_fail_open()
+_install_shared_board_shell_fail_open()
 # Hub must wrap the final heavy snapshot implementation before the opening-burst
 # cache captures it. TR single-flight is installed before worker threads start.
 _install_board_data_hub_fail_open()
