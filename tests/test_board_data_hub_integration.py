@@ -9,15 +9,20 @@ ENTRYPOINT = ROOT / "realtime_v2" / "worker64_guarded_large_bidask.py"
 HUB_PATCH = ROOT / "realtime_v2" / "worker_board_data_hub_patch.py"
 TR_PATCH = ROOT / "realtime_v2" / "worker_tr_singleflight_patch.py"
 CONTEXT_ENTRY = ROOT / "realtime_v2" / "context_snapshot_writer_singleflight.py"
+THEME_ENGINE = ROOT / "realtime_v2" / "theme_projection_engine.py"
+STRATEGY_ENGINE = ROOT / "realtime_v2" / "strategy_projection_engine.py"
 
 
 def test_hub_and_singleflight_modules_are_valid_python():
     for path in (
         ROOT / "realtime_v2" / "board_data_hub.py",
+        ROOT / "realtime_v2" / "board_projection_runtime.py",
         ROOT / "realtime_v2" / "tr_singleflight.py",
         HUB_PATCH,
         TR_PATCH,
         CONTEXT_ENTRY,
+        THEME_ENGINE,
+        STRATEGY_ENGINE,
     ):
         ast.parse(path.read_text(encoding="utf-8"))
 
@@ -36,9 +41,27 @@ def test_hub_exposes_read_only_shared_endpoints_and_no_direct_board_tr():
     assert '"/api/v2/hub/manifest"' in source
     assert '"/api/v2/hub/canonical"' in source
     assert '"/api/v2/hub/features"' in source
+    assert '"/api/v2/hub/theme"' in source
+    assert '"/api/v2/hub/strategy"' in source
     assert '"/api/v2/hub/projection"' in source
     assert 'self.status["board_data_hub_direct_board_tr_allowed"] = False' in source
     assert "hub.publish_feature_snapshot(payload)" in source
+
+
+def test_theme_and_strategy_share_one_feature_publish_without_rescoring():
+    source = HUB_PATCH.read_text(encoding="utf-8")
+    publish_index = source.index("feature_version = hub.publish_feature_snapshot(payload)")
+    theme_submit_index = source.index("theme_runtime.submit(feature_version)")
+    strategy_submit_index = source.index("strategy_runtime.submit(feature_version)")
+    assert publish_index < theme_submit_index
+    assert publish_index < strategy_submit_index
+    assert "StrategyProjectionRuntime" in source
+    assert 'self.status["strategy_projection_candidate_rescore_allowed"] = False' in source
+
+    strategy_source = STRATEGY_ENGINE.read_text(encoding="utf-8")
+    assert "stockboard_candidate_engine" not in strategy_source
+    assert "FeatureSnapshot" not in strategy_source
+    assert "kiwoom_data_provider" not in strategy_source
 
 
 def test_existing_slow_sources_use_or_have_singleflight_entries():
