@@ -14,8 +14,8 @@ class StaleProjectionInput(RuntimeError):
 class BoardDataHub:
     """Single read model for StockBoard, ThemeBoard and StrategyBoard.
 
-    The live State remains the canonical owner.  This hub publishes immutable
-    completed feature/candidate snapshots and future board projections without
+    The live State remains the canonical owner. This hub publishes immutable
+    completed feature/candidate snapshots and board projections without
     triggering TR requests or recalculation from HTTP handlers.
     """
 
@@ -33,6 +33,7 @@ class BoardDataHub:
         self._feature_input_state_version = 0
         self._projections: dict[str, dict[str, Any]] = {}
         self._projection_versions: dict[str, int] = {}
+        self._projection_status: dict[str, dict[str, Any]] = {}
 
     def mark_state_change(
         self,
@@ -60,13 +61,37 @@ class BoardDataHub:
             self._feature_version += 1
             self._candidate_version += 1
             self._feature_payload_meta = meta
-            # The background snapshot is complete and no longer mutated. Keep the
-            # reference here and deepcopy only on consumer reads to avoid another
-            # full-universe copy during the expensive build lane.
+            # The completed heavy snapshot is immutable after publish. Projection
+            # workers borrow this reference read-only so Theme/Strategy projections
+            # do not make another full-universe copy before their own aggregation.
             self._feature_rows = rows
             self._feature_published_at = now_text()
             self._feature_input_state_version = self._state_version
             return self._feature_version
+
+    def borrow_feature_snapshot(
+        self,
+    ) -> tuple[int, int, tuple[dict[str, Any], ...], dict[str, Any]]:
+        """Return the current completed feature snapshot for internal readers.
+
+        Rows are borrowed read-only. Public HTTP consumers must use
+        ``feature_snapshot`` which returns defensive copies.
+        """
+
+        with self._lock:
+            return (
+                self._feature_version,
+                self._feature_input_state_version,
+                tuple(self._feature_rows),
+                dict(self._feature_payload_meta),
+            )
+
+    def update_projection_status(self, name: str, status: dict[str, Any]) -> None:
+        projection_name = str(name or "").strip().lower()
+        if not projection_name:
+            return
+        with self._lock:
+            self._projection_status[projection_name] = deepcopy(status)
 
     def publish_projection(
         self,
@@ -113,6 +138,7 @@ class BoardDataHub:
                 "last_state_event_type": self._last_state_event_type,
                 "last_state_code": self._last_state_code,
                 "projection_versions": dict(self._projection_versions),
+                "projection_status": deepcopy(self._projection_status),
                 "policy": {
                     "canonical_state_owner": "stockboard_v2_worker",
                     "realtime_owner": "stockboard_v2_collector32",
