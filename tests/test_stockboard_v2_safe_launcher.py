@@ -30,9 +30,17 @@ def test_large_launcher_uses_safe_powershell_entrypoint_and_preflight():
 def test_start_flow_stops_old_runtime_then_cleans_orphan_then_starts():
     wrapper = _wrapper()
     stop_index = wrapper.index('-Action stop')
+    context_cleanup_index = wrapper.index("context_snapshot_writer(_base")
     preflight_index = wrapper.index('-File "%PREFLIGHT%"')
     start_index = wrapper.index('-Action "%START_ACTION%"')
-    assert stop_index < preflight_index < start_index
+    assert stop_index < context_cleanup_index < preflight_index < start_index
+
+
+def test_restart_removes_all_context_writer_variants():
+    wrapper = _wrapper()
+    assert "context_snapshot_writer(_base^|_singleflight)?\\.py" in wrapper
+    assert "Stopping context writer PID=" in wrapper
+    assert "Stop-Process -Id ([int]$row.ProcessId) -Force" in wrapper
 
 
 def test_wrapper_applies_safe_opening_burst_defaults_without_shrinking_universe():
