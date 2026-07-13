@@ -10,10 +10,13 @@ if not defined STOCKBOARD_HEAVY_SNAPSHOT_INTERVAL_MS set "STOCKBOARD_HEAVY_SNAPS
 if not defined STOCKBOARD_HEAVY_SNAPSHOT_MAX_AGE_MS set "STOCKBOARD_HEAVY_SNAPSHOT_MAX_AGE_MS=2000"
 if not defined STOCKBOARD_BACKGROUND_REBUILD_POLL_MS set "STOCKBOARD_BACKGROUND_REBUILD_POLL_MS=50"
 if not defined STOCKBOARD_STATUS_WRITE_INTERVAL_SEC set "STOCKBOARD_STATUS_WRITE_INTERVAL_SEC=5"
+rem A manually refreshed full Kiwoom catalog is preferred. If it is absent, the
+rem ThemeMembershipLoader continues to the existing static 10-theme fallback.
+if not defined STOCKBOARD_THEME_MEMBERSHIP_FILE set "STOCKBOARD_THEME_MEMBERSHIP_FILE=C:\aiTrade\data\runtime\stockboard_v2\theme_membership.json"
 
 set "ACTION=%~1"
 if "%ACTION%"=="" goto menu
-goto run
+ goto run
 
 :menu
 echo.
