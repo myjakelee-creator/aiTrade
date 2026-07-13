@@ -66,6 +66,52 @@ _CROSS_TABLE_NAV_PATCH = r"""
   }
 """
 
+_DISPLAY50_MARKER = "STOCKBOARD_V2_DISPLAY50_FAST_PRICE_20260713"
+_DISPLAY50_PATCH = r"""
+  /* STOCKBOARD_V2_DISPLAY50_FAST_PRICE_20260713 */
+  const __sbv2HeavyRenderIntervalMs = 500;
+  let __sbv2LastHeavyRenderAt = 0;
+
+  function __sbv2FastPatchPriceRate(payload){
+    const rows = Array.isArray(payload && payload.rows) ? payload.rows : [];
+    if(!rows.length) return;
+    const byCode = new Map(rows.map(row => [String(row && row.stock_code || ''), row]));
+
+    document.querySelectorAll('table.board tbody tr[data-code]').forEach(tr => {
+      const row = byCode.get(String(tr.dataset.code || ''));
+      if(!row) return;
+
+      const price = numeric(row.price);
+      const rate = numeric(row.change_rate);
+      const priceCell = tr.cells && tr.cells[4];
+      const rateCell = tr.cells && tr.cells[5];
+
+      if(priceCell){
+        const nextText = price === null ? '-' : fmtNum(price);
+        if(priceCell.textContent !== nextText) priceCell.textContent = nextText;
+      }
+
+      if(rateCell){
+        const nextText = rate === null ? '-' : `${rate > 0 ? '+' : ''}${rate.toFixed(2)}%`;
+        if(rateCell.textContent !== nextText) rateCell.textContent = nextText;
+        rateCell.classList.remove('plus', 'minus', 'zero');
+        rateCell.classList.add(rate === null || rate === 0 ? 'zero' : rate > 0 ? 'plus' : 'minus');
+      }
+    });
+  }
+
+  function __sbv2HandleFastSnapshot(payload){
+    const now = performance.now();
+    const first = !lastPayload;
+    lastPayload = payload;
+    __sbv2FastPatchPriceRate(payload);
+    if(first || now - __sbv2LastHeavyRenderAt >= __sbv2HeavyRenderIntervalMs){
+      __sbv2LastHeavyRenderAt = now;
+      render(payload, 'stream');
+    }
+  }
+"""
+
 
 def _runtime_dir() -> Path:
     try:
@@ -172,6 +218,54 @@ def _install_header_sort_patch_fail_open() -> None:
         _write_patch_error("html_header_sort_patch_error.txt", error)
 
 
+def _install_display50_fast_price_patch_fail_open() -> None:
+    try:
+        if getattr(large, "_display50_fast_price_patch_installed", False):
+            return
+
+        original_ui_safety_patch = large._ui_safety_patch
+
+        def patched_ui_safety_patch(html: str) -> str:
+            patched = original_ui_safety_patch(html)
+            if _DISPLAY50_MARKER in patched:
+                return patched
+
+            patched = patched.replace(
+                "/api/v2/snapshot?limit=300&ts=${Date.now()}",
+                "/api/v2/snapshot?limit=50&ts=${Date.now()}",
+            )
+            patched = patched.replace(
+                "/api/v2/stream?limit=300&interval_ms=100&ts=${Date.now()}",
+                "/api/v2/stream?limit=50&interval_ms=100&ts=${Date.now()}",
+            )
+            patched = patched.replace("Top300 Pool", "표시 Pool")
+            patched = patched.replace(
+                "return minutes >= 9 * 60 && minutes < 9 * 60 + 10 ? 1000 : 250;",
+                "return 1000;",
+            )
+            patched = patched.replace(
+                "countsEl.textContent=`rows ${payload.row_count||raw.length}",
+                "countsEl.textContent=`표시 ${payload.row_count||raw.length} / 내부 ${payload.status?.universe_count||raw.length}",
+            )
+            patched = patched.replace(
+                "stream.addEventListener('snapshot',e=>{try{lastStreamAt=performance.now();render(JSON.parse(e.data),'stream');}catch(err){console.warn(err);}});",
+                "stream.addEventListener('snapshot',e=>{try{lastStreamAt=performance.now();__sbv2HandleFastSnapshot(JSON.parse(e.data));}catch(err){console.warn(err);}});",
+            )
+
+            if _CROSS_TABLE_NAV_ANCHOR in patched:
+                patched = patched.replace(
+                    _CROSS_TABLE_NAV_ANCHOR,
+                    f"{_DISPLAY50_PATCH}\n{_CROSS_TABLE_NAV_ANCHOR}",
+                    1,
+                )
+            return patched
+
+        large._ui_safety_patch = patched_ui_safety_patch
+        large._display50_fast_price_patch_installed = True
+    except Exception as error:
+        _write_patch_error("display50_fast_price_patch_error.txt", error)
+
+
 _install_bidask_patch_fail_open()
 _install_display_hold_fail_open()
 _install_display_hold_ohlc_price_fail_open()
@@ -180,6 +274,7 @@ _install_execution_strength_alias_fail_open()
 _install_event_freshness_fail_open()
 _install_cross_table_navigation_patch_fail_open()
 _install_header_sort_patch_fail_open()
+_install_display50_fast_price_patch_fail_open()
 
 if __name__ == "__main__":
     raise SystemExit(base.main())
