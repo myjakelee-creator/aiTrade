@@ -9,6 +9,9 @@ from realtime_v2.theme_projection_dual_rank_patch import (
     install as install_theme_dual_rank,
 )
 from realtime_v2.theme_selected_detail_runtime import ThemeSelectedDetailRuntime
+from realtime_v2.worker_opening_load_diagnostics_patch import (
+    install as install_opening_load_diagnostics,
+)
 from realtime_v2.worker_theme_dual_rank_ui_patch import (
     install as install_theme_dual_rank_ui,
 )
@@ -237,3 +240,4 @@ def install(base) -> None:
     # Install last so the Theme page uses the display-only server ranking switch
     # while the detail API above remains the underlying cache source.
     install_theme_dual_rank_ui(base)
+    install_opening_load_diagnostics(base)
