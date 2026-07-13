@@ -14,6 +14,7 @@ coordinator = get_shared_tr_coordinator()
 _original_fetch_yahoo_snapshot = base.fetch_yahoo_snapshot
 _original_fetch_live_market_supply_snapshot = base.fetch_live_market_supply_snapshot
 _original_fetch_ohlc_bootstrap = base.fetch_ohlc_bootstrap
+_original_write_status = base.write_status
 
 
 def _file_fingerprint(path: Path) -> str:
@@ -77,9 +78,17 @@ def fetch_ohlc_bootstrap(
     )
 
 
+def write_status(status):
+    payload = dict(status or {})
+    payload["context_owner"] = "tr_singleflight"
+    payload["tr_singleflight"] = coordinator.status()
+    _original_write_status(payload)
+
+
 base.fetch_yahoo_snapshot = fetch_yahoo_snapshot
 base.fetch_live_market_supply_snapshot = fetch_live_market_supply_snapshot
 base.fetch_ohlc_bootstrap = fetch_ohlc_bootstrap
+base.write_status = write_status
 
 main = base.main
 
