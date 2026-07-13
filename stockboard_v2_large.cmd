@@ -73,15 +73,22 @@ if errorlevel 1 goto failed
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PREFLIGHT%"
 if errorlevel 1 goto failed
 
+rem The older safe launcher still invokes the historical context path. Defer that
+rem no-op launch so only the verified module owner below performs Context TR work.
+set "STOCKBOARD_CONTEXT_DEFER_TO_VERIFIED_LAUNCHER=1"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SAFE%" -Action "%START_ACTION%"
-if errorlevel 1 goto failed
+set "SAFE_RC=%ERRORLEVEL%"
+set "STOCKBOARD_CONTEXT_DEFER_TO_VERIFIED_LAUNCHER="
+if not "%SAFE_RC%"=="0" goto failed_with_safe_rc
 
-rem The safe launcher may start the historical facade. Replace it with the direct
-rem single-flight process and require owner/PID/runtime readiness before success.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%CONTEXT_SINGLEFLIGHT%"
 if errorlevel 1 goto failed
 
 set "RC=0"
+goto finish
+
+:failed_with_safe_rc
+set "RC=%SAFE_RC%"
 goto finish
 
 :direct_action
@@ -94,6 +101,7 @@ set "RC=%ERRORLEVEL%"
 if "%RC%"=="0" set "RC=1"
 
 :finish
+set "STOCKBOARD_CONTEXT_DEFER_TO_VERIFIED_LAUNCHER="
 if not "%RC%"=="0" (
   echo.
   echo StockBoard v2 safe launcher finished with an error.
