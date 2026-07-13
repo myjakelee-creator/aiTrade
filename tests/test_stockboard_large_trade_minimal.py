@@ -29,6 +29,12 @@ class FakeSender:
     def _attach_trade_flow(self, _code, event, _flow):
         return event
 
+    def _requeue_unsent(self, events):
+        with self.lock:
+            for event in events:
+                code = normalize_code(event.get("stock_code"))
+                self.latest_trade_by_code[code] = event
+
     def stats(self):
         return {}
 
@@ -101,3 +107,24 @@ def test_every_qualifying_signed_tick_survives_latest_only_coalescing():
     assert stats["large_trade_buy_count"] == 1
     assert stats["large_trade_sell_count"] == 1
     assert stats["pending_large_trade_code_count"] == 0
+
+
+def test_requeued_large_trade_delta_is_not_lost_or_doubled_by_newer_quote():
+    base = build_base()
+    install(base)
+    sender = base.EventSender(flush_ms=50)
+
+    sender.publish_trade(trade(600))
+    first = sender._drain()[0]
+    sender._requeue_unsent([first])
+
+    sender.publish_trade(trade(700))
+    merged = sender._drain()[0]
+    kwargs = merged["kwargs"]
+    assert kwargs["collector_large_trade_buy_count_delta"] == 2
+    assert kwargs["collector_large_trade_buy_sum_eok_delta"] == 1.3
+
+    sender._requeue_unsent([merged])
+    redrained = sender._drain()[0]
+    assert redrained["kwargs"]["collector_large_trade_buy_count_delta"] == 2
+    assert redrained["kwargs"]["collector_large_trade_buy_sum_eok_delta"] == 1.3
