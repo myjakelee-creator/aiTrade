@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import os
 from pathlib import Path
 
 from realtime_v2.common import trading_date_text
@@ -15,6 +16,7 @@ _original_fetch_yahoo_snapshot = base.fetch_yahoo_snapshot
 _original_fetch_live_market_supply_snapshot = base.fetch_live_market_supply_snapshot
 _original_fetch_ohlc_bootstrap = base.fetch_ohlc_bootstrap
 _original_write_status = base.write_status
+_original_atomic_write = base._atomic_write
 
 
 def _file_fingerprint(path: Path) -> str:
@@ -22,6 +24,22 @@ def _file_fingerprint(path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
         return "missing"
+
+
+def _inject_context_status(payload):
+    status = dict(payload or {})
+    status["context_owner"] = "tr_singleflight"
+    status["context_entrypoint"] = "realtime_v2.context_snapshot_writer"
+    status["context_process_pid"] = os.getpid()
+    status["tr_singleflight"] = coordinator.status()
+    return status
+
+
+def _atomic_write(path: Path, payload):
+    target = Path(path)
+    if target == Path(base.STATUS_FILE):
+        payload = _inject_context_status(payload)
+    return _original_atomic_write(target, payload)
 
 
 def fetch_yahoo_snapshot(timeout: float = 5.0):
@@ -79,12 +97,13 @@ def fetch_ohlc_bootstrap(
 
 
 def write_status(status):
-    payload = dict(status or {})
-    payload["context_owner"] = "tr_singleflight"
-    payload["tr_singleflight"] = coordinator.status()
-    _original_write_status(payload)
+    return _original_write_status(_inject_context_status(status))
 
 
+# Patch both the named status helper and the underlying status-file write path.
+# The second guard makes owner/single-flight telemetry survive every base writer
+# path, including startup, loop errors, and future direct STATUS_FILE writes.
+base._atomic_write = _atomic_write
 base.fetch_yahoo_snapshot = fetch_yahoo_snapshot
 base.fetch_live_market_supply_snapshot = fetch_live_market_supply_snapshot
 base.fetch_ohlc_bootstrap = fetch_ohlc_bootstrap
