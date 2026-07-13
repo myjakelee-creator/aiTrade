@@ -22,8 +22,8 @@ def _preflight_script() -> str:
 
 def test_large_launcher_uses_safe_powershell_entrypoint_and_preflight():
     wrapper = _wrapper()
-    assert "scripts\stockboard_v2_large_safe.ps1" in wrapper
-    assert "scripts\stockboard_v2_openapi_preflight.ps1" in wrapper
+    assert r"scripts\stockboard_v2_large_safe.ps1" in wrapper
+    assert r"scripts\stockboard_v2_openapi_preflight.ps1" in wrapper
     assert "Stop-OpenApiStarterArtifacts" not in wrapper
 
 
@@ -90,7 +90,8 @@ def test_preflight_blocks_another_openapi_python_host():
     script = _preflight_script()
     assert "Get-OtherOpenApiPythonRows" in script
     assert "kiwoom_interface_32" in script
-    assert "interfaces\\kiwoom" in script
+    # PowerShell regex text contains two literal backslashes to match one path slash.
+    assert r"interfaces\\kiwoom" in script
     assert "Another 32-bit Kiwoom/OpenAPI Python host is running" in script
 
 
