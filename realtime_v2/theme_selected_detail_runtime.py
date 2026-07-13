@@ -65,12 +65,24 @@ class ThemeSelectedDetailRuntime:
         self.worker.stop()
 
     def select(self, theme_id: str) -> bool:
-        changed = self.builder.select(theme_id)
+        selected = str(theme_id or "").strip()
+        changed = self.builder.select(selected)
+        projection = self.hub.projection_snapshot("theme_detail")
+        payload = (
+            projection.get("payload")
+            if isinstance(projection, dict)
+            and isinstance(projection.get("payload"), dict)
+            else None
+        )
+        ready_for_selection = (
+            isinstance(payload, dict)
+            and payload.get("status") == "READY"
+            and str(payload.get("theme_id") or "") == selected
+        )
         feature_version = self.hub.borrow_feature_snapshot()[0]
-        if changed:
-            # A selection change must rebuild even when the shared Feature version
-            # has not changed. Reset only this detail worker's completed marker;
-            # the published projection still uses the current real Feature version.
+        if changed or not ready_for_selection:
+            # Selection changes and incomplete warmups must rebuild even when the
+            # shared Feature version is unchanged. Reset only this detail worker.
             with self.worker._lock:
                 self.worker._completed_feature_version = 0
         if feature_version > 0:
