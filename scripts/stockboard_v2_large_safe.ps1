@@ -19,6 +19,8 @@ $OldLauncher = Join-Path $ProjectRoot "stockboard_v2_live.cmd"
 $UniverseFile = Join-Path $RuntimeDir "universe.json"
 $DoctorReport = Join-Path $RuntimeDir "large_doctor_report.txt"
 
+Set-Location -LiteralPath $ProjectRoot
+
 function Write-Step([string]$Message) {
     Write-Host ""
     Write-Host "== $Message ==" -ForegroundColor Cyan
@@ -42,32 +44,25 @@ function Get-PythonBits([string]$Path) {
 
 function Resolve-Python64 {
     $candidates = New-Object System.Collections.Generic.List[string]
-
     if ($env:STOCKBOARD_PYTHON64) {
         $candidates.Add([string]$env:STOCKBOARD_PYTHON64)
     }
-
     try {
         $command = Get-Command python -ErrorAction Stop
         if ($command.Source) { $candidates.Add([string]$command.Source) }
     } catch { }
-
-    foreach ($path in @(
+    foreach ($pattern in @(
         "$env:LOCALAPPDATA\Programs\Python\Python*\python.exe",
         "C:\Python*\python.exe",
         "C:\Program Files\Python*\python.exe"
     )) {
-        Get-ChildItem -Path $path -ErrorAction SilentlyContinue |
+        Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue |
             Sort-Object FullName -Descending |
             ForEach-Object { $candidates.Add($_.FullName) }
     }
-
     foreach ($candidate in ($candidates | Select-Object -Unique)) {
-        if ((Get-PythonBits $candidate) -eq 64) {
-            return $candidate
-        }
+        if ((Get-PythonBits $candidate) -eq 64) { return $candidate }
     }
-
     throw "64-bit Python was not found. Set STOCKBOARD_PYTHON64 to a 64-bit python.exe."
 }
 
@@ -81,18 +76,24 @@ function Assert-Python32 {
     }
 }
 
-function Stop-PidFile([string]$PidFile, [string]$Name) {
-    if (-not (Test-Path -LiteralPath $PidFile)) { return }
+function Read-Pid([string]$PidFile) {
+    if (-not (Test-Path -LiteralPath $PidFile)) { return 0 }
+    $raw = Get-Content -LiteralPath $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1
+    $number = 0
+    if ([int]::TryParse([string]$raw, [ref]$number)) { return $number }
+    return 0
+}
 
-    $raw = Get-Content -LiteralPath $PidFile -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    $pidNumber = 0
-    if ([int]::TryParse([string]$raw, [ref]$pidNumber)) {
-        $process = Get-Process -Id $pidNumber -ErrorAction SilentlyContinue
-        if ($null -ne $process) {
-            Write-Host "Stopping $Name PID=$pidNumber"
-            Stop-Process -Id $pidNumber -Force -ErrorAction SilentlyContinue
-        }
+function Test-PidAlive([int]$ProcessId) {
+    if ($ProcessId -le 0) { return $false }
+    return $null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
+}
+
+function Stop-PidFile([string]$PidFile, [string]$Name) {
+    $pidNumber = Read-Pid $PidFile
+    if (Test-PidAlive $pidNumber) {
+        Write-Host "Stopping $Name PID=$pidNumber"
+        Stop-Process -Id $pidNumber -Force -ErrorAction SilentlyContinue
     }
     Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
 }
@@ -106,7 +107,6 @@ function Stop-Port([int]$Port) {
     } catch {
         $pids = @()
     }
-
     foreach ($pidNumber in $pids) {
         if ($pidNumber -gt 0 -and $pidNumber -ne $PID) {
             Write-Host "Stopping port $Port listener PID=$pidNumber"
@@ -128,7 +128,6 @@ function Stop-KnownV2Processes {
         "realtime_v2\context_snapshot_writer.py",
         "scripts\stockboard_kiwoom_link_v1.ahk"
     )
-
     try {
         $rows = @(
             Get-CimInstance Win32_Process -ErrorAction Stop |
@@ -145,7 +144,6 @@ function Stop-KnownV2Processes {
     } catch {
         $rows = @()
     }
-
     foreach ($row in $rows) {
         $pidNumber = [int]$row.ProcessId
         if ($pidNumber -gt 0 -and $pidNumber -ne $PID) {
@@ -178,13 +176,12 @@ function Report-OpstarterState([string]$Stage) {
     foreach ($row in $rows) {
         Write-Host "OPSTARTER PID=$($row.ProcessId) NAME=$($row.Name)"
     }
-    # Do not terminate opstarter. It owns the OpenAPI login dialog and its HWND.
+    # Do not terminate opstarter after collector start. It owns the login dialog/HWND.
 }
 
 function Stop-V2 {
     Ensure-RuntimeDir
     Write-Step "Stopping StockBoard v2 processes"
-
     Stop-PidFile $CollectorPidFile "collector32"
     Start-Sleep -Milliseconds 500
     Stop-PidFile $WorkerPidFile "worker64"
@@ -192,11 +189,9 @@ function Stop-V2 {
     Stop-KnownV2Processes
     Stop-Port 8765
     Stop-Port 8710
-
     Remove-Item -LiteralPath $WorkerPidFile -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $CollectorPidFile -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $ContextPidFile -Force -ErrorAction SilentlyContinue
-
     Start-Sleep -Milliseconds 700
     Report-OpstarterState "after_stop_no_force_kill"
 }
@@ -220,55 +215,83 @@ function Wait-WorkerReady([int]$TimeoutSec = 15) {
 }
 
 function Get-CollectorLoginState {
+    $collectorPid = Read-Pid $CollectorPidFile
+    $collectorAlive = Test-PidAlive $collectorPid
     try {
         $snapshot = Invoke-RestMethod -Uri $SnapshotUrl -TimeoutSec 3
         $collector = $snapshot.status.collector_status
         $provider = $collector.status
-
+        $realRegSucceeded = [bool]$provider.realreg_succeeded
+        $actualCount = [int]($provider.realreg_code_count)
+        if ($actualCount -le 0 -and $realRegSucceeded) {
+            $actualCount = [int]($collector.registered_count)
+        }
         return [pscustomobject]@{
             Snapshot = $snapshot
             Collector = $collector
             Provider = $provider
+            CollectorPid = $collectorPid
+            CollectorAlive = $collectorAlive
             LoginState = [string]$provider.login_state
+            RealRegSucceeded = $realRegSucceeded
+            RegisteredCount = $actualCount
             NativeHandleReady = [bool]$provider.openapi_native_handle_ready
             NativeHwnd = $provider.openapi_native_hwnd
             ProviderStarted = [bool]$collector.provider_started
-            RegisteredCount = [int]($collector.registered_count)
+            RealData = [int]($provider.realdata_received_count)
+            TradeReceived = [int]($provider.trade_event_received_count)
+            RealDataLastAt = $provider.realdata_last_received_at
+            WorkerTrades = [int]($snapshot.status.trade_count)
+            WorkerLastEventAt = $snapshot.status.last_event_at
             LastError = [string]$provider.last_error
         }
     } catch {
-        return $null
+        return [pscustomobject]@{
+            CollectorPid = $collectorPid
+            CollectorAlive = $collectorAlive
+            LoginState = "unavailable"
+            RealRegSucceeded = $false
+            RegisteredCount = 0
+            NativeHandleReady = $false
+            NativeHwnd = $null
+            ProviderStarted = $false
+            RealData = 0
+            TradeReceived = 0
+            RealDataLastAt = $null
+            WorkerTrades = 0
+            WorkerLastEventAt = $null
+            LastError = $_.Exception.Message
+        }
     }
 }
 
 function Wait-CollectorOpenApiReady([int]$TimeoutSec = 180) {
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     $lastState = ""
-
     while ((Get-Date) -lt $deadline) {
         $state = Get-CollectorLoginState
-        if ($null -ne $state) {
-            $summary = "login=$($state.LoginState) hwnd_ready=$($state.NativeHandleReady) registered=$($state.RegisteredCount)"
-            if ($summary -ne $lastState) {
-                Write-Host "OPENAPI_WAIT $summary"
-                $lastState = $summary
-            }
-
-            if (
-                $state.ProviderStarted -and
-                $state.LoginState -eq "connected" -and
-                $state.NativeHandleReady -and
-                $state.RegisteredCount -gt 0
-            ) {
-                Write-Host "COLLECTOR_OPENAPI_READY=True registered_count=$($state.RegisteredCount) hwnd=$($state.NativeHwnd)"
-                return $true
-            }
+        $summary = "pid=$($state.CollectorPid) alive=$($state.CollectorAlive) login=$($state.LoginState) realreg=$($state.RealRegSucceeded) hwnd_ready=$($state.NativeHandleReady) registered=$($state.RegisteredCount) realdata=$($state.RealData)"
+        if ($summary -ne $lastState) {
+            Write-Host "OPENAPI_WAIT $summary"
+            $lastState = $summary
         }
-
+        if (-not $state.CollectorAlive -and $state.CollectorPid -gt 0) {
+            Write-Warning "Collector exited before OpenAPI became ready."
+            return $false
+        }
+        if (
+            $state.CollectorAlive -and
+            $state.ProviderStarted -and
+            $state.LoginState -eq "connected" -and
+            $state.RealRegSucceeded -and
+            $state.RegisteredCount -gt 0
+        ) {
+            Write-Host "COLLECTOR_OPENAPI_READY=True pid=$($state.CollectorPid) registered_count=$($state.RegisteredCount) hwnd=$($state.NativeHwnd)"
+            return $true
+        }
         Start-Sleep -Milliseconds 500
     }
-
-    Write-Warning "OpenAPI login was not confirmed within ${TimeoutSec}s. The login helper was left untouched."
+    Write-Warning "OpenAPI login/SetRealReg was not confirmed within ${TimeoutSec}s. The login helper was left untouched."
     Report-OpstarterState "login_timeout_no_force_kill"
     return $false
 }
@@ -277,9 +300,7 @@ function Build-Universe([string]$Python64) {
     Write-Step "Building v2 universe"
     & $Python64 (Join-Path $ProjectRoot "realtime_v2\build_universe.py") --limit 300 --rank-basis today
     $exitCode = $LASTEXITCODE
-
     if ($exitCode -eq 0) { return }
-
     throw "build_universe failed with exit code $exitCode; live build and validated cached fallback are both unavailable"
 }
 
@@ -287,13 +308,11 @@ function Start-V2([bool]$FastOpen) {
     Ensure-RuntimeDir
     $python64 = Resolve-Python64
     Assert-Python32
-
+    Write-Host "COLLECTOR_PATH=verified_provider_thread_restore"
     Write-Host "PYTHON64=$python64"
     Write-Host "PYTHON64_BITS=$(Get-PythonBits $python64)"
     Write-Host "PYTHON32=$Python32"
     Write-Host "PYTHON32_BITS=$(Get-PythonBits $Python32)"
-
-    Stop-V2
     Build-Universe $python64
 
     $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
@@ -326,19 +345,24 @@ function Start-V2([bool]$FastOpen) {
         -PassThru
     Set-Content -LiteralPath $WorkerPidFile -Value $worker.Id -Encoding ASCII
     Write-Host "WORKER64_PID=$($worker.Id)"
-
     if (-not (Wait-WorkerReady 15)) {
         throw "64-bit worker did not become ready. Check $workerErr"
     }
 
-    Write-Step "Starting 32-bit OpenAPI collector"
+    Write-Step "Starting restored 32-bit OpenAPI collector"
+    $collectorLimit = 300
+    if ($env:STOCKBOARD_V2_COLLECTOR_LIMIT) {
+        $parsedLimit = 0
+        if ([int]::TryParse([string]$env:STOCKBOARD_V2_COLLECTOR_LIMIT, [ref]$parsedLimit)) {
+            $collectorLimit = [Math]::Max(1, [Math]::Min(300, $parsedLimit))
+        }
+    }
     $collectorArgs = @(
         "realtime_v2\collector32_large_bidask.py",
-        "--limit", "300",
+        "--limit", [string]$collectorLimit,
         "--suffix", "AL",
         "--flush-ms", "50"
     )
-
     if ($FastOpen) {
         Write-Host "FAST_OPEN=True"
         Write-Host "ORDERBOOK_REALTIME=False"
@@ -347,9 +371,10 @@ function Start-V2([bool]$FastOpen) {
         Write-Host "FAST_OPEN=False"
         Write-Host "ORDERBOOK_REALTIME=True"
     }
+    Write-Host "COLLECTOR_LIMIT=$collectorLimit"
 
     $oldHide = $env:STOCKBOARD_HIDE_COLLECTOR_CONSOLE_AFTER_LOGIN
-    $env:STOCKBOARD_HIDE_COLLECTOR_CONSOLE_AFTER_LOGIN = "1"
+    $env:STOCKBOARD_HIDE_COLLECTOR_CONSOLE_AFTER_LOGIN = "0"
     try {
         $collector = Start-Process `
             -FilePath $Python32 `
@@ -366,23 +391,24 @@ function Start-V2([bool]$FastOpen) {
             $env:STOCKBOARD_HIDE_COLLECTOR_CONSOLE_AFTER_LOGIN = $oldHide
         }
     }
-
     Set-Content -LiteralPath $CollectorPidFile -Value $collector.Id -Encoding ASCII
     Write-Host "COLLECTOR32_PID=$($collector.Id)"
+    Write-Host "COLLECTOR32_STDOUT=$collectorOut"
     Write-Host "COLLECTOR32_STDERR=$collectorErr"
 
-    Write-Step "Waiting for OpenAPI login and registration"
-    $openApiReady = Wait-CollectorOpenApiReady 180
-
-    if ($openApiReady) {
-        Write-Step "Starting HTS bridge"
-        if (Test-Path -LiteralPath $OldLauncher) {
-            & cmd.exe /c "`"$OldLauncher`" ahk"
-        }
-    } else {
-        Write-Warning "HTS bridge startup was skipped until OpenAPI login is confirmed."
+    Write-Step "Waiting for OpenAPI login and actual SetRealReg"
+    if (-not (Wait-CollectorOpenApiReady 180)) {
+        Write-Host "---- collector stdout tail ----" -ForegroundColor Yellow
+        Get-Content -LiteralPath $collectorOut -Tail 80 -ErrorAction SilentlyContinue
+        Write-Host "---- collector stderr tail ----" -ForegroundColor Yellow
+        Get-Content -LiteralPath $collectorErr -Tail 80 -ErrorAction SilentlyContinue
+        throw "Collector did not reach connected + realreg_succeeded state. It was not force-stopped so the console/logs remain available."
     }
 
+    Write-Step "Starting HTS bridge"
+    if (Test-Path -LiteralPath $OldLauncher) {
+        & cmd.exe /c "`"$OldLauncher`" ahk"
+    }
     Start-Process $BoardUrl
     Write-Host ""
     Write-Host "Open $BoardUrl"
@@ -390,103 +416,58 @@ function Start-V2([bool]$FastOpen) {
 
 function Show-Status {
     Ensure-RuntimeDir
-    $python64 = $null
-    try { $python64 = Resolve-Python64 } catch { }
-
-    Write-Host "PYTHON64=$python64"
-    if ($python64) { Write-Host "PYTHON64_BITS=$(Get-PythonBits $python64)" }
-    Write-Host "PYTHON32=$Python32"
-    Write-Host "PYTHON32_BITS=$(Get-PythonBits $Python32)"
-
-    try {
-        $snapshot = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v2/snapshot?limit=5" -TimeoutSec 10
-        $collector = $snapshot.status.collector_status
-        $provider = $collector.status
-
-        Write-Host "WORKER_HEALTH=True"
-        Write-Host "ROW_COUNT=$($snapshot.row_count)"
-        Write-Host "EVENT_COUNT=$($snapshot.status.event_count)"
-        Write-Host "TRADE_COUNT=$($snapshot.status.trade_count)"
-        Write-Host "LOGIN_STATE=$($provider.login_state)"
-        Write-Host "OPENAPI_NATIVE_HANDLE_READY=$($provider.openapi_native_handle_ready)"
-        Write-Host "OPENAPI_NATIVE_HWND=$($provider.openapi_native_hwnd)"
-        Write-Host "COLLECTOR_PROVIDER_STARTED=$($collector.provider_started)"
-        Write-Host "COLLECTOR_REGISTERED_COUNT=$($collector.registered_count)"
-        Write-Host "COLLECTOR_PENDING_TOTAL=$($collector.sender_stats.pending_total_count)"
-        Write-Host "COLLECTOR_SENT_PER_SEC=$($collector.sender_stats.sent_per_sec)"
-        Write-Host "OPENAPI_LAST_ERROR=$($provider.last_error)"
-    } catch {
-        Write-Host "WORKER_HEALTH=False"
-        Write-Host "ERROR=$($_.Exception.Message)"
-    }
-
+    $state = Get-CollectorLoginState
+    $queue = $state.Collector.sender_stats.pending_total_count
+    [pscustomobject]@{
+        CollectorPid = $state.CollectorPid
+        CollectorAlive = $state.CollectorAlive
+        LoginState = $state.LoginState
+        RealRegSucceeded = $state.RealRegSucceeded
+        RegisteredCount = $state.RegisteredCount
+        NativeHandleReady = $state.NativeHandleReady
+        RealData = $state.RealData
+        TradeReceived = $state.TradeReceived
+        RealDataLastAt = $state.RealDataLastAt
+        WorkerTrades = $state.WorkerTrades
+        WorkerLastEventAt = $state.WorkerLastEventAt
+        Queue = $queue
+        LastError = $state.LastError
+    } | Format-List
     Report-OpstarterState "status_only_no_force_kill"
 }
 
 function Invoke-Doctor {
     Ensure-RuntimeDir
     $lines = New-Object System.Collections.Generic.List[string]
-
     function Add-Line([string]$Text) {
         $lines.Add($Text) | Out-Null
         Write-Host $Text
     }
-
-    Add-Line "StockBoard v2 safe launcher doctor"
+    Add-Line "StockBoard v2 restored collector doctor"
     Add-Line "TIME=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-
-    try {
-        Add-Line "GIT_BRANCH=$(& git -C $ProjectRoot branch --show-current 2>$null)"
-        Add-Line "GIT_HEAD=$(& git -C $ProjectRoot rev-parse --short HEAD 2>$null)"
-    } catch {
-        Add-Line "GIT_INFO_ERROR=$($_.Exception.Message)"
-    }
-
-    try {
-        $python64 = Resolve-Python64
-        Add-Line "PYTHON64=$python64"
-        Add-Line "PYTHON64_BITS=$(Get-PythonBits $python64)"
-    } catch {
-        Add-Line "PYTHON64_ERROR=$($_.Exception.Message)"
-    }
-
+    Add-Line "GIT_BRANCH=$(& git -C $ProjectRoot branch --show-current 2>$null)"
+    Add-Line "GIT_HEAD=$(& git -C $ProjectRoot rev-parse --short HEAD 2>$null)"
     Add-Line "PYTHON32=$Python32"
     Add-Line "PYTHON32_BITS=$(Get-PythonBits $Python32)"
-
-    $opstarterRows = @(Get-OpstarterRows)
-    Add-Line "OPSTARTER_PROCESS_COUNT=$($opstarterRows.Count)"
-    foreach ($row in $opstarterRows) {
-        Add-Line "OPSTARTER PID=$($row.ProcessId) NAME=$($row.Name)"
+    $state = Get-CollectorLoginState
+    foreach ($name in @(
+        "CollectorPid", "CollectorAlive", "LoginState", "RealRegSucceeded",
+        "RegisteredCount", "NativeHandleReady", "RealData", "TradeReceived",
+        "RealDataLastAt", "WorkerTrades", "WorkerLastEventAt", "LastError"
+    )) {
+        Add-Line "$name=$($state.$name)"
     }
-
-    try {
-        $state = Get-CollectorLoginState
-        if ($null -eq $state) {
-            Add-Line "COLLECTOR_LOGIN_STATUS=False"
-        } else {
-            Add-Line "COLLECTOR_LOGIN_STATUS=True"
-            Add-Line "LOGIN_STATE=$($state.LoginState)"
-            Add-Line "OPENAPI_NATIVE_HANDLE_READY=$($state.NativeHandleReady)"
-            Add-Line "OPENAPI_NATIVE_HWND=$($state.NativeHwnd)"
-            Add-Line "REGISTERED_COUNT=$($state.RegisteredCount)"
-            Add-Line "OPENAPI_LAST_ERROR=$($state.LastError)"
-        }
-    } catch {
-        Add-Line "COLLECTOR_LOGIN_ERROR=$($_.Exception.Message)"
-    }
-
-    foreach ($pattern in @("worker64_large_*.err.log", "collector32_large_*.err.log")) {
+    foreach ($pattern in @("worker64_large_*.err.log", "collector32_large_*.out.log", "collector32_large_*.err.log")) {
         $file = Get-ChildItem -Path $RuntimeDir -Filter $pattern -ErrorAction SilentlyContinue |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
         if ($file) {
             Add-Line "LOG=$($file.FullName)"
-            foreach ($line in (Get-Content -LiteralPath $file.FullName -Tail 40 -ErrorAction SilentlyContinue)) {
+            foreach ($line in (Get-Content -LiteralPath $file.FullName -Tail 80 -ErrorAction SilentlyContinue)) {
                 Add-Line $line
             }
         }
     }
-
     Set-Content -LiteralPath $DoctorReport -Value $lines -Encoding UTF8
     Write-Host "DOCTOR_REPORT=$DoctorReport" -ForegroundColor Cyan
 }
@@ -494,8 +475,8 @@ function Invoke-Doctor {
 switch ($Action) {
     "start" { Start-V2 $false; break }
     "start-fast" { Start-V2 $true; break }
-    "restart" { Start-V2 $false; break }
-    "restart-fast" { Start-V2 $true; break }
+    "restart" { Stop-V2; Start-V2 $false; break }
+    "restart-fast" { Stop-V2; Start-V2 $true; break }
     "stop" { Stop-V2; break }
     "status" { Show-Status; break }
     "doctor" { Invoke-Doctor; break }
