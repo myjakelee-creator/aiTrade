@@ -105,6 +105,9 @@ def test_precomputed_stock_metrics_keep_positive_stock_ahead_of_negative_money_l
     status = payload["leader_selection_status"]
     assert status["stock_metric_extract_passes"] == 1
     assert status["per_theme_raw_metric_reparse"] is False
-    assert status["rank_method"] == "within_theme_two_pass_minmax"
+    assert status["rank_method"] == "top_union_two_pass_minmax"
     assert status["rank_metric_passes_per_theme"] == 2
     assert status["positive_stock_precedence"] is True
+    assert status["precise_theme_count"] == 1
+    assert status["fallback_theme_count"] == 0
+    assert status["selected_detail_always_precise"] is True
