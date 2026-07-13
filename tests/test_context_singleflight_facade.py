@@ -22,8 +22,19 @@ def test_singleflight_writer_uses_preserved_base_without_recursion():
     assert "coordinator.execute(" in source
     assert 'tr_code="market_supply_bundle"' in source
     assert 'tr_code="ka10086_ohlc_bootstrap_bundle"' in source
-    assert 'payload["context_owner"] = "tr_singleflight"' in source
-    assert 'payload["tr_singleflight"] = coordinator.status()' in source
+
+
+def test_singleflight_owner_is_injected_into_every_status_file_write():
+    source = (
+        ROOT / "realtime_v2" / "context_snapshot_writer_singleflight.py"
+    ).read_text(encoding="utf-8")
+    assert "_original_atomic_write = base._atomic_write" in source
+    assert "def _inject_context_status" in source
+    assert 'status["context_owner"] = "tr_singleflight"' in source
+    assert 'status["context_entrypoint"] = "realtime_v2.context_snapshot_writer"' in source
+    assert 'status["tr_singleflight"] = coordinator.status()' in source
+    assert "if target == Path(base.STATUS_FILE):" in source
+    assert "base._atomic_write = _atomic_write" in source
 
 
 def test_preserved_base_contains_only_original_context_implementation():
