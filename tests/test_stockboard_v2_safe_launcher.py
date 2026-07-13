@@ -45,6 +45,20 @@ def test_start_flow_requires_verified_context_after_stockboard_start():
     assert 'if errorlevel 1 goto failed' in wrapper
 
 
+def test_start_flow_defers_legacy_context_to_single_verified_owner():
+    wrapper = _wrapper()
+    enable_index = wrapper.index(
+        'set "STOCKBOARD_CONTEXT_DEFER_TO_VERIFIED_LAUNCHER=1"'
+    )
+    safe_start_index = wrapper.index('-Action "%START_ACTION%"')
+    disable_index = wrapper.index(
+        'set "STOCKBOARD_CONTEXT_DEFER_TO_VERIFIED_LAUNCHER="',
+        safe_start_index,
+    )
+    context_index = wrapper.index('-File "%CONTEXT_SINGLEFLIGHT%"')
+    assert enable_index < safe_start_index < disable_index < context_index
+
+
 def test_context_launcher_starts_module_and_checks_readiness():
     script = _context_launcher()
     assert '$ModuleName = "realtime_v2.context_snapshot_writer_singleflight"' in script
