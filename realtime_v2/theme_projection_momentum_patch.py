@@ -76,11 +76,17 @@ def _session() -> dict[str, Any]:
 def install(theme_module) -> None:
     """Add cheap relative-strength features after the shared Theme projection.
 
-    The patch stores only one average-change float per active theme per second for
-    about five minutes. It does not read State, call OpenAPI/TR, rescore stocks, or
-    add browser work. Existing Theme rows remain the single input and the current
-    money-flow ranking is intentionally unchanged until the next approved stage.
+    The builder stores one average-change float per active theme per second for about
+    five minutes. Median change and median amount-ratio are normally reused from the
+    aggregation pass, so the full member details are not scanned a second time. This
+    patch does not read State, call OpenAPI/TR, rescore stocks, or add browser work.
     """
+
+    from realtime_v2.theme_projection_precomputed_stats_patch import (
+        install as install_precomputed_stats,
+    )
+
+    install_precomputed_stats(theme_module)
 
     builder_class = theme_module.ThemeProjectionBuilder
     if getattr(builder_class, "_stockboard_theme_momentum_installed", False):
@@ -189,6 +195,54 @@ def install(theme_module) -> None:
         self._theme_momentum_dirty = False
         self._theme_momentum_last_save_mono = now_mono
 
+    def member_stats(detail: dict[str, Any]) -> tuple[
+        float | None,
+        float | None,
+        int,
+        float,
+        bool,
+    ]:
+        median_rate = _number(detail.get("median_change_rate"))
+        amount_ratio = _number(detail.get("theme_amount_ratio"))
+        amount_count = int(_number(detail.get("amount_ratio_member_count")) or 0)
+        amount_coverage = _number(detail.get("amount_ratio_coverage_pct"))
+        precomputed = str(detail.get("theme_member_stats_basis") or "") == (
+            "single_aggregation_pass"
+        )
+        if precomputed:
+            return (
+                median_rate,
+                amount_ratio,
+                amount_count,
+                float(amount_coverage or 0.0),
+                False,
+            )
+
+        members = detail.get("members")
+        members = members if isinstance(members, list) else []
+        rates = [
+            value
+            for value in (
+                _number(member.get("change_rate"))
+                for member in members
+                if isinstance(member, dict)
+            )
+            if value is not None
+        ]
+        ratios = [
+            value
+            for value in (
+                _number(member.get("amount_ratio"))
+                for member in members
+                if isinstance(member, dict)
+            )
+            if value is not None and value > 0
+        ]
+        median_rate = float(median(rates)) if rates else None
+        amount_ratio = float(median(ratios)) if ratios else None
+        coverage = round(len(ratios) / len(members) * 100.0, 2) if members else 0.0
+        return median_rate, amount_ratio, len(ratios), coverage, True
+
     def call(
         self,
         feature_version: int,
@@ -263,28 +317,20 @@ def install(theme_module) -> None:
         five_ready = 0
         amount_ratio_ready = 0
         held_count = 0
+        member_rescan_theme_count = 0
 
         for raw_theme_id, detail in details.items():
             if not isinstance(detail, dict):
                 continue
             theme_id = str(detail.get("theme_id") or raw_theme_id)
-            members = detail.get("members")
-            members = members if isinstance(members, list) else []
-            rates = [
-                value
-                for value in (_number(member.get("change_rate")) for member in members if isinstance(member, dict))
-                if value is not None
-            ]
-            ratios = [
-                value
-                for value in (_number(member.get("amount_ratio")) for member in members if isinstance(member, dict))
-                if value is not None and value > 0
-            ]
-            median_rate = float(median(rates)) if rates else None
-            amount_ratio = float(median(ratios)) if ratios else None
-            amount_ratio_coverage = (
-                round(len(ratios) / len(members) * 100.0, 2) if members else 0.0
-            )
+            (
+                median_rate,
+                amount_ratio,
+                amount_count,
+                amount_ratio_coverage,
+                rescanned,
+            ) = member_stats(detail)
+            member_rescan_theme_count += int(rescanned)
             average_rate = _number(detail.get("avg_change_rate"))
 
             if not hold_active:
@@ -322,17 +368,23 @@ def install(theme_module) -> None:
                 remember(self, theme_id, one_min, five_min)
 
             feature_values = {
-                "median_change_rate": round(median_rate, 4) if median_rate is not None else None,
+                "median_change_rate": (
+                    round(median_rate, 4) if median_rate is not None else None
+                ),
                 "median_change_rate_text": (
                     "-" if median_rate is None else f"{median_rate:+.2f}%"
                 ),
                 "change_momentum_1m": round(one_min, 4) if one_min is not None else None,
                 "change_momentum_1m_text": _fmt_signed_pct(one_min),
-                "change_persistence_5m": round(five_min, 4) if five_min is not None else None,
+                "change_persistence_5m": (
+                    round(five_min, 4) if five_min is not None else None
+                ),
                 "change_persistence_5m_text": _fmt_signed_pct(five_min),
-                "theme_amount_ratio": round(amount_ratio, 4) if amount_ratio is not None else None,
+                "theme_amount_ratio": (
+                    round(amount_ratio, 4) if amount_ratio is not None else None
+                ),
                 "theme_amount_ratio_text": _fmt_ratio(amount_ratio),
-                "amount_ratio_member_count": len(ratios),
+                "amount_ratio_member_count": amount_count,
                 "amount_ratio_coverage_pct": amount_ratio_coverage,
                 "amount_ratio_coverage_text": f"{amount_ratio_coverage:.0f}%",
                 "trend_feature_basis": basis,
@@ -353,6 +405,7 @@ def install(theme_module) -> None:
             policy["trend_feature_input"] = "theme_projection_completed_rows_only"
             policy["theme_amount_ratio"] = "median_positive_member_amount_ratio"
             policy["change_momentum_history"] = "theme_average_change_delta_60s_300s"
+            policy["member_stats"] = "single_aggregation_pass_reuse"
             policy["additional_tr_allowed"] = False
             policy["browser_feature_calculation_allowed"] = False
 
@@ -370,6 +423,8 @@ def install(theme_module) -> None:
             "valid_until": valid_until,
             "path": str(MOMENTUM_HOLD_PATH),
             "memory_policy": "one_float_per_active_theme_per_second_310s",
+            "precomputed_member_stats_enabled": member_rescan_theme_count == 0,
+            "member_rescan_theme_count": member_rescan_theme_count,
         }
         payload["calculate_ms"] = round(
             (time.perf_counter() - total_started) * 1000.0,
