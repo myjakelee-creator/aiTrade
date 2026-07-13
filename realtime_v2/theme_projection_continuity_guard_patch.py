@@ -111,6 +111,18 @@ def install(theme_module) -> None:
     if getattr(builder_class, "_stockboard_continuity_guard_installed", False):
         return
 
+    required_methods = (
+        "_member_row",
+        "_aggregate_theme",
+        "_score_themes",
+        "__call__",
+    )
+    if not all(callable(getattr(builder_class, name, None)) for name in required_methods):
+        # Flow-history and other unit-level wrappers intentionally use minimal
+        # builders. They do not compute Theme leadership scores and therefore do
+        # not need this guard. Fail open instead of breaking compatible wrappers.
+        return
+
     original_member_row = builder_class._member_row
     original_aggregate_theme = builder_class._aggregate_theme
     original_score_themes = builder_class._score_themes
