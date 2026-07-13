@@ -22,10 +22,10 @@ def isolated_engine():
     source = ENGINE_PATH.read_text(encoding="utf-8")
     exec(compile(source, str(ENGINE_PATH), "exec"), module.__dict__)
     install_summary(module)
-    # Runtime order: leader wrapper is imported before dual-rank is installed.
+    # Runtime order: dual rank completes before scoped precise leader selection.
+    install_dual_rank(module)
     install_leaders(module)
     install_detail_display(module)
-    install_dual_rank(module)
     return module
 
 
@@ -136,6 +136,8 @@ def test_theme_leader_ignores_candidate_score_and_uses_momentum_money(tmp_path):
     assert leaders[0]["stock_code"] == "000002"
     assert leaders[0]["leadership_role"] == "주도"
     assert leaders[0]["leadership_score"] > leaders[1]["leadership_score"]
+    assert first["rows"][0]["leader_precision"] == "precise_top_union"
+    assert first["leader_selection_status"]["precise_theme_count"] == 1
     assert first["leader_selection_status"]["candidate_score_used"] is False
     assert first["policy"]["theme_leader_candidate_score_used"] is False
     assert first["performance_breakdown"]["leader_rank_ms"] >= 0
@@ -200,8 +202,11 @@ def test_selected_detail_is_server_sorted_by_leader_score(tmp_path):
     assert members[0]["candidate_score_text"] == members[0]["leadership_score_text"]
     assert members[0]["stockboard_candidate_score"] == 10
     assert members[0]["stockboard_candidate_score_text"] == "10.0"
+    assert payload["theme"]["leader_precision"] == "selected_detail_precise"
+    assert payload["leader_detail_status"]["precise"] is True
     assert payload["policy"]["candidate_score_used_for_leader"] is False
     assert payload["policy"]["browser_leader_sort_allowed"] is False
+    assert payload["policy"]["selected_detail_always_precise"] is True
     assert payload["policy"]["detail_score_display"] == "leadership_score"
 
 
@@ -223,5 +228,7 @@ def test_theme_leader_modules_have_no_openapi_tr_or_browser_sort():
         ROOT / "realtime_v2" / "theme_leader_selection_patch.py"
     ).read_text(encoding="utf-8")
     assert "candidate_score_used" in source
-    assert "summary_extra_member_passes\": 1" in source
+    assert '"summary_extra_member_passes": 1' in source
+    assert "top_momentum_money_union_plus_selected_detail" in source
+    assert "selected_detail_always_precise" in source
     assert "price30_momentum25_amount20_recent_money15_strength_flow10" in source
