@@ -8,7 +8,7 @@ from typing import Any
 
 from realtime_v2.board_data_hub import BoardDataHub
 from realtime_v2.board_projection_runtime import LatestOnlyProjectionWorker
-from realtime_v2.common import ROOT if False else now_text
+from realtime_v2.common import now_text
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,12 +33,12 @@ class ThemeMembershipLoader:
 
     def __init__(self, paths: list[Path] | None = None, refresh_sec: float = 5.0):
         env_path = os.getenv("STOCKBOARD_THEME_MEMBERSHIP_FILE", "").strip()
-        self.paths = paths or [
-            *( [Path(env_path)] if env_path else [] ),
+        default_paths = [
             ROOT / "data" / "runtime" / "stockboard_v2" / "theme_membership.json",
             ROOT / "data" / "config" / "theme_membership.json",
             ROOT / "docs" / "assets" / "theme_membership.json",
         ]
+        self.paths = paths or ([Path(env_path)] if env_path else []) + default_paths
         self.refresh_sec = max(1.0, float(refresh_sec))
         self._last_check_mono = 0.0
         self._last_mtime: float | None = None
@@ -56,9 +56,13 @@ class ThemeMembershipLoader:
                 members = item.get("members") or item.get("stock_codes") or []
                 codes = sorted({_code(value) for value in members if _code(value)})
                 name = str(item.get("theme_name") or item.get("name") or "").strip()
-                theme_id = str(item.get("theme_id") or item.get("id") or name or index).strip()
+                theme_id = str(
+                    item.get("theme_id") or item.get("id") or name or index
+                ).strip()
                 if name and codes:
-                    themes.append({"theme_id": theme_id, "theme_name": name, "members": codes})
+                    themes.append(
+                        {"theme_id": theme_id, "theme_name": name, "members": codes}
+                    )
 
         stock_to_themes = payload.get("stock_to_themes") or payload.get("membership")
         if isinstance(stock_to_themes, dict):
@@ -75,7 +79,13 @@ class ThemeMembershipLoader:
             existing = {item["theme_name"] for item in themes}
             for name, codes in sorted(by_name.items()):
                 if name not in existing and codes:
-                    themes.append({"theme_id": name, "theme_name": name, "members": sorted(codes)})
+                    themes.append(
+                        {
+                            "theme_id": name,
+                            "theme_name": name,
+                            "members": sorted(codes),
+                        }
+                    )
         return themes
 
     def load(self) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -137,7 +147,11 @@ class ThemeProjectionBuilder:
         _meta: dict[str, Any],
     ) -> dict[str, Any]:
         themes, mapping_status = self.loader.load()
-        by_code = {_code(row.get("stock_code")): row for row in rows if _code(row.get("stock_code"))}
+        by_code = {
+            _code(row.get("stock_code")): row
+            for row in rows
+            if _code(row.get("stock_code"))
+        }
         if not themes:
             return {
                 "schema_version": 1,
@@ -157,16 +171,36 @@ class ThemeProjectionBuilder:
 
         result: list[dict[str, Any]] = []
         for theme in themes:
-            member_rows = [by_code[code] for code in theme["members"] if code in by_code]
+            member_rows = [
+                by_code[code] for code in theme["members"] if code in by_code
+            ]
             if not member_rows:
                 continue
-            rates = [value for value in (_number(row.get("change_rate")) for row in member_rows) if value is not None]
-            values = [value for value in (_number(row.get("trade_value_eok")) for row in member_rows) if value is not None]
-            scores = [value for value in (_number(row.get("candidate_score") or row.get("grade_score")) for row in member_rows) if value is not None]
+            rates = [
+                value
+                for value in (_number(row.get("change_rate")) for row in member_rows)
+                if value is not None
+            ]
+            values = [
+                value
+                for value in (
+                    _number(row.get("trade_value_eok")) for row in member_rows
+                )
+                if value is not None
+            ]
+            scores = [
+                value
+                for value in (
+                    _number(row.get("candidate_score") or row.get("grade_score"))
+                    for row in member_rows
+                )
+                if value is not None
+            ]
             top = max(
                 member_rows,
                 key=lambda row: (
-                    _number(row.get("candidate_score") or row.get("grade_score")) or 0.0,
+                    _number(row.get("candidate_score") or row.get("grade_score"))
+                    or 0.0,
                     _number(row.get("trade_value_eok")) or 0.0,
                 ),
             )
@@ -178,15 +212,21 @@ class ThemeProjectionBuilder:
                     "active_member_count": len(member_rows),
                     "advancers": sum(1 for value in rates if value > 0),
                     "decliners": sum(1 for value in rates if value < 0),
-                    "avg_change_rate": round(sum(rates) / len(rates), 4) if rates else None,
+                    "avg_change_rate": (
+                        round(sum(rates) / len(rates), 4) if rates else None
+                    ),
                     "max_change_rate": round(max(rates), 4) if rates else None,
                     "trade_value_eok": round(sum(values), 4) if values else 0.0,
-                    "avg_candidate_score": round(sum(scores) / len(scores), 4) if scores else None,
+                    "avg_candidate_score": (
+                        round(sum(scores) / len(scores), 4) if scores else None
+                    ),
                     "max_candidate_score": round(max(scores), 4) if scores else None,
                     "top_stock_code": _code(top.get("stock_code")),
                     "top_stock_name": top.get("stock_name"),
                     "top_stock_change_rate": _number(top.get("change_rate")),
-                    "top_stock_candidate_score": _number(top.get("candidate_score") or top.get("grade_score")),
+                    "top_stock_candidate_score": _number(
+                        top.get("candidate_score") or top.get("grade_score")
+                    ),
                 }
             )
 
