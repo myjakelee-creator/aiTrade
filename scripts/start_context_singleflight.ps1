@@ -5,7 +5,8 @@ $RuntimeDir = Join-Path $ProjectRoot "data\runtime\stockboard_v2"
 $PidFile = Join-Path $RuntimeDir "context_snapshot_writer.pid"
 $StatusFile = Join-Path $RuntimeDir "context_snapshot_status.json"
 $ExpectedOwner = "tr_singleflight"
-$ExpectedRuntime = "singleflight_explicit_loop_v2"
+$ExpectedRuntime = "singleflight_explicit_loop_v3"
+$ModuleName = "realtime_v2.context_snapshot_writer_singleflight"
 
 Set-Location -LiteralPath $ProjectRoot
 
@@ -53,11 +54,7 @@ function Get-ContextWriterRows {
                     if ($name -notmatch '^(?i)python(w)?\.exe$' -or -not $commandLine) {
                         return $false
                     }
-                    return (
-                        $commandLine -like '*realtime_v2\context_snapshot_writer.py*' -or
-                        $commandLine -like '*realtime_v2\context_snapshot_writer_base.py*' -or
-                        $commandLine -like '*realtime_v2\context_snapshot_writer_singleflight.py*'
-                    )
+                    return $commandLine -match '(?i)realtime_v2[\\.]context_snapshot_writer(_base|_singleflight)?(\.py)?'
                 } |
                 Select-Object ProcessId, Name, CommandLine
         )
@@ -85,19 +82,19 @@ function Show-LogTail([string]$Path, [string]$Label) {
 New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
 Stop-ContextWriters
 Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $StatusFile -Force -ErrorAction SilentlyContinue
 
 $python64 = Resolve-Python64
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $stdout = Join-Path $RuntimeDir "context_singleflight_$stamp.out.log"
 $stderr = Join-Path $RuntimeDir "context_singleflight_$stamp.err.log"
-$entrypoint = "realtime_v2\context_snapshot_writer_singleflight.py"
 
 Write-Host "CONTEXT_SINGLEFLIGHT_PYTHON=$python64"
-Write-Host "CONTEXT_SINGLEFLIGHT_ENTRYPOINT=$entrypoint"
+Write-Host "CONTEXT_SINGLEFLIGHT_MODULE=$ModuleName"
 
 $process = Start-Process `
     -FilePath $python64 `
-    -ArgumentList @($entrypoint, "--interval-sec", "30", "--ohlc-bootstrap") `
+    -ArgumentList @("-m", $ModuleName, "--interval-sec", "30", "--ohlc-bootstrap") `
     -WorkingDirectory $ProjectRoot `
     -WindowStyle Hidden `
     -RedirectStandardOutput $stdout `
