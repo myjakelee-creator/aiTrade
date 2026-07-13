@@ -5,6 +5,7 @@ from typing import Any
 
 from realtime_v2.board_data_hub import BoardDataHub
 from realtime_v2.common import now_text
+from realtime_v2.theme_projection_engine import ThemeProjectionRuntime
 from realtime_v2.tr_singleflight import get_shared_tr_coordinator
 
 
@@ -13,7 +14,8 @@ def install(base) -> None:
 
     Install this before the opening-burst cache patch. The cache then captures the
     hub-wrapped heavy snapshot builder, so each expensive calculation is published
-    once and all future boards consume the same completed feature snapshot.
+    once and all boards consume the same completed feature snapshot. Theme
+    projection runs in a latest-only background worker and performs no TR calls.
     """
 
     state_class = base.State
@@ -29,10 +31,16 @@ def install(base) -> None:
     def patched_init(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
         self.board_data_hub = BoardDataHub()
+        self.theme_projection_runtime = ThemeProjectionRuntime(self.board_data_hub)
+        self.theme_projection_runtime.start()
         with self.lock:
             self.status["board_data_hub_enabled"] = True
             self.status["board_data_hub_direct_board_tr_allowed"] = False
             self.status["board_data_hub_html_calculation_allowed"] = False
+            self.status["theme_projection_enabled"] = True
+            self.status["theme_projection_input"] = (
+                "board_data_hub_shared_feature_snapshot"
+            )
 
     def patched_apply_event(self, event: dict[str, Any]) -> None:
         original_apply_event(self, event)
@@ -42,7 +50,9 @@ def install(base) -> None:
         hub = getattr(self, "board_data_hub", None)
         if hub is None:
             return
-        event_kwargs = event.get("kwargs") if isinstance(event.get("kwargs"), dict) else {}
+        event_kwargs = (
+            event.get("kwargs") if isinstance(event.get("kwargs"), dict) else {}
+        )
         hub.mark_state_change(
             event_type=event_type,
             at=event.get("ts") or now_text(),
@@ -58,13 +68,18 @@ def install(base) -> None:
         hub = getattr(self, "board_data_hub", None)
         if hub is not None and isinstance(payload, dict):
             try:
-                hub.publish_feature_snapshot(payload)
+                feature_version = hub.publish_feature_snapshot(payload)
+                theme_runtime = getattr(self, "theme_projection_runtime", None)
+                if theme_runtime is not None:
+                    theme_runtime.submit(feature_version)
                 payload_status = payload.get("status")
                 if isinstance(payload_status, dict):
                     payload_status["board_data_hub"] = hub.manifest()
                     payload_status["tr_singleflight"] = (
                         get_shared_tr_coordinator().status()
                     )
+                    if theme_runtime is not None:
+                        payload_status["theme_projection"] = theme_runtime.status()
             except Exception as error:
                 with self.lock:
                     self.status["board_data_hub_last_error"] = (
@@ -73,6 +88,7 @@ def install(base) -> None:
         return payload
 
     if callable(original_apply_program_net):
+
         def patched_apply_program_net_values(
             self,
             values: dict[str, Any],
@@ -104,35 +120,52 @@ def install(base) -> None:
         hub = getattr(self.server.state, "board_data_hub", None)
 
         if parsed.path == "/api/v2/hub/manifest":
-            payload = hub.manifest() if hub is not None else {
-                "schema_version": 1,
-                "source": "board_data_hub",
-                "enabled": False,
-                "ts": now_text(),
-            }
+            payload = (
+                hub.manifest()
+                if hub is not None
+                else {
+                    "schema_version": 1,
+                    "source": "board_data_hub",
+                    "enabled": False,
+                    "ts": now_text(),
+                }
+            )
             payload["tr_singleflight"] = get_shared_tr_coordinator().status()
             self._json(payload)
             return
 
         if parsed.path == "/api/v2/hub/canonical":
             if hub is None:
-                self._json({"error": "board data hub unavailable"}, status=HTTPStatus.SERVICE_UNAVAILABLE)
+                self._json(
+                    {"error": "board data hub unavailable"},
+                    status=HTTPStatus.SERVICE_UNAVAILABLE,
+                )
                 return
             self._json(hub.canonical_snapshot(self.server.state, parse_limit(query)))
             return
 
         if parsed.path == "/api/v2/hub/features":
             if hub is None:
-                self._json({"error": "board data hub unavailable"}, status=HTTPStatus.SERVICE_UNAVAILABLE)
+                self._json(
+                    {"error": "board data hub unavailable"},
+                    status=HTTPStatus.SERVICE_UNAVAILABLE,
+                )
                 return
             self._json(hub.feature_snapshot(parse_limit(query)))
             return
 
-        if parsed.path == "/api/v2/hub/projection":
+        if parsed.path in {"/api/v2/hub/theme", "/api/v2/hub/projection"}:
             if hub is None:
-                self._json({"error": "board data hub unavailable"}, status=HTTPStatus.SERVICE_UNAVAILABLE)
+                self._json(
+                    {"error": "board data hub unavailable"},
+                    status=HTTPStatus.SERVICE_UNAVAILABLE,
+                )
                 return
-            name = str((query.get("name") or [""])[0] or "").strip().lower()
+            name = (
+                "theme"
+                if parsed.path.endswith("/theme")
+                else str((query.get("name") or [""])[0] or "").strip().lower()
+            )
             projection = hub.projection_snapshot(name)
             if projection is None:
                 self._json(
