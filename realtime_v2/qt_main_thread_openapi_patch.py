@@ -26,16 +26,24 @@ def install_provider() -> None:
             control = self._control
             app = self._app
             owns_app = bool(self._owns_app)
+            exec_timer = getattr(self, "_stockboard_qt_exec_loop_timer", None)
         if stop_event is not None:
             stop_event.set()
 
         cleanup_error = None
         try:
+            if exec_timer is not None:
+                try:
+                    exec_timer.stop()
+                    exec_timer.deleteLater()
+                except Exception:
+                    pass
             if control is not None:
                 control.clear()
                 control.deleteLater()
             if app is not None:
-                app.processEvents()
+                if not bool(getattr(self, "_stockboard_qt_exec_loop_active", False)):
+                    app.processEvents()
                 if owns_app:
                     app.quit()
         except Exception as error:
@@ -58,6 +66,8 @@ def install_provider() -> None:
             self._stockboard_inline_qt_mode = False
             self._stockboard_inline_qt_owner_ident = None
             self._stockboard_inline_qt_owner_name = None
+            self._stockboard_qt_exec_loop_active = False
+            self._stockboard_qt_exec_loop_timer = None
         return cleanup_error is None
 
     def start_inline_qt(self) -> bool:
@@ -75,6 +85,11 @@ def install_provider() -> None:
             self._stockboard_inline_qt_mode = True
             self._stockboard_inline_qt_owner_ident = threading.get_ident()
             self._stockboard_inline_qt_owner_name = threading.current_thread().name
+            self._stockboard_qt_exec_loop_active = False
+            self._stockboard_qt_exec_loop_started_at = None
+            self._stockboard_qt_exec_loop_tick_count = 0
+            self._stockboard_qt_exec_loop_last_tick_at = None
+            self._stockboard_qt_exec_loop_timer = None
             ready_event = self._qt_ready_event
 
         app = None
@@ -94,6 +109,7 @@ def install_provider() -> None:
                     "QAxWidget requires QApplication, but a QCoreApplication "
                     "instance already exists"
                 )
+            app.setQuitOnLastWindowClosed(False)
 
             with self._lock:
                 self._app = app
@@ -135,7 +151,13 @@ def install_provider() -> None:
             return False
 
     def pump_inline_qt_once(self) -> bool:
-        """Process Qt/OpenAPI events once from the same thread that owns QAxWidget."""
+        """Run provider-side pending work from the QAx owner thread.
+
+        When the collector is inside ``QApplication.exec_()``, Qt itself dispatches
+        OpenAPI events. Calling ``processEvents()`` again from a QTimer callback can
+        re-enter the ActiveX event loop and eventually stop delivery, so it is used
+        only by legacy callers that have not entered the real Qt event loop.
+        """
 
         with self._lock:
             inline_mode = bool(getattr(self, "_stockboard_inline_qt_mode", False))
@@ -143,6 +165,9 @@ def install_provider() -> None:
             app = self._app
             stop_event = self._qt_pump_stop_event
             running = self._running
+            exec_loop_active = bool(
+                getattr(self, "_stockboard_qt_exec_loop_active", False)
+            )
 
         if not inline_mode:
             return False
@@ -155,7 +180,8 @@ def install_provider() -> None:
             return False
 
         try:
-            app.processEvents()
+            if not exec_loop_active:
+                app.processEvents()
             self._process_pending_realtime_requests()
             self._process_orderbook_rotation()
             self._process_strength_probe_queue()
@@ -166,6 +192,11 @@ def install_provider() -> None:
             with self._lock:
                 self._qt_pump_running = True
                 self._qt_pump_last_at = pump_time
+                if exec_loop_active:
+                    self._stockboard_qt_exec_loop_tick_count = int(
+                        getattr(self, "_stockboard_qt_exec_loop_tick_count", 0) or 0
+                    ) + 1
+                    self._stockboard_qt_exec_loop_last_tick_at = pump_time
             return True
         except Exception as error:
             with self._lock:
@@ -193,6 +224,18 @@ def install_provider() -> None:
                     getattr(self, "_stockboard_inline_qt_owner_ident", None)
                     == threading.get_ident()
                 ),
+                "qt_exec_loop_active": bool(
+                    getattr(self, "_stockboard_qt_exec_loop_active", False)
+                ),
+                "qt_exec_loop_started_at": getattr(
+                    self, "_stockboard_qt_exec_loop_started_at", None
+                ),
+                "qt_exec_loop_tick_count": int(
+                    getattr(self, "_stockboard_qt_exec_loop_tick_count", 0) or 0
+                ),
+                "qt_exec_loop_last_tick_at": getattr(
+                    self, "_stockboard_qt_exec_loop_last_tick_at", None
+                ),
             }
         )
         return result
@@ -205,7 +248,7 @@ def install_provider() -> None:
 
 
 def install_collector_main(base) -> None:
-    """Replace collector32.main with a Qt-main-thread event loop."""
+    """Replace collector32.main with a real Qt-main-thread event loop."""
 
     if getattr(base, "_stockboard_qt_main_thread_main_installed", False):
         return
@@ -271,11 +314,36 @@ def install_collector_main(base) -> None:
         registered_count = provider.register_codes(codes)
         print(f"registered_count={registered_count}", flush=True)
 
+        with provider._lock:
+            app = provider._app
+        if app is None:
+            print("collector_qt_event_loop_error=QApplication unavailable", flush=True)
+            sender.stop()
+            provider.stop()
+            return 1
+
+        from PyQt5.QtCore import QTimer, Qt
+
+        app.setQuitOnLastWindowClosed(False)
+        exit_state = {"code": 0, "error": None}
         last_status_at = 0.0
         console_hidden = False
-        try:
-            while True:
-                if not provider.pump_inline_qt_once():
+
+        def request_exit(code: int, error: Exception | str | None = None) -> None:
+            if code and not exit_state["code"]:
+                exit_state["code"] = int(code)
+            if error is not None and exit_state["error"] is None:
+                exit_state["error"] = str(error)
+            try:
+                app.exit(int(exit_state["code"] or 0))
+            except Exception:
+                pass
+
+        def collector_tick() -> None:
+            nonlocal last_status_at, console_hidden
+            try:
+                ok = provider.pump_inline_qt_once()
+                if not ok:
                     with provider._lock:
                         running = bool(provider._running)
                         last_error = provider._last_error
@@ -304,10 +372,71 @@ def install_collector_main(base) -> None:
                         },
                     )
                     last_status_at = now_mono
-                time.sleep(0.02)
+            except Exception as error:
+                print(
+                    f"collector_qt_tick_error={type(error).__name__}: {error}",
+                    flush=True,
+                )
+                request_exit(1, error)
+
+        pump_interval_ms = max(
+            10,
+            min(
+                100,
+                int(os.getenv("STOCKBOARD_QT_PUMP_TIMER_MS", "20")),
+            ),
+        )
+        pump_timer = QTimer()
+        pump_timer.setInterval(pump_interval_ms)
+        try:
+            pump_timer.setTimerType(Qt.PreciseTimer)
+        except Exception:
+            pass
+        pump_timer.timeout.connect(collector_tick)
+
+        with provider._lock:
+            provider._stockboard_qt_exec_loop_active = True
+            provider._stockboard_qt_exec_loop_started_at = datetime.now().isoformat(
+                timespec="seconds"
+            )
+            provider._stockboard_qt_exec_loop_timer = pump_timer
+
+        base.publish_collector_status(
+            sender,
+            provider,
+            {
+                "provider_started": True,
+                "registered_count": registered_count,
+            },
+        )
+        last_status_at = time.monotonic()
+        pump_timer.start()
+        print(
+            f"qt_event_loop=exec_ pump_timer_ms={pump_interval_ms}",
+            flush=True,
+        )
+
+        app_result = 0
+        try:
+            app_result = int(app.exec_() or 0)
         except KeyboardInterrupt:
-            return 0
+            request_exit(0)
+        except Exception as error:
+            print(
+                f"collector_qt_event_loop_error={type(error).__name__}: {error}",
+                flush=True,
+            )
+            exit_state["code"] = 1
+            exit_state["error"] = str(error)
         finally:
+            try:
+                pump_timer.stop()
+                pump_timer.deleteLater()
+            except Exception:
+                pass
+            with provider._lock:
+                provider._stockboard_qt_exec_loop_active = False
+                provider._stockboard_qt_exec_loop_timer = None
             sender.stop()
             try:
                 provider.stop()
@@ -315,6 +444,13 @@ def install_collector_main(base) -> None:
                 pass
             if sender.is_alive():
                 sender.join(timeout=2.0)
+
+        if exit_state["error"]:
+            print(
+                f"collector_exit_error={exit_state['error']}",
+                flush=True,
+            )
+        return int(exit_state["code"] or app_result or 0)
 
     base.main = main
     base._stockboard_qt_main_thread_main_installed = True
