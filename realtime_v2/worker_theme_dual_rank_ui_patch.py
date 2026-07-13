@@ -10,6 +10,7 @@ _STYLE = r"""
 <style>
 /* THEMEBOARD_DUAL_SERVER_RANK_UI_20260713 */
 .view-toggle{display:inline-flex;gap:3px;margin-left:auto}.view-button{min-height:22px;padding:2px 9px;border:1px solid #94a3b8;border-radius:3px;background:#fff;color:#334155;font-weight:900;cursor:pointer}.view-button.active{border-color:#1d4ed8;background:#1d4ed8;color:#fff}.view-button:focus{outline:2px solid #93c5fd;outline-offset:1px}
+.leader-item{display:inline-flex;align-items:center;gap:2px}.leader-rate{font-variant-numeric:tabular-nums}.detail-panel-inline{margin:0 5px 5px}.detail-panel-inline .table-wrap{max-height:320px}.theme-list-layout{display:block;padding:0 5px 5px}.theme-list-layout>.panel{width:100%}
 </style>
 """
 
@@ -35,15 +36,26 @@ function __tbGradeClass(theme){return __tbField(theme,'grade_class',theme&&theme
 function __tbState(theme){return __tbField(theme,'state_text',theme&&theme.state_text);}
 function __tbStateClass(theme){return __tbField(theme,'state_class',theme&&theme.state_class);}
 function __tbViewLabel(){return window.__themeBoardView==='money'?'돈쏠림':'상승탄력';}
+function __tbNumericTone(value){const number=Number(value);return Number.isFinite(number)?(number>0?'plus':number<0?'minus':'zero'):'zero';}
 
 rows=function(payload){return __tbServerRows(payload);};
+
+leadersHtml=function(theme){
+  const items=Array.isArray(theme&&theme.leaders)?theme.leaders:[];
+  if(!items.length)return '-';
+  return items.map(item=>{
+    const rateTone=tone(item&&item.change_rate_tone?item.change_rate_tone:__tbNumericTone(item&&item.change_rate));
+    const rateText=item&&item.change_rate_text?item.change_rate_text:'-';
+    return `<span class="leader-item"><button type="button" class="stock-link" data-code="${esc(item.stock_code)}">${esc(item.stock_name)}</button><span class="leader-rate ${rateTone}">${esc(rateText)}</span></span>`;
+  }).join(' · ');
+};
 
 radarHtml=function(theme){
   return `<article class="theme-card ${String(theme.theme_id)===selectedThemeId?'selected':''}" data-theme-id="${esc(theme.theme_id)}">
     <div class="card-head"><span class="rank">${esc(__tbRank(theme))}</span><span class="card-name">${esc(theme.theme_name)}</span><span class="grade ${gradeClass(__tbGradeClass(theme))}">${esc(__tbGrade(theme))}</span><span class="state ${stateClass(__tbStateClass(theme))}">${esc(__tbState(theme))}</span></div>
     <div class="flow"><span>1분</span><div class="track"><div class="fill" style="width:${pctWidth(theme.trade_value_1m_bar_pct)}%"></div></div><b class="${tone(theme.trade_value_1m_tone)}">${esc(theme.trade_value_1m_text)}</b></div>
     <div class="flow"><span>5분</span><div class="track"><div class="fill" style="width:${pctWidth(theme.trade_value_5m_bar_pct)}%"></div></div><b class="${tone(theme.trade_value_5m_tone)}">${esc(theme.trade_value_5m_text)}</b></div>
-    <div class="card-sub"><span>${__tbViewLabel()} ${esc(__tbScore(theme))}</span><span>평균 ${esc(theme.change_rate_text)}</span><span>${esc(theme.breadth_text)}</span><span>1분탄력 ${esc(theme.change_momentum_1m_text)}</span><span>5분지속 ${esc(theme.change_persistence_5m_text)}</span><span>대금비 ${esc(theme.theme_amount_ratio_text)}</span></div>
+    <div class="card-sub"><span>${__tbViewLabel()} ${esc(__tbScore(theme))}</span><span>평균 <b class="${tone(theme.change_rate_tone)}">${esc(theme.change_rate_text)}</b></span><span>${esc(theme.breadth_text)}</span><span>1분탄력 ${esc(theme.change_momentum_1m_text)}</span><span>5분지속 ${esc(theme.change_persistence_5m_text)}</span><span>대금비 ${esc(theme.theme_amount_ratio_text)}</span></div>
     <div class="leaders"><b>주도</b> ${leadersHtml(theme)}</div>
   </article>`;
 };
@@ -79,11 +91,12 @@ renderSummary=function(payload){
 
 renderThemes=function(payload){
   const list=__tbServerRows(payload);
+  const cardList=list.slice(0,10);
   if(!selectedThemeId&&list[0])selectedThemeId=String(list[0].theme_id||'');
-  radarEl.innerHTML=list.length?list.map(radarHtml).join(''):'<div class="empty">유효 테마 데이터 없음</div>';
+  radarEl.innerHTML=cardList.length?cardList.map(radarHtml).join(''):'<div class="empty">유효 테마 데이터 없음</div>';
   themeBody.innerHTML=list.length?list.map(themeRowHtml).join(''):'<tr><td colspan="15" class="empty">유효 테마 데이터 없음</td></tr>';
   const title=byId('themeRankingTitle');
-  if(title) title.textContent=`${__tbViewLabel()} 순위 · 서버 완성 순서 · 1초 latest-only`;
+  if(title) title.textContent=`${__tbViewLabel()} 전체 순위 · 서버 완성 순서 · 1초 latest-only`;
   bindThemes();
 };
 
@@ -112,6 +125,18 @@ loadDetail=async function(force){
   }
 };
 
+function __tbMoveDetailBelowRadar(){
+  const radar=byId('radar');
+  const detailTable=byId('detailTable');
+  const detail=detailTable?detailTable.closest('section.panel'):null;
+  const layout=document.querySelector('main.layout');
+  if(radar&&detail&&detail.previousElementSibling!==radar){
+    detail.classList.add('detail-panel-inline');
+    radar.insertAdjacentElement('afterend',detail);
+  }
+  if(layout)layout.classList.add('theme-list-layout');
+}
+
 function __tbApplyView(view){
   window.__themeBoardView=view==='money'?'money':'momentum';
   localStorage.setItem('aitrade.theme.view.v3',window.__themeBoardView);
@@ -128,6 +153,7 @@ const momentumButton=byId('themeViewMomentum');
 const moneyButton=byId('themeViewMoney');
 if(momentumButton)momentumButton.addEventListener('click',()=>__tbApplyView('momentum'));
 if(moneyButton)moneyButton.addEventListener('click',()=>__tbApplyView('money'));
+__tbMoveDetailBelowRadar();
 __tbApplyView(window.__themeBoardView);
 </script>
 """
@@ -139,12 +165,12 @@ def _patch_html(html: str) -> str:
     html = html.replace("</head>", f"{_STYLE}\n</head>", 1)
     html = html.replace(
         '<div class="section-head">상위 테마 레이더 <span class="section-note">서버 순위·점수·막대 그대로 표시</span></div>',
-        '<div class="section-head">상위 테마 레이더 <span class="section-note">서버 완성 이중 순위</span><span class="view-toggle"><button id="themeViewMomentum" class="view-button active" type="button">상승탄력</button><button id="themeViewMoney" class="view-button" type="button">돈쏠림</button></span></div>',
+        '<div class="section-head">상위 테마 레이더 <span class="section-note">현재 보기 상위 10개 · 전체 테마는 하단 순위표</span><span class="view-toggle"><button id="themeViewMomentum" class="view-button active" type="button">상승탄력</button><button id="themeViewMoney" class="view-button" type="button">돈쏠림</button></span></div>',
         1,
     )
     html = html.replace(
         '<h2>테마 돈쏠림 순위 · 1초 공용 Projection</h2>',
-        '<h2 id="themeRankingTitle">상승탄력 순위 · 서버 완성 순서 · 1초 latest-only</h2>',
+        '<h2 id="themeRankingTitle">상승탄력 전체 순위 · 서버 완성 순서 · 1초 latest-only</h2>',
         1,
     )
     html = html.replace("</body>", f"{_SCRIPT}\n</body>", 1)
