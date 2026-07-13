@@ -7,6 +7,7 @@ from typing import Any
 
 
 HISTORY_WINDOW_SEC = 310.0
+TOP_PER_VIEW = 10
 
 # source key, payload component key, weight, positive-only, minimum
 _METRIC_SPECS = (
@@ -61,12 +62,12 @@ def _eligible(
 
 
 def install(theme_module) -> None:
-    """Select Theme leaders from price strength, persistence and relative money.
+    """Select precise leaders only for top Theme views and selected detail.
 
-    One compact stock metric record is extracted for each shared Feature row and reused
-    across every overlapping Theme. Per-theme relative ranks are calculated with one
-    min/max scan and one score scan instead of ten independent list/dict passes.
-    Missing metrics are dynamically reweighted.
+    All Theme summary rows keep a lightweight fallback leader from the summary pass.
+    Precise price/momentum/money/strength/flow scoring is limited to the union of the
+    top momentum and money views. Any selected Theme is always scored precisely by the
+    independent detail worker. No TR/OpenAPI work or browser-side calculation is added.
     """
 
     builder_class = theme_module.ThemeProjectionBuilder
@@ -128,13 +129,38 @@ def install(theme_module) -> None:
         self._theme_leader_member_codes_by_theme[theme_id] = codes
         return codes
 
+    def update_history(
+        self,
+        by_code: dict[str, dict[str, Any]],
+        now_ts: float,
+        hold_active: bool,
+    ) -> None:
+        if hold_active:
+            return
+        cutoff = now_ts - HISTORY_WINDOW_SEC
+        for stock_code, row in by_code.items():
+            rate = _number(row.get("change_rate"))
+            if rate is None:
+                continue
+            history = self._theme_leader_history_by_code.setdefault(stock_code, deque())
+            if history and now_ts - history[-1][0] < 0.9:
+                history[-1] = (now_ts, rate)
+            else:
+                history.append((now_ts, rate))
+            while history and history[0][0] < cutoff:
+                history.popleft()
+
     def extract_stock_metrics(
         self,
         by_code: dict[str, dict[str, Any]],
         now_ts: float,
+        needed_codes: set[str],
     ) -> dict[str, dict[str, Any]]:
         metrics: dict[str, dict[str, Any]] = {}
-        for stock_code, row in by_code.items():
+        for stock_code in needed_codes:
+            row = by_code.get(stock_code)
+            if row is None:
+                continue
             one_delta, five_delta = history_deltas(self, stock_code, now_ts)
             groups = _blocked(row)
             metrics[stock_code] = {
@@ -206,7 +232,7 @@ def install(theme_module) -> None:
         scored_records: list[dict[str, Any]] = []
         scored_by_code: dict[str, dict[str, Any]] = {}
 
-        # Pass 2: normalize and score directly, without ten rank dictionaries.
+        # Pass 2: normalize and score directly, without rank dictionaries.
         for base_record in base_records:
             components: dict[str, float | None] = {}
             score_sum = 0.0
@@ -248,7 +274,7 @@ def install(theme_module) -> None:
                     "leadership_metric_weight": round(weight_sum, 2),
                     "leadership_components": components,
                     "leadership_basis": (
-                        "price_momentum_amount_flow_two_pass_minmax_v3"
+                        "price_momentum_amount_flow_two_pass_minmax_v4"
                     ),
                 }
             )
@@ -356,6 +382,78 @@ def install(theme_module) -> None:
             )
         return leaders, scored_by_code
 
+    def top_scope_ids(payload: dict[str, Any]) -> list[str]:
+        selected: list[str] = []
+        seen: set[str] = set()
+        for source in (
+            payload.get("rows") if isinstance(payload.get("rows"), list) else [],
+            payload.get("money_rows")
+            if isinstance(payload.get("money_rows"), list)
+            else [],
+        ):
+            for row in source[:TOP_PER_VIEW]:
+                if not isinstance(row, dict):
+                    continue
+                theme_id = str(row.get("theme_id") or "")
+                if not theme_id or theme_id in seen:
+                    continue
+                seen.add(theme_id)
+                selected.append(theme_id)
+        return selected
+
+    def sanitize_fallback(summary: dict[str, Any]) -> None:
+        leaders = summary.get("leaders")
+        if not isinstance(leaders, list):
+            summary["leader_precision"] = "summary_fallback"
+            return
+        valid = [dict(row) for row in leaders if isinstance(row, dict)]
+        valid.sort(
+            key=lambda row: (
+                -int((_number(row.get("change_rate")) or 0.0) > 0),
+                -float(_number(row.get("leadership_score")) or 0.0),
+                -float(_number(row.get("change_rate")) or -999.0),
+                str(row.get("stock_code") or ""),
+            )
+        )
+        positive_assigned = False
+        for index, row in enumerate(valid):
+            rate = _number(row.get("change_rate")) or 0.0
+            score = float(_number(row.get("leadership_score")) or 0.0)
+            if not positive_assigned and rate > 0:
+                role, role_class = "주도", "lead"
+                positive_assigned = True
+            elif rate > 0 and score >= 65:
+                role, role_class = "동반", "co"
+            elif rate > 0:
+                role, role_class = "후발", "follow"
+            else:
+                role, role_class = "관찰", "watch"
+            row["leadership_role"] = role
+            row["role_class"] = role_class
+            row["leadership_rank"] = index + 1
+        summary["leaders"] = valid[:3]
+        summary["leader_precision"] = "summary_fallback"
+        summary["top_stock_code"] = valid[0].get("stock_code") if valid else ""
+        summary["top_stock_name"] = valid[0].get("stock_name") if valid else None
+        summary["top_stock_change_rate"] = (
+            valid[0].get("change_rate") if valid else None
+        )
+
+    def apply_precise_summary(
+        summary: dict[str, Any],
+        leaders: list[dict[str, Any]],
+    ) -> None:
+        summary["leaders"] = leaders
+        summary["leader_precision"] = "precise_top_union"
+        summary["top_stock_code"] = leaders[0].get("stock_code") if leaders else ""
+        summary["top_stock_name"] = leaders[0].get("stock_name") if leaders else None
+        summary["top_stock_change_rate"] = (
+            leaders[0].get("change_rate") if leaders else None
+        )
+        summary["top_stock_leadership_score"] = (
+            leaders[0].get("leadership_score") if leaders else None
+        )
+
     def call(
         self,
         feature_version: int,
@@ -382,12 +480,12 @@ def install(theme_module) -> None:
         now_ts = _number((meta or {}).get("snapshot_epoch")) or time.time()
 
         with self._theme_summary_split_lock:
-            # Borrow the completed references read-only. This builder is serialized by
-            # its latest-only worker; copying both dictionaries added measurable cost.
             by_code = self._theme_latest_flow_rows_by_code
             mapping_by_id = self._theme_latest_mapping_by_id
 
-        cutoff = now_ts - HISTORY_WINDOW_SEC
+        precise_ids = top_scope_ids(payload)
+        precise_id_set = set(precise_ids)
+
         with self._theme_leader_lock:
             if (
                 trading_date
@@ -400,29 +498,28 @@ def install(theme_module) -> None:
             if trading_date:
                 self._theme_leader_basis_date = trading_date
 
-            if not hold_active:
-                for stock_code, row in by_code.items():
-                    rate = _number(row.get("change_rate"))
-                    if rate is None:
-                        continue
-                    history = self._theme_leader_history_by_code.setdefault(
-                        stock_code, deque()
-                    )
-                    if history and now_ts - history[-1][0] < 0.9:
-                        history[-1] = (now_ts, rate)
-                    else:
-                        history.append((now_ts, rate))
-                    while history and history[0][0] < cutoff:
-                        history.popleft()
+            update_history(self, by_code, now_ts, hold_active)
 
-            stock_metrics = extract_stock_metrics(self, by_code, now_ts)
+            needed_codes: set[str] = set()
+            for theme_id in precise_ids:
+                theme = mapping_by_id.get(theme_id)
+                if isinstance(theme, dict):
+                    needed_codes.update(member_codes(self, theme_id, theme))
+            stock_metrics = extract_stock_metrics(self, by_code, now_ts, needed_codes)
+
+            summary_by_id = {
+                str(row.get("theme_id") or ""): row
+                for row in summaries
+                if isinstance(row, dict)
+            }
             leader_maps: dict[str, dict[str, dict[str, Any]]] = {}
-            for summary in summaries:
-                if not isinstance(summary, dict):
+            for theme_id, summary in summary_by_id.items():
+                if theme_id not in precise_id_set:
+                    sanitize_fallback(summary)
                     continue
-                theme_id = str(summary.get("theme_id") or "")
                 theme = mapping_by_id.get(theme_id)
                 if not isinstance(theme, dict):
+                    sanitize_fallback(summary)
                     continue
                 base_records = [
                     stock_metrics[stock_code]
@@ -431,27 +528,10 @@ def install(theme_module) -> None:
                 ]
                 leaders, scored_by_code = score_records(base_records)
                 leader_maps[theme_id] = scored_by_code
-                summary["leaders"] = leaders
-                summary["top_stock_code"] = (
-                    leaders[0].get("stock_code") if leaders else ""
-                )
-                summary["top_stock_name"] = (
-                    leaders[0].get("stock_name") if leaders else None
-                )
-                summary["top_stock_change_rate"] = (
-                    leaders[0].get("change_rate") if leaders else None
-                )
-                summary["top_stock_leadership_score"] = (
-                    leaders[0].get("leadership_score") if leaders else None
-                )
+                apply_precise_summary(summary, leaders)
 
             money_rows = payload.get("money_rows")
             if isinstance(money_rows, list):
-                summary_by_id = {
-                    str(row.get("theme_id") or ""): row
-                    for row in summaries
-                    if isinstance(row, dict)
-                }
                 for money_row in money_rows:
                     if not isinstance(money_row, dict):
                         continue
@@ -460,6 +540,7 @@ def install(theme_module) -> None:
                         continue
                     for key in (
                         "leaders",
+                        "leader_precision",
                         "top_stock_code",
                         "top_stock_name",
                         "top_stock_change_rate",
@@ -481,21 +562,14 @@ def install(theme_module) -> None:
         if isinstance(performance, dict):
             performance["leader_rank_ms"] = round(leader_ms, 3)
             performance["total_ms"] = round(total_ms, 3)
-            accounted = sum(
-                float(performance.get(key) or 0.0)
-                for key in (
-                    "aggregate_ms",
-                    "score_sort_ms",
-                    "momentum_ms",
-                    "dual_rank_ms",
-                    "leader_rank_ms",
-                )
-            )
-            performance["other_ms"] = round(max(0.0, total_ms - accounted), 3)
         payload["calculate_ms"] = round(total_ms, 3)
         payload["leader_selection_status"] = {
             "enabled": True,
-            "theme_count": len(self._theme_leader_scores_by_theme),
+            "theme_count": len(summaries),
+            "precise_theme_count": len(precise_id_set),
+            "fallback_theme_count": max(0, len(summaries) - len(precise_id_set)),
+            "top_per_view": TOP_PER_VIEW,
+            "precise_member_count": len(needed_codes),
             "tracked_stock_count": len(self._theme_leader_history_by_code),
             "history_window_sec": int(HISTORY_WINDOW_SEC),
             "hold_active": hold_active,
@@ -504,23 +578,25 @@ def install(theme_module) -> None:
             "dynamic_reweight": True,
             "additional_tr_allowed": False,
             "summary_extra_member_passes": 1,
+            "summary_member_scope": "top_momentum_money_union_only",
             "stock_metric_extract_passes": 1,
             "per_theme_raw_metric_reparse": False,
-            "rank_method": "within_theme_two_pass_minmax",
+            "rank_method": "top_union_two_pass_minmax",
             "rank_metric_passes_per_theme": 2,
             "positive_stock_precedence": True,
+            "selected_detail_always_precise": True,
         }
         policy = payload.setdefault("policy", {})
         if isinstance(policy, dict):
             policy["theme_leader_selection"] = (
-                "price30_momentum25_amount20_recent_money15_strength_flow10"
+                "top10_each_view_price30_momentum25_amount20_recent_money15_strength_flow10"
             )
             policy["theme_leader_candidate_score_used"] = False
             policy["theme_leader_dynamic_reweight"] = True
             policy["theme_leader_additional_tr_allowed"] = False
             policy["theme_leader_positive_stock_precedence"] = True
-            policy["theme_leader_rank_implementation"] = (
-                "two_pass_minmax_no_rank_dicts"
+            policy["theme_leader_precision_scope"] = (
+                "top_momentum_money_union_plus_selected_detail"
             )
         return payload
 
@@ -537,16 +613,34 @@ def install(theme_module) -> None:
         )
         if not isinstance(payload, dict) or payload.get("status") != "READY":
             return payload
-        theme = payload.get("theme")
-        members = theme.get("members") if isinstance(theme, dict) else None
+        theme_payload = payload.get("theme")
+        members = (
+            theme_payload.get("members") if isinstance(theme_payload, dict) else None
+        )
         if not isinstance(members, list):
             return payload
 
         selected = str(theme_id or "")
+        now_ts = _number((meta or {}).get("snapshot_epoch")) or time.time()
+        with self._theme_summary_split_lock:
+            mapping = self._theme_latest_mapping_by_id.get(selected)
+            by_code = self._theme_latest_flow_rows_by_code
+
+        precise_leaders: list[dict[str, Any]] = []
+        score_by_code: dict[str, dict[str, Any]] = {}
         with self._theme_leader_lock:
-            score_by_code = dict(
-                self._theme_leader_scores_by_theme.get(selected) or {}
-            )
+            if isinstance(mapping, dict):
+                selected_codes = set(member_codes(self, selected, mapping))
+                stock_metrics = extract_stock_metrics(
+                    self, by_code, now_ts, selected_codes
+                )
+                base_records = [
+                    stock_metrics[stock_code]
+                    for stock_code in member_codes(self, selected, mapping)
+                    if stock_code in stock_metrics
+                ]
+                precise_leaders, score_by_code = score_records(base_records)
+                self._theme_leader_scores_by_theme[selected] = score_by_code
 
         for member in members:
             if not isinstance(member, dict):
@@ -584,37 +678,27 @@ def install(theme_module) -> None:
                 str(member.get("stock_code") or ""),
             )
         )
-        theme["members"] = members
-        theme["leaders"] = [
-            {
-                key: member.get(key)
-                for key in (
-                    "stock_code",
-                    "stock_name",
-                    "change_rate",
-                    "change_rate_text",
-                    "change_rate_tone",
-                    "trade_value_eok",
-                    "trade_value_text",
-                    "leadership_score",
-                    "leadership_score_text",
-                    "leadership_role",
-                    "role_class",
-                    "leadership_rank",
-                )
-            }
-            for member in members[:3]
-        ]
+        theme_payload["members"] = members
+        theme_payload["leaders"] = precise_leaders
+        theme_payload["leader_precision"] = "selected_detail_precise"
+
         detail_ms = (time.perf_counter() - started) * 1000.0
         payload["calculate_ms"] = round(detail_ms, 3)
+        payload["leader_detail_status"] = {
+            "selected_theme_id": selected,
+            "precise": True,
+            "member_count": len(score_by_code),
+            "calculate_ms": round(detail_ms, 3),
+        }
         detail_policy = payload.setdefault("policy", {})
         if isinstance(detail_policy, dict):
             detail_policy["leader_selection"] = (
-                "server_price_momentum_amount_money_strength_flow"
+                "selected_theme_precise_price_momentum_amount_money_strength_flow"
             )
             detail_policy["candidate_score_used_for_leader"] = False
             detail_policy["browser_leader_sort_allowed"] = False
             detail_policy["positive_stock_precedence"] = True
+            detail_policy["selected_detail_always_precise"] = True
         return payload
 
     builder_class.__init__ = init
