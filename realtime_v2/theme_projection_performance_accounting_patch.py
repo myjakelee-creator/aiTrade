@@ -6,18 +6,26 @@ from typing import Any
 _ACCOUNTED_KEYS = (
     "aggregate_ms",
     "score_sort_ms",
+    "summary_core_other_ms",
     "momentum_ms",
     "dual_rank_ms",
     "leader_rank_ms",
 )
 
 
-def install(theme_module) -> None:
-    """Correct Theme projection phase accounting without adding calculation work.
+def _float(value: Any) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
 
-    Multiple wrappers add their own phase timings. The outer dual-rank wrapper used to
-    classify the already-measured leader phase as ``other_ms``. This patch only recomputes
-    the final accounting from the existing completed payload.
+
+def install(theme_module) -> None:
+    """Correct final Theme timing and expose the remaining wrapper residual.
+
+    ``summary_core_ms`` is captured before flow-history, continuity, momentum and rank
+    wrappers run. Its aggregate, score and residual pieces are non-overlapping. The
+    final ``other_ms`` therefore represents only work that still lacks a named phase.
     """
 
     builder_class = theme_module.ThemeProjectionBuilder
@@ -38,19 +46,28 @@ def install(theme_module) -> None:
         performance = payload.get("performance_breakdown")
         if not isinstance(performance, dict):
             return payload
-        try:
-            total_ms = float(payload.get("calculate_ms") or performance.get("total_ms") or 0.0)
-        except (TypeError, ValueError):
-            return payload
-        accounted_ms = 0.0
-        for key in _ACCOUNTED_KEYS:
-            try:
-                accounted_ms += float(performance.get(key) or 0.0)
-            except (TypeError, ValueError):
-                continue
+
+        total_ms = _float(payload.get("calculate_ms") or performance.get("total_ms"))
+        accounted_ms = sum(_float(performance.get(key)) for key in _ACCOUNTED_KEYS)
+        residual_ms = max(0.0, total_ms - accounted_ms)
+
+        summary_core_ms = _float(performance.get("summary_core_ms"))
+        post_core_wrapper_ms = max(
+            0.0,
+            total_ms
+            - summary_core_ms
+            - _float(performance.get("momentum_ms"))
+            - _float(performance.get("dual_rank_ms"))
+            - _float(performance.get("leader_rank_ms")),
+        )
+
         performance["accounted_ms"] = round(accounted_ms, 3)
-        performance["other_ms"] = round(max(0.0, total_ms - accounted_ms), 3)
-        performance["accounting_policy"] = "final_total_minus_named_nonoverlapping_phases"
+        performance["other_ms"] = round(residual_ms, 3)
+        performance["wrapper_residual_ms"] = round(residual_ms, 3)
+        performance["post_core_wrapper_ms"] = round(post_core_wrapper_ms, 3)
+        performance["accounting_policy"] = (
+            "final_total_minus_named_nonoverlapping_core_and_rank_phases"
+        )
         return payload
 
     builder_class.__call__ = call
