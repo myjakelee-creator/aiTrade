@@ -166,12 +166,13 @@ def install(base) -> None:
 
         # Requeued aggregate values can already be attached to the latest event.
         # Add the current micro-batch instead of replacing those unsent values.
-        for key in ("collector_buy_qty", "collector_sell_qty", "collector_trade_count"):
-            previous = _number(existing_kwargs.get(key))
-            current = _number(kwargs.get(key))
-            total = previous + current
-            if total:
-                kwargs[key] = int(total)
+        if trade_flow:
+            for key in ("collector_buy_qty", "collector_sell_qty", "collector_trade_count"):
+                previous = _number(existing_kwargs.get(key))
+                current = _number(kwargs.get(key))
+                total = previous + current
+                if total:
+                    kwargs[key] = int(total)
 
         large_values = {
             "collector_large_trade_buy_count_delta": _number(
