@@ -3,22 +3,8 @@ from __future__ import annotations
 import threading
 from typing import Any
 
-from realtime_v2 import theme_projection_engine as theme_projection_module
 from realtime_v2.board_data_hub import BoardDataHub
 from realtime_v2.board_projection_runtime import LatestOnlyProjectionWorker
-from realtime_v2.theme_leader_detail_display_patch import (
-    install as install_theme_leader_detail_display,
-)
-from realtime_v2.theme_leader_selection_patch import (
-    install as install_theme_leader_selection,
-)
-
-
-# The lightweight summary split has already been installed before this module is
-# imported. Install the leader model before State creates the shared runtimes so
-# summary leaders and selected-detail ordering use the same server calculation.
-install_theme_leader_selection(theme_projection_module)
-install_theme_leader_detail_display(theme_projection_module)
 
 
 class ThemeSelectedDetailBuilder:
@@ -55,7 +41,12 @@ class ThemeSelectedDetailBuilder:
 
 
 class ThemeSelectedDetailRuntime:
-    """Latest-only worker for one selected ThemeBoard detail."""
+    """Latest-only worker for one selected ThemeBoard detail.
+
+    Projection patches are installed explicitly by
+    ``worker_theme_selected_detail_patch`` before State creates this runtime. Keeping
+    this module side-effect free makes wrapper order deterministic.
+    """
 
     def __init__(
         self,
@@ -117,6 +108,7 @@ class ThemeSelectedDetailRuntime:
                 "same_feature_selection_rebuild_enabled": True,
                 "leader_selection_enabled": True,
                 "leader_candidate_score_used": False,
+                "selected_detail_always_precise": True,
             }
         )
         return status
