@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, Callable
 
 
 def _number(value: Any) -> float | None:
@@ -39,10 +39,31 @@ def _coverage_cap(score: float, coverage: float, active_count: int) -> float:
     return score
 
 
+def _tie_aware_rank_percent(values: dict[str, float]) -> dict[str, float]:
+    """Return dense percentile ranks while giving equal values equal scores.
+
+    The previous generic ordinal rank used the theme id as a tie breaker. Two themes
+    with identical market metrics could therefore receive very different scores,
+    which also made an unrelated candidate-score test appear to influence Theme rank.
+    """
+
+    if not values:
+        return {}
+    unique_values = sorted({float(value) for value in values.values()}, reverse=True)
+    if len(unique_values) == 1:
+        return {key: 100.0 for key in values}
+    denominator = len(unique_values) - 1
+    by_value = {
+        value: round((denominator - index) / denominator * 100.0, 4)
+        for index, value in enumerate(unique_values)
+    }
+    return {key: by_value[float(value)] for key, value in values.items()}
+
+
 def install(theme_module) -> None:
     """Publish server-completed momentum and money ranking views.
 
-    The patch consumes only completed Theme summary rows. It performs two small
+    The patch consumes only completed Theme summary rows. It performs small
     O(theme_count log theme_count) sorts, makes no TR/OpenAPI calls, does not
     rescore stocks, and leaves HTML responsible only for choosing which already
     sorted server view to display.
@@ -55,7 +76,20 @@ def install(theme_module) -> None:
     original_call = builder_class.__call__
 
     def rank(values: dict[str, float]) -> dict[str, float]:
-        return theme_module._rank_percent(values)
+        return _tie_aware_rank_percent(values)
+
+    def metric_rank(
+        valid_rows: list[dict[str, Any]],
+        key: str,
+        transform: Callable[[dict[str, Any]], float | None] | None = None,
+    ) -> dict[str, float]:
+        values: dict[str, float] = {}
+        for row in valid_rows:
+            theme_id = str(row.get("theme_id") or "")
+            value = transform(row) if transform is not None else _number(row.get(key))
+            if theme_id and value is not None:
+                values[theme_id] = float(value)
+        return rank(values)
 
     def flow_strength(row: dict[str, Any]) -> float | None:
         # Previous-session held metrics remain visible but are excluded from
@@ -94,15 +128,20 @@ def install(theme_module) -> None:
             return "WAIT_DATA"
         ratio = _number(row.get("theme_amount_ratio"))
         one = _number(row.get("trade_value_1m_eok"))
-        if score >= 85 and (ratio is not None and ratio >= 1.5):
+        if score >= 85 and ratio is not None and ratio >= 1.5:
             return "SURGE"
         if score >= 70:
             return "RISING"
-        if (ratio is not None and ratio < 1.0) and (one is None or one <= 0):
+        if ratio is not None and ratio < 1.0 and (one is None or one <= 0):
             return "COOLING"
         return "STEADY"
 
-    def apply_grade_state(row: dict[str, Any], prefix: str, score: float, state: str) -> None:
+    def apply_grade_state(
+        row: dict[str, Any],
+        prefix: str,
+        score: float,
+        state: str,
+    ) -> None:
         grade = theme_module._grade(score)
         row[f"{prefix}_score"] = round(score, 2)
         row[f"{prefix}_score_text"] = f"{score:.1f}"
@@ -128,56 +167,13 @@ def install(theme_module) -> None:
 
         started = time.perf_counter()
         valid_rows = [row for row in summaries if isinstance(row, dict)]
-        ids = [str(row.get("theme_id") or "") for row in valid_rows]
-
-        average_rank = rank(
-            {
-                theme_id: float(value)
-                for theme_id, row in zip(ids, valid_rows)
-                if (value := _number(row.get("avg_change_rate"))) is not None
-            }
-        )
-        momentum_rank = rank(
-            {
-                theme_id: float(value)
-                for theme_id, row in zip(ids, valid_rows)
-                if (value := _number(row.get("change_momentum_1m"))) is not None
-            }
-        )
-        persistence_rank = rank(
-            {
-                theme_id: float(value)
-                for theme_id, row in zip(ids, valid_rows)
-                if (value := _number(row.get("change_persistence_5m"))) is not None
-            }
-        )
-        amount_ratio_rank = rank(
-            {
-                theme_id: float(value)
-                for theme_id, row in zip(ids, valid_rows)
-                if (value := _number(row.get("theme_amount_ratio"))) is not None
-            }
-        )
-        one_money_rank = rank(
-            {
-                theme_id: float(value)
-                for theme_id, row in zip(ids, valid_rows)
-                if (value := _number(row.get("trade_value_1m_eok"))) is not None
-            }
-        )
-        five_money_rank = rank(
-            {
-                theme_id: float(value)
-                for theme_id, row in zip(ids, valid_rows)
-                if (value := _number(row.get("trade_value_5m_eok"))) is not None
-            }
-        )
-        flow_values = {
-            theme_id: float(value)
-            for theme_id, row in zip(ids, valid_rows)
-            if (value := flow_strength(row)) is not None
-        }
-        flow_rank = rank(flow_values)
+        average_rank = metric_rank(valid_rows, "avg_change_rate")
+        momentum_rank = metric_rank(valid_rows, "change_momentum_1m")
+        persistence_rank = metric_rank(valid_rows, "change_persistence_5m")
+        amount_ratio_rank = metric_rank(valid_rows, "theme_amount_ratio")
+        one_money_rank = metric_rank(valid_rows, "trade_value_1m_eok")
+        five_money_rank = metric_rank(valid_rows, "trade_value_5m_eok")
+        flow_rank = metric_rank(valid_rows, "", flow_strength)
 
         for row in valid_rows:
             theme_id = str(row.get("theme_id") or "")
@@ -208,8 +204,7 @@ def install(theme_module) -> None:
             elif (breadth or 0.0) < 50.0:
                 trend_score = min(trend_score, 79.0)
             trend_score = round(max(0.0, min(100.0, trend_score)), 2)
-            trend_status = trend_state(row, trend_score)
-            apply_grade_state(row, "trend", trend_score, trend_status)
+            apply_grade_state(row, "trend", trend_score, trend_state(row, trend_score))
             row["trend_metric_weight"] = round(trend_weight, 2)
 
             money_raw, money_weight = _weighted_score(
@@ -228,8 +223,7 @@ def install(theme_module) -> None:
                 ),
                 2,
             )
-            money_status = money_state(row, money_score)
-            apply_grade_state(row, "money", money_score, money_status)
+            apply_grade_state(row, "money", money_score, money_state(row, money_score))
             row["money_metric_weight"] = round(money_weight, 2)
             row["flow_confirmation_rank_score"] = flow_rank.get(theme_id)
 
@@ -257,7 +251,7 @@ def install(theme_module) -> None:
         for index, row in enumerate(trend_rows, start=1):
             row["trend_rank"] = index
             row["trend_display_rank"] = index
-            # Momentum is the default ThemeBoard view and legacy aliases remain
+            # Momentum is the default ThemeBoard view; legacy aliases remain
             # display-compatible with the existing HTML until its UI patch loads.
             row["rank"] = index
             row["display_rank"] = index
@@ -301,6 +295,7 @@ def install(theme_module) -> None:
             },
             "average_candidate_score_used": False,
             "amount_ratio_applied_once_per_view": True,
+            "tie_policy": "equal_values_equal_percentile",
         }
 
         # Refresh the selected-detail summary cache with the completed dual-rank
