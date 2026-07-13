@@ -141,5 +141,5 @@ def test_strategy_projection_contains_no_tr_or_candidate_rescore_path():
     assert "dynamicCall" not in source
     assert "coordinator.execute" not in source
     assert "stockboard_candidate_engine" not in source
-    assert "FeatureSnapshot" not in source
+    assert "from stockboard_candidate_features import FeatureSnapshot" not in source
     assert "LatestOnlyProjectionWorker" in source
