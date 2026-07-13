@@ -173,13 +173,13 @@ def test_dual_rank_and_ui_modules_have_no_tr_or_browser_sort_path():
     assert "install_theme_dual_rank_ui(base)" in worker_source
 
 
-def test_theme_cards_use_color_cues_top10_and_detail_below_selected_card_row():
+def test_theme_cards_use_color_cues_top20_and_detail_below_selected_card_row():
     root = Path(__file__).resolve().parents[1]
     ui_source = (
         root / "realtime_v2" / "worker_theme_dual_rank_ui_patch.py"
     ).read_text(encoding="utf-8")
 
-    assert "const cardList=list.slice(0,10);" in ui_source
+    assert "const cardList=list.slice(0,20);" in ui_source
     assert 'class="${tone(theme.change_rate_tone)}"' in ui_source
     assert "leader-rate ${rateTone}" in ui_source
     assert "item.change_rate_text" in ui_source
@@ -189,4 +189,5 @@ def test_theme_cards_use_color_cues_top10_and_detail_below_selected_card_row():
     assert "__tbDetachDetailBeforeRadarRender();" in ui_source
     assert "grid-column:1/-1" in ui_source
     assert "theme-list-layout" in ui_source
+    assert "현재 보기 상위 20개" in ui_source
     assert "전체 테마는 하단 순위표" in ui_source
