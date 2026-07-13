@@ -8,21 +8,16 @@
 :root{--red:#d71920;--blue:#1266d6;--green:#067a2a;--text:#111827;--muted:#64748b;--grid:#c7d1dc;--head:#eaf0f6;--bg:#f5f7fa;--selected:#eaf3ff}
 *{box-sizing:border-box}html,body{margin:0;min-width:0;background:var(--bg);color:var(--text);font:12px "Malgun Gothic",Arial,sans-serif}
 a{color:inherit;text-decoration:none}button{font:inherit}.wrap{width:100%;min-width:0}
-.topbar{position:sticky;top:0;z-index:30;display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:5px 7px;border-bottom:1px solid #9aa8b5;background:#dde7f1}
-.title{font-size:14px;font-weight:900;margin-right:4px}.tab,.pill,.action{display:inline-flex;align-items:center;min-height:22px;padding:2px 6px;border:1px solid #9aa8b5;border-radius:3px;background:#fff;white-space:nowrap}
-.tab{font-weight:800;background:#edf3f8}.tab.active{color:#fff;border-color:#1d4ed8;background:#1d4ed8}.tab.disabled{color:#94a3b8;pointer-events:none}
-.action{cursor:pointer}.ok{color:var(--green);font-weight:900}.warn{color:#92400e;border-color:#facc15;background:#fef9c3;font-weight:900}.bad{color:var(--red);font-weight:900}
-.summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:4px 5px;background:#edf2f7;border-bottom:1px solid #b7c3cf}
-.summary-card{min-width:0;padding:5px 7px;border:1px solid var(--grid);background:#fff}.summary-card span{display:block;color:var(--muted)}.summary-card b{display:block;margin-top:2px;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topbar{position:sticky;top:0;left:0;z-index:30;display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;align-content:flex-start;justify-content:flex-start;width:calc(100vw - 18px);max-width:calc(100vw - 18px);min-width:0;height:112px;min-height:112px;max-height:112px;gap:3px 5px;padding:4px 6px;border-bottom:1px solid #aab7c6;background:#dde7f1;white-space:normal;overflow-y:auto;overflow-x:visible;scrollbar-gutter:stable}
+.metric-row{display:contents}.title{flex:0 0 auto;min-width:0;font-size:12px;font-weight:800;white-space:nowrap}.badge,.control,.board-shell-tab{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;min-width:0;max-width:none;min-height:22px;margin:0;padding:2px 5px;border:1px solid #9aa8b5;border-radius:3px;background:#fff;color:var(--text);font:12px "Malgun Gothic",Arial,sans-serif;line-height:1.2;white-space:nowrap;overflow:visible;text-overflow:clip;box-sizing:border-box}.control{cursor:pointer}.board-shell-tab{padding:1px 7px;background:#edf3f8;font-weight:800}.board-shell-tab.active{color:#fff;border-color:#1d4ed8;background:#1d4ed8}.board-shell-tab.disabled{color:#94a3b8;background:#f8fafc;pointer-events:none}.ok{color:var(--green);font-weight:900}.warn{color:#92400e;border-color:#facc15;background:#fef9c3;font-weight:900}.bad{color:var(--red);font-weight:900}.small{flex:0 0 auto;min-width:0;color:#4b5563;white-space:nowrap}
+.summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:4px 5px;background:#edf2f7;border-bottom:1px solid #b7c3cf}.summary-card{min-width:0;padding:5px 7px;border:1px solid var(--grid);background:#fff}.summary-card span{display:block;color:var(--muted)}.summary-card b{display:block;margin-top:2px;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .section-head{display:flex;align-items:center;gap:7px;padding:4px 7px;border-top:1px solid #9aa8b5;border-bottom:1px solid #b8c3cf;background:var(--head);font-weight:900}.section-note{color:var(--muted);font-weight:600}
 .plus{color:var(--red);font-weight:900}.minus{color:var(--blue);font-weight:900}.zero{color:#4b5563}
 .state,.grade,.role,.coverage{display:inline-flex;align-items:center;justify-content:center;min-height:17px;padding:0 4px;border-radius:3px;font-size:10px;font-weight:900}
 .surge,.grade-a,.lead{color:#991b1b;background:#fee2e2}.rising,.grade-b,.co{color:#9a3412;background:#ffedd5}.steady,.grade-c{color:#166534;background:#dcfce7}.cooling,.grade-d,.follow{color:#1e40af;background:#dbeafe}.wait-data,.grade-f,.watch{color:#374151;background:#e5e7eb}
 .READY{color:#166534;background:#dcfce7}.PARTIAL{color:#9a3412;background:#ffedd5}.LOW_COVERAGE,.WAIT_DATA{color:#374151;background:#e5e7eb}
-.radar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:5px;background:#eef3f8}
-.theme-card{min-width:0;padding:5px;border:1px solid #b8c4cf;border-radius:3px;background:#fff;cursor:pointer}.theme-card.selected{border-color:#2563eb;background:var(--selected)}
-.card-head{display:flex;align-items:center;gap:4px;min-width:0}.rank{flex:0 0 23px;padding:2px 0;text-align:center;border-radius:2px;color:#fff;background:#4b5563;font-weight:900}
-.card-name{flex:1;min-width:0;font-weight:900;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.radar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:5px;background:#eef3f8}.theme-card{min-width:0;padding:5px;border:1px solid #b8c4cf;border-radius:3px;background:#fff;cursor:pointer}.theme-card.selected{border-color:#2563eb;background:var(--selected)}
+.card-head{display:flex;align-items:center;gap:4px;min-width:0}.rank{flex:0 0 23px;padding:2px 0;text-align:center;border-radius:2px;color:#fff;background:#4b5563;font-weight:900}.card-name{flex:1;min-width:0;font-weight:900;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .flow{display:grid;grid-template-columns:27px minmax(0,1fr) 64px;align-items:center;gap:4px;margin-top:4px}.track{height:6px;overflow:hidden;border-radius:2px;background:#e5e7eb}.fill{height:100%;background:linear-gradient(90deg,#fecaca,#d71920)}
 .card-sub{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px 5px;margin-top:4px;color:#374151}.leaders{margin-top:4px;padding-top:3px;border-top:1px dashed #d4dce4;white-space:normal}.stock-link{border:0;padding:0 2px;background:transparent;font-weight:900;cursor:pointer}.stock-link:hover{color:#1d4ed8;background:#dbeafe}
 .layout{display:grid;grid-template-columns:minmax(620px,47%) minmax(720px,53%);gap:5px;padding:5px}.panel{min-width:0;border:1px solid #aab7c6;background:#fff}.panel h2{margin:0;padding:5px 7px;border-bottom:1px solid var(--grid);background:var(--head);font-size:12px}
@@ -30,24 +25,32 @@ a{color:inherit;text-decoration:none}button{font:inherit}.wrap{width:100%;min-wi
 tbody tr{cursor:pointer}tbody tr:hover{background:#eef6ff}tbody tr.selected{background:var(--selected)}.num{text-align:right;font-variant-numeric:tabular-nums}.center{text-align:center}.name{font-weight:900}.empty{padding:20px;text-align:center;color:var(--muted)}
 .footer{padding:5px 8px;border-top:1px solid #cbd5e1;color:#475569;background:#f8fafc}
 @media(max-width:1250px){.radar{grid-template-columns:repeat(3,minmax(0,1fr))}.layout{grid-template-columns:1fr}.table-wrap{max-height:none}}
-@media(max-width:900px){.title{width:100%}.radar{grid-template-columns:repeat(2,minmax(0,1fr))}.summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:900px){.radar{grid-template-columns:repeat(2,minmax(0,1fr))}.summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){body{font-size:11px}.radar,.summary{grid-template-columns:1fr}.topbar{padding:4px}.layout{padding:3px}.hide-narrow{display:none}}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="topbar">
-    <span class="title">aiTrade ThemeBoard</span>
-    <a class="tab" href="/">StockBoard</a>
-    <a class="tab active" href="/theme">ThemeBoard</a>
-    <span class="tab disabled">StrategyBoard 준비</span>
-    <span id="clock" class="pill">-</span>
-    <span id="connection" class="pill bad">연결 대기</span>
-    <span id="version" class="pill">Theme v-</span>
-    <span id="featureVersion" class="pill">Feature v-</span>
-    <span id="calculate" class="pill">계산 -</span>
-    <span id="master" class="pill">Master -</span>
-    <button id="newWindow" class="action" type="button">새 창</button>
+  <div id="topbar" class="topbar">
+    <div class="metric-row">
+      <span class="title">ThemeBoard v2 Realtime</span>
+      <a class="board-shell-tab" href="/">StockBoard</a>
+      <a class="board-shell-tab active" href="/theme">ThemeBoard</a>
+      <span class="board-shell-tab disabled">StrategyBoard</span>
+      <span id="clock" class="badge">-</span>
+      <span id="connection" class="badge bad">연결 대기</span>
+      <button id="newWindow" class="control" type="button">새 창</button>
+    </div>
+    <div class="metric-row">
+      <span id="version" class="badge">Theme v-</span>
+      <span id="featureVersion" class="badge">Feature v-</span>
+      <span id="calculate" class="badge">계산 -</span>
+      <span id="master" class="badge">Master -</span>
+    </div>
+    <div class="metric-row">
+      <span class="badge">공용 FeatureSnapshot · 1초 latest-only Projection</span>
+      <span class="small">종목 클릭=HTS/S1 연동 · HTML 계산 없음 · ThemeBoard 신규 TR 없음</span>
+    </div>
   </div>
 
   <div class="summary">
@@ -208,7 +211,7 @@ function renderPayload(payload){
   byId('calculate').textContent=`계산 ${payload.calculate_ms??'-'}ms`;
   byId('master').textContent=`Master ${payload.mapping?.theme_count??'-'}테마`;
   byId('connection').textContent='연결 정상';
-  byId('connection').className='pill ok';
+  byId('connection').className='badge ok';
   if(selectedThemeId)loadDetail(false);
 }
 
@@ -244,10 +247,10 @@ async function linkStock(code){
   try{
     await navigator.clipboard.writeText(command);
     byId('connection').textContent=`HTS 연동 ${code}`;
-    byId('connection').className='pill ok';
+    byId('connection').className='badge ok';
   }catch(_error){
     byId('connection').textContent=`클립보드 실패 ${code}`;
-    byId('connection').className='pill warn';
+    byId('connection').className='badge warn';
   }
 }
 
@@ -267,7 +270,7 @@ function connect(){
   });
   stream.onerror=()=>{
     byId('connection').textContent='재연결 중';
-    byId('connection').className='pill warn';
+    byId('connection').className='badge warn';
   };
 }
 
