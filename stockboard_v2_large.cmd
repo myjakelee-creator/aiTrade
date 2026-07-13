@@ -45,6 +45,7 @@ if "%ACTION%"=="" (
 :run
 set "SAFE=%~dp0scripts\stockboard_v2_large_safe.ps1"
 set "PREFLIGHT=%~dp0scripts\stockboard_v2_openapi_preflight.ps1"
+set "CONTEXT_SINGLEFLIGHT=%~dp0scripts\start_context_singleflight.ps1"
 
 if /I "%ACTION%"=="start" (
   set "START_ACTION=start"
@@ -69,15 +70,18 @@ goto direct_action
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SAFE%" -Action stop
 if errorlevel 1 goto failed
 
-rem Prevent an old base/singleflight writer from overwriting the shared status file.
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$rows=@(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue ^| Where-Object { [string]$_.CommandLine -match 'context_snapshot_writer(_base^|_singleflight)?\.py' }); foreach($row in $rows){ Write-Host ('Stopping context writer PID=' + $row.ProcessId); Stop-Process -Id ([int]$row.ProcessId) -Force -ErrorAction SilentlyContinue }; if($rows.Count -gt 0){ Start-Sleep -Milliseconds 500 }"
-if errorlevel 1 goto failed
-
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PREFLIGHT%"
 if errorlevel 1 goto failed
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SAFE%" -Action "%START_ACTION%"
-set "RC=%ERRORLEVEL%"
+if errorlevel 1 goto failed
+
+rem The safe launcher may start the historical facade. Replace it with the direct
+rem single-flight process and require owner/PID/runtime readiness before success.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%CONTEXT_SINGLEFLIGHT%"
+if errorlevel 1 goto failed
+
+set "RC=0"
 goto finish
 
 :direct_action
@@ -87,6 +91,7 @@ goto finish
 
 :failed
 set "RC=%ERRORLEVEL%"
+if "%RC%"=="0" set "RC=1"
 
 :finish
 if not "%RC%"=="0" (
