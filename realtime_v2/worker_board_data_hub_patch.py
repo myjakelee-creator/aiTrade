@@ -8,8 +8,15 @@ from typing import Any
 from realtime_v2.board_data_hub import BoardDataHub
 from realtime_v2.common import now_text
 from realtime_v2.strategy_projection_engine import StrategyProjectionRuntime
+from realtime_v2 import theme_projection_engine as theme_projection_module
 from realtime_v2.theme_projection_engine import ThemeProjectionRuntime
+from realtime_v2.theme_projection_flow_history_patch import (
+    install as install_theme_projection_flow_history,
+)
 from realtime_v2.tr_singleflight import get_shared_tr_coordinator
+
+
+install_theme_projection_flow_history(theme_projection_module)
 
 
 ROOT = Path(__file__).resolve().parents[1]
