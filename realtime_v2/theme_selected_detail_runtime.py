@@ -81,9 +81,6 @@ class ThemeSelectedDetailRuntime:
         if self.builder.selected():
             self.worker.submit(feature_version)
 
-    def stop(self) -> None:
-        self.worker.stop()
-
     def status(self) -> dict[str, Any]:
         status = self.worker.status()
         status.update(
