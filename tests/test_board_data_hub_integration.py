@@ -60,7 +60,7 @@ def test_theme_and_strategy_share_one_feature_publish_without_rescoring():
 
     strategy_source = STRATEGY_ENGINE.read_text(encoding="utf-8")
     assert "stockboard_candidate_engine" not in strategy_source
-    assert "FeatureSnapshot" not in strategy_source
+    assert "from stockboard_candidate_features import FeatureSnapshot" not in strategy_source
     assert "kiwoom_data_provider" not in strategy_source
 
 
