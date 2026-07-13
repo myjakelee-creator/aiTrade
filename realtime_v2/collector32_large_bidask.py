@@ -4,28 +4,20 @@ import argparse
 import importlib
 import os
 import sys
+import threading
 import time
-import traceback
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# QAx/QApplication must be created on the collector process main thread. Reuse
-# only the provider-side main-thread constructor; do not install the previous
-# 20 ms production pump, off-hours timers, or auxiliary TR patch stack.
-from realtime_v2.qt_main_thread_openapi_patch import install_provider
-from realtime_v2.openapi_native_handle_patch import install as install_native_handle
+# Critical-path collector: keep the production QAx process as close as possible
+# to the verified minimal smoke test.  Do not import the large provider or any
+# provider/timer/TR/off-hours patch stack here.
+base = importlib.import_module("realtime_v2.collector32")
 
-install_provider()
-install_native_handle()
-
-large = importlib.import_module("realtime_v2.collector32_large")
-base = large.base
-
-# Transport repairs do not own QAx or Qt. Keep sender recovery and monotonic
-# reconnect ordering while the collector lifecycle is simplified.
 from realtime_v2.collector_sender_resilience_patch import (
     install as install_collector_sender_resilience,
 )
@@ -37,57 +29,125 @@ install_collector_sender_resilience(base)
 install_collector_sender_ordering(base)
 
 
-def _runtime_dir() -> Path:
+_REALTIME_FIDS = "10;12;20;14"
+_REALTIME_BATCH_SIZE = 100
+_REALTIME_SCREEN_START = 5100
+
+
+class MinimalCollectorStatus:
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self.running = False
+        self.login_state = "not_requested"
+        self.login_error_code: Any = None
+        self.login_completed_at: str | None = None
+        self.realreg_requested = False
+        self.realreg_succeeded = False
+        self.realreg_error: str | None = None
+        self.realreg_code_count = 0
+        self.realreg_screen_count = 0
+        self.realreg_screens: list[str] = []
+        self.realdata_received_count = 0
+        self.trade_event_received_count = 0
+        self.realdata_last_received_at: str | None = None
+        self.trade_event_last_received_at: str | None = None
+        self.last_error: str | None = None
+        self.openapi_native_handle_ready = False
+        self.openapi_native_hwnd: int | None = None
+        self.openapi_native_handle_error: str | None = None
+        self.started_at = base.now_text()
+
+    def status(self) -> dict[str, Any]:
+        with self.lock:
+            return {
+                "available": True,
+                "running": self.running,
+                "collector_mode": "minimal_qax_critical_v1",
+                "started_at": self.started_at,
+                "login_requested": self.login_state != "not_requested",
+                "login_state": self.login_state,
+                "login_error_code": self.login_error_code,
+                "login_completed_at": self.login_completed_at,
+                "realreg_requested": self.realreg_requested,
+                "realreg_succeeded": self.realreg_succeeded,
+                "realreg_error": self.realreg_error,
+                "realreg_code_count": self.realreg_code_count,
+                "realreg_screen_count": self.realreg_screen_count,
+                "realreg_screens": list(self.realreg_screens),
+                "realreg_fids": _REALTIME_FIDS,
+                "realdata_received_count": self.realdata_received_count,
+                "trade_event_received_count": self.trade_event_received_count,
+                "realdata_last_received_at": self.realdata_last_received_at,
+                "trade_event_last_received_at": self.trade_event_last_received_at,
+                "openapi_native_handle_ready": self.openapi_native_handle_ready,
+                "openapi_native_hwnd": self.openapi_native_hwnd,
+                "openapi_native_handle_error": self.openapi_native_handle_error,
+                "last_error": self.last_error,
+            }
+
+
+def _native_hwnd(app, control, state: MinimalCollectorStatus) -> int:
     try:
-        return Path(base.RUNTIME_DIR)
+        from PyQt5.QtCore import Qt
+
+        control.setAttribute(Qt.WA_NativeWindow, True)
     except Exception:
-        return ROOT / "data" / "runtime" / "stockboard_v2"
+        pass
 
-
-def _install_orderbook_thin_fail_open() -> None:
     try:
-        from realtime_v2.orderbook_thin_scheduler import (
-            install as install_orderbook_thin_scheduler,
-        )
+        control.resize(2, 2)
+        control.move(-32000, -32000)
+        control.show()
+        app.processEvents()
+        hwnd = int(control.winId())
+        app.processEvents()
+        if hwnd <= 0:
+            raise RuntimeError(f"invalid QAx HWND: {hwnd}")
+        if os.name == "nt":
+            import ctypes
 
-        install_orderbook_thin_scheduler(base)
+            if not bool(ctypes.windll.user32.IsWindow(hwnd)):
+                raise RuntimeError(f"QAx HWND is not a Windows window: {hwnd}")
+        with state.lock:
+            state.openapi_native_handle_ready = True
+            state.openapi_native_hwnd = hwnd
+            state.openapi_native_handle_error = None
+        return hwnd
     except Exception as error:
-        try:
-            runtime = _runtime_dir()
-            runtime.mkdir(parents=True, exist_ok=True)
-            (runtime / "bidask_collector_patch_error.txt").write_text(
-                f"{type(error).__name__}: {error}\n\n{traceback.format_exc()}",
-                encoding="utf-8",
-            )
-        except Exception:
-            pass
+        with state.lock:
+            state.openapi_native_handle_ready = False
+            state.openapi_native_handle_error = f"{type(error).__name__}: {error}"
+            state.last_error = str(error)
+        raise
 
 
-_install_orderbook_thin_fail_open()
+def _registration_batches(codes: list[str]):
+    for index in range(0, len(codes), _REALTIME_BATCH_SIZE):
+        screen = str(_REALTIME_SCREEN_START + index // _REALTIME_BATCH_SIZE)
+        yield screen, codes[index : index + _REALTIME_BATCH_SIZE]
 
 
-def _provider_status(provider) -> dict:
-    try:
-        status = provider.status()
-        return status if isinstance(status, dict) else {"status": status}
-    except Exception as error:
-        return {"last_error": f"status failed: {type(error).__name__}: {error}"}
+def _real_text(control, received_code: str, fid: int) -> str:
+    value = control.dynamicCall(
+        "GetCommRealData(QString, int)",
+        received_code,
+        int(fid),
+    )
+    return str(value or "").strip()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="StockBoard v2 main-thread light OpenAPI collector"
+        description="StockBoard v2 minimal QAx critical-path collector"
     )
     parser.add_argument("--host", default=base.DEFAULT_HOST)
     parser.add_argument("--event-port", type=int, default=base.DEFAULT_EVENT_PORT)
     parser.add_argument(
         "--codes-file",
-        default=str(
-            base.ROOT / "data" / "runtime" / "stockboard_v2" / "codes.txt"
-        ),
+        default=str(ROOT / "data" / "runtime" / "stockboard_v2" / "codes.txt"),
     )
     parser.add_argument("--codes", default="")
-    parser.add_argument("--limit", type=int, default=300)
+    parser.add_argument("--limit", type=int, default=100)
     parser.add_argument("--suffix", default="AL")
     parser.add_argument("--orderbook", action="store_true")
     parser.add_argument(
@@ -97,214 +157,217 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if args.orderbook:
-        os.environ.setdefault("STOCKBOARD_ENABLE_ORDERBOOK_REALTIME", "1")
-        os.environ.setdefault("STOCKBOARD_ORDERBOOK_MODE", "hybrid")
-        os.environ.setdefault("STOCKBOARD_ORDERBOOK_HOT_SOURCE", "top5")
-        os.environ.setdefault("STOCKBOARD_ORDERBOOK_HOT_LIMIT", "5")
-        os.environ.setdefault("STOCKBOARD_ORDERBOOK_ROTATE_BATCH", "20")
-        os.environ.setdefault("STOCKBOARD_ORDERBOOK_ROTATE_INTERVAL_SEC", "5")
-    else:
-        os.environ.setdefault("STOCKBOARD_ENABLE_ORDERBOOK_REALTIME", "0")
-        os.environ.setdefault("STOCKBOARD_ORDERBOOK_MODE", "off")
-
-    os.environ.setdefault("STOCKBOARD_PRICE_FAST_MODE", "1")
-    os.environ.setdefault(
-        "STOCKBOARD_REALTIME_CODE_LIMIT", str(max(1, int(args.limit or 300)))
-    )
-
+    # Orderbook, strength, close-metric and auxiliary TR work are deliberately
+    # excluded until this price/rate/value lane passes a long-running QAx test.
+    codes = base.load_codes(args.codes_file, args.codes, args.limit, args.suffix)
     sender = base.EventSender(args.host, args.event_port, flush_ms=args.flush_ms)
     sender.start()
-    store = base.PublishingStore(sender)
-    provider = base.KiwoomOpenApiRealtimeProvider(store=store)
-    codes = base.load_codes(args.codes_file, args.codes, args.limit, args.suffix)
+    state = MinimalCollectorStatus()
+
+    from PyQt5.QtCore import QCoreApplication, QTimer
+    from PyQt5.QtWidgets import QApplication
+    from PyQt5.QAxContainer import QAxWidget
+
+    app = QCoreApplication.instance()
+    if app is None:
+        app = QApplication([])
+    elif not isinstance(app, QApplication):
+        raise RuntimeError("QAxWidget requires QApplication")
+    app.setQuitOnLastWindowClosed(False)
+
+    control = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
+    if control.isNull():
+        raise RuntimeError("failed to create KHOPENAPI.KHOpenAPICtrl.1")
+
+    hwnd = _native_hwnd(app, control, state)
 
     print(
         f"collector codes={len(codes)} suffix={args.suffix} "
-        f"orderbook={args.orderbook} flush_ms={args.flush_ms}",
+        f"orderbook=False flush_ms={args.flush_ms}",
         flush=True,
     )
-    print("collector_mode=main_thread_light", flush=True)
+    print("collector_mode=minimal_qax_critical_v1", flush=True)
+    print(f"native_hwnd={hwnd}", flush=True)
 
-    started = provider.start_inline_qt()
-    print(f"provider_start={started}", flush=True)
-    if not started:
+    def publish_status() -> None:
+        status = state.status()
         base.publish_collector_status(
             sender,
-            provider,
+            state,
             {
-                "provider_started": False,
-                "collector_mode": "main_thread_light",
+                "provider_started": bool(status.get("running")),
+                "registered_count_requested": len(codes),
+                "registered_count": (
+                    int(status.get("realreg_code_count") or 0)
+                    if status.get("realreg_succeeded") is True
+                    else 0
+                ),
+                "collector_ready": bool(
+                    status.get("running")
+                    and status.get("login_state") == "connected"
+                    and status.get("realreg_succeeded") is True
+                    and int(status.get("realreg_code_count") or 0) > 0
+                ),
+                "collector_mode": "minimal_qax_critical_v1",
             },
         )
-        print(f"provider_status={_provider_status(provider)}", flush=True)
-        sender.stop()
-        return 1
 
-    requested_count = provider.register_codes(codes)
-    print(f"registered_count_requested={requested_count}", flush=True)
-
-    with provider._lock:
-        app = provider._app
-    if app is None:
-        print("collector_qt_event_loop_error=QApplication unavailable", flush=True)
-        sender.stop()
-        provider.stop()
-        return 1
-
-    from PyQt5.QtCore import QTimer
-
-    app.setQuitOnLastWindowClosed(False)
-    timer = QTimer()
-    startup_interval_ms = max(
-        50,
-        min(1000, int(os.getenv("STOCKBOARD_QT_STARTUP_TIMER_MS", "100"))),
-    )
-    steady_interval_ms = max(
-        250,
-        min(5000, int(os.getenv("STOCKBOARD_QT_STEADY_TIMER_MS", "1000"))),
-    )
-    timer.setInterval(startup_interval_ms)
-
-    state = {
-        "last_status_at": 0.0,
-        "console_hidden": False,
-        "steady": False,
-        "exit_code": 0,
-        "exit_error": None,
-    }
-
-    def request_exit(code: int, error=None) -> None:
-        if code and not state["exit_code"]:
-            state["exit_code"] = int(code)
-        if error is not None and state["exit_error"] is None:
-            state["exit_error"] = str(error)
+    def on_event_connect(error_code) -> None:
+        now = base.now_text()
         try:
-            app.exit(int(state["exit_code"] or 0))
-        except Exception:
-            pass
+            error_value = int(error_code)
+        except (TypeError, ValueError):
+            error_value = error_code
+        with state.lock:
+            state.login_error_code = error_value
+            state.login_completed_at = now
+            if error_value == 0:
+                state.login_state = "connected"
+                state.last_error = None
+            else:
+                state.login_state = "failed"
+                state.last_error = f"OnEventConnect failed: {error_value}"
+        if error_value != 0:
+            publish_status()
+            app.exit(1)
+            return
 
-    def collector_tick() -> None:
-        status = _provider_status(provider)
-        login_state = str(status.get("login_state") or "")
-        running = bool(status.get("running"))
-
-        if login_state == "connected" and status.get("realreg_succeeded") is not True:
-            try:
-                # This is the only startup provider work performed by the timer.
-                # It runs after OnEventConnect and executes the queued SetRealReg.
-                provider._process_pending_realtime_requests()
-                status = _provider_status(provider)
-            except Exception as error:
-                print(
-                    f"collector_registration_error={type(error).__name__}: {error}",
-                    flush=True,
+        screens: list[str] = []
+        try:
+            with state.lock:
+                state.realreg_requested = True
+            for screen, batch in _registration_batches(codes):
+                result = control.dynamicCall(
+                    "SetRealReg(QString, QString, QString, QString)",
+                    screen,
+                    ";".join(batch),
+                    _REALTIME_FIDS,
+                    "0",
                 )
-                request_exit(1, error)
-                return
-
-        realreg_succeeded = status.get("realreg_succeeded") is True
-        actual_count = int(status.get("realreg_code_count") or 0)
-
-        if realreg_succeeded and actual_count > 0 and not state["steady"]:
-            state["steady"] = True
-            timer.setInterval(steady_interval_ms)
+                if result not in (None, 0, "0"):
+                    raise RuntimeError(
+                        f"SetRealReg screen {screen} returned {result!r}"
+                    )
+                screens.append(screen)
+            with state.lock:
+                state.realreg_succeeded = True
+                state.realreg_error = None
+                state.realreg_code_count = len(codes)
+                state.realreg_screen_count = len(screens)
+                state.realreg_screens = screens
             print(
-                f"collector_ready=True registered_count={actual_count} "
-                f"steady_timer_ms={steady_interval_ms}",
+                f"collector_ready=True registered_count={len(codes)} "
+                f"screens={len(screens)}",
                 flush=True,
             )
+            publish_status()
+        except Exception as error:
+            with state.lock:
+                state.realreg_succeeded = False
+                state.realreg_error = f"{type(error).__name__}: {error}"
+                state.last_error = str(error)
+            print(
+                f"collector_registration_error={type(error).__name__}: {error}",
+                flush=True,
+            )
+            publish_status()
+            app.exit(1)
 
-        if args.orderbook and realreg_succeeded:
-            try:
-                provider._process_orderbook_rotation()
-            except Exception as error:
-                print(
-                    f"collector_orderbook_rotation_warning={type(error).__name__}: {error}",
-                    flush=True,
-                )
-
-        if not state["console_hidden"] and login_state == "connected":
-            state["console_hidden"] = base.hide_console_after_login_if_requested()
-
-        now_mono = time.monotonic()
-        if now_mono - state["last_status_at"] >= 1.0:
-            try:
-                base.publish_collector_status(
-                    sender,
-                    provider,
-                    {
-                        "provider_started": True,
-                        "registered_count_requested": requested_count,
-                        "registered_count": actual_count if realreg_succeeded else 0,
-                        "collector_ready": realreg_succeeded and actual_count > 0,
-                        "collector_mode": "main_thread_light",
-                        "qt_timer_interval_ms": timer.interval(),
-                    },
-                )
-            except Exception as error:
-                print(
-                    f"collector_status_warning={type(error).__name__}: {error}",
-                    flush=True,
-                )
-            state["last_status_at"] = now_mono
-
-        if login_state in {"failed", "native_handle_failed"}:
-            request_exit(1, status.get("last_error") or login_state)
+    def on_receive_real_data(received_code, real_type, _real_data) -> None:
+        now = base.now_text()
+        with state.lock:
+            state.realdata_received_count += 1
+            state.realdata_last_received_at = now
+        if "주식체결" not in str(real_type or ""):
             return
-        if not running:
-            request_exit(1, status.get("last_error") or "provider stopped")
 
-    timer.timeout.connect(collector_tick)
-    timer.start()
+        normalized_code = base.normalize_code(received_code)
+        if not normalized_code:
+            return
 
-    base.publish_collector_status(
-        sender,
-        provider,
-        {
-            "provider_started": True,
-            "registered_count_requested": requested_count,
-            "registered_count": 0,
-            "collector_ready": False,
-            "collector_mode": "main_thread_light",
-            "qt_timer_interval_ms": timer.interval(),
-        },
-    )
-    state["last_status_at"] = time.monotonic()
-    print(
-        f"qt_event_loop=exec_ startup_timer_ms={startup_interval_ms}",
-        flush=True,
-    )
+        try:
+            price_raw = _real_text(control, str(received_code), 10)
+            change_rate_raw = _real_text(control, str(received_code), 12)
+            trade_time_raw = _real_text(control, str(received_code), 20)
+            cumulative_value_raw = _real_text(control, str(received_code), 14)
+        except Exception as error:
+            with state.lock:
+                state.last_error = f"GetCommRealData failed: {type(error).__name__}: {error}"
+            return
+
+        with state.lock:
+            state.trade_event_received_count += 1
+            state.trade_event_last_received_at = now
+
+        sender.publish_trade(
+            {
+                "type": "trade",
+                "ts": now,
+                "stock_code": normalized_code,
+                "received_code": str(received_code),
+                "kwargs": {
+                    "price": price_raw,
+                    "change_rate": change_rate_raw,
+                    "trade_time": trade_time_raw,
+                    "fid20_trade_time": trade_time_raw,
+                    "cumulative_value": cumulative_value_raw,
+                    "price_received_at": now,
+                    "trade_received_at": now,
+                    "received_at": now,
+                    "source_code": str(received_code),
+                    "registered_code": str(received_code),
+                    "raw": {
+                        "price_raw": price_raw,
+                        "change_rate_raw": change_rate_raw,
+                        "trade_time_raw": trade_time_raw,
+                        "cumulative_value_raw": cumulative_value_raw,
+                    },
+                },
+            }
+        )
+
+    control.OnEventConnect.connect(on_event_connect)
+    control.OnReceiveRealData.connect(on_receive_real_data)
+
+    heartbeat = QTimer()
+    heartbeat.setInterval(1000)
+    heartbeat.timeout.connect(publish_status)
+    heartbeat.start()
+
+    with state.lock:
+        state.running = True
+        state.login_state = "requested"
+    result = control.dynamicCall("CommConnect()")
+    if result not in (None, 0, "0"):
+        with state.lock:
+            state.login_state = "failed"
+            state.login_error_code = result
+            state.last_error = f"CommConnect returned {result!r}"
+        publish_status()
+        sender.stop()
+        return 1
+
+    publish_status()
+    print("qt_event_loop=exec_ minimal_callback_fids=10,12,20,14", flush=True)
 
     app_result = 0
     try:
         app_result = int(app.exec_() or 0)
     except KeyboardInterrupt:
-        request_exit(0)
-    except Exception as error:
-        print(
-            f"collector_qt_event_loop_error={type(error).__name__}: {error}",
-            flush=True,
-        )
-        state["exit_code"] = 1
-        state["exit_error"] = str(error)
+        app_result = 0
     finally:
+        with state.lock:
+            state.running = False
         try:
-            timer.stop()
-            timer.deleteLater()
+            heartbeat.stop()
         except Exception:
             pass
         sender.stop()
-        try:
-            provider.stop()
-        except Exception:
-            pass
         if sender.is_alive():
             sender.join(timeout=2.0)
 
-    if state["exit_error"]:
-        print(f"collector_exit_error={state['exit_error']}", flush=True)
-    return int(state["exit_code"] or app_result or 0)
+    print(f"collector_app_result={app_result}", flush=True)
+    return app_result
 
 
 if __name__ == "__main__":
