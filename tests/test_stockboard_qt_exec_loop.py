@@ -55,8 +55,9 @@ def test_critical_callback_reads_price_rate_time_qty_and_samples_trade_value():
             "control.OnEventConnect.connect"
         )
     ]
-    for fid in (10, 12, 20, 15, 14):
+    for fid in (10, 12, 20, 15):
         assert f", {fid})" in callback
+    assert "control, str(received_code), 14\n" in callback
     assert "STOCKBOARD_TRADE_VALUE_SAMPLE_MS" in source
     assert "trade_value_sample_skip_count" in source
     assert "should_sample_value" in callback
