@@ -1,9 +1,46 @@
 from __future__ import annotations
 
 from http import HTTPStatus
+from pathlib import Path
 from typing import Any
 
 from realtime_v2.theme_selected_detail_runtime import ThemeSelectedDetailRuntime
+
+
+ROOT = Path(__file__).resolve().parents[1]
+_CLIENT_PATCH = r"""
+<script>
+/* THEMEBOARD_SELECTED_DETAIL_LATEST_ONLY_20260713 */
+let __themeDetailRetryTimer=0;
+let __themeDetailInputFeatureVersion=0;
+loadDetail=async function(force){
+  if(!selectedThemeId||!lastPayload)return;
+  const summaryFeatureVersion=Number(lastPayload.input_feature_version||0);
+  if(!force&&__themeDetailInputFeatureVersion>=summaryFeatureVersion)return;
+  try{
+    const response=await fetch(`/api/v2/hub/theme/detail?theme_id=${encodeURIComponent(selectedThemeId)}&ts=${Date.now()}`,{cache:'no-store'});
+    if(response.status===202){
+      const waiting=await response.json();
+      detailBody.innerHTML=`<tr><td colspan="15" class="empty">선택 테마 상세 준비 중 · ${esc(waiting.theme_id||selectedThemeId)}</td></tr>`;
+      clearTimeout(__themeDetailRetryTimer);
+      __themeDetailRetryTimer=setTimeout(()=>loadDetail(true),250);
+      return;
+    }
+    if(!response.ok)throw new Error(`HTTP ${response.status}`);
+    const payload=await response.json();
+    const theme=payload.theme||{};
+    const members=Array.isArray(theme.members)?theme.members:[];
+    __themeDetailInputFeatureVersion=Number(payload.input_feature_version||summaryFeatureVersion);
+    lastDetailVersion=Number(payload.projection_version||0);
+    byId('detailTitle').textContent=`${theme.theme_name||'선택 테마'} · ${theme.active_member_count??0}/${theme.master_member_count??0}종목 · Coverage ${theme.coverage_text||'-'} · 상세 ${payload.calculate_ms??'-'}ms`;
+    detailBody.innerHTML=members.length?members.map(memberRowHtml).join(''):'<tr><td colspan="15" class="empty">유효 구성종목 없음</td></tr>';
+    bindStockLinks(detailBody);
+  }catch(error){
+    detailBody.innerHTML=`<tr><td colspan="15" class="empty">상세 조회 실패: ${esc(error.message)}</td></tr>`;
+  }
+};
+</script>
+"""
 
 
 def install(base) -> None:
@@ -59,8 +96,31 @@ def install(base) -> None:
     def detail_projection(hub):
         return hub.projection_snapshot("theme_detail") if hub is not None else None
 
+    def send_theme_html(handler) -> None:
+        path = ROOT / "docs" / "themeboard.html"
+        if not path.is_file():
+            handler._json(
+                {"error": "ThemeBoard HTML unavailable"},
+                status=HTTPStatus.SERVICE_UNAVAILABLE,
+            )
+            return
+        html = path.read_text(encoding="utf-8")
+        if "THEMEBOARD_SELECTED_DETAIL_LATEST_ONLY_20260713" not in html:
+            html = html.replace("</body>", f"{_CLIENT_PATCH}\n</body>", 1)
+        body = html.encode("utf-8")
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/html; charset=utf-8")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.send_header("Cache-Control", "no-store")
+        handler.end_headers()
+        handler.wfile.write(body)
+
     def patched_do_get(self) -> None:
         parsed = base.urlparse(self.path)
+        if parsed.path in {"/theme", "/themeboard", "/themeboard.html"}:
+            send_theme_html(self)
+            return
+
         if parsed.path == "/api/v2/hub/theme/detail/status":
             runtime = getattr(
                 self.server.state, "theme_selected_detail_runtime", None
