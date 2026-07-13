@@ -4,11 +4,16 @@ import argparse
 import hashlib
 import importlib
 import os
+import sys
 import time
 from pathlib import Path
 
-from realtime_v2.common import trading_date_text
-from realtime_v2.tr_singleflight import get_shared_tr_coordinator
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from realtime_v2.common import trading_date_text  # noqa: E402
+from realtime_v2.tr_singleflight import get_shared_tr_coordinator  # noqa: E402
 
 
 base = importlib.import_module("realtime_v2.context_snapshot_writer_base")
@@ -20,7 +25,7 @@ _original_fetch_ohlc_bootstrap = base.fetch_ohlc_bootstrap
 _original_write_status = base.write_status
 _original_atomic_write = base._atomic_write
 
-_CONTEXT_RUNTIME_VERSION = "singleflight_explicit_loop_v2"
+_CONTEXT_RUNTIME_VERSION = "singleflight_explicit_loop_v3"
 
 
 def _file_fingerprint(path: Path) -> str:
@@ -33,7 +38,7 @@ def _file_fingerprint(path: Path) -> str:
 def _inject_context_status(payload):
     status = dict(payload or {})
     status["context_owner"] = "tr_singleflight"
-    status["context_entrypoint"] = "realtime_v2.context_snapshot_writer"
+    status["context_entrypoint"] = "realtime_v2.context_snapshot_writer_singleflight"
     status["context_process_pid"] = os.getpid()
     status["context_runtime_version"] = _CONTEXT_RUNTIME_VERSION
     status["tr_singleflight"] = coordinator.status()
@@ -192,8 +197,6 @@ def main() -> int:
         time.sleep(max(15.0, float(args.interval_sec or 30.0)))
 
 
-# Keep these assignments for callers importing the historical base module, while
-# production execution uses the explicit main loop above.
 base._atomic_write = _atomic_write
 base.fetch_yahoo_snapshot = fetch_yahoo_snapshot
 base.fetch_live_market_supply_snapshot = fetch_live_market_supply_snapshot
