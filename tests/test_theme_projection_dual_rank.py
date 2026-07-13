@@ -171,3 +171,19 @@ def test_dual_rank_and_ui_modules_have_no_tr_or_browser_sort_path():
     assert "themeViewMoney" in ui_source
     assert "install_theme_dual_rank(theme_projection_module)" in worker_source
     assert "install_theme_dual_rank_ui(base)" in worker_source
+
+
+def test_theme_cards_use_color_cues_top10_and_inline_selected_detail():
+    root = Path(__file__).resolve().parents[1]
+    ui_source = (
+        root / "realtime_v2" / "worker_theme_dual_rank_ui_patch.py"
+    ).read_text(encoding="utf-8")
+
+    assert "const cardList=list.slice(0,10);" in ui_source
+    assert 'class="${tone(theme.change_rate_tone)}"' in ui_source
+    assert "leader-rate ${rateTone}" in ui_source
+    assert "item.change_rate_text" in ui_source
+    assert "function __tbMoveDetailBelowRadar()" in ui_source
+    assert "radar.insertAdjacentElement('afterend',detail);" in ui_source
+    assert "theme-list-layout" in ui_source
+    assert "전체 테마는 하단 순위표" in ui_source
