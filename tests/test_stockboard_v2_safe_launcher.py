@@ -20,27 +20,41 @@ def _preflight_script() -> str:
     )
 
 
+def _context_launcher() -> str:
+    return (ROOT / "scripts" / "start_context_singleflight.ps1").read_text(
+        encoding="utf-8"
+    )
+
+
 def test_large_launcher_uses_safe_powershell_entrypoint_and_preflight():
     wrapper = _wrapper()
     assert r"scripts\stockboard_v2_large_safe.ps1" in wrapper
     assert r"scripts\stockboard_v2_openapi_preflight.ps1" in wrapper
+    assert r"scripts\start_context_singleflight.ps1" in wrapper
     assert "Stop-OpenApiStarterArtifacts" not in wrapper
 
 
-def test_start_flow_stops_old_runtime_then_cleans_orphan_then_starts():
+def test_start_flow_requires_verified_context_after_stockboard_start():
     wrapper = _wrapper()
     stop_index = wrapper.index('-Action stop')
-    context_cleanup_index = wrapper.index("context_snapshot_writer(_base")
     preflight_index = wrapper.index('-File "%PREFLIGHT%"')
     start_index = wrapper.index('-Action "%START_ACTION%"')
-    assert stop_index < context_cleanup_index < preflight_index < start_index
+    context_index = wrapper.index('-File "%CONTEXT_SINGLEFLIGHT%"')
+    assert stop_index < preflight_index < start_index < context_index
+    assert 'if errorlevel 1 goto failed' in wrapper
 
 
-def test_restart_removes_all_context_writer_variants():
-    wrapper = _wrapper()
-    assert "context_snapshot_writer(_base^|_singleflight)?\\.py" in wrapper
-    assert "Stopping context writer PID=" in wrapper
-    assert "Stop-Process -Id ([int]$row.ProcessId) -Force" in wrapper
+def test_context_launcher_starts_direct_entrypoint_and_checks_readiness():
+    script = _context_launcher()
+    assert 'context_snapshot_writer_singleflight.py' in script
+    assert 'context_snapshot_writer.py' in script
+    assert 'context_snapshot_writer_base.py' in script
+    assert 'CONTEXT_SINGLEFLIGHT_READY=True' in script
+    assert '$owner -eq $ExpectedOwner' in script
+    assert '$runtime -eq $ExpectedRuntime' in script
+    assert '$statusPid -eq [int]$process.Id' in script
+    assert 'Context single-flight writer exited before readiness.' in script
+    assert 'Context single-flight readiness was not confirmed within 20 seconds.' in script
 
 
 def test_wrapper_applies_safe_opening_burst_defaults_without_shrinking_universe():
@@ -98,7 +112,6 @@ def test_preflight_blocks_another_openapi_python_host():
     script = _preflight_script()
     assert "Get-OtherOpenApiPythonRows" in script
     assert "kiwoom_interface_32" in script
-    # PowerShell regex text contains two literal backslashes to match one path slash.
     assert r"interfaces\\kiwoom" in script
     assert "Another 32-bit Kiwoom/OpenAPI Python host is running" in script
 
