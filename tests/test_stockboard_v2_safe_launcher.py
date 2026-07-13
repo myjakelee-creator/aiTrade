@@ -35,12 +35,26 @@ def test_start_flow_stops_old_runtime_then_cleans_orphan_then_starts():
     assert stop_index < preflight_index < start_index
 
 
-def test_safe_launcher_waits_for_real_openapi_connection():
+def test_safe_launcher_waits_for_actual_login_and_realreg():
     script = _safe_script()
     assert '$state.LoginState -eq "connected"' in script
-    assert "$state.NativeHandleReady" in script
+    assert "$state.RealRegSucceeded" in script
     assert "$state.RegisteredCount -gt 0" in script
+    assert "$state.CollectorAlive" in script
     assert "Wait-CollectorOpenApiReady 180" in script
+    # Native HWND remains diagnostic, but the restored provider path is accepted
+    # based on process life + login + actual SetRealReg.
+    assert "$state.NativeHandleReady" in script
+    ready_block = script[script.index("function Wait-CollectorOpenApiReady"):script.index("function Build-Universe")]
+    assert "$state.NativeHandleReady -and" not in ready_block
+
+
+def test_restored_collector_console_is_visible_during_validation():
+    script = _safe_script()
+    assert 'COLLECTOR_PATH=verified_provider_thread_restore' in script
+    assert '$env:STOCKBOARD_HIDE_COLLECTOR_CONSOLE_AFTER_LOGIN = "0"' in script
+    assert "COLLECTOR32_STDOUT=" in script
+    assert "COLLECTOR32_STDERR=" in script
 
 
 def test_safe_launcher_never_kills_opstarter_after_collector_start():
