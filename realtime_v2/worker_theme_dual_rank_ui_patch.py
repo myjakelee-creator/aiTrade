@@ -10,7 +10,7 @@ _STYLE = r"""
 <style>
 /* THEMEBOARD_DUAL_SERVER_RANK_UI_20260713 */
 .view-toggle{display:inline-flex;gap:3px;margin-left:auto}.view-button{min-height:22px;padding:2px 9px;border:1px solid #94a3b8;border-radius:3px;background:#fff;color:#334155;font-weight:900;cursor:pointer}.view-button.active{border-color:#1d4ed8;background:#1d4ed8;color:#fff}.view-button:focus{outline:2px solid #93c5fd;outline-offset:1px}
-.leader-item{display:inline-flex;align-items:center;gap:2px}.leader-rate{font-variant-numeric:tabular-nums}.detail-panel-inline{margin:0 5px 5px}.detail-panel-inline .table-wrap{max-height:320px}.theme-list-layout{display:block;padding:0 5px 5px}.theme-list-layout>.panel{width:100%}
+.leader-item{display:inline-flex;align-items:center;gap:2px}.leader-rate{font-variant-numeric:tabular-nums}.detail-panel-inline{grid-column:1/-1;width:100%;min-width:0;margin:0}.detail-panel-inline .table-wrap{max-height:320px}.theme-list-layout{display:block;padding:0 5px 5px}.theme-list-layout>.panel{width:100%}
 </style>
 """
 
@@ -89,15 +89,51 @@ renderSummary=function(payload){
   byId('summaryMaster').textContent=payload.mapping?.master_version||'-';
 };
 
+function __tbDetailPanel(){
+  const detailTable=byId('detailTable');
+  return detailTable?detailTable.closest('section.panel'):null;
+}
+
+function __tbDetachDetailBeforeRadarRender(){
+  const radar=byId('radar');
+  const detail=__tbDetailPanel();
+  if(radar&&detail&&detail.parentElement===radar)radar.insertAdjacentElement('afterend',detail);
+}
+
+function __tbGridColumnCount(radar){
+  const template=window.getComputedStyle(radar).gridTemplateColumns||'';
+  return Math.max(1,template.split(/\s+/).filter(Boolean).length||1);
+}
+
+function __tbPlaceDetailBelowSelectedCardRow(){
+  const radar=byId('radar');
+  const detail=__tbDetailPanel();
+  const layout=document.querySelector('main.layout');
+  if(!radar||!detail)return;
+  detail.classList.add('detail-panel-inline');
+  const cards=Array.from(radar.querySelectorAll(':scope > .theme-card'));
+  const selectedIndex=cards.findIndex(card=>String(card.dataset.themeId||'')===String(selectedThemeId||''));
+  if(selectedIndex<0){
+    radar.insertAdjacentElement('afterend',detail);
+  }else{
+    const columns=__tbGridColumnCount(radar);
+    const rowEndIndex=Math.min(cards.length-1,(Math.floor(selectedIndex/columns)+1)*columns-1);
+    cards[rowEndIndex].insertAdjacentElement('afterend',detail);
+  }
+  if(layout)layout.classList.add('theme-list-layout');
+}
+
 renderThemes=function(payload){
   const list=__tbServerRows(payload);
   const cardList=list.slice(0,10);
   if(!selectedThemeId&&list[0])selectedThemeId=String(list[0].theme_id||'');
+  __tbDetachDetailBeforeRadarRender();
   radarEl.innerHTML=cardList.length?cardList.map(radarHtml).join(''):'<div class="empty">유효 테마 데이터 없음</div>';
   themeBody.innerHTML=list.length?list.map(themeRowHtml).join(''):'<tr><td colspan="15" class="empty">유효 테마 데이터 없음</td></tr>';
   const title=byId('themeRankingTitle');
   if(title) title.textContent=`${__tbViewLabel()} 전체 순위 · 서버 완성 순서 · 1초 latest-only`;
   bindThemes();
+  __tbPlaceDetailBelowSelectedCardRow();
 };
 
 loadDetail=async function(force){
@@ -125,18 +161,6 @@ loadDetail=async function(force){
   }
 };
 
-function __tbMoveDetailBelowRadar(){
-  const radar=byId('radar');
-  const detailTable=byId('detailTable');
-  const detail=detailTable?detailTable.closest('section.panel'):null;
-  const layout=document.querySelector('main.layout');
-  if(radar&&detail&&detail.previousElementSibling!==radar){
-    detail.classList.add('detail-panel-inline');
-    radar.insertAdjacentElement('afterend',detail);
-  }
-  if(layout)layout.classList.add('theme-list-layout');
-}
-
 function __tbApplyView(view){
   window.__themeBoardView=view==='money'?'money':'momentum';
   localStorage.setItem('aitrade.theme.view.v3',window.__themeBoardView);
@@ -147,13 +171,19 @@ function __tbApplyView(view){
   if(lastPayload){renderSummary(lastPayload);renderThemes(lastPayload);}
 }
 
+let __tbResizeTimer=0;
+window.addEventListener('resize',()=>{
+  clearTimeout(__tbResizeTimer);
+  __tbResizeTimer=setTimeout(__tbPlaceDetailBelowSelectedCardRow,120);
+});
+
 const themeHead=document.querySelector('#themeTable thead tr');
 if(themeHead)themeHead.innerHTML='<th>현재</th><th>상승</th><th>돈</th><th>등급</th><th>점수</th><th>테마</th><th>평균등락</th><th>확산</th><th>1분탄력</th><th>5분지속</th><th>대금비</th><th>1분대금</th><th>5분대금</th><th>Coverage</th><th>주도주</th>';
 const momentumButton=byId('themeViewMomentum');
 const moneyButton=byId('themeViewMoney');
 if(momentumButton)momentumButton.addEventListener('click',()=>__tbApplyView('momentum'));
 if(moneyButton)moneyButton.addEventListener('click',()=>__tbApplyView('money'));
-__tbMoveDetailBelowRadar();
+__tbPlaceDetailBelowSelectedCardRow();
 __tbApplyView(window.__themeBoardView);
 </script>
 """
