@@ -41,6 +41,7 @@ def test_wrapper_applies_safe_opening_burst_defaults_without_shrinking_universe(
     assert 'STOCKBOARD_TRADE_VALUE_SAMPLE_MS=500' in wrapper
     assert 'STOCKBOARD_HEAVY_SNAPSHOT_INTERVAL_MS=500' in wrapper
     assert 'STOCKBOARD_HEAVY_SNAPSHOT_MAX_AGE_MS=2000' in wrapper
+    assert 'STOCKBOARD_BACKGROUND_REBUILD_POLL_MS=50' in wrapper
     assert 'STOCKBOARD_STATUS_WRITE_INTERVAL_SEC=5' in wrapper
     assert 'if not defined STOCKBOARD_V2_COLLECTOR_LIMIT' in wrapper
 
