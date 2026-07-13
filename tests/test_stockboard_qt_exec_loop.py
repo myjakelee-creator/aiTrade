@@ -16,10 +16,10 @@ def test_minimal_qax_collector_is_valid_python():
     ast.parse(source_text())
 
 
-def test_production_collector_does_not_import_provider_or_patch_stack():
+def test_production_collector_does_not_import_provider_or_heavy_patch_stack():
     source = source_text()
     assert "KiwoomOpenApiRealtimeProvider" not in source
-    assert "collector32_large" not in source
+    assert 'import_module("realtime_v2.collector32_large")' not in source
     assert "qt_main_thread_openapi_patch" not in source
     assert "openapi_native_handle_patch" not in source
     assert "offhours_metric" not in source
@@ -34,7 +34,7 @@ def test_qapplication_and_qaxwidget_are_created_directly_on_main_thread():
     assert "control.OnEventConnect.connect(on_event_connect)" in source
     assert "control.OnReceiveRealData.connect(on_receive_real_data)" in source
     assert "app.exec_()" in source
-    assert "collector_mode=minimal_qax_critical_v1" in source
+    assert "collector_mode=minimal_qax_critical_large_trade_v1" in source
 
 
 def test_registration_runs_inside_login_success_callback():
@@ -47,20 +47,22 @@ def test_registration_runs_inside_login_success_callback():
     assert "collector_ready=True" in on_connect
 
 
-def test_critical_callback_reads_price_rate_time_and_samples_trade_value():
+def test_critical_callback_reads_price_rate_time_qty_and_samples_trade_value():
     source = source_text()
-    assert '_REALTIME_FIDS = "10;12;20;14"' in source
+    assert '_REALTIME_FIDS = "10;12;20;15;14"' in source
     callback = source[
         source.index("def on_receive_real_data"):source.index(
             "control.OnEventConnect.connect"
         )
     ]
-    for fid in (10, 12, 20, 14):
+    for fid in (10, 12, 20, 15, 14):
         assert f", {fid})" in callback
     assert "STOCKBOARD_TRADE_VALUE_SAMPLE_MS" in source
     assert "trade_value_sample_skip_count" in source
     assert "should_sample_value" in callback
-    for heavy_fid in (13, 15, 228, 41, 51, 121, 125):
+    assert '"trade_qty": trade_qty_raw' in callback
+    assert '"trade_qty_raw": trade_qty_raw' in callback
+    for heavy_fid in (13, 228, 41, 51, 121, 125):
         assert f", {heavy_fid})" not in callback
 
 
@@ -76,9 +78,11 @@ def test_callback_only_enqueues_latest_trade_and_never_does_socket_io():
     assert "socket" not in callback
 
 
-def test_transport_ordering_and_resilience_repairs_are_kept():
+def test_transport_and_large_trade_patches_are_kept():
     source = source_text()
     assert "collector_sender_resilience_patch" in source
     assert "collector_sender_ordering_patch" in source
+    assert "collector_large_trade_patch" in source
     assert "install_collector_sender_resilience(base)" in source
     assert "install_collector_sender_ordering(base)" in source
+    assert "install_collector_large_trade(base)" in source
