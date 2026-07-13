@@ -22,6 +22,21 @@ def _row(
         "price": 1000 + model_rank,
         "change_rate": score / 100,
         "trade_value_eok": 100 - model_rank,
+        "bid_ask_ratio": 1.25,
+        "execution_strength": 135.0,
+        "strength_5m": 125.0,
+        "program_net": 3.5,
+        "large_trade_buy_count": 4,
+        "large_trade_sell_count": 1,
+        "large_trade_net_count": 3,
+        "large_trade_buy_sum_eok": 5.0,
+        "large_trade_sell_sum_eok": 1.0,
+        "large_trade_net_sum_eok": 4.0,
+        "metric_continuity_basis": "last_session_hold",
+        "metric_continuity_phase": "closed",
+        "metric_continuity_reference_date": "20260713",
+        "metric_continuity_valid_until": "2026-07-14T08:00:00",
+        "metric_scoring_blocked_groups": [],
         "candidate_model_id": "model-a",
         "candidate_model_name": "모델 A",
         "candidate_score": score,
@@ -97,6 +112,14 @@ def test_strategy_projection_classifies_existing_candidate_results_only():
     assert focus["strategy_lane_rank"] == 1
     assert focus["order_side"] is None
     assert focus["auto_order_allowed"] is False
+    assert focus["bid_ask_ratio"] == 1.25
+    assert focus["execution_strength"] == 135.0
+    assert focus["strength_5m"] == 125.0
+    assert focus["program_net"] == 3.5
+    assert focus["large_trade_net_count"] == 3
+    assert focus["large_trade_net_sum_eok"] == 4.0
+    assert focus["metric_continuity_basis"] == "last_session_hold"
+    assert focus["metric_continuity_valid_until"] == "2026-07-14T08:00:00"
 
     policy = payload["policy"]
     assert policy["direct_tr_allowed"] is False
@@ -104,6 +127,8 @@ def test_strategy_projection_classifies_existing_candidate_results_only():
     assert policy["candidate_rescore_allowed"] is False
     assert policy["selected_candidate_model_only"] is True
     assert policy["auto_order_allowed"] is False
+    assert policy["metric_continuity_input"] is True
+    assert policy["previous_session_metric_rescore_allowed"] is False
 
 
 def test_strategy_projection_limit_does_not_change_internal_lane_counts():
