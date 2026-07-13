@@ -2,6 +2,14 @@
 setlocal EnableExtensions
 cd /d C:\aiTrade
 
+rem Safe opening-burst defaults. The internal universe remains up to 300/filter 100~200;
+rem only the 32-bit realtime registration is capped at 100 until 09:00 validation.
+if not defined STOCKBOARD_V2_COLLECTOR_LIMIT set "STOCKBOARD_V2_COLLECTOR_LIMIT=100"
+if not defined STOCKBOARD_TRADE_VALUE_SAMPLE_MS set "STOCKBOARD_TRADE_VALUE_SAMPLE_MS=500"
+if not defined STOCKBOARD_HEAVY_SNAPSHOT_INTERVAL_MS set "STOCKBOARD_HEAVY_SNAPSHOT_INTERVAL_MS=500"
+if not defined STOCKBOARD_HEAVY_SNAPSHOT_MAX_AGE_MS set "STOCKBOARD_HEAVY_SNAPSHOT_MAX_AGE_MS=2000"
+if not defined STOCKBOARD_STATUS_WRITE_INTERVAL_SEC set "STOCKBOARD_STATUS_WRITE_INTERVAL_SEC=5"
+
 set "ACTION=%~1"
 if "%ACTION%"=="" goto menu
 goto run
