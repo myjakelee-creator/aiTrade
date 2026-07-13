@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from realtime_v2 import theme_projection_flow_history_patch as theme_flow_module
+from realtime_v2.theme_projection_fast_primitives_patch import (
+    install as install_theme_fast_primitives,
+)
+
 
 _ACCOUNTED_KEYS = (
     "aggregate_ms",
@@ -27,6 +32,11 @@ def install(theme_module) -> None:
     wrappers run. Its aggregate, score and residual pieces are non-overlapping. The
     final ``other_ms`` therefore represents only work that still lacks a named phase.
     """
+
+    # Install after all wrappers are defined but before State creates the runtime
+    # builder. Summary closures resolve theme_module._code dynamically, and the flow
+    # wrapper resolves its module-level _code dynamically, so both hot paths benefit.
+    install_theme_fast_primitives(theme_module, theme_flow_module)
 
     builder_class = theme_module.ThemeProjectionBuilder
     if getattr(builder_class, "_stockboard_theme_performance_accounting_installed", False):
