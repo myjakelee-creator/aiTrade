@@ -277,11 +277,36 @@ def _install_shared_board_shell_fail_open() -> None:
 
 def _install_board_data_hub_fail_open() -> None:
     try:
+        from realtime_v2 import theme_projection_engine as theme_projection_module
+        from realtime_v2.theme_projection_summary_split_patch import (
+            install as install_theme_summary_split,
+        )
+        from realtime_v2.theme_projection_summary_momentum_patch import (
+            install as install_theme_summary_momentum,
+        )
+
+        # Install the summary core before the existing hub module imports and wraps
+        # ThemeProjectionBuilder. The existing flow/continuity wrappers then enrich
+        # the summary input without forcing all-theme member detail construction.
+        install_theme_summary_split(theme_projection_module)
+
         from realtime_v2.worker_board_data_hub_patch import install as install_board_data_hub
 
         install_board_data_hub(base)
+        install_theme_summary_momentum(theme_projection_module)
     except Exception as error:
         _write_patch_error("board_data_hub_patch_error.txt", error)
+
+
+def _install_theme_selected_detail_fail_open() -> None:
+    try:
+        from realtime_v2.worker_theme_selected_detail_patch import (
+            install as install_theme_selected_detail,
+        )
+
+        install_theme_selected_detail(base)
+    except Exception as error:
+        _write_patch_error("theme_selected_detail_patch_error.txt", error)
 
 
 def _install_tr_singleflight_fail_open() -> None:
@@ -317,6 +342,7 @@ _install_shared_board_shell_fail_open()
 # Hub must wrap the final heavy snapshot implementation before the opening-burst
 # cache captures it. TR single-flight is installed before worker threads start.
 _install_board_data_hub_fail_open()
+_install_theme_selected_detail_fail_open()
 _install_tr_singleflight_fail_open()
 # Install last so it caches the final ranking/display/hold/hub snapshot implementation.
 _install_opening_burst_cache_fail_open()
