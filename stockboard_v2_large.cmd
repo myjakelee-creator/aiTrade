@@ -69,6 +69,10 @@ goto direct_action
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SAFE%" -Action stop
 if errorlevel 1 goto failed
 
+rem Prevent an old base/singleflight writer from overwriting the shared status file.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$rows=@(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue ^| Where-Object { [string]$_.CommandLine -match 'context_snapshot_writer(_base^|_singleflight)?\.py' }); foreach($row in $rows){ Write-Host ('Stopping context writer PID=' + $row.ProcessId); Stop-Process -Id ([int]$row.ProcessId) -Force -ErrorAction SilentlyContinue }; if($rows.Count -gt 0){ Start-Sleep -Milliseconds 500 }"
+if errorlevel 1 goto failed
+
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PREFLIGHT%"
 if errorlevel 1 goto failed
 
