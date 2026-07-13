@@ -57,8 +57,12 @@ base = large.base
 from realtime_v2.collector_sender_resilience_patch import (
     install as install_collector_sender_resilience,
 )
+from realtime_v2.collector_readiness_gate_patch import (
+    install as install_collector_readiness_gate,
+)
 
 install_collector_sender_resilience(base)
+install_collector_readiness_gate(base)
 install_collector_main(base)
 
 # The off-hours completion pass must be driven by its own Qt timer rather than by
