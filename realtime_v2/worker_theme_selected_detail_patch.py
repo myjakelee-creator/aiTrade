@@ -8,6 +8,9 @@ from realtime_v2 import theme_projection_engine as theme_projection_module
 from realtime_v2.theme_projection_dual_rank_patch import (
     install as install_theme_dual_rank,
 )
+from realtime_v2.theme_projection_performance_accounting_patch import (
+    install as install_theme_performance_accounting,
+)
 from realtime_v2.theme_selected_detail_runtime import ThemeSelectedDetailRuntime
 from realtime_v2.worker_opening_load_diagnostics_patch import (
     install as install_opening_load_diagnostics,
@@ -17,10 +20,11 @@ from realtime_v2.worker_theme_dual_rank_ui_patch import (
 )
 
 
-# The hub runtime is instantiated later, when State starts. Installing the final
-# dual ranking wrapper here therefore affects the same shared summary builder
-# without changing the collector or the BoardDataHub publish path.
+# ThemeSelectedDetailRuntime imports and installs the leader wrapper first. Install
+# dual ranking next, then one final accounting wrapper so named phases are not counted
+# again as ``other_ms``.
 install_theme_dual_rank(theme_projection_module)
+install_theme_performance_accounting(theme_projection_module)
 
 
 ROOT = Path(__file__).resolve().parents[1]
