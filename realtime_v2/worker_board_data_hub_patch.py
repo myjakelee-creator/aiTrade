@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import time
 from http import HTTPStatus
+from pathlib import Path
 from typing import Any
 
 from realtime_v2.board_data_hub import BoardDataHub
@@ -8,6 +10,9 @@ from realtime_v2.common import now_text
 from realtime_v2.strategy_projection_engine import StrategyProjectionRuntime
 from realtime_v2.theme_projection_engine import ThemeProjectionRuntime
 from realtime_v2.tr_singleflight import get_shared_tr_coordinator
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def install(base) -> None:
@@ -45,6 +50,8 @@ def install(base) -> None:
             self.status["theme_projection_input"] = (
                 "board_data_hub_shared_feature_snapshot"
             )
+            self.status["theme_projection_interval_ms"] = 1000
+            self.status["theme_stream_clients"] = 0
             self.status["strategy_projection_enabled"] = True
             self.status["strategy_projection_input"] = (
                 "board_data_hub_shared_feature_snapshot"
@@ -130,10 +137,100 @@ def install(base) -> None:
             value = default
         return max(1, min(1000, value))
 
+    def theme_projection(hub):
+        return hub.projection_snapshot("theme") if hub is not None else None
+
+    def theme_payload(projection: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(projection, dict):
+            return None
+        payload = projection.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        result = dict(payload)
+        result.update(
+            {
+                "projection": "theme",
+                "projection_version": projection.get("projection_version"),
+                "input_feature_version": projection.get("input_feature_version"),
+                "published_at": projection.get("published_at"),
+            }
+        )
+        return result
+
+    def send_html(handler, path: Path) -> None:
+        body = path.read_bytes()
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/html; charset=utf-8")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.send_header("Cache-Control", "no-store")
+        handler.end_headers()
+        handler.wfile.write(body)
+
+    def stream_theme(handler, query, hub) -> None:
+        try:
+            interval_ms = int((query.get("interval_ms") or ["1000"])[0])
+        except (TypeError, ValueError):
+            interval_ms = 1000
+        interval_sec = max(1.0, min(5.0, interval_ms / 1000.0))
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        handler.send_header("Cache-Control", "no-store")
+        handler.send_header("Connection", "keep-alive")
+        handler.end_headers()
+
+        last_version = None
+        last_sent_at = 0.0
+        state = handler.server.state
+        with state.lock:
+            state.status["theme_stream_clients"] = (
+                int(state.status.get("theme_stream_clients") or 0) + 1
+            )
+        try:
+            while True:
+                projection = theme_projection(hub)
+                payload = theme_payload(projection)
+                version = (
+                    projection.get("projection_version")
+                    if isinstance(projection, dict)
+                    else None
+                )
+                now_mono = time.monotonic()
+                should_send = (
+                    payload is not None
+                    and (version != last_version or now_mono - last_sent_at >= 5.0)
+                )
+                if should_send:
+                    body = base.safe_json_dumps(payload)
+                    handler.wfile.write(
+                        f"event: themes\ndata: {body}\n\n".encode("utf-8")
+                    )
+                    handler.wfile.flush()
+                    last_version = version
+                    last_sent_at = now_mono
+                time.sleep(interval_sec)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+        finally:
+            with state.lock:
+                state.status["theme_stream_clients"] = max(
+                    0, int(state.status.get("theme_stream_clients") or 1) - 1
+                )
+
     def patched_do_get(self) -> None:
         parsed = base.urlparse(self.path)
         query = base.parse_qs(parsed.query)
         hub = getattr(self.server.state, "board_data_hub", None)
+
+        if parsed.path in {"/theme", "/themeboard", "/themeboard.html"}:
+            theme_html = ROOT / "docs" / "themeboard.html"
+            if not theme_html.is_file():
+                self._json(
+                    {"error": "ThemeBoard HTML unavailable"},
+                    status=HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+                return
+            send_html(self, theme_html)
+            return
 
         if parsed.path == "/api/v2/hub/manifest":
             payload = (
@@ -170,6 +267,57 @@ def install(base) -> None:
             self._json(hub.feature_snapshot(parse_limit(query)))
             return
 
+        if parsed.path == "/api/v2/hub/theme/stream":
+            if hub is None:
+                self._json(
+                    {"error": "board data hub unavailable"},
+                    status=HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+                return
+            stream_theme(self, query, hub)
+            return
+
+        if parsed.path == "/api/v2/hub/theme/detail":
+            if hub is None:
+                self._json(
+                    {"error": "board data hub unavailable"},
+                    status=HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+                return
+            selected_id = str(
+                (query.get("theme_id") or [""])[0] or ""
+            ).strip()
+            projection = theme_projection(hub)
+            payload = theme_payload(projection)
+            details = payload.get("details") if isinstance(payload, dict) else None
+            detail = details.get(selected_id) if isinstance(details, dict) else None
+            if not isinstance(detail, dict):
+                self._json(
+                    {
+                        "error": "theme detail not found",
+                        "theme_id": selected_id,
+                        "projection_version": (
+                            projection.get("projection_version")
+                            if isinstance(projection, dict)
+                            else None
+                        ),
+                    },
+                    status=HTTPStatus.NOT_FOUND,
+                )
+                return
+            self._json(
+                {
+                    "schema_version": 2,
+                    "source": "board_data_hub_theme_detail",
+                    "theme_id": selected_id,
+                    "projection_version": projection.get("projection_version"),
+                    "input_feature_version": projection.get("input_feature_version"),
+                    "published_at": projection.get("published_at"),
+                    "theme": detail,
+                }
+            )
+            return
+
         if parsed.path in {
             "/api/v2/hub/theme",
             "/api/v2/hub/strategy",
@@ -198,7 +346,10 @@ def install(base) -> None:
                     status=HTTPStatus.NOT_FOUND,
                 )
                 return
-            self._json(projection)
+            if name == "theme":
+                self._json(theme_payload(projection))
+            else:
+                self._json(projection)
             return
 
         return original_do_get(self)
