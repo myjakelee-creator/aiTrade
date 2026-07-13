@@ -90,6 +90,38 @@ def _project_row(row: dict[str, Any], lane: str) -> dict[str, Any]:
         "received_at": row.get("received_at"),
         "price_age_sec": row.get("price_age_sec"),
         "row_source": row.get("row_source"),
+        # Preserve the same display-ready metric values used by StockBoard and
+        # ThemeBoard. StrategyBoard does not re-fetch or re-score these fields.
+        "bid_ask_ratio": row.get("bid_ask_ratio"),
+        "bid_pct": row.get("bid_pct"),
+        "ask_pct": row.get("ask_pct"),
+        "execution_strength": row.get("execution_strength"),
+        "strength_5m": row.get("strength_5m"),
+        "program_net": row.get("program_net"),
+        "large_trade_buy_count": row.get("large_trade_buy_count"),
+        "large_trade_sell_count": row.get("large_trade_sell_count"),
+        "large_trade_net_count": row.get("large_trade_net_count"),
+        "large_trade_buy_sum_eok": row.get("large_trade_buy_sum_eok"),
+        "large_trade_sell_sum_eok": row.get("large_trade_sell_sum_eok"),
+        "large_trade_net_sum_eok": row.get("large_trade_net_sum_eok"),
+        "orderbook_display_basis": row.get("orderbook_display_basis"),
+        "execution_strength_display_basis": row.get(
+            "execution_strength_display_basis"
+        ),
+        "strength_display_basis": row.get("strength_display_basis"),
+        "program_net_display_basis": row.get("program_net_display_basis"),
+        "large_trade_display_basis": row.get("large_trade_display_basis"),
+        "metric_continuity_basis": row.get("metric_continuity_basis"),
+        "metric_continuity_phase": row.get("metric_continuity_phase"),
+        "metric_continuity_reference_date": row.get(
+            "metric_continuity_reference_date"
+        ),
+        "metric_continuity_valid_until": row.get(
+            "metric_continuity_valid_until"
+        ),
+        "metric_scoring_blocked_groups": list(
+            row.get("metric_scoring_blocked_groups") or []
+        ),
         "candidate_model_id": row.get("candidate_model_id"),
         "candidate_model_name": row.get("candidate_model_name"),
         "candidate_score": row.get("candidate_score"),
@@ -219,6 +251,8 @@ class StrategyProjectionBuilder:
             "queue": "latest_only_depth_1",
             "html_calculation_allowed": False,
             "auto_order_allowed": False,
+            "metric_continuity_input": True,
+            "previous_session_metric_rescore_allowed": False,
         }
 
 
