@@ -15,6 +15,14 @@ if str(ROOT) not in sys.path:
 large = importlib.import_module("realtime_v2.collector32_large")
 base = large.base
 
+# Keep only the transport-ordering repair from the newer collector work. It does
+# not touch QAx, Qt timers, login, registration, or provider ownership.
+from realtime_v2.collector_sender_ordering_patch import (
+    install as install_collector_sender_ordering,
+)
+
+install_collector_sender_ordering(base)
+
 
 def _runtime_dir() -> Path:
     try:
