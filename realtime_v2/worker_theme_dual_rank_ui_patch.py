@@ -125,7 +125,7 @@ function __tbPlaceDetailBelowSelectedCardRow(){
 
 renderThemes=function(payload){
   const list=__tbServerRows(payload);
-  const cardList=list.slice(0,10);
+  const cardList=list.slice(0,20);
   if(!selectedThemeId&&list[0])selectedThemeId=String(list[0].theme_id||'');
   __tbDetachDetailBeforeRadarRender();
   radarEl.innerHTML=cardList.length?cardList.map(radarHtml).join(''):'<div class="empty">유효 테마 데이터 없음</div>';
@@ -195,7 +195,7 @@ def _patch_html(html: str) -> str:
     html = html.replace("</head>", f"{_STYLE}\n</head>", 1)
     html = html.replace(
         '<div class="section-head">상위 테마 레이더 <span class="section-note">서버 순위·점수·막대 그대로 표시</span></div>',
-        '<div class="section-head">상위 테마 레이더 <span class="section-note">현재 보기 상위 10개 · 전체 테마는 하단 순위표</span><span class="view-toggle"><button id="themeViewMomentum" class="view-button active" type="button">상승탄력</button><button id="themeViewMoney" class="view-button" type="button">돈쏠림</button></span></div>',
+        '<div class="section-head">상위 테마 레이더 <span class="section-note">현재 보기 상위 20개 · 전체 테마는 하단 순위표</span><span class="view-toggle"><button id="themeViewMomentum" class="view-button active" type="button">상승탄력</button><button id="themeViewMoney" class="view-button" type="button">돈쏠림</button></span></div>',
         1,
     )
     html = html.replace(
