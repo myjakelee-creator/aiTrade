@@ -1,8 +1,34 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from realtime_v2.common import LARGE_TRADE_THRESHOLD_KRW, normalized_price
+
+
+_AGGREGATE_KEYS = (
+    "collector_buy_qty",
+    "collector_sell_qty",
+    "collector_trade_count",
+    "collector_large_trade_buy_count_delta",
+    "collector_large_trade_sell_count_delta",
+    "collector_large_trade_buy_sum_eok_delta",
+    "collector_large_trade_sell_sum_eok_delta",
+)
+_INTEGER_KEYS = {
+    "collector_buy_qty",
+    "collector_sell_qty",
+    "collector_trade_count",
+    "collector_large_trade_buy_count_delta",
+    "collector_large_trade_sell_count_delta",
+}
+
+
+def _number(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _event_trade_price(event: dict[str, Any]) -> int | None:
@@ -24,6 +50,29 @@ def _event_trade_price(event: dict[str, Any]) -> int | None:
         or kwargs.get("realtime_price")
         or values.get("realtime_price")
     )
+
+
+def _merge_aggregate_kwargs(
+    newer: dict[str, Any],
+    older: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(older, dict):
+        return newer
+    older_kwargs = older.get("kwargs") if isinstance(older.get("kwargs"), dict) else {}
+    if not any(older_kwargs.get(key) not in (None, 0, 0.0, "") for key in _AGGREGATE_KEYS):
+        return newer
+
+    merged = deepcopy(newer)
+    newer_kwargs = dict(
+        merged.get("kwargs") if isinstance(merged.get("kwargs"), dict) else {}
+    )
+    for key in _AGGREGATE_KEYS:
+        total = _number(newer_kwargs.get(key)) + _number(older_kwargs.get(key))
+        if not total:
+            continue
+        newer_kwargs[key] = int(total) if key in _INTEGER_KEYS else round(total, 4)
+    merged["kwargs"] = newer_kwargs
+    return merged
 
 
 def install(base) -> None:
@@ -86,8 +135,12 @@ def install(base) -> None:
                 self.large_trade_sell_sum_eok += eok
 
     def publish_trade(self, event: dict[str, Any]) -> None:
-        record_large_trade(self, event)
-        return original_publish_trade(self, event)
+        code = base.normalize_code(event.get("stock_code"))
+        with self.lock:
+            older_pending = self.latest_trade_by_code.get(code) if code else None
+        next_event = _merge_aggregate_kwargs(event, older_pending)
+        record_large_trade(self, next_event)
+        return original_publish_trade(self, next_event)
 
     def attach_large_trade_flow(
         self,
@@ -96,38 +149,65 @@ def install(base) -> None:
         trade_flow: dict[str, int],
         large_flow: dict[str, float],
     ) -> dict[str, Any]:
+        existing_kwargs = dict(
+            event.get("kwargs") if isinstance(event.get("kwargs"), dict) else {}
+        )
         next_event = (
             original_attach_trade_flow(self, code, event, trade_flow)
             if trade_flow
             else event
         )
-        if not large_flow:
-            return next_event
-
         next_event = dict(next_event)
         kwargs = dict(
             next_event.get("kwargs")
             if isinstance(next_event.get("kwargs"), dict)
             else {}
         )
-        kwargs.update(
-            {
-                "collector_large_trade_buy_count_delta": int(
-                    large_flow.get("buy_count") or 0
-                ),
-                "collector_large_trade_sell_count_delta": int(
-                    large_flow.get("sell_count") or 0
-                ),
-                "collector_large_trade_buy_sum_eok_delta": round(
-                    float(large_flow.get("buy_sum_eok") or 0.0), 4
-                ),
-                "collector_large_trade_sell_sum_eok_delta": round(
-                    float(large_flow.get("sell_sum_eok") or 0.0), 4
-                ),
-                "collector_large_trade_window_ms": int(self.flush_sec * 1000),
-                "large_trade_threshold_krw": LARGE_TRADE_THRESHOLD_KRW,
-            }
-        )
+
+        # Requeued aggregate values can already be attached to the latest event.
+        # Add the current micro-batch instead of replacing those unsent values.
+        for key in ("collector_buy_qty", "collector_sell_qty", "collector_trade_count"):
+            previous = _number(existing_kwargs.get(key))
+            current = _number(kwargs.get(key))
+            total = previous + current
+            if total:
+                kwargs[key] = int(total)
+
+        large_values = {
+            "collector_large_trade_buy_count_delta": _number(
+                existing_kwargs.get("collector_large_trade_buy_count_delta")
+            )
+            + _number(large_flow.get("buy_count")),
+            "collector_large_trade_sell_count_delta": _number(
+                existing_kwargs.get("collector_large_trade_sell_count_delta")
+            )
+            + _number(large_flow.get("sell_count")),
+            "collector_large_trade_buy_sum_eok_delta": _number(
+                existing_kwargs.get("collector_large_trade_buy_sum_eok_delta")
+            )
+            + _number(large_flow.get("buy_sum_eok")),
+            "collector_large_trade_sell_sum_eok_delta": _number(
+                existing_kwargs.get("collector_large_trade_sell_sum_eok_delta")
+            )
+            + _number(large_flow.get("sell_sum_eok")),
+        }
+        for key, total in large_values.items():
+            if not total:
+                continue
+            kwargs[key] = int(total) if key in _INTEGER_KEYS else round(total, 4)
+
+        if large_flow or any(
+            kwargs.get(key) not in (None, 0, 0.0, "")
+            for key in (
+                "collector_large_trade_buy_count_delta",
+                "collector_large_trade_sell_count_delta",
+                "collector_large_trade_buy_sum_eok_delta",
+                "collector_large_trade_sell_sum_eok_delta",
+            )
+        ):
+            kwargs["collector_large_trade_window_ms"] = int(self.flush_sec * 1000)
+            kwargs["large_trade_threshold_krw"] = LARGE_TRADE_THRESHOLD_KRW
+
         next_event["kwargs"] = kwargs
         return next_event
 
@@ -177,6 +257,7 @@ def install(base) -> None:
                     ),
                     "large_trade_threshold_krw": LARGE_TRADE_THRESHOLD_KRW,
                     "large_trade_policy": "signed_fid15_every_tick_latest_quote_aggregate_v1",
+                    "large_trade_requeue_preserve_enabled": True,
                 }
             )
         return result
