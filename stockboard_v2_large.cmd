@@ -34,8 +34,36 @@ if "%ACTION%"=="" (
 )
 
 :run
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\stockboard_v2_large_safe.ps1" -Action "%ACTION%"
+set "SAFE=%~dp0scripts\stockboard_v2_large_safe.ps1"
+set "PREFLIGHT=%~dp0scripts\stockboard_v2_openapi_preflight.ps1"
+
+if /I "%ACTION%"=="start" set "START_ACTION=start"& goto prepare_start
+if /I "%ACTION%"=="restart" set "START_ACTION=start"& goto prepare_start
+if /I "%ACTION%"=="start-fast" set "START_ACTION=start-fast"& goto prepare_start
+if /I "%ACTION%"=="restart-fast" set "START_ACTION=start-fast"& goto prepare_start
+
+goto direct_action
+
+:prepare_start
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SAFE%" -Action stop
+if errorlevel 1 goto failed
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PREFLIGHT%"
+if errorlevel 1 goto failed
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SAFE%" -Action "%START_ACTION%"
 set "RC=%ERRORLEVEL%"
+goto finish
+
+:direct_action
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SAFE%" -Action "%ACTION%"
+set "RC=%ERRORLEVEL%"
+goto finish
+
+:failed
+set "RC=%ERRORLEVEL%"
+
+:finish
 if not "%RC%"=="0" (
   echo.
   echo StockBoard v2 safe launcher finished with an error.
