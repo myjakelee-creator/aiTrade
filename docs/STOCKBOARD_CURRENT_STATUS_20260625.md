@@ -1,6 +1,6 @@
 # StockBoard / ThemeBoard Current Status
 
-최종 갱신: 2026-07-13 KST  
+최종 갱신: 2026-07-14 KST  
 문서 역할: aiTrade 보드 계열의 단일 현재상태 기준문서  
 작업 브랜치: `fix/restore-stable-collector-20260713`  
 기준 브랜치: `hot-priority-integrated-20260630`  
@@ -14,16 +14,13 @@ Draft PR: `#35`
 
 StockBoard의 최소 32비트 QAx 실시간 가격 경로, FID15 대량체결 집계, 64비트 Canonical State, continuity 최종 read layer, BoardDataHub 공용 FeatureSnapshot, ThemeBoard·StrategyProjection이 같은 검증 브랜치에 연결돼 있다.
 
-ThemeBoard는 기존 수동 10개 고정 구조에서 벗어나 키움 전체 테마 catalog `142개 / membership 907개`를 runtime 원천으로 사용한다. 현재 내부 188종목과 교집합이 있는 유효 테마는 68개다. 전체 테마 Summary와 선택 테마 Detail을 분리했고, 전체 테마 구성종목 상세 생성은 0건이며 선택한 한 테마만 latest-only worker에서 상세를 만든다.
+ThemeBoard는 키움 전체 테마 catalog `142개 / membership 907개`를 runtime 원천으로 사용한다. 현재 내부 188종목과 교집합이 있는 유효 테마는 68개다. 전체 Theme Summary와 선택 Theme Detail은 분리돼 있고, 전체 테마 구성종목 상세 생성은 0건이며 선택한 한 테마만 latest-only worker에서 정밀 상세를 만든다.
 
-기본 순위는 `상승탄력`, 보조 순위는 `돈쏠림`이다. 평균등락률이 0 이하인 테마는 거래대금이 크더라도 상승탄력 점수가 F59를 넘지 못한다. 테마 주도주는 StockBoard 후보점수와 분리해 등락률·1분/5분 상승지속성·대금비·최근대금·강도·프로그램·대량체결로 선발한다.
+기본 순위는 `상승탄력`, 보조 순위는 `돈쏠림`이다. Summary의 정밀 주도주 계산은 두 순위 상위 10개 합집합만 수행하고, 최근 실제 상태는 `정밀 17개 / 경량 fallback 51개`였다. 선택한 테마는 순위권 밖이어도 Detail worker에서 항상 정밀 계산한다.
 
-대표님 PC 검증 결과:
+ThemeBoard UI는 기본 상승탄력 상위 20개 카드를 표시한다. 돈쏠림 보기에서는 돈쏠림 상위 20개를 표시한다. 카드 평균등락률과 주도주 등락률은 상승 빨강·하락 파랑으로 표시하며, 선택 테마 구성종목은 클릭한 카드가 속한 행 바로 아래에 펼쳐진다. 전체 68개 테마 순위표는 하단에 그대로 유지한다.
 
-```text
-Theme 회귀 핵심: 7 passed in 0.32s
-Theme 4단계 전체: 23 passed in 0.89s
-```
+대표님 PC에서 마지막으로 확인된 성능은 장마감 30회 기준 `total 평균 30.343ms / 최대 36.859ms`, `leader_rank 평균 3.274ms`다. 주도주 목표 5ms 이하는 통과했고 전체 목표 30ms에는 0.343ms 근접 초과했다. 이후 6자리 종목코드 fast path와 ThemeBoard 카드 UI 변경은 반영했지만 최신 회귀·브라우저·30회 재측정은 2026-07-14 아침에 수행한다.
 
 PR은 계속 Draft·미병합으로 유지한다. 최종 병합 전에는 09:00~09:10 장개시 실전 부하, 주도주 변화, queue 누적 여부를 확인해야 한다.
 
@@ -44,13 +41,12 @@ PR은 계속 Draft·미병합으로 유지한다. 최종 병합 전에는 09:00~
 BoardDataHub shared FeatureSnapshot
         ├─ StockBoard
         ├─ Theme Summary latest-only 1초
-        │    └─ 전체 유효 테마 숫자 요약 + 서버 완성 이중 순위
+        │    └─ 전체 68개 숫자 요약 + 서버 완성 이중 순위
+        │    └─ 상위 두 순위 합집합만 정밀 주도주
         ├─ Theme Detail latest-only depth 1
-        │    └─ 선택 테마 한 개의 구성종목 상세
+        │    └─ 선택 테마 한 개의 정밀 구성종목 상세
         └─ StrategyProjection latest-only
 ```
-
-운영 원칙:
 
 | 항목 | 원칙 |
 |---|---|
@@ -58,7 +54,7 @@ BoardDataHub shared FeatureSnapshot
 | Canonical State | 64비트 worker State 한 개 |
 | 공통 계산 | 한 번 계산한 완료 FeatureSnapshot을 세 보드가 공유 |
 | ThemeBoard·StrategyBoard TR | 금지 |
-| HTML 계산 | 금지, 표시·선택·HTS 연동만 허용 |
+| HTML 계산 | 금지, 서버 완성 배열 표시·선택·HTS 연동만 허용 |
 | Theme Summary | 1초 latest-only, 전체 구성종목 상세 생성 금지 |
 | Theme Detail | 선택 테마 1개만 latest-only depth 1 |
 | 개장폭주 보호 | latest-only queue, background heavy snapshot, UI 50종목 |
@@ -93,8 +89,6 @@ large_trade_net_sum_eok
 metric_continuity_basis
 ```
 
-판정:
-
 | 항목 | 상태 |
 |---|---|
 | 애프터마켓 저장 | 실제 확인 |
@@ -116,7 +110,7 @@ data/runtime/stockboard_v2/theme_flow_history_hold.json
 data/runtime/stockboard_v2/theme_momentum_hold.json
 ```
 
-운영 파일은 원자적으로 갱신한다. 단위 테스트는 실제 runtime hold 파일과 현재 장상태를 읽지 않도록 임시 경로·가상 세션으로 격리했다.
+운영 파일은 원자적으로 갱신한다. 단위 테스트는 실제 runtime hold 파일과 현재 장상태를 읽지 않도록 임시 경로·가상 세션으로 격리한다.
 
 ---
 
@@ -136,15 +130,13 @@ data/runtime/stockboard_v2/theme_momentum_hold.json
 config/stockboard_market_calendar.json
 ```
 
-주말은 자동 휴장이다. 공휴일·임시휴장·지연개장은 `holidays`, `special_days`, `closed`, `open_delay_minutes`, 명시적 `windows`로 처리한다. 공식 휴장일 목록은 계속 유지보수가 필요하다.
+주말은 자동 휴장이다. 공휴일·임시휴장·지연개장은 `holidays`, `special_days`, `closed`, `open_delay_minutes`, 명시적 `windows`로 처리한다. 캘린더 JSON은 경로·수정시각·크기가 바뀔 때만 다시 파싱한다.
 
 ---
 
 ## 4. 전체 테마 catalog
 
 ### 4.1 현재 원천
-
-StockBoard를 정지한 상태에서 독립 32비트 갱신기를 한 번 실행한다.
 
 ```text
 refresh_theme_catalog.cmd
@@ -175,11 +167,11 @@ master_version      : KIWOOM_THEME_20260713_200535
 
 ---
 
-## 5. Theme Summary / Detail 분리
+## 5. Theme Summary / Detail / 성능
 
 ### 5.1 Summary
 
-전체 68개 유효 테마에 대해 다음 숫자만 계산한다.
+전체 68개 유효 테마에 대해 다음 숫자를 계산한다.
 
 ```text
 평균·중앙 등락률
@@ -206,30 +198,58 @@ HTML 정렬·점수 계산          : 0
 
 사용자가 선택한 한 테마만 별도 latest-only worker가 구성종목 상세를 만든다.
 
-실제 확인:
+최근 실제 확인:
 
 ```text
-status                : READY
-detail calculate_ms   : 1.086ms
-queue_policy           : latest_only_depth_1
-error_count            : 0
+DetailStatus      : READY
+DetailPrecision   : selected_detail_precise
+DetailPrecise     : True
+DetailMemberCount : 1
+DetailCalculateMs : 1.622
 ```
 
 HTTP 요청은 계산을 직접 실행하지 않고 선택값만 queue에 넣는다. 준비 중이면 `202 BUILDING`, 완료 후 cache를 반환한다.
 
-### 5.3 성능 실측
+### 5.3 정밀 주도주 범위
+
+```text
+rank_method                    : top_union_two_pass_minmax
+precise_theme_count            : 17
+fallback_theme_count           : 51
+top_per_view                   : 10
+summary_member_scope           : top_momentum_money_union_only
+selected_detail_always_precise : True
+candidate_score_used           : False
+```
+
+상승탄력 상위 10개와 돈쏠림 상위 10개의 합집합만 Summary 정밀 주도주 계산을 수행한다. 나머지 테마는 Summary 경량 주도주를 유지하고, 선택 Detail은 항상 정밀 계산한다.
+
+### 5.4 마지막 확인 성능
 
 장마감 후 30회 측정:
 
 | 구간 | 평균 | 최소 | 최대 |
 |---|---:|---:|---:|
-| total_ms | 25.416 | 16.987 | 58.001 |
-| aggregate_ms | 12.718 | 10.283 | 22.242 |
-| score_sort_ms | 1.902 | 1.320 | 3.512 |
-| momentum_ms | 0.214 | 0.165 | 0.482 |
-| other_ms | 10.582 | 4.665 | 42.932 |
+| total_ms | 30.343 | 26.249 | 36.859 |
+| summary_core_ms | 17.369 | 13.510 | 23.356 |
+| aggregate_ms | 12.633 | 10.118 | 18.867 |
+| score_sort_ms | 1.200 | 1.070 | 1.489 |
+| summary_core_other_ms | 3.536 | 1.823 | 8.640 |
+| momentum_ms | 0.199 | 0.173 | 0.271 |
+| dual_rank_ms | 3.583 | 2.653 | 6.989 |
+| leader_rank_ms | 3.274 | 2.828 | 3.679 |
+| wrapper_residual_ms | 5.918 | 1.246 | 7.268 |
 
-판정: 전체 테마 상세 생성 제거는 성공했다. 1초 latest-only 독립 worker 기준으로 다음 단계 진행은 허용했지만, 09:00 장개시에는 queue·stale discard·StockBoard 갱신 지연을 다시 측정한다.
+판정:
+
+```text
+주도주 평균 5ms 이하      : 통과
+전체 최대 40ms 이하       : 통과
+전체 평균 30ms 이하       : 0.343ms 근접 초과
+선택 Detail 정밀 계산     : 통과
+```
+
+그 뒤 적용한 6자리 종목코드 fast path는 정확한 6자리 숫자를 즉시 반환하고 특수값은 기존 정규화 함수로 fallback한다. 서버 계산식·점수·순위·TR은 변경하지 않았다. 최신 30회 재측정은 아침 검증에서 수행한다.
 
 ---
 
@@ -245,8 +265,6 @@ HTTP 요청은 계산을 직접 실행하지 않고 선택값만 queue에 넣는
 | 최근 5분 상승지속성 | 15 |
 | 테마 대금비 상대순위 | 10 |
 | 프로그램·대량체결 확인 | 5 |
-
-규칙:
 
 ```text
 평균 등락률 <= 0 → trend_score 최고 59, grade F
@@ -295,102 +313,137 @@ StockBoard 후보점수를 주도주 선발에서 제외하고 같은 테마 구
 | 프로그램 | 2.5 |
 | 대량체결 | 2.5 |
 
-운영 규칙:
-
 ```text
-등락률 <= 0 → 주도점수 최고 59
+등락률 <= 0 → 주도점수 최고 39
 결측 항목은 제외하고 남은 가중치로 동적 재가중
 전일 보존 강도·프로그램·대량체결은 표시 가능, 점수 제외
+양수 등락 종목이 보합·하락 종목보다 우선
 주도 = 상승 중 1위
 동반 = 상승 중이며 주도점수 65 이상
 후발 = 상승 중이나 점수 부족
 관찰 = 보합·하락
 ```
 
-Summary TOP3와 선택 Detail 구성종목은 같은 서버 주도점수·역할·순서를 사용한다. 선택 Detail의 기존 후보점수는 `stockboard_candidate_score`로 보존한다.
-
-현재 구현은 Summary 이후 theme membership을 숫자만 한 번 추가 순회한다.
-
-```text
-leader_selection_status.summary_extra_member_passes = 1
-performance_breakdown.leader_rank_ms
-```
-
-장개시 실측에서 `leader_rank_ms`가 과하면 다음 최적화는 기존 Summary aggregation 1회에 주도주 scalar 수집을 통합하는 것이다.
+종목 지표는 1회 추출하고, 각 테마는 10개 지표의 min/max 수집 1회 + 정규화·점수 1회로 계산한다. 60초·300초 history delta는 종목당 deque 역방향 1회 스캔에서 함께 찾는다.
 
 ---
 
-## 8. PC 테스트 검증
+## 8. ThemeBoard UI 현재 상태
 
-대표님 PC 실제 결과:
-
-```text
-7 passed in 0.32s
-23 passed in 0.89s
-```
-
-검증 범위:
-
-```text
-Theme dual rank
-Theme flow history
-Theme leader selection
-Theme Summary / selected Detail split
-Theme continuity
-Theme momentum
-ThemeBoard 표시 계약
-```
-
-수정된 회귀:
-
-| 문제 | 수정 |
+| 항목 | 현재 동작 |
 |---|---|
-| 동일 지표 테마가 theme_id tie-break로 다른 점수를 받음 | equal-values equal-percentile 적용 |
-| 최소 FakeBuilder에 continuity guard가 강제 설치됨 | 필수 메서드가 없는 Builder는 fail-open |
-| 단위 테스트가 실제 장마감 hold 파일을 읽음 | 임시 runtime 경로·가상 세션으로 테스트 격리 |
+| 기본 카드 | 상승탄력 서버 순위 상위 20개 |
+| 돈쏠림 보기 | 돈쏠림 서버 순위 상위 20개 |
+| 전체 테마 | 하단 전체 순위표에 68개 유지 |
+| 카드 평균등락률 | 상승 빨강, 하락 파랑 |
+| 카드 주도주 | 종목명 오른쪽에 등락률·색상 표시 |
+| 선택 상세 | 클릭 카드가 속한 행 바로 아래 전체 폭 표시 |
+| 반응형 배치 | 실제 CSS grid 4/3/2/1열을 읽어 행 끝 자동 계산 |
+| 상위 20 밖 선택 | 카드 대응이 없으므로 카드 그룹 전체 아래 표시 |
+| 화면 폭 변경 | 선택 상세 위치 재계산 |
+| HTML 계산 | 없음, 서버 배열 표시만 수행 |
+
+카드는 10개에서 20개로 늘었지만 서버 Theme 계산량은 변하지 않는다. 브라우저 DOM은 10개 늘었으므로 2026-07-14 아침에 새로고침·클릭·1초 갱신 체감과 CPU를 확인한다.
 
 ---
 
-## 9. 다음 우선순위
+## 9. PC 테스트 검증
+
+대표님 PC에서 확인된 기존 기준:
+
+```text
+Theme 회귀 핵심: 7 passed in 0.32s
+Theme 4단계 전체: 23 passed in 0.89s
+```
+
+이후 반영된 항목:
+
+```text
+Theme 최종 성능 accounting
+시장 캘린더 JSON 캐시
+6자리 종목코드 fast path
+카드 평균등락률·주도주 등락률 색상
+카드 20개 표시
+선택 Detail을 클릭 카드 행 아래 배치
+```
+
+위 최신 변경 묶음은 2026-07-14 아침 PC 회귀 테스트를 다시 통과해야 한다. 이 문서 갱신 시점에는 최신 테스트 통과를 주장하지 않는다.
+
+---
+
+## 10. 다음 우선순위
 
 | 우선순위 | 작업 | 완료 기준 |
 |---:|---|---|
-| 1 | 09:00~09:10 장개시 실전 부하 | collector/worker queue 지속 증가 없음 |
-| 2 | 상승탄력 history 완성 | 60초·300초 후 값 정상, 급등·반납 구분 |
-| 3 | 주도주 실전 대조 | 테마 내 실제 강한 종목이 TOP3에 지속 반영 |
-| 4 | leader rank 성능 측정 | 평균 5ms 안팎, 전체 Summary 평균 30ms 이하 |
-| 5 | exact 20:00 전환 확인 | closed·hold_active 전환 순간 확인 |
-| 6 | 주말·공휴일·지연개장 | 실제 날짜별 continuity 검증 |
-| 7 | StrategyBoard UI | 같은 continuity/FeatureSnapshot 표시 |
-| 8 | Draft PR 최종 정리 | 장중 검증 통과 후 병합 여부 판단 |
+| 1 | 아침 최신 회귀 테스트 | 관련 pytest `0 failed` |
+| 2 | ThemeBoard UI 육안 검증 | 카드 20개, 색상, 선택 카드 행 아래 Detail 정상 |
+| 3 | 장마감 30회 성능 재측정 | 주도주 평균 <=5ms, 전체 평균 실용 30~31ms, 최대 <=40ms |
+| 4 | 09:00~09:10 장개시 실전 부하 | collector/worker queue 지속 증가 없음 |
+| 5 | 상승탄력 history 완성 | 60초·300초 후 값 정상, 급등·반납 구분 |
+| 6 | 주도주 실전 대조 | 테마 내 실제 강한 종목이 TOP3에 지속 반영 |
+| 7 | exact 20:00 전환 확인 | closed·hold_active 전환 순간 확인 |
+| 8 | 주말·공휴일·지연개장 | 실제 날짜별 continuity 검증 |
+| 9 | StrategyBoard UI | 같은 continuity/FeatureSnapshot 표시 |
+| 10 | Draft PR 최종 정리 | 장중 검증 통과 후 병합 여부 판단 |
 
 ---
 
-## 10. 핵심 검증 명령
+## 11. 아침 검증 명령
+
+명령 블록 안의 내용만 통째로 복사한다. `PS C:\aiTrade>` 프롬프트나 마크다운 표시를 붙여넣지 않는다.
 
 ```powershell
 cd C:\aiTrade
 
-$t = Invoke-RestMethod `
-  "http://127.0.0.1:8765/api/v2/hub/theme?ts=$([DateTimeOffset]::Now.ToUnixTimeMilliseconds())"
+$ErrorActionPreference = "Stop"
 
-$t.performance_breakdown | Format-List
-$t.leader_selection_status | Format-List
-$t.ranking_views | ConvertTo-Json -Depth 5
-$t.ranking_policy | ConvertTo-Json -Depth 5
+git pull --ff-only origin fix/restore-stable-collector-20260713
 
-$t.rows |
-Select-Object -First 20 `
-  trend_display_rank,money_display_rank,theme_name,avg_change_rate,
-  breadth_pct,change_momentum_1m,change_persistence_5m,
-  theme_amount_ratio,@{N="leader";E={$_.leaders[0].stock_name}},
-  @{N="leader_score";E={$_.leaders[0].leadership_score}} |
-Format-Table -Auto
+$tests = @(
+    "tests\test_theme_projection_fast_primitives.py"
+    "tests\test_theme_projection_core_diagnostics.py"
+    "tests\test_theme_projection_performance_accounting.py"
+    "tests\test_theme_leader_top_scope.py"
+    "tests\test_theme_leader_selection.py"
+    "tests\test_theme_leader_selection_precomputed.py"
+    "tests\test_theme_projection_dual_rank.py"
+    "tests\test_theme_summary_detail_split.py"
+    "tests\test_theme_projection_flow_history.py"
+    "tests\test_theme_projection_momentum.py"
+    "tests\test_themeboard_v2.py"
+)
+
+python -m pytest -q $tests
+
+if ($LASTEXITCODE -ne 0) {
+    throw "pytest 실패로 재시작을 중단합니다."
+}
+
+.\stockboard_v2_large.cmd restart-fast
+```
+
+재시작 후:
+
+```text
+http://127.0.0.1:8765/theme
+```
+
+확인 순서:
+
+```text
+1. 상승탄력 카드 20개
+2. 카드 평균등락률 빨강·파랑
+3. 주도주 이름 오른쪽 등락률·색상
+4. 1~4번 카드 클릭 → 첫 행 아래 Detail
+5. 5~8번 카드 클릭 → 둘째 행 아래 Detail
+6. 창 폭 변경 후 Detail 행 위치 재계산
+7. 돈쏠림 전환 후 상위 20개·선택 상세 정상
+8. 하단 전체 테마 순위표 유지
 ```
 
 ---
 
-## 11. 관련 핵심 파일
+## 12. 관련 핵심 파일
 
 | 파일 | 역할 |
 |---|---|
@@ -404,18 +457,20 @@ Format-Table -Auto
 | `realtime_v2/theme_projection_summary_momentum_patch.py` | 테마 평균등락률 1분·5분 history |
 | `realtime_v2/theme_projection_continuity_guard_patch.py` | 보존값 표시·이전 세션 점수 제외 |
 | `realtime_v2/theme_projection_dual_rank_patch.py` | 상승탄력·돈쏠림 서버 이중 순위 |
-| `realtime_v2/theme_leader_selection_patch.py` | 테마 내부 주도주 서버 선발 |
+| `realtime_v2/theme_leader_selection_patch.py` | 상위 두 순위 합집합 테마 정밀 주도주 선발 |
+| `realtime_v2/theme_projection_performance_accounting_patch.py` | 최종 Theme 성능 회계 |
+| `realtime_v2/theme_projection_fast_primitives_patch.py` | 6자리 종목코드 fast path |
 | `realtime_v2/theme_selected_detail_runtime.py` | 선택 Detail latest-only worker |
 | `realtime_v2/worker_theme_selected_detail_patch.py` | Detail API·UI cache 연결 |
-| `realtime_v2/worker_theme_dual_rank_ui_patch.py` | 서버 순위 view 전환 표시 |
+| `realtime_v2/worker_theme_dual_rank_ui_patch.py` | 카드 20개·색상·행별 Detail·서버 순위 view 표시 |
 | `config/stockboard_market_calendar.json` | 휴장·지연개장 포함 시장 캘린더 |
 | `config/stockboard_theme_master.json` | 장애 시 10개 fallback |
 | `data/runtime/stockboard_v2/theme_membership.json` | 키움 전체 runtime 테마 마스터 |
-| `docs/themeboard.html` | 계산 없는 ThemeBoard 표시 UI |
+| `docs/themeboard.html` | 계산 없는 ThemeBoard 기본 표시 UI |
 
 ---
 
-## 12. 미검증·금지사항
+## 13. 미검증·금지사항
 
 ```text
 장중 실전 검증 전 PR 병합 금지
@@ -426,4 +481,5 @@ HTML에서 점수·정렬·Coverage 계산 금지
 장마감 검증만으로 09:00 성능까지 완료라고 주장하지 말 것
 closed 확인만으로 정확한 20:00 경계·주말·공휴일·지연개장 완료라고 주장하지 말 것
 단위 테스트가 실제 runtime hold 파일을 읽도록 두지 말 것
+최신 UI·fast path는 아침 PC 회귀 전 통과라고 주장하지 말 것
 ```
