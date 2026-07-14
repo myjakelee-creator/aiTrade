@@ -9,10 +9,14 @@ from realtime_v2.stockboard_global_sort_patch import install as install_stockboa
 from realtime_v2.candidate_score_unification_patch import (
     install as install_candidate_score_unification,
 )
+from realtime_v2.three_lane_display_order_patch import (
+    install as install_three_lane_display_order,
+)
 
 install_runtime_wrappers()
 install_script_hotfix()
 install_candidate_score_unification()
+install_three_lane_display_order()
 install_stockboard_global_sort()
 
 __all__: list[str] = []
