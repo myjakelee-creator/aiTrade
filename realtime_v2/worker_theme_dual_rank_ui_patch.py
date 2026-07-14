@@ -11,6 +11,7 @@ _STYLE = r"""
 /* THEMEBOARD_DUAL_SERVER_RANK_UI_20260713 */
 .view-toggle{display:inline-flex;gap:3px;margin-left:auto}.view-button{min-height:22px;padding:2px 9px;border:1px solid #94a3b8;border-radius:3px;background:#fff;color:#334155;font-weight:900;cursor:pointer}.view-button.active{border-color:#1d4ed8;background:#1d4ed8;color:#fff}.view-button:focus{outline:2px solid #93c5fd;outline-offset:1px}
 .leader-item{display:inline-flex;align-items:center;gap:2px}.leader-rate{font-variant-numeric:tabular-nums}.detail-panel-inline{grid-column:1/-1;width:100%;min-width:0;margin:0}.detail-panel-inline .table-wrap{max-height:320px}.theme-list-layout{display:block;padding:0 5px 5px}.theme-list-layout>.panel{width:100%}
+.theme-card .fund-flow{grid-template-columns:48px minmax(0,1fr) 108px}.theme-card .fund-flow>b{display:flex;align-items:center;justify-content:flex-end;gap:4px;white-space:nowrap}.fund-score{min-width:22px;color:#b91c1c;font-weight:900;font-variant-numeric:tabular-nums}.fund-amount{color:#374151;font-weight:800}.theme-card .fund-flow .fill{background:linear-gradient(90deg,#fecaca,#ef4444,#b91c1c)}
 </style>
 """
 
@@ -18,6 +19,7 @@ _SCRIPT = r"""
 <script>
 /* THEMEBOARD_DUAL_SERVER_RANK_UI_20260713 */
 window.__themeBoardView = localStorage.getItem('aitrade.theme.view.v3') === 'money' ? 'money' : 'momentum';
+window.__themeDetailOpen = Boolean(selectedThemeId);
 
 function __tbViewPrefix(){return window.__themeBoardView === 'money' ? 'money' : 'trend';}
 function __tbServerRows(payload){
@@ -37,6 +39,7 @@ function __tbState(theme){return __tbField(theme,'state_text',theme&&theme.state
 function __tbStateClass(theme){return __tbField(theme,'state_class',theme&&theme.state_class);}
 function __tbViewLabel(){return window.__themeBoardView==='money'?'돈쏠림':'상승탄력';}
 function __tbNumericTone(value){const number=Number(value);return Number.isFinite(number)?(number>0?'plus':number<0?'minus':'zero'):'zero';}
+function __tbIsSelected(theme){return window.__themeDetailOpen&&String(theme&&theme.theme_id)===String(selectedThemeId);}
 
 rows=function(payload){return __tbServerRows(payload);};
 
@@ -51,17 +54,18 @@ leadersHtml=function(theme){
 };
 
 radarHtml=function(theme){
-  return `<article class="theme-card ${String(theme.theme_id)===selectedThemeId?'selected':''}" data-theme-id="${esc(theme.theme_id)}">
+  const selected=__tbIsSelected(theme);
+  return `<article class="theme-card ${selected?'selected':''}" data-theme-id="${esc(theme.theme_id)}" aria-expanded="${selected?'true':'false'}">
     <div class="card-head"><span class="rank">${esc(__tbRank(theme))}</span><span class="card-name">${esc(theme.theme_name)}</span><span class="grade ${gradeClass(__tbGradeClass(theme))}">${esc(__tbGrade(theme))}</span><span class="state ${stateClass(__tbStateClass(theme))}">${esc(__tbState(theme))}</span></div>
-    <div class="flow"><span>1분</span><div class="track"><div class="fill" style="width:${pctWidth(theme.trade_value_1m_bar_pct)}%"></div></div><b class="${tone(theme.trade_value_1m_tone)}">${esc(theme.trade_value_1m_text)}</b></div>
-    <div class="flow"><span>5분</span><div class="track"><div class="fill" style="width:${pctWidth(theme.trade_value_5m_bar_pct)}%"></div></div><b class="${tone(theme.trade_value_5m_tone)}">${esc(theme.trade_value_5m_text)}</b></div>
+    <div class="flow fund-flow" title="전체 유효 테마 상대평가 · 최근대금 50 + 대금비 상대 20 + 대금비 절대 20 + 프로그램/대량체결 10"><span>1분쏠림</span><div class="track"><div class="fill" style="width:${pctWidth(theme.fund_flow_1m_bar_pct)}%"></div></div><b><span class="fund-score">${esc(theme.fund_flow_1m_text)}</span><span class="fund-amount">· ${esc(theme.trade_value_1m_text)}</span></b></div>
+    <div class="flow fund-flow" title="전체 유효 테마 상대평가 · 최근대금 50 + 대금비 상대 20 + 대금비 절대 20 + 프로그램/대량체결 10"><span>5분쏠림</span><div class="track"><div class="fill" style="width:${pctWidth(theme.fund_flow_5m_bar_pct)}%"></div></div><b><span class="fund-score">${esc(theme.fund_flow_5m_text)}</span><span class="fund-amount">· ${esc(theme.trade_value_5m_text)}</span></b></div>
     <div class="card-sub"><span>${__tbViewLabel()} ${esc(__tbScore(theme))}</span><span>평균 <b class="${tone(theme.change_rate_tone)}">${esc(theme.change_rate_text)}</b></span><span>${esc(theme.breadth_text)}</span><span>1분탄력 ${esc(theme.change_momentum_1m_text)}</span><span>5분지속 ${esc(theme.change_persistence_5m_text)}</span><span>대금비 ${esc(theme.theme_amount_ratio_text)}</span></div>
     <div class="leaders"><b>주도</b> ${leadersHtml(theme)}</div>
   </article>`;
 };
 
 themeRowHtml=function(theme){
-  return `<tr data-theme-id="${esc(theme.theme_id)}" class="${String(theme.theme_id)===selectedThemeId?'selected':''}">
+  return `<tr data-theme-id="${esc(theme.theme_id)}" class="${__tbIsSelected(theme)?'selected':''}">
     <td class="center">${esc(__tbRank(theme))}</td>
     <td class="center">${esc(theme.trend_display_rank)}</td>
     <td class="center">${esc(theme.money_display_rank)}</td>
@@ -111,6 +115,8 @@ function __tbPlaceDetailBelowSelectedCardRow(){
   const layout=document.querySelector('main.layout');
   if(!radar||!detail)return;
   detail.classList.add('detail-panel-inline');
+  if(!window.__themeDetailOpen){detail.hidden=true;return;}
+  detail.hidden=false;
   const cards=Array.from(radar.querySelectorAll(':scope > .theme-card'));
   const selectedIndex=cards.findIndex(card=>String(card.dataset.themeId||'')===String(selectedThemeId||''));
   if(selectedIndex<0){
@@ -126,7 +132,10 @@ function __tbPlaceDetailBelowSelectedCardRow(){
 renderThemes=function(payload){
   const list=__tbServerRows(payload);
   const cardList=list.slice(0,20);
-  if(!selectedThemeId&&list[0])selectedThemeId=String(list[0].theme_id||'');
+  if(!selectedThemeId&&list[0]){
+    selectedThemeId=String(list[0].theme_id||'');
+    window.__themeDetailOpen=true;
+  }
   __tbDetachDetailBeforeRadarRender();
   radarEl.innerHTML=cardList.length?cardList.map(radarHtml).join(''):'<div class="empty">유효 테마 데이터 없음</div>';
   themeBody.innerHTML=list.length?list.map(themeRowHtml).join(''):'<tr><td colspan="15" class="empty">유효 테마 데이터 없음</td></tr>';
@@ -136,8 +145,23 @@ renderThemes=function(payload){
   __tbPlaceDetailBelowSelectedCardRow();
 };
 
+selectTheme=async function(themeId){
+  const nextThemeId=String(themeId||'');
+  if(!nextThemeId)return;
+  if(nextThemeId===String(selectedThemeId||'')&&window.__themeDetailOpen){
+    window.__themeDetailOpen=false;
+    if(lastPayload)renderThemes(lastPayload);
+    return;
+  }
+  selectedThemeId=nextThemeId;
+  window.__themeDetailOpen=true;
+  localStorage.setItem('aitrade.theme.selected.v2',selectedThemeId);
+  if(lastPayload)renderThemes(lastPayload);
+  await loadDetail(true);
+};
+
 loadDetail=async function(force){
-  if(!selectedThemeId||!lastPayload)return;
+  if(!window.__themeDetailOpen||!selectedThemeId||!lastPayload)return;
   const version=Number(lastPayload.projection_version||0);
   if(!force&&version===lastDetailVersion)return;
   try{
@@ -195,7 +219,7 @@ def _patch_html(html: str) -> str:
     html = html.replace("</head>", f"{_STYLE}\n</head>", 1)
     html = html.replace(
         '<div class="section-head">상위 테마 레이더 <span class="section-note">서버 순위·점수·막대 그대로 표시</span></div>',
-        '<div class="section-head">상위 테마 레이더 <span class="section-note">현재 보기 상위 20개 · 전체 테마는 하단 순위표</span><span class="view-toggle"><button id="themeViewMomentum" class="view-button active" type="button">상승탄력</button><button id="themeViewMoney" class="view-button" type="button">돈쏠림</button></span></div>',
+        '<div class="section-head">상위 테마 레이더 <span class="section-note">현재 보기 상위 20개 · 1분/5분 쏠림은 전체 테마 상대평가</span><span class="view-toggle"><button id="themeViewMomentum" class="view-button active" type="button">상승탄력</button><button id="themeViewMoney" class="view-button" type="button">돈쏠림</button></span></div>',
         1,
     )
     html = html.replace(
