@@ -1,11 +1,11 @@
 # StockBoard v2 실시간 collector 장애·복구 보고서
 
-최종 갱신: 2026-07-13 14:05 KST  
+최종 갱신: 2026-07-14 15:30 KST  
 최초 작성: 2026-07-13 11:03 KST  
-상태: **핵심 가격·등락률 복구 · 최소 collector 장시간 관찰 중 · 자동매매 연결 보류**  
+상태: **가격 전용 최소 collector 복귀 후 생존 확인 · FID15/대량체결 경로 보류 · 자동매매 연결 보류**  
 작업 브랜치: `fix/restore-stable-collector-20260713`  
 기준 브랜치: `hot-priority-integrated-20260630`  
-Draft PR: `#35 fix: restore stable StockBoard realtime collector`  
+Draft PR: `#35`  
 작업 경로: `C:\aiTrade`  
 화면: `http://127.0.0.1:8765/`
 
@@ -13,437 +13,441 @@ Draft PR: `#35 fix: restore stable StockBoard realtime collector`
 
 ## 0. 한 줄 결론
 
-기존 생산용 32비트 collector는 QAx/OpenAPI 자체가 아니라 복잡한 provider·patch·timer·보조 TR 계층을 함께 실행하는 과정에서 Windows 네이티브 힙 손상(`ntdll.dll`, 예외코드 `0xc0000374`)으로 종료됐다. 생산용 collector를 최소 QAx 핵심 경로로 교체하고 현재가·등락률·체결시각·누적거래대금만 실시간 수집하도록 축소한 결과, 같은 PID로 10만 건 이상 연속 수신하고 HTS와 가격·등락률이 일치하는 상태까지 복구했다. UI는 50종목만 전송·표시하고 내부 후보 계산은 필터 후 약 185~186종목을 유지한다.
+StockBoard 브라우저와 64비트 worker는 정상인데 `recv/s 0`, `trade/s 0`, 가격 고정이 나타난 원인은 32비트 QAx collector의 비정상 종료였다. UI 100종목은 `stream 21ms`, `render 6.5ms`, queue 0, drop 0으로 정상 동작했으므로 원인에서 제외한다.
+
+2026-07-14 장애형 collector는 로그인·SetRealReg·100종목 등록에 성공하고 1,448건을 받은 뒤 Python traceback, stderr, 정상 Qt 종료 표식 없이 사라졌다. 마지막 장시간 안정형과 비교해 추가됐던 FID15 signed 체결량과 대량체결 aggregate를 생산 경로에서 제거하고 `FID10·12·20 + sampled FID14` 가격 전용 구조로 복귀한 뒤, 같은 PID로 최소 8분 이상 생존하며 `RealData +31,069`, queue 0, LastError 없음이 확인됐다.
+
+FID15 하나가 직접 원인이라고 확정하지 않는다. 현재 확정된 회귀 의심 범위는 **FID15 매 callback 조회와 collector 대량체결 aggregate의 결합 경로**다.
 
 ---
 
-## 1. 현재 운영 판정
+## 1. 장애 화면 판정
 
-| 항목 | 현재 판정 |
-|---|---|
-| 현재가 | 실시간 갱신 복구, HTS와 주요 종목 일치 확인 |
-| 등락률 | 실시간 갱신 복구, 현재가와 동일 이벤트 기준으로 표시 |
-| 누적거래대금 | 핵심 FID 14로 실시간 수신 |
-| collector 생존 | 최소 QAx collector에서 장시간 관찰 중 |
-| 브라우저 표시 | 50종목으로 축소, Top20 + 표시 Pool 30 |
-| 내부 후보 계산 | 필터 후 185~186종목 유지 |
-| 실시간 등록 종목 | 현재 안전 검증 기준 100종목 |
-| 잔량비·순간강도·5분강도·대량체결 | 기존 보존값 또는 저속 snapshot 표시 가능, 이번 복구의 실시간 보증 대상 아님 |
-| 수동매매 감시 | 가격·등락률 기준 사용 가능 수준 |
-| 자동매매 연결 | 장시간 생존·재시작 반복 검증 전 보류 |
-
-**중요:** 화면에 남아 있는 잔량비·강도·프로그램·대량체결 값은 현재가·등락률과 같은 속도로 갱신된다는 뜻이 아니다. 이번 단계의 최우선 보증 범위는 현재가, 등락률, 체결시각, 누적거래대금이다.
-
----
-
-## 2. 최초 장애 증상
-
-초기 화면은 행과 각종 저장값이 표시됐지만 실시간 collector가 죽거나 멈춰 다음 상태가 반복됐다.
+장애 당시 상단 지표:
 
 ```text
-recv/s 0
-trade/s 0
-top20 stale 20
-연결 지연 수십~수백 초
-가격·등락률 고정
-```
-
-웹서버와 worker를 재시작해도 마지막 snapshot만 다시 표시될 뿐 가격은 갱신되지 않았다. 원천 collector가 살아 있지 않으므로 서버 재시작만으로 복구할 수 없는 장애였다.
-
----
-
-## 3. 원인 조사 결과
-
-### 3.1 배제된 원인
-
-같은 PC, 같은 32비트 Python, 같은 Kiwoom OpenAPI, 같은 `_AL` 코드에서 최소 QAx 테스트는 정상 동작했다.
-
-```text
-CommConnect=0
-OnEventConnect=0
-SetRealReg=0
-삼성전자 _AL 30초 1,907건 수신
-APP_RESULT=0
-EXIT_CODE=0
-```
-
-따라서 다음은 근본 원인이 아니었다.
-
-- Kiwoom OpenAPI 설치 불량
-- 계정 로그인 실패
-- `_AL` 정규장 체결 미지원
-- SetRealReg 자체 실패
-- 브라우저 렌더링 자체
-- SSE 자체
-- 64비트 worker queue 자체
-
-### 3.2 생산용 collector 네이티브 충돌 확인
-
-186종목 생산 collector는 로그인·등록·실제 체결 수신까지 성공한 뒤 약 4만5천 건 수신 후 종료됐다.
-
-```text
-LoginState       : connected
-RealRegSucceeded : True
-RegisteredCount  : 186
-RealData          : 45,668
-TradeReceived     : 45,291
-CollectorAlive    : False
-```
-
-Windows Application Error / WER 결과:
-
-```text
-Faulting application : python.exe 3.10 32-bit
-Faulting module      : ntdll.dll
-Exception code       : 0xc0000374
-Meaning              : native heap corruption
-```
-
-100종목으로 줄여도 기존 생산 provider 구조에서는 짧은 시간 안에 다시 종료됐다. 따라서 **UI 종목 수나 단순 종목 수가 근본 원인은 아니며, 생산 collector의 복잡한 네이티브 실행 경로가 핵심 위험 범위**로 확정됐다.
-
-정확히 어떤 DLL 내부에서 메모리가 손상됐는지는 dump 기호 분석 없이는 단정하지 않는다. 다만 최소 QAx 경로는 정상이고 대형 provider stack에서만 재현됐으므로 운영 해결은 복잡한 provider 경로를 제거하는 방식으로 진행했다.
-
----
-
-## 4. 실패한 생산 구조
-
-기존 생산 collector는 다음 계층을 한 프로세스의 QAx owner thread 주변에 함께 설치했다.
-
-```text
-KiwoomOpenApiRealtimeProvider
-+ main-thread/provider patch
-+ native HWND patch
-+ EventSender/PublishingStore
-+ orderbook scheduler
-+ strength probe
-+ orderbook probe
-+ opt10055 probe
-+ close-metric queue
-+ off-hours completion timer
-+ 여러 readiness/resilience wrapper
-```
-
-이 구조는 로그인·실등록에 성공하더라도 다량 체결 처리 중 네이티브 힙 손상으로 프로세스가 사라졌다. Python traceback이나 stderr는 남지 않았고 Windows WER만 APPCRASH를 기록했다.
-
----
-
-## 5. 최종 복구 구조
-
-생산용 `realtime_v2/collector32_large_bidask.py`를 최소 QAx 핵심 경로로 교체했다.
-
-```text
-32비트 Python 메인 스레드
-→ QApplication 생성
-→ QAxWidget 생성
-→ native HWND 확보
-→ CommConnect
-→ OnEventConnect 성공 callback
-→ SetRealReg
-→ OnReceiveRealData
-→ 핵심 FID 4개 조회
-→ latest-only EventSender queue
-→ 64비트 worker
-→ SSE
-→ 브라우저 50종목 표시
-```
-
-### 5.1 실시간 수집 FID
-
-| FID | 의미 | 우선순위 |
-|---:|---|---|
-| 10 | 현재가 | 최우선 |
-| 12 | 등락률 | 최우선 |
-| 20 | 체결시각 | 신선도 판정 |
-| 14 | 누적거래대금 | 순위·후보 계산 |
-
-이번 단계에서 collector callback에서 제거한 항목:
-
-- 체결강도 FID
-- 체결량 기반 1분 집계
-- 호가잔량 FID
-- 보조 TR
-- strength/orderbook/close-metric queue
-- off-hours completion timer
-
-### 5.2 전송 정책
-
-모든 틱을 순서대로 화면에 재생하지 않고 종목별 최신값을 우선한다.
-
-```text
-같은 종목에서 50ms 안에 여러 체결 발생
-→ 중간 가격은 병합
-→ 최신 가격·등락률 전송
-```
-
-이는 전광판의 목적에 맞는다. 모든 과거 틱을 순차 처리하면 최신 가격이 뒤로 밀리기 때문이다.
-
----
-
-## 6. 최종 실측 결과
-
-### 6.1 collector 장시간 수신
-
-동일 PID `20220`에서 확인된 증가:
-
-```text
-13:09
-RealData      21,223
-TradeReceived 21,223
-WorkerTrades     874
-Queue             25
-
-13:15
-RealData     117,149
-TradeReceived117,149
-WorkerTrades   3,790
-Queue             24
-```
-
-약 6분 18초 동안 약 95,926건 증가, 평균 약 254건/초 수신이며 queue는 증가하지 않았다.
-
-### 6.2 UI 50종목 적용 후 화면 지표
-
-```text
-표시 50 / 내부 185
-recv/s 37.6
-trade/s 13.0
+표시 100 / 내부 173
+stream 21ms
+render 6.5ms
 collector_q 0
-sent/s 37.7
-worker_q 1
-stream 19ms
-render 31.4ms
-top20 lag 3.0s
-rt 50
+worker_q 0
+drop 0
+logdrop 0
+recv/s 0.0
+trade/s 0.0
+연결 지연 92.6s
 ```
 
 판정:
 
-| 구간 | 값 | 평가 |
-|---|---:|---|
-| collector 수신 | 37.6/s | 정상 |
-| collector 전송 | 37.7/s | 수신과 거의 동일 |
-| collector queue | 0 | 병목 없음 |
-| worker queue | 1 | 사실상 병목 없음 |
-| SSE 지연 | 19ms | 매우 양호 |
-| 브라우저 렌더 | 31.4ms | 양호 |
-| Top20 최대 FID20 지연 | 3.0초 | 감시 가능, 경고 기준 개선 필요 |
-| 실시간 표시 행 | 50 | 표시 전 종목 실시간 적용 |
+| 구간 | 상태 |
+|---|---|
+| 브라우저 SSE | 정상 |
+| 브라우저 렌더 | 정상 |
+| 64비트 worker | 정상 |
+| collector/worker queue | 적체 없음 |
+| 이벤트 drop | 없음 |
+| 신규 실시간 체결 | 완전 중단 |
+| 원천 collector | 종료 또는 전체 QAx event loop 정지 의심 |
 
-### 6.3 HTS 가격·등락률 대조
-
-동시 화면에서 다음 종목이 일치했다.
-
-| 종목 | StockBoard | HTS | 판정 |
-|---|---|---|---|
-| SK이노베이션 | 109,100 / +6.03% | 109,100 / +6.03% | 일치 |
-| 현대차 | 443,500 / -3.06% | 443,500 / -3.06% | 일치 |
-| 삼성SDI | 443,000 / +2.07% | 443,000 / +2.07% | 일치 |
-| SK텔레콤 | 175,300 / +0.06% | 175,300 / +0.06% | 일치 |
-| LG전자 | 186,300 / +2.14% | 186,300 / +2.14% | 일치 |
-| S-Oil | 138,900 / +5.15% | 138,900 / +5.15% | 일치 |
-| 미래에셋증권 | 39,700 / -5.92% | 39,700 / -5.92% | 일치 |
-| LG에너지솔루션 | 329,500 / +1.07% | 329,500 / +1.07% | 일치 |
-| HMM | 19,750 / +0.05% | 19,750 / +0.05% | 일치 |
-| 한화오션 | 78,500 / -3.44% | 78,500 / -3.44% | 일치 |
+화면의 `sent/s 96.0`은 현재 신규 전송률이 아니라 마지막 collector status에 남은 값이었다. `recv/s`, `trade/s`는 worker 누적 카운터 증가량으로 계산되므로 현재 상태 판정에는 이 두 값을 우선한다.
 
 ---
 
-## 7. UI 50종목 정책
+## 2. 진단 결과
 
-UI는 다음과 같이 고정한다.
+재시작 전 `status` 두 번과 `doctor` 결과:
+
+```text
+CollectorPid      : 9848
+CollectorAlive    : False
+LoginState        : connected
+RealRegSucceeded  : True
+RegisteredCount   : 100
+NativeHandleReady : True
+RealData          : 1,448
+TradeReceived     : 1,448
+RealDataLastAt    : 2026-07-14 12:57:56.440 KST
+WorkerTrades      : 865
+WorkerLastEventAt : 2026-07-14 12:57:56.758 KST
+Queue             : 0
+LastError         : 없음
+```
+
+로그:
+
+```text
+collector_mode=minimal_qax_critical_large_trade_v1
+native_hwnd=1579148
+trade_value_sample_interval_ms=500
+large_trade_threshold_krw=50000000
+qt_event_loop=exec_ critical_fids=10,12,20,15 sampled_fid14_ms=500
+collector_ready=True registered_count=100 screens=1
+```
+
+collector stderr는 비어 있었다.
+
+worker stderr:
+
+```text
+ConnectionResetError: [WinError 10054]
+현재 연결은 원격 호스트에 의해 강제로 끊겼습니다
+```
+
+`WinError 10054`는 worker가 collector socket 단절을 감지한 결과다. worker가 collector를 죽인 원인으로 해석하지 않는다.
+
+최근 20분 Windows Application Event 1000/1001에서 다음 패턴은 발견되지 않았다.
+
+```text
+python.exe
+ntdll.dll
+0xc0000374
+```
+
+WER 기록이 없다고 정상 종료인 것은 아니다. 정상 Qt 종료라면 collector는 마지막에 `collector_app_result=<code>`를 stdout에 출력해야 하지만 해당 출력이 없었다.
+
+최종 판정:
+
+```text
+Python 처리 예외 아님
+정상 app.exec_ 종료 아님
+로그에 남는 명시적 종료 아님
+32비트 collector 비정상 종료
+```
+
+---
+
+## 3. 과거 장애와 현재 장애의 관계
+
+### 3.1 과거 복잡한 provider 장애
+
+기존 생산 provider 구조는 다음 기능을 같은 QAx owner process에 함께 설치했다.
+
+```text
+KiwoomOpenApiRealtimeProvider
+main-thread/native HWND patch
+orderbook scheduler
+strength probe
+보조 TR
+close-metric queue
+off-hours timer
+여러 readiness/resilience wrapper
+```
+
+이 구조는 로그인·등록·수신 후 `ntdll.dll / 0xc0000374` native heap corruption으로 종료됐다.
+
+### 3.2 2026-07-13 가격 핵심형 복구
+
+복잡한 provider를 제거하고 가격 핵심 FID만 읽는 최소 QAx collector로 교체한 뒤 같은 PID에서 10만 건 이상 연속 수신했다.
+
+검증된 핵심 경로:
+
+```text
+FID10 현재가
+FID12 등락률
+FID20 체결시각
+FID14 누적거래대금 저속 샘플
+latest-only EventSender
+```
+
+### 3.3 2026-07-14 회귀 경계
+
+가격 핵심형에 다음이 추가된 상태에서 짧은 수신 후 비정상 종료가 재발했다.
+
+```text
+FID15 signed 체결량을 매 주식체결 callback에서 조회
+collector_large_trade_patch 설치
+5천만원 이상 체결 aggregate
+재연결 시 aggregate 보존 로직
+```
+
+대량체결 patch는 Python 코드이며 자체적으로 QAx/TR을 생성하지 않는다. 그러나 생산 callback의 추가 FID15 QAx read와 aggregate 경로가 함께 활성화된 상태가 마지막 안정형과 다른 핵심 구간이다.
+
+현재 증거만으로 다음을 개별 확정하지 않는다.
+
+```text
+FID15 자체가 원인
+large_trade Python aggregate 자체가 원인
+두 경로의 결합이 원인
+Kiwoom/QAx의 우발 종료
+```
+
+운영 해결은 원인을 완전히 증명할 때까지 기다리지 않고 마지막 장시간 안정형으로 복귀하는 방식으로 진행한다.
+
+---
+
+## 4. 생산 복구 구조
+
+현재 생산 `realtime_v2/collector32_large_bidask.py`:
+
+```text
+32비트 Python 메인 스레드
+→ QApplication
+→ QAxWidget native HWND
+→ CommConnect
+→ SetRealReg 100종목
+→ OnReceiveRealData
+→ FID10 현재가
+→ FID12 등락률
+→ FID20 체결시각
+→ FID14 종목별 500ms 샘플
+→ latest-only EventSender
+→ 64비트 worker
+→ SSE
+→ StockBoard 최대 100종목
+```
+
+생산 collector에서 비활성화한 기능:
+
+```text
+FID15 체결량
+대량체결 aggregate
+호가잔량
+체결강도
+보조 TR
+orderbook scheduler
+strength scheduler
+off-hours completion timer
+```
+
+상태 계약:
+
+```text
+collector_mode          : minimal_qax_price_only_v2
+realreg_fids            : 10;12;20;14
+large_trade_enabled     : False
+large_trade_input_fid   : None
+```
+
+관련 커밋:
+
+```text
+60ac499a13dadc14f5fa29f8d02c062e7e3164a4
+fix: restore price-only minimal QAx collector
+
+eeea3a7a79617decf0e250d15109bfcf582b0a3b
+test: lock production collector to price-only QAx path
+```
+
+---
+
+## 5. 복귀 후 실측
+
+첫 측정:
+
+```text
+CollectorPid      : 23732
+CollectorAlive    : True
+LoginState        : connected
+RealRegSucceeded  : True
+RegisteredCount   : 100
+RealData          : 22,638
+TradeReceived     : 13,745
+WorkerTrades      : 8,367
+RealDataLastAt    : 2026-07-14 15:21:36.814 KST
+Queue             : 0
+LastError         : 없음
+```
+
+후속 측정:
+
+```text
+CollectorPid      : 23732
+CollectorAlive    : True
+LoginState        : connected
+RealRegSucceeded  : True
+RegisteredCount   : 100
+RealData          : 53,707
+TradeReceived     : 13,745
+WorkerTrades      : 8,367
+RealDataLastAt    : 2026-07-14 15:29:54.810 KST
+Queue             : 0
+LastError         : 없음
+```
+
+증가:
+
+```text
+RealData +31,069
+동일 PID 유지
+Queue 0
+LastError 없음
+```
+
+15:20~15:30 종가 단일가 구간에는 `주식체결`이 아닌 real event가 지속될 수 있다. 현재 callback은 모든 real event에서 `RealData`를 증가시키고, real type에 `주식체결`이 포함될 때만 FID10·12·20·14를 읽어 `TradeReceived`를 증가시킨다.
+
+따라서 이 측정에서 `RealData`만 증가하고 `TradeReceived`, `WorkerTrades`가 고정된 것은 코드 계약과 일치한다. 이 결과는 QAx 이벤트 루프와 heartbeat가 살아 있음을 보여준다.
+
+---
+
+## 6. UI 100종목과 collector 장애 분리
+
+현재 UI:
 
 ```text
 S1 선택행         1종목
 집중 후보         20종목
-표시 Pool         21~50, 30종목
-브라우저 고유행   총 50종목
+표시 Pool         21~100, 최대 80종목
+브라우저 고유행   최대 100종목
 ```
 
-내부 후보 계산은 필터 후 약 185~186종목 전체를 유지한다.
+UI100은 브라우저 snapshot/stream 요청 limit만 100으로 확대한다.
+
+변경하지 않은 것:
 
 ```text
-universe 185~186
-→ 전체 후보 점수 계산
-→ Top50
-→ Top20
-→ Top5
-→ 브라우저에는 상위 50만 전송
+OpenAPI 실시간 등록 기본 100
+내부 후보 universe
+heavy snapshot 계산 범위
+collector callback
+ThemeBoard projection
 ```
 
-따라서 UI 50 적용은 선발 범위를 줄이지 않는다.
-
-### 7.1 UI 축소 효과
-
-직전 186행 화면과 비교한 참고값:
-
-| 항목 | 186행 표시 | 50행 표시 | 변화 |
-|---|---:|---:|---:|
-| 화면 행 | 186 | 50 | 약 73% 감소 |
-| SSE | 약 113ms | 약 19ms | 크게 개선 |
-| 렌더 | 약 106ms | 약 31ms | 크게 개선 |
-| 하단 Pool DOM | 166행 | 30행 | 약 82% 감소 |
-
-측정 조건이 완전히 동일하지는 않지만 UI 50종목의 성능 이득은 충분히 크므로 유지한다.
-
-### 7.2 브라우저 빠른 가격 경로
-
-브라우저 표시도 두 단계로 분리했다.
+장애 화면에서도 다음이 확인됐다.
 
 ```text
-현재가·등락률 셀 직접 patch  약 100ms 이벤트 주기
-전체 행 무거운 render         500ms 간격
-표시 Pool 전체 render          1초 간격
+stream 21ms
+render 6.5ms
+collector_q 0
+worker_q 0
+drop 0
+logdrop 0
 ```
 
-가격·등락률은 표 전체 DOM을 다시 만들지 않고 해당 셀만 갱신한다.
+따라서 UI 100종목은 collector 종료 원인에서 제외한다.
+
+관련 커밋:
+
+```text
+7193ed674072ba5fe43a57d4a849bde7d64560c4
+feat: expand StockBoard visible rows to 100
+
+191af1ad48c3f08e8701069c4440438b13444b67
+test: lock StockBoard visible rows at 100
+```
 
 ---
 
-## 8. 내부 Pool과 실시간 등록 정책
+## 7. 현재 운영 판정
 
-현재 구분:
-
-| 구분 | 종목 수 | 역할 |
-|---|---:|---|
-| 내부 universe·후보 계산 | 약 185~186 | 후보 선발 범위 유지 |
-| 실시간 OpenAPI 등록 | 100 | 최소 collector 안정성 우선 |
-| UI 표시 | 50 | 실전 감시 성능 우선 |
-
-내부 185종목 중 현재 실시간 입력을 받지 않는 하위 종목은 seed·저속값 의존도가 높다. 최소 collector가 장시간 안정되면 다음 순서로 실시간 등록 범위를 확대한다.
-
-```text
-100종목 장시간 안정
-→ 150종목 시험
-→ 185~186종목 시험
-→ UI는 계속 50종목 유지
-```
-
-단계별 합격 기준:
-
-- 동일 collector PID 30분 이상 생존
-- `RealData`, `TradeReceived`, `WorkerTrades` 계속 증가
-- collector queue 지속 증가 없음
-- Windows Event 1000/1001 APPCRASH 없음
-- 주요 종목 HTS 가격·등락률 일치
-- 재시작 3회 연속 성공
+| 항목 | 판정 |
+|---|---|
+| 현재가 | 가격 전용 collector에서 실시간 보증 |
+| 등락률 | 가격과 같은 callback에서 실시간 보증 |
+| 체결시각 | FID20 실시간 보증 |
+| 누적거래대금 | FID14 500ms 샘플 |
+| collector 등록 | 100종목 |
+| UI 표시 | 최대 100종목 |
+| 내부 후보 계산 | 약 170~190종목 유지 |
+| 대량체결 | 생산 실시간 비활성, 이전 값/보존값만 가능 |
+| 잔량비·강도·프로그램 | 가격과 같은 실시간 속도 미보증 |
+| 수동매매 감시 | 가격·등락률 기준 사용 가능, 장시간 재검증 중 |
+| 자동매매 연결 | 장시간·재시작·개장폭주 검증 전 보류 |
+| PR #35 | Draft 유지 |
 
 ---
 
-## 9. `stale`과 `drop` 해석
+## 8. 실행·검증 명령
 
-### 9.1 stale 기준
-
-현재 화면의 stale 기준은 약 3초라 거래가 잠시 없는 종목도 stale로 잡힐 수 있다. 가격이 HTS와 일치하고 collector가 살아 있는 경우 다음 기준이 더 적절하다.
-
-```text
-0~10초   정상
-10~30초  주의
-30초 초과 실제 stale
-```
-
-따라서 `stale 20` 숫자만으로 collector 사망을 판정하지 않는다. 반드시 아래를 함께 본다.
-
-- `CollectorAlive`
-- `RealDataLastAt`
-- `RealData` 증가량
-- `TradeReceived` 증가량
-- `WorkerTrades` 증가량
-- HTS 실제 가격 대조
-
-### 9.2 drop 누적값
-
-`drop`은 누적값이다. 절대 숫자보다 짧은 구간의 증가량을 본다. collector queue가 0에 가깝고 가격이 HTS와 일치하면 과거 누적 drop 자체를 현재 병목으로 판정하지 않는다.
-
----
-
-## 10. 실행·확인 명령
-
-### 10.1 최신 브랜치 적용
+### 최신 코드 적용
 
 ```powershell
 cd C:\aiTrade
+git status --short
 git pull --ff-only origin fix/restore-stable-collector-20260713
-$env:STOCKBOARD_V2_COLLECTOR_LIMIT = "100"
-$env:PYTHONFAULTHANDLER = "1"
+
+python -m py_compile realtime_v2\collector32_large_bidask.py
+python -m pytest -q `
+  tests\test_stockboard_qt_exec_loop.py `
+  tests\test_stockboard_display50_fast_price.py
+
 .\stockboard_v2_large.cmd restart-fast
 ```
 
-### 10.2 상태 확인
+### 상태 확인
 
 ```powershell
 .\stockboard_v2_large.cmd status
 ```
 
-정상 기준:
+### collector mode 확인
 
-```text
-CollectorAlive    : True
-LoginState        : connected
-RealRegSucceeded  : True
-RegisteredCount   : 100
-RealData          : 계속 증가
-TradeReceived     : 계속 증가
-WorkerTrades      : 계속 증가
-RealDataLastAt    : 현재 시각과 근접
-Queue             : 낮고 지속 증가하지 않음
-LastError         : 비어 있음
+```powershell
+$s = Invoke-RestMethod 'http://127.0.0.1:8765/api/v2/snapshot?limit=1'
+$s.status.collector_status.status |
+Select-Object collector_mode,running,login_state,realreg_succeeded,realreg_code_count,realreg_fids,large_trade_enabled,realdata_received_count,trade_event_received_count,last_error |
+Format-List
 ```
 
-### 10.3 현재 생산 collector 식별 로그
+기대값:
 
 ```text
-collector_mode=minimal_qax_critical_v1
-qt_event_loop=exec_ minimal_callback_fids=10,12,20,14
-collector_ready=True registered_count=100
+collector_mode      : minimal_qax_price_only_v2
+running             : True
+login_state         : connected
+realreg_succeeded   : True
+realreg_code_count  : 100
+realreg_fids        : 10;12;20;14
+large_trade_enabled : False
 ```
 
-구형 collector 로그가 나오면 최신 코드가 적용되지 않은 것이다.
+### 장시간 확인
+
+```powershell
+.\stockboard_v2_large.cmd status
+Start-Sleep -Seconds 1800
+.\stockboard_v2_large.cmd status
+```
+
+합격 기준:
+
+```text
+CollectorPid 동일
+CollectorAlive=True
+RealData 증가
+Queue 낮고 지속 증가 없음
+LastError 없음
+```
 
 ---
 
-## 11. 남은 작업
+## 9. 다음 작업
 
-우선순위 순서:
+1. 가격 전용 collector 동일 PID 30분 이상 검증  
+2. 재시작 3회 연속 로그인·등록·수신 검증  
+3. 다음 정규장 09:00~09:10 장개시 폭주 검증  
+4. UI100 render·stream·top20 lag 반복 확인  
+5. FID15 단독 실험과 aggregate patch 실험을 생산 collector 밖에서 분리  
+6. 원인 분리 후 대량체결 별도 저위험 경로 결정  
+7. collector 종료·heartbeat 정지를 감지하는 watchdog 설계  
+8. 자동매매 연결은 위 검증 뒤 판단  
 
-1. 최소 collector 30분 이상 및 재시작 3회 안정 검증
-2. 실시간 등록 150종목 시험
-3. 실시간 등록 185~186종목 시험
-4. stale 경고 기준 10초/30초 단계화
-5. 순간강도는 별도 저부하 경로로 복원 검토
-6. 잔량비·5분강도·대량체결은 저속 snapshot 또는 별도 프로세스로 분리
-7. 다음 정규장 09:00~09:10 개장 폭주 검증
-8. 자동매매 연결은 위 검증 완료 뒤 판단
-
-**금지:** 안정화된 가격 핵심 collector에 보조 TR·호가·강도 timer를 한 번에 다시 합치지 않는다. 기능은 반드시 한 계층씩 복원하고 각 단계에서 장시간 생존을 확인한다.
+watchdog은 장애를 숨기는 용도로 먼저 넣지 않는다. 가격 핵심형 생존을 확인한 뒤, collector PID 종료 또는 heartbeat 장기 정지를 명확히 표시하고 안전 재시작하는 방식으로 설계한다.
 
 ---
 
-## 12. 변경 이력 요약
+## 10. 금지사항
+
+```text
+생산 가격 collector에 FID15·호가·강도·TR을 한꺼번에 복원하지 않는다.
+대량체결 열을 실시간 보증값으로 사용하지 않는다.
+UI100을 collector native 종료 원인으로 취급하지 않는다.
+WinError 10054를 근본 원인으로 취급하지 않는다.
+collector가 죽었는데 worker나 브라우저만 재시작하지 않는다.
+가격 핵심형 장시간 검증 전 실시간 등록 수 확대를 진행하지 않는다.
+PC 장중 검증 전 Draft PR을 병합하지 않는다.
+```
+
+---
+
+## 11. 변경 이력 요약
 
 | 단계 | 결과 |
 |---|---|
-| 복잡한 provider thread 복원 | `QApplication was not created in main thread` 후 종료 |
-| main-thread light collector | 로그인·등록·수신 성공 후 `ntdll.dll / 0xc0000374` APPCRASH |
-| 186 → 100종목 축소 | 기존 provider stack에서는 여전히 종료, 종목 수 단독 원인 배제 |
-| 최소 QAx critical collector | 10만 건 이상 연속 수신, 동일 PID 생존, queue 안정 |
-| UI 186 → 50종목 | SSE·렌더 지연 크게 감소, 내부 후보 계산 185 유지 |
-| 가격·등락률 셀 fast patch | 화면 체감 갱신 속도 개선, HTS 대조 일치 |
+| 복잡한 provider 생산 구조 | 대량 수신 중 native heap corruption |
+| 최소 가격 collector | 같은 PID 10만 건 이상 수신, HTS 가격 일치 |
+| FID15·대량체결 복원형 | 100종목 등록 후 1,448건에서 비정상 종료 |
+| UI 50 → 100 | stream·render 정상, collector 장애와 무관 |
+| 가격 전용 collector 재복귀 | 같은 PID 유지, RealData +31,069, queue 0 |
 
----
-
-## 13. 최종 현재 판단
-
-```text
-핵심 현재가·등락률 수집       복구
-누적거래대금 수집             복구
-collector queue               정상
-worker/SSE/browser             정상
-UI 50종목                     유지
-내부 후보 Pool 185~186        유지
-실시간 등록 100               현재 안전 검증값
-보조 지표 실시간성            미보증
-자동매매 실전 연결            보류
-PR #35                        Draft 유지
-```
-
-현재 단계는 “장애 미해결”이 아니라 **가격 핵심 경로 복구 성공, 확대·장시간 검증 중**으로 판정한다.
+현재 단계는 **가격 핵심 경로 재복구 성공, 장시간·재시작·다음 개장폭주 검증 중**으로 판정한다.
