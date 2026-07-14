@@ -93,6 +93,9 @@ def test_average_button_compact_summary_and_column_resize_contracts():
     package_source = (root / "realtime_v2" / "__init__.py").read_text(
         encoding="utf-8"
     )
+    selected_detail_source = (
+        root / "realtime_v2" / "worker_theme_selected_detail_patch.py"
+    ).read_text(encoding="utf-8")
 
     assert "themeViewAverage" in source
     assert "평균등락률" in source
@@ -106,6 +109,18 @@ def test_average_button_compact_summary_and_column_resize_contracts():
     assert "__tbMinimizeAllColumns" in source
     assert "average_rows" in source
     assert "install_runtime_wrappers()" in package_source
+
+    explicit_call = selected_detail_source.index("install_runtime_wrappers()")
+    rank_alias = selected_detail_source.index(
+        "from realtime_v2.theme_projection_dual_rank_patch import"
+    )
+    ui_alias = selected_detail_source.index(
+        "from realtime_v2.worker_theme_dual_rank_ui_patch import"
+    )
+    assert explicit_call < rank_alias
+    assert explicit_call < ui_alias
+    assert "theme_average_view_layout_extension_loaded" in selected_detail_source
+    assert "THEMEBOARD_AVERAGE_VIEW_RESIZABLE_COLUMNS_20260714" in selected_detail_source
 
     for forbidden in (
         "CommRqData",
