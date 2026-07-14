@@ -54,8 +54,8 @@ def unified_apply_funnel(self, rows: list[dict[str, Any]]) -> list[dict[str, Any
     ordered = sorted(
         rows,
         key=lambda row: (
-            row.get("candidate_status") == "WAIT_DATA",
             -_score(row),
+            row.get("candidate_status") == "WAIT_DATA",
             -_number(row.get("candidate_score_coverage")),
             _source_rank(row),
             str(row.get("stock_code") or ""),
