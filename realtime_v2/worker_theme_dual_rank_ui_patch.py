@@ -1,10 +1,115 @@
 from __future__ import annotations
 
+from http import HTTPStatus
 from pathlib import Path
+from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MARKER = "THEMEBOARD_DUAL_SERVER_RANK_UI_20260713"
+
+_ALLOWED_SORT_KEYS = {
+    "current",
+    "trend",
+    "money",
+    "grade",
+    "score",
+    "theme",
+    "average",
+    "breadth",
+    "momentum_1m",
+    "persistence_5m",
+    "amount_ratio",
+    "money_1m",
+    "money_5m",
+    "coverage",
+    "leader",
+}
+
+
+def _number(value: Any) -> float | None:
+    try:
+        if value in (None, ""):
+            return None
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == number else None
+
+
+def _sort_value(row: dict[str, Any], view: str, key: str) -> float | str | None:
+    current_prefix = "money" if view == "money" else "trend"
+    if key == "current":
+        return _number(row.get(f"{current_prefix}_rank"))
+    if key == "trend":
+        return _number(row.get("trend_rank"))
+    if key == "money":
+        return _number(row.get("money_rank"))
+    if key in {"grade", "score"}:
+        return _number(row.get(f"{current_prefix}_score"))
+    if key == "theme":
+        return str(row.get("theme_name") or "").casefold()
+    if key == "average":
+        return _number(row.get("avg_change_rate"))
+    if key == "breadth":
+        return _number(row.get("breadth_pct"))
+    if key == "momentum_1m":
+        return _number(row.get("change_momentum_1m"))
+    if key == "persistence_5m":
+        return _number(row.get("change_persistence_5m"))
+    if key == "amount_ratio":
+        return _number(row.get("theme_amount_ratio"))
+    if key == "money_1m":
+        return _number(row.get("trade_value_1m_eok"))
+    if key == "money_5m":
+        return _number(row.get("trade_value_5m_eok"))
+    if key == "coverage":
+        return _number(row.get("coverage_pct"))
+    if key == "leader":
+        leaders = row.get("leaders")
+        if isinstance(leaders, list) and leaders and isinstance(leaders[0], dict):
+            return _number(leaders[0].get("leadership_score")) or _number(
+                leaders[0].get("change_rate")
+            )
+    return None
+
+
+def _ordered_theme_ids(
+    payload: dict[str, Any],
+    *,
+    view: str,
+    key: str,
+    direction: str,
+) -> list[str]:
+    normalized_view = "money" if view == "money" else "momentum"
+    normalized_key = key if key in _ALLOWED_SORT_KEYS else "current"
+    normalized_direction = "desc" if direction == "desc" else "asc"
+    raw_rows = (
+        payload.get("money_rows") if normalized_view == "money" else payload.get("rows")
+    )
+    rows = [row for row in raw_rows or [] if isinstance(row, dict)]
+
+    valued: list[tuple[dict[str, Any], float | str]] = []
+    missing: list[dict[str, Any]] = []
+    for row in rows:
+        value = _sort_value(row, normalized_view, normalized_key)
+        if value is None or value == "":
+            missing.append(row)
+        else:
+            valued.append((row, value))
+
+    valued = sorted(
+        valued,
+        key=lambda item: (item[1], str(item[0].get("theme_name") or "")),
+        reverse=normalized_direction == "desc",
+    )
+    ordered_rows = [row for row, _value in valued] + missing
+    return [
+        str(row.get("theme_id") or "")
+        for row in ordered_rows
+        if str(row.get("theme_id") or "")
+    ]
+
 
 _STYLE = r"""
 <style>
@@ -12,6 +117,7 @@ _STYLE = r"""
 .view-toggle{display:inline-flex;gap:3px;margin-left:auto}.view-button{min-height:22px;padding:2px 9px;border:1px solid #94a3b8;border-radius:3px;background:#fff;color:#334155;font-weight:900;cursor:pointer}.view-button.active{border-color:#1d4ed8;background:#1d4ed8;color:#fff}.view-button:focus{outline:2px solid #93c5fd;outline-offset:1px}
 .leader-item{display:inline-flex;align-items:center;gap:2px}.leader-rate{font-variant-numeric:tabular-nums}.detail-panel-inline{grid-column:1/-1;width:100%;min-width:0;margin:0}.detail-panel-inline .table-wrap{max-height:320px}.theme-list-layout{display:block;padding:0 5px 5px}.theme-list-layout>.panel{width:100%}
 .theme-card .fund-flow{grid-template-columns:48px minmax(0,1fr) 108px}.theme-card .fund-flow>b{display:flex;align-items:center;justify-content:flex-end;gap:4px;white-space:nowrap}.fund-score{min-width:22px;color:#b91c1c;font-weight:900;font-variant-numeric:tabular-nums}.fund-amount{color:#374151;font-weight:800}.theme-card .fund-flow .fill{background:linear-gradient(90deg,#fecaca,#ef4444,#b91c1c)}
+.theme-ranking-wrap{overflow-x:auto;overflow-y:auto;scrollbar-gutter:stable}#themeTable{min-width:1180px}.theme-bottom-scroll{position:sticky;bottom:0;z-index:5;height:17px;overflow-x:auto;overflow-y:hidden;border-top:1px solid #94a3b8;background:#f8fafc}.theme-bottom-scroll-inner{height:1px}.theme-sort-head{cursor:pointer;user-select:none;white-space:nowrap}.theme-sort-head::after{display:inline-block;min-width:11px;margin-left:3px;color:#64748b;content:"↕"}.theme-sort-head.sort-asc::after{color:#1d4ed8;content:"▲"}.theme-sort-head.sort-desc::after{color:#1d4ed8;content:"▼"}.theme-sort-head:focus{outline:2px solid #93c5fd;outline-offset:-2px}
 </style>
 """
 
@@ -20,6 +126,7 @@ _SCRIPT = r"""
 /* THEMEBOARD_DUAL_SERVER_RANK_UI_20260713 */
 window.__themeBoardView = localStorage.getItem('aitrade.theme.view.v3') === 'money' ? 'money' : 'momentum';
 window.__themeDetailOpen = Boolean(selectedThemeId);
+window.__themeTableSort = {key:'current',direction:'asc',requestSeq:0};
 
 function __tbViewPrefix(){return window.__themeBoardView === 'money' ? 'money' : 'trend';}
 function __tbServerRows(payload){
@@ -129,6 +236,64 @@ function __tbPlaceDetailBelowSelectedCardRow(){
   if(layout)layout.classList.add('theme-list-layout');
 }
 
+function __tbBindCardThemes(){
+  radarEl.querySelectorAll('[data-theme-id]').forEach(element=>{element.onclick=()=>selectTheme(element.dataset.themeId);});
+  bindStockLinks(radarEl);
+}
+function __tbBindTableThemes(){
+  themeBody.querySelectorAll('[data-theme-id]').forEach(element=>{element.onclick=()=>selectTheme(element.dataset.themeId);});
+  bindStockLinks(themeBody);
+}
+function __tbRenderTableRows(list){
+  themeBody.innerHTML=list.length?list.map(themeRowHtml).join(''):'<tr><td colspan="15" class="empty">유효 테마 데이터 없음</td></tr>';
+  __tbBindTableThemes();
+  __tbUpdateBottomScrollWidth();
+}
+function __tbUpdateSortHeader(){
+  const state=window.__themeTableSort;
+  document.querySelectorAll('#themeTable thead th[data-sort-key]').forEach(th=>{
+    const active=th.dataset.sortKey===state.key;
+    th.classList.toggle('sort-asc',active&&state.direction==='asc');
+    th.classList.toggle('sort-desc',active&&state.direction==='desc');
+    th.setAttribute('aria-sort',active?(state.direction==='asc'?'ascending':'descending'):'none');
+  });
+}
+async function __tbRenderSortedTable(payload,list){
+  const state=window.__themeTableSort;
+  __tbUpdateSortHeader();
+  if(state.key==='current'&&state.direction==='asc'){
+    __tbRenderTableRows(list);
+    return;
+  }
+  const requestSeq=++state.requestSeq;
+  try{
+    const query=new URLSearchParams({view:window.__themeBoardView,key:state.key,direction:state.direction,ts:String(Date.now())});
+    const response=await fetch(`/api/v2/hub/theme/order?${query.toString()}`,{cache:'no-store'});
+    if(!response.ok)throw new Error(`HTTP ${response.status}`);
+    const orderPayload=await response.json();
+    if(requestSeq!==state.requestSeq)return;
+    const byThemeId=new Map(list.map(row=>[String(row.theme_id||''),row]));
+    const ordered=[];
+    const used=new Set();
+    (Array.isArray(orderPayload.theme_ids)?orderPayload.theme_ids:[]).forEach(themeId=>{
+      const key=String(themeId||'');
+      const row=byThemeId.get(key);
+      if(row&&!used.has(key)){ordered.push(row);used.add(key);}
+    });
+    list.forEach(row=>{const key=String(row.theme_id||'');if(!used.has(key)){ordered.push(row);used.add(key);}});
+    __tbRenderTableRows(ordered);
+  }catch(_error){
+    __tbRenderTableRows(list);
+  }
+}
+function __tbDefaultSortDirection(key){return ['current','trend','money','theme'].includes(key)?'asc':'desc';}
+function __tbToggleSort(key){
+  const state=window.__themeTableSort;
+  if(state.key===key)state.direction=state.direction==='asc'?'desc':'asc';
+  else{state.key=key;state.direction=__tbDefaultSortDirection(key);}
+  if(lastPayload)__tbRenderSortedTable(lastPayload,__tbServerRows(lastPayload));
+}
+
 renderThemes=function(payload){
   const list=__tbServerRows(payload);
   const cardList=list.slice(0,20);
@@ -138,10 +303,10 @@ renderThemes=function(payload){
   }
   __tbDetachDetailBeforeRadarRender();
   radarEl.innerHTML=cardList.length?cardList.map(radarHtml).join(''):'<div class="empty">유효 테마 데이터 없음</div>';
-  themeBody.innerHTML=list.length?list.map(themeRowHtml).join(''):'<tr><td colspan="15" class="empty">유효 테마 데이터 없음</td></tr>';
   const title=byId('themeRankingTitle');
   if(title) title.textContent=`${__tbViewLabel()} 전체 순위 · 서버 완성 순서 · 1초 latest-only`;
-  bindThemes();
+  __tbBindCardThemes();
+  __tbRenderSortedTable(payload,list);
   __tbPlaceDetailBelowSelectedCardRow();
 };
 
@@ -195,18 +360,48 @@ function __tbApplyView(view){
   if(lastPayload){renderSummary(lastPayload);renderThemes(lastPayload);}
 }
 
+const themeTable=byId('themeTable');
+const themeWrap=themeTable?themeTable.closest('.table-wrap'):null;
+let themeBottomScroll=null;
+let themeBottomScrollInner=null;
+function __tbUpdateBottomScrollWidth(){
+  if(themeTable&&themeBottomScrollInner)themeBottomScrollInner.style.width=`${themeTable.scrollWidth}px`;
+}
+function __tbInstallBottomScrollbar(){
+  if(!themeWrap||themeBottomScroll)return;
+  themeWrap.classList.add('theme-ranking-wrap');
+  themeBottomScroll=document.createElement('div');
+  themeBottomScroll.className='theme-bottom-scroll';
+  themeBottomScroll.setAttribute('aria-label','테마 전체 순위 가로 스크롤');
+  themeBottomScrollInner=document.createElement('div');
+  themeBottomScrollInner.className='theme-bottom-scroll-inner';
+  themeBottomScroll.appendChild(themeBottomScrollInner);
+  themeWrap.insertAdjacentElement('afterend',themeBottomScroll);
+  let syncing=false;
+  themeWrap.addEventListener('scroll',()=>{if(syncing)return;syncing=true;themeBottomScroll.scrollLeft=themeWrap.scrollLeft;syncing=false;});
+  themeBottomScroll.addEventListener('scroll',()=>{if(syncing)return;syncing=true;themeWrap.scrollLeft=themeBottomScroll.scrollLeft;syncing=false;});
+  if(window.ResizeObserver)new ResizeObserver(__tbUpdateBottomScrollWidth).observe(themeTable);
+  __tbUpdateBottomScrollWidth();
+}
+
 let __tbResizeTimer=0;
 window.addEventListener('resize',()=>{
   clearTimeout(__tbResizeTimer);
-  __tbResizeTimer=setTimeout(__tbPlaceDetailBelowSelectedCardRow,120);
+  __tbResizeTimer=setTimeout(()=>{__tbPlaceDetailBelowSelectedCardRow();__tbUpdateBottomScrollWidth();},120);
 });
 
 const themeHead=document.querySelector('#themeTable thead tr');
-if(themeHead)themeHead.innerHTML='<th>현재</th><th>상승</th><th>돈</th><th>등급</th><th>점수</th><th>테마</th><th>평균등락</th><th>확산</th><th>1분탄력</th><th>5분지속</th><th>대금비</th><th>1분대금</th><th>5분대금</th><th>Coverage</th><th>주도주</th>';
+if(themeHead)themeHead.innerHTML='<th class="theme-sort-head" data-sort-key="current" tabindex="0">현재</th><th class="theme-sort-head" data-sort-key="trend" tabindex="0">상승</th><th class="theme-sort-head" data-sort-key="money" tabindex="0">돈</th><th class="theme-sort-head" data-sort-key="grade" tabindex="0">등급</th><th class="theme-sort-head" data-sort-key="score" tabindex="0">점수</th><th class="theme-sort-head" data-sort-key="theme" tabindex="0">테마</th><th class="theme-sort-head" data-sort-key="average" tabindex="0">평균등락</th><th class="theme-sort-head" data-sort-key="breadth" tabindex="0">확산</th><th class="theme-sort-head" data-sort-key="momentum_1m" tabindex="0">1분탄력</th><th class="theme-sort-head" data-sort-key="persistence_5m" tabindex="0">5분지속</th><th class="theme-sort-head" data-sort-key="amount_ratio" tabindex="0">대금비</th><th class="theme-sort-head" data-sort-key="money_1m" tabindex="0">1분대금</th><th class="theme-sort-head" data-sort-key="money_5m" tabindex="0">5분대금</th><th class="theme-sort-head" data-sort-key="coverage" tabindex="0">Coverage</th><th class="theme-sort-head" data-sort-key="leader" tabindex="0">주도주</th>';
+document.querySelectorAll('#themeTable thead th[data-sort-key]').forEach(th=>{
+  th.addEventListener('click',()=>__tbToggleSort(th.dataset.sortKey));
+  th.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();__tbToggleSort(th.dataset.sortKey);}});
+});
 const momentumButton=byId('themeViewMomentum');
 const moneyButton=byId('themeViewMoney');
 if(momentumButton)momentumButton.addEventListener('click',()=>__tbApplyView('momentum'));
 if(moneyButton)moneyButton.addEventListener('click',()=>__tbApplyView('money'));
+__tbInstallBottomScrollbar();
+__tbUpdateSortHeader();
 __tbPlaceDetailBelowSelectedCardRow();
 __tbApplyView(window.__themeBoardView);
 </script>
@@ -239,6 +434,48 @@ def install(base) -> None:
 
     def patched_do_get(self) -> None:
         parsed = base.urlparse(self.path)
+        if parsed.path == "/api/v2/hub/theme/order":
+            query = base.parse_qs(parsed.query)
+            view = str((query.get("view") or ["momentum"])[0] or "momentum")
+            key = str((query.get("key") or ["current"])[0] or "current")
+            direction = str((query.get("direction") or ["asc"])[0] or "asc")
+            hub = getattr(self.server.state, "board_data_hub", None)
+            projection = hub.projection_snapshot("theme") if hub is not None else None
+            payload = (
+                projection.get("payload")
+                if isinstance(projection, dict)
+                and isinstance(projection.get("payload"), dict)
+                else None
+            )
+            if not isinstance(payload, dict) or payload.get("status") != "READY":
+                self._json(
+                    {"error": "theme projection unavailable"},
+                    status=HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+                return
+            self._json(
+                {
+                    "schema_version": 1,
+                    "source": "theme_cached_server_sort_order",
+                    "projection_version": projection.get("projection_version"),
+                    "view": "money" if view == "money" else "momentum",
+                    "key": key if key in _ALLOWED_SORT_KEYS else "current",
+                    "direction": "desc" if direction == "desc" else "asc",
+                    "theme_ids": _ordered_theme_ids(
+                        payload,
+                        view=view,
+                        key=key,
+                        direction=direction,
+                    ),
+                    "policy": {
+                        "cached_projection_only": True,
+                        "direct_tr_allowed": False,
+                        "direct_openapi_allowed": False,
+                        "browser_sort_allowed": False,
+                    },
+                }
+            )
+            return
         if parsed.path not in {"/theme", "/themeboard", "/themeboard.html"}:
             return original_do_get(self)
         path = ROOT / "docs" / "themeboard.html"
