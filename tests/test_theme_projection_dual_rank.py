@@ -190,4 +190,4 @@ def test_theme_cards_use_color_cues_top20_and_detail_below_selected_card_row():
     assert "grid-column:1/-1" in ui_source
     assert "theme-list-layout" in ui_source
     assert "현재 보기 상위 20개" in ui_source
-    assert "전체 테마는 하단 순위표" in ui_source
+    assert "1분/5분 쏠림은 전체 테마 상대평가" in ui_source
