@@ -5,6 +5,14 @@ from pathlib import Path
 from typing import Any
 
 from realtime_v2 import theme_projection_engine as theme_projection_module
+from realtime_v2.theme_average_view_layout_patch import install_runtime_wrappers
+
+# Install the average-view/UI extension before this module captures any rank/UI install
+# aliases. This explicit ordering is required on the production worker import path;
+# relying only on package __init__ ordering proved insufficient on PC1.
+install_runtime_wrappers()
+
+from realtime_v2 import worker_theme_dual_rank_ui_patch as theme_dual_rank_ui_module
 from realtime_v2.theme_leader_detail_display_patch import (
     install as install_theme_leader_detail_display,
 )
@@ -27,8 +35,10 @@ from realtime_v2.worker_theme_dual_rank_ui_patch import (
 
 
 # Dual rank must complete first so the leader wrapper can precisely score only the
-# union of the top momentum and money views. Selected detail remains always precise.
-# Performance accounting is installed last and sees the final named phase timings.
+# union of the top momentum and money views. The average-view wrapper is installed
+# around the dual-rank install above and adds average_rows without changing leader
+# precision scope. Selected detail remains always precise. Performance accounting is
+# installed last and sees the final named phase timings.
 install_theme_dual_rank(theme_projection_module)
 install_theme_leader_selection(theme_projection_module)
 install_theme_leader_detail_display(theme_projection_module)
@@ -103,6 +113,11 @@ def install(base) -> None:
         )
         runtime.start()
         self.theme_selected_detail_runtime = runtime
+        extension_marker = "THEMEBOARD_AVERAGE_VIEW_RESIZABLE_COLUMNS_20260714"
+        extension_loaded = (
+            extension_marker in getattr(theme_dual_rank_ui_module, "_STYLE", "")
+            and extension_marker in getattr(theme_dual_rank_ui_module, "_SCRIPT", "")
+        )
         with self.lock:
             self.status["theme_selected_detail_enabled"] = True
             self.status["theme_selected_detail_queue"] = "latest_only_depth_1"
@@ -111,6 +126,10 @@ def install(base) -> None:
             self.status["theme_dual_server_rankings_enabled"] = True
             self.status["theme_default_view"] = "momentum"
             self.status["theme_browser_sort_allowed"] = False
+            self.status["theme_average_view_layout_extension_loaded"] = extension_loaded
+            self.status["theme_average_view_layout_marker"] = (
+                extension_marker if extension_loaded else None
+            )
             self.status["theme_leader_precision_scope"] = (
                 "top_momentum_money_union_plus_selected_detail"
             )
@@ -254,6 +273,8 @@ def install(base) -> None:
     state_class._stockboard_theme_selected_detail_installed = True
 
     # Install last so the Theme page uses the display-only server ranking switch
-    # while the detail API above remains the underlying cache source.
+    # while the detail API above remains the underlying cache source. The imported
+    # install alias is guaranteed to include the average-view/column-layout wrapper
+    # because install_runtime_wrappers() ran before the alias was captured.
     install_theme_dual_rank_ui(base)
     install_opening_load_diagnostics(base)
