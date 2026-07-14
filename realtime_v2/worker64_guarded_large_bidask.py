@@ -66,9 +66,9 @@ _CROSS_TABLE_NAV_PATCH = r"""
   }
 """
 
-_DISPLAY50_MARKER = "STOCKBOARD_V2_DISPLAY50_FAST_PRICE_20260713"
-_DISPLAY50_PATCH = r"""
-  /* STOCKBOARD_V2_DISPLAY50_FAST_PRICE_20260713 */
+_DISPLAY100_MARKER = "STOCKBOARD_V2_DISPLAY100_FAST_PRICE_20260714"
+_DISPLAY100_PATCH = r"""
+  /* STOCKBOARD_V2_DISPLAY100_FAST_PRICE_20260714 */
   const __sbv2HeavyRenderIntervalMs = 500;
   let __sbv2LastHeavyRenderAt = 0;
 
@@ -218,25 +218,25 @@ def _install_header_sort_patch_fail_open() -> None:
         _write_patch_error("html_header_sort_patch_error.txt", error)
 
 
-def _install_display50_fast_price_patch_fail_open() -> None:
+def _install_display100_fast_price_patch_fail_open() -> None:
     try:
-        if getattr(large, "_display50_fast_price_patch_installed", False):
+        if getattr(large, "_display100_fast_price_patch_installed", False):
             return
 
         original_ui_safety_patch = large._ui_safety_patch
 
         def patched_ui_safety_patch(html: str) -> str:
             patched = original_ui_safety_patch(html)
-            if _DISPLAY50_MARKER in patched:
+            if _DISPLAY100_MARKER in patched:
                 return patched
 
             patched = patched.replace(
                 "/api/v2/snapshot?limit=300&ts=${Date.now()}",
-                "/api/v2/snapshot?limit=50&ts=${Date.now()}",
+                "/api/v2/snapshot?limit=100&ts=${Date.now()}",
             )
             patched = patched.replace(
                 "/api/v2/stream?limit=300&interval_ms=100&ts=${Date.now()}",
-                "/api/v2/stream?limit=50&interval_ms=100&ts=${Date.now()}",
+                "/api/v2/stream?limit=100&interval_ms=100&ts=${Date.now()}",
             )
             patched = patched.replace("Top300 Pool", "표시 Pool")
             patched = patched.replace(
@@ -255,15 +255,15 @@ def _install_display50_fast_price_patch_fail_open() -> None:
             if _CROSS_TABLE_NAV_ANCHOR in patched:
                 patched = patched.replace(
                     _CROSS_TABLE_NAV_ANCHOR,
-                    f"{_DISPLAY50_PATCH}\n{_CROSS_TABLE_NAV_ANCHOR}",
+                    f"{_DISPLAY100_PATCH}\n{_CROSS_TABLE_NAV_ANCHOR}",
                     1,
                 )
             return patched
 
         large._ui_safety_patch = patched_ui_safety_patch
-        large._display50_fast_price_patch_installed = True
+        large._display100_fast_price_patch_installed = True
     except Exception as error:
-        _write_patch_error("display50_fast_price_patch_error.txt", error)
+        _write_patch_error("display100_fast_price_patch_error.txt", error)
 
 
 def _install_shared_board_shell_fail_open() -> None:
@@ -343,7 +343,7 @@ _install_execution_strength_alias_fail_open()
 _install_event_freshness_fail_open()
 _install_cross_table_navigation_patch_fail_open()
 _install_header_sort_patch_fail_open()
-_install_display50_fast_price_patch_fail_open()
+_install_display100_fast_price_patch_fail_open()
 _install_shared_board_shell_fail_open()
 # Hub must wrap the final heavy snapshot implementation before the opening-burst
 # cache captures it. TR single-flight is installed before worker threads start.
