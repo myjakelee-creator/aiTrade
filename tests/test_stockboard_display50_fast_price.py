@@ -12,15 +12,18 @@ def source_text() -> str:
     return SOURCE_PATH.read_text(encoding="utf-8")
 
 
-def test_display50_patch_is_valid_python():
+def test_display100_patch_is_valid_python():
     ast.parse(source_text())
 
 
-def test_browser_requests_only_top50_rows():
+def test_browser_requests_only_top100_rows():
     source = source_text()
-    assert '"/api/v2/snapshot?limit=50&ts=${Date.now()}"' in source
-    assert '"/api/v2/stream?limit=50&interval_ms=100&ts=${Date.now()}"' in source
+    assert '"/api/v2/snapshot?limit=100&ts=${Date.now()}"' in source
+    assert '"/api/v2/stream?limit=100&interval_ms=100&ts=${Date.now()}"' in source
+    assert '"/api/v2/snapshot?limit=50&ts=${Date.now()}"' not in source
+    assert '"/api/v2/stream?limit=50&interval_ms=100&ts=${Date.now()}"' not in source
     assert 'patched = patched.replace("Top300 Pool", "표시 Pool")' in source
+    assert "STOCKBOARD_V2_DISPLAY100_FAST_PRICE_20260714" in source
 
 
 def test_price_and_rate_are_patched_without_full_table_rerender():
