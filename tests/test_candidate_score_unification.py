@@ -26,14 +26,21 @@ def engine():
     )
 
 
-def row(code: str, score: float, *, coverage: float = 1.0, source_rank: int = 1):
+def row(
+    code: str,
+    score: float,
+    *,
+    coverage: float = 1.0,
+    source_rank: int = 1,
+    status: str = "READY",
+):
     return {
         "stock_code": code,
         "candidate_score": score,
         "grade_score": score,
         "score_percent": score,
         "candidate_score_coverage": coverage,
-        "candidate_status": "READY",
+        "candidate_status": status,
         "_source_rank": source_rank,
         "entry_score": 100 - source_rank,
         "confirmation_score": source_rank,
@@ -63,6 +70,16 @@ def test_grade_score_is_the_only_primary_candidate_order():
     assert all(item["selection_order_policy"] == POLICY for item in ordered)
 
 
+def test_higher_grade_score_never_falls_behind_a_lower_score_for_status_reason():
+    rows = [
+        row("000001", 59, status="WAIT_DATA", source_rank=20),
+        row("000002", 58, status="READY", source_rank=1),
+    ]
+
+    ordered = unified_apply_funnel(engine(), rows)
+    assert [item["stock_code"] for item in ordered] == ["000001", "000002"]
+
+
 def test_score_fields_and_all_compatibility_ranks_are_unified():
     ordered = unified_apply_funnel(
         engine(),
@@ -79,12 +96,18 @@ def test_score_fields_and_all_compatibility_ranks_are_unified():
     assert all(item["target_lane"] == "cold" for item in ordered[50:])
 
 
-def test_ties_use_coverage_then_trade_value_source_rank_only():
+def test_ties_use_status_coverage_then_trade_value_source_rank_only():
     rows = [
+        row("000004", 80, coverage=1.00, source_rank=1, status="WAIT_DATA"),
         row("000003", 80, coverage=0.80, source_rank=1),
         row("000002", 80, coverage=1.00, source_rank=20),
         row("000001", 80, coverage=1.00, source_rank=5),
     ]
 
     ordered = unified_apply_funnel(engine(), rows)
-    assert [item["stock_code"] for item in ordered] == ["000001", "000002", "000003"]
+    assert [item["stock_code"] for item in ordered] == [
+        "000001",
+        "000002",
+        "000003",
+        "000004",
+    ]
