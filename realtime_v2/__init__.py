@@ -15,11 +15,15 @@ from realtime_v2.candidate_score_unification_patch import (
 from realtime_v2.three_lane_display_order_patch import (
     install as install_three_lane_display_order,
 )
+from realtime_v2.display_order_model_reset_patch import (
+    install as install_display_order_model_reset,
+)
 
 install_runtime_wrappers()
 install_script_hotfix()
 install_candidate_score_unification()
 install_three_lane_display_order()
+install_display_order_model_reset()
 install_stockboard_global_sort()
 install_stockboard_manual_sort_mode()
 
