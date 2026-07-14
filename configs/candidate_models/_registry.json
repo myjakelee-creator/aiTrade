@@ -1,9 +1,9 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "default_model_id": "FIVE_FACTOR_FLOW_V01",
   "runtime_status": "validated_config_models_v3",
   "models": [
-    {"id":"FIVE_FACTOR_FLOW_V01","label":"5요소 수급선발 v0.1","file":"FIVE_FACTOR_FLOW_V01.json","recommended":true},
+    {"id":"FIVE_FACTOR_FLOW_V01","label":"거래대금 순위 v0.1","file":"FIVE_FACTOR_FLOW_V01.json","recommended":true},
     {"id":"NET_BUY_STRENGTH_V02","label":"순매수 강도 v0.2 · 5분강도","file":"NET_BUY_STRENGTH_V02.json"},
     {"id":"NET_BUY_STRENGTH_V01","label":"순매수 강도 v0.1 · 5분강도","file":"NET_BUY_STRENGTH_V01.json"},
     {"id":"OPENING_MONEY_FLOW_V01","label":"돈쏠림 시작형 · 5분강도","file":"OPENING_MONEY_FLOW_V01.json"},
