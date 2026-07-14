@@ -6,6 +6,9 @@ from __future__ import annotations
 from realtime_v2.theme_average_view_layout_patch import install_runtime_wrappers
 from realtime_v2.theme_average_view_script_hotfix import install_script_hotfix
 from realtime_v2.stockboard_global_sort_patch import install as install_stockboard_global_sort
+from realtime_v2.stockboard_manual_sort_mode_patch import (
+    install as install_stockboard_manual_sort_mode,
+)
 from realtime_v2.candidate_score_unification_patch import (
     install as install_candidate_score_unification,
 )
@@ -18,5 +21,6 @@ install_script_hotfix()
 install_candidate_score_unification()
 install_three_lane_display_order()
 install_stockboard_global_sort()
+install_stockboard_manual_sort_mode()
 
 __all__: list[str] = []
