@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from realtime_v2 import theme_projection_engine as engine
 from realtime_v2.theme_projection_dual_rank_patch import install
+from realtime_v2.worker_theme_dual_rank_ui_patch import _ordered_theme_ids
 
 
 def _module():
@@ -105,4 +106,74 @@ def test_theme_card_second_click_closes_detail_and_uses_server_bar_fields():
     assert "theme.fund_flow_5m_text" in source
     assert "1분쏠림" in source
     assert "5분쏠림" in source
+    assert ".sort(" not in source
+
+
+def test_cached_server_sort_orders_numeric_text_and_missing_last():
+    payload = {
+        "status": "READY",
+        "rows": [
+            {
+                "theme_id": "A",
+                "theme_name": "가나다",
+                "trend_rank": 2,
+                "money_rank": 1,
+                "trend_score": 75.0,
+                "avg_change_rate": 1.0,
+                "leaders": [{"leadership_score": 55.0}],
+            },
+            {
+                "theme_id": "B",
+                "theme_name": "나비",
+                "trend_rank": 1,
+                "money_rank": 3,
+                "trend_score": 90.0,
+                "avg_change_rate": 3.0,
+                "leaders": [{"leadership_score": 88.0}],
+            },
+            {
+                "theme_id": "C",
+                "theme_name": "다람쥐",
+                "trend_rank": 3,
+                "money_rank": 2,
+                "trend_score": 60.0,
+                "avg_change_rate": None,
+                "leaders": [],
+            },
+        ],
+    }
+    payload["money_rows"] = [dict(row) for row in payload["rows"]]
+
+    assert _ordered_theme_ids(
+        payload, view="momentum", key="current", direction="asc"
+    ) == ["B", "A", "C"]
+    assert _ordered_theme_ids(
+        payload, view="momentum", key="score", direction="desc"
+    ) == ["B", "A", "C"]
+    assert _ordered_theme_ids(
+        payload, view="momentum", key="theme", direction="asc"
+    ) == ["A", "B", "C"]
+    assert _ordered_theme_ids(
+        payload, view="momentum", key="average", direction="desc"
+    ) == ["B", "A", "C"]
+    assert _ordered_theme_ids(
+        payload, view="money", key="current", direction="asc"
+    ) == ["A", "C", "B"]
+
+
+def test_theme_table_has_bottom_scroll_and_server_sort_endpoint_only():
+    root = Path(__file__).resolve().parents[1]
+    source = (
+        root / "realtime_v2" / "worker_theme_dual_rank_ui_patch.py"
+    ).read_text(encoding="utf-8")
+
+    assert "theme-bottom-scroll" in source
+    assert "theme-bottom-scroll-inner" in source
+    assert "themeWrap.insertAdjacentElement('afterend',themeBottomScroll);" in source
+    assert "data-sort-key=\"current\"" in source
+    assert "data-sort-key=\"leader\"" in source
+    assert "/api/v2/hub/theme/order" in source
+    assert "theme_cached_server_sort_order" in source
+    assert '"browser_sort_allowed": False' in source
+    assert "new URLSearchParams" in source
     assert ".sort(" not in source
