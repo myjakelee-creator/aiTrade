@@ -151,6 +151,42 @@ def install(theme_module) -> None:
         row[f"{prefix}_state_text"] = state
         row[f"{prefix}_state_class"] = state.lower().replace("_", "-")
 
+    def apply_fund_flow_bar(
+        row: dict[str, Any],
+        *,
+        prefix: str,
+        recent_value: float | None,
+        recent_rank: float | None,
+        ratio_rank: float | None,
+        positive_flow_rank: float | None,
+        coverage: float,
+        active_count: int,
+    ) -> None:
+        ratio = _number(row.get("theme_amount_ratio"))
+        ratio_absolute = (
+            max(0.0, min(100.0, float(ratio) * 20.0))
+            if ratio is not None and ratio > 0 and ratio_rank is not None
+            else 0.0
+        )
+        if recent_value is None or recent_value <= 0:
+            score = 0.0
+            active_weight = 0.0
+        else:
+            raw_score, active_weight = _weighted_score(
+                [
+                    (recent_rank, 50.0),
+                    (ratio_rank, 20.0),
+                    (ratio_absolute, 20.0),
+                    (positive_flow_rank, 10.0),
+                ]
+            )
+            score = _coverage_cap(raw_score, coverage, active_count)
+        score = round(max(0.0, min(100.0, score)), 2)
+        row[f"fund_flow_{prefix}_score"] = score
+        row[f"fund_flow_{prefix}_bar_pct"] = score
+        row[f"fund_flow_{prefix}_text"] = f"{score:.0f}"
+        row[f"fund_flow_{prefix}_metric_weight"] = round(active_weight, 2)
+
     def call(
         self,
         feature_version: int,
@@ -227,6 +263,41 @@ def install(theme_module) -> None:
             row["money_metric_weight"] = round(money_weight, 2)
             row["flow_confirmation_rank_score"] = flow_rank.get(theme_id)
 
+            raw_flow = flow_strength(row)
+            positive_flow_rank = (
+                flow_rank.get(theme_id)
+                if raw_flow is not None and raw_flow > 0
+                else 0.0
+            )
+            apply_fund_flow_bar(
+                row,
+                prefix="1m",
+                recent_value=_number(row.get("trade_value_1m_eok")),
+                recent_rank=(
+                    one_money_rank.get(theme_id)
+                    if (_number(row.get("trade_value_1m_eok")) or 0.0) > 0
+                    else 0.0
+                ),
+                ratio_rank=ratio_value,
+                positive_flow_rank=positive_flow_rank,
+                coverage=coverage,
+                active_count=active_count,
+            )
+            apply_fund_flow_bar(
+                row,
+                prefix="5m",
+                recent_value=_number(row.get("trade_value_5m_eok")),
+                recent_rank=(
+                    five_money_rank.get(theme_id)
+                    if (_number(row.get("trade_value_5m_eok")) or 0.0) > 0
+                    else 0.0
+                ),
+                ratio_rank=ratio_value,
+                positive_flow_rank=positive_flow_rank,
+                coverage=coverage,
+                active_count=active_count,
+            )
+
         trend_rows = sorted(
             valid_rows,
             key=lambda row: (
@@ -293,6 +364,15 @@ def install(theme_module) -> None:
                 "program_large_trade_confirmation_rank": 10,
                 "coverage": 5,
             },
+            "fund_flow_bars": {
+                "server_completed": True,
+                "recent_money_relative_rank": 50,
+                "amount_ratio_relative_rank": 20,
+                "amount_ratio_absolute_signal": 20,
+                "positive_program_large_trade_rank": 10,
+                "zero_recent_money_score": 0,
+                "browser_calculation_allowed": False,
+            },
             "average_candidate_score_used": False,
             "amount_ratio_applied_once_per_view": True,
             "tie_policy": "equal_values_equal_percentile",
@@ -327,6 +407,7 @@ def install(theme_module) -> None:
             policy["dual_server_rankings"] = True
             policy["browser_sort_allowed"] = False
             policy["current_money_ranking_preserved_until_stage3"] = False
+            policy["fund_flow_bars"] = "server_relative_1m_5m"
         return payload
 
     builder_class.__call__ = call
