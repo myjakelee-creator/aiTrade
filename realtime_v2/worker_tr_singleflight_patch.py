@@ -5,11 +5,11 @@ from realtime_v2.tr_singleflight import get_shared_tr_coordinator
 
 
 def install(base) -> None:
-    """Route slow REST sources through shared low-priority worker lanes.
+    """Route slow REST and S1 realtime-strength sources through isolated lanes.
 
-    The large-trade QAx sidecar remains production-disabled. Restored bid/ask,
-    strength, and large-trade metrics use official Kiwoom REST endpoints from one
-    sleeping worker thread and never alter the verified price collector.
+    The production price collector remains the only QAx owner. Bid/ask and future
+    five-minute/large-trade stages use low-load REST. Stage 2 instantaneous strength
+    uses one official Kiwoom REST WebSocket subscription for S1 only.
     """
 
     updater_class = getattr(base, "ProgramNetUpdater", None)
@@ -66,9 +66,17 @@ def install(base) -> None:
     from realtime_v2.worker_rest_live_metrics_stage2_fix_patch import (
         install as install_rest_live_metrics_stage2_fix,
     )
+    from realtime_v2.worker_realtime_strength_ws_patch import (
+        install as install_realtime_strength_ws,
+    )
+    from realtime_v2.worker_realtime_strength_ws_coalesce_patch import (
+        install as install_realtime_strength_ws_coalesce,
+    )
 
     install_metric_restore(base)
     install_rest_live_metrics(base)
     install_rest_live_metrics_aftermarket()
     install_rest_live_metric_metadata(base)
     install_rest_live_metrics_stage2_fix(base)
+    install_realtime_strength_ws(base)
+    install_realtime_strength_ws_coalesce(base)

@@ -98,7 +98,7 @@ def test_bidask_parser_uses_total_bid_and_ask_volume():
     assert values["orderbook_source"] == "ka10004_rest_lowload"
 
 
-def test_strength_parser_applies_five_minute_only_from_stage_three():
+def test_ka10046_parser_exposes_time_trend_and_five_minute_fields():
     payload = {
         "cntr_str_tm": [
             {
@@ -111,16 +111,15 @@ def test_strength_parser_applies_five_minute_only_from_stage_three():
         ]
     }
 
-    stage_two = parse_strength_payload(payload, apply_five_minute=False)
-    stage_three = parse_strength_payload(payload, apply_five_minute=True)
+    without_five = parse_strength_payload(payload, apply_five_minute=False)
+    with_five = parse_strength_payload(payload, apply_five_minute=True)
 
-    assert stage_two["execution_strength"] == 118.25
-    assert stage_two["execution_strength_source"] == "ka10046_rest_lowload"
-    assert "strength_5m" not in stage_two
-    assert stage_three["execution_strength"] == 118.25
-    assert stage_three["strength_5m"] == 112.5
-    assert stage_three["strength_20m"] == 108.1
-    assert stage_three["strength_60m"] == 104.0
+    assert without_five["execution_strength"] == 118.25
+    assert without_five["execution_strength_source"] == "ka10046_rest_lowload"
+    assert "strength_5m" not in without_five
+    assert with_five["strength_5m"] == 112.5
+    assert with_five["strength_20m"] == 108.1
+    assert with_five["strength_60m"] == 104.0
 
 
 def test_large_trade_parser_preserves_signed_quantity_and_threshold():
@@ -165,8 +164,16 @@ def test_rollout_stage_one_requests_only_bidask():
     assert updater._metric_enabled("large_trade") is False
 
 
-def test_rollout_stage_two_adds_strength_but_not_five_minute_or_large_trade():
+def test_rollout_stage_two_keeps_ka10046_disabled_for_instant_strength():
     updater = RestLiveMetricUpdater(FakeState(), config=_config(2))
+
+    assert updater._metric_enabled("bidask") is True
+    assert updater._metric_enabled("strength") is False
+    assert updater._metric_enabled("large_trade") is False
+
+
+def test_rollout_stage_three_enables_ka10046_for_five_minute_strength():
+    updater = RestLiveMetricUpdater(FakeState(), config=_config(3))
 
     assert updater._metric_enabled("bidask") is True
     assert updater._metric_enabled("strength") is True
@@ -182,10 +189,9 @@ def test_rollout_stage_two_adds_strength_but_not_five_minute_or_large_trade():
                 }
             ]
         },
-        apply_five_minute=updater.stage >= 3,
+        apply_five_minute=True,
     )
-    assert values["execution_strength"] == 121.5
-    assert "strength_5m" not in values
+    assert values["strength_5m"] == 110.2
 
 
 def test_install_applies_values_and_requests_one_coalesced_rebuild():

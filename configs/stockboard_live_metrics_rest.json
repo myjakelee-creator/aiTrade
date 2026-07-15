@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "enabled": true,
   "rollout_stage": 2,
   "mode": "kiwoom_rest_lowload_v1",
@@ -27,6 +27,23 @@
     "start": "09:00",
     "end": "09:10"
   },
+  "realtime_strength_ws": {
+    "stage": 2,
+    "enabled": true,
+    "scope": "s1_only",
+    "url": "wss://api.kiwoom.com:10000/api/dostk/websocket",
+    "type": "0B",
+    "strength_field": "228",
+    "time_field": "20",
+    "exchange_field": "9081",
+    "group_no": "41",
+    "apply_interval_ms": 1000,
+    "stale_after_sec": 20,
+    "selection_refresh_sec": 5,
+    "reconnect_backoff_sec": 10,
+    "connect_timeout_sec": 10,
+    "receive_timeout_sec": 2
+  },
   "metrics": {
     "bidask": {
       "stage": 1,
@@ -46,7 +63,8 @@
       }
     },
     "strength": {
-      "stage": 2,
+      "stage": 3,
+      "purpose": "5분·20분·60분 강도 전용; 순간강도에는 사용 금지",
       "strength_5m_apply_stage": 3,
       "api_id": "ka10046",
       "path": "/api/dostk/mrkcond",
@@ -91,6 +109,9 @@
     "browser_calculation": false,
     "single_background_thread": true,
     "single_request_inflight": true,
-    "top_scope_only": true
+    "top_scope_only": true,
+    "realtime_strength_ws_connections": 1,
+    "realtime_strength_ws_symbols": 1,
+    "realtime_strength_apply_hz_max": 1
   }
 }

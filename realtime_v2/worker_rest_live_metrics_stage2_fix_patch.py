@@ -5,7 +5,7 @@ from typing import Any
 
 from realtime_v2.common import normalize_code, now_text, to_number
 
-PATCH_VERSION = "stage2_s1_source_diagnostics_v2"
+PATCH_VERSION = "stage2_s1_source_diagnostics_v3"
 SELECTION_STATUS_KEYS = (
     "selected_code",
     "active_code",
@@ -46,17 +46,25 @@ def _latest_strength_row(payload: dict[str, Any]) -> dict[str, Any] | None:
     return candidates[0]
 
 
+def _ranked_codes(quotes: dict[str, dict[str, Any]]) -> list[str]:
+    ranked = sorted(
+        quotes.items(),
+        key=lambda item: (
+            int(_number(item[1].get("rank")) or 999999),
+            -(_number(item[1].get("trade_value_eok")) or 0.0),
+            item[0],
+        ),
+    )
+    return [code for code, _row in ranked]
+
+
 def install(base) -> None:
-    """Fix Stage 2 S1 recognition and distinguish polling from source changes.
+    """Keep legacy selection diagnostics while rejecting stale runtime S1 values.
 
-    The UI selection is not always persisted to the legacy selected-code file. The
-    updater therefore resolves S1 from, in order: the existing file reader, worker
-    status, quote selection flags, and the current trade-value top code as a safe
-    fallback. No extra REST request is introduced.
-
-    ka10046 polling time and source row time are recorded separately. When the API
-    returns the same source row and value, ``execution_strength_updated_at`` keeps
-    the last real source-change time instead of pretending that the metric changed.
+    Stage 2 instantaneous strength no longer uses ka10046; the official 0B/FID228
+    WebSocket patch owns that field. This compatibility patch still resolves the
+    low-load REST lane selection and preserves ka10046 source diagnostics for the
+    future Stage 3 five-minute-strength rollout.
     """
 
     import realtime_v2.worker_rest_live_metrics_patch as module
@@ -86,46 +94,57 @@ def install(base) -> None:
 
     def resolve_selected(self) -> None:
         original_refresh_selected(self)
-        selected = normalize_code(getattr(self, "selected_code", ""))
-        source = "runtime_file" if selected else ""
+        runtime_selected = normalize_code(getattr(self, "selected_code", ""))
+        with self.state.lock:
+            status = dict(self.state.status)
+            quotes = {
+                normalize_code(code): dict(quote)
+                for code, quote in self.state.quotes.items()
+                if isinstance(quote, dict) and normalize_code(code)
+            }
+        ranked_codes = _ranked_codes(quotes)
+        top20 = set(ranked_codes[:20])
+        selected = ""
+        source = ""
+
+        for key in SELECTION_STATUS_KEYS:
+            candidate = normalize_code(status.get(key))
+            if candidate and candidate in top20:
+                selected = candidate
+                source = f"status:{key}"
+                break
 
         if not selected:
-            with self.state.lock:
-                status = dict(self.state.status)
-                quotes = {
-                    normalize_code(code): dict(quote)
-                    for code, quote in self.state.quotes.items()
-                    if isinstance(quote, dict) and normalize_code(code)
-                }
-            for key in SELECTION_STATUS_KEYS:
-                candidate = normalize_code(status.get(key))
-                if candidate:
-                    selected = candidate
-                    source = f"status:{key}"
+            for code, quote in quotes.items():
+                if code not in top20:
+                    continue
+                if any(bool(quote.get(key)) for key in SELECTION_QUOTE_KEYS):
+                    selected = code
+                    source = "quote_flag"
                     break
 
-            if not selected:
-                for code, quote in quotes.items():
-                    if any(bool(quote.get(key)) for key in SELECTION_QUOTE_KEYS):
-                        selected = code
-                        source = "quote_flag"
-                        break
+        runtime_rejected = False
+        if not selected and runtime_selected:
+            if runtime_selected in top20:
+                selected = runtime_selected
+                source = "runtime_file_current_top20"
+            else:
+                runtime_rejected = True
 
-            if not selected and quotes:
-                selected = max(
-                    quotes.items(),
-                    key=lambda item: (
-                        _number(item[1].get("trade_value_eok")) or 0.0,
-                        -int(item[1].get("seed_rank") or 999999),
-                        item[0],
-                    ),
-                )[0]
-                source = "trade_value_top1_fallback"
+        if not selected and ranked_codes:
+            selected = ranked_codes[0]
+            source = "canonical_rank1_fallback"
 
         self.selected_code = selected
         with self.state.lock:
             self.state.status["rest_live_metrics_selected_code"] = selected or None
             self.state.status["rest_live_metrics_selected_source"] = source or "unresolved"
+            self.state.status["rest_live_metrics_runtime_selected_code"] = (
+                runtime_selected or None
+            )
+            self.state.status["rest_live_metrics_runtime_selected_rejected"] = (
+                runtime_rejected
+            )
 
     def patched_apply(self, code: str, metric: str, payload: dict[str, Any]) -> bool:
         if metric != "strength":

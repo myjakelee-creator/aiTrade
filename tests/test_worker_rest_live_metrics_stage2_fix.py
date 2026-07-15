@@ -48,11 +48,6 @@ class FakeUpdater:
         return True
 
 
-class FakeModule:
-    RestLiveMetricUpdater = FakeUpdater
-    PERSIST_KEYS = ()
-
-
 class FakeBase:
     State = FakeState
     DAILY_PERSIST_KEYS = ()
@@ -74,7 +69,7 @@ def test_patch_installation_is_exposed_in_state_status(monkeypatch):
     assert state.status["rest_live_metrics_stage2_fix_version"] == PATCH_VERSION
 
 
-def test_missing_selection_falls_back_to_trade_value_top1(monkeypatch):
+def test_missing_selection_falls_back_to_canonical_top1(monkeypatch):
     _install_with_module(monkeypatch)
     state = FakeState()
     updater = FakeUpdater(state)
@@ -83,7 +78,7 @@ def test_missing_selection_falls_back_to_trade_value_top1(monkeypatch):
 
     assert updater.selected_code == "000001"
     assert state.status["rest_live_metrics_selected_code"] == "000001"
-    assert state.status["rest_live_metrics_selected_source"] == "trade_value_top1_fallback"
+    assert state.status["rest_live_metrics_selected_source"] == "canonical_rank1_fallback"
 
 
 def test_worker_status_selection_beats_top1_fallback(monkeypatch):
@@ -96,6 +91,20 @@ def test_worker_status_selection_beats_top1_fallback(monkeypatch):
 
     assert updater.selected_code == "000002"
     assert state.status["rest_live_metrics_selected_source"] == "status:selected_code"
+
+
+def test_stale_runtime_selection_outside_current_top20_is_rejected(monkeypatch):
+    _install_with_module(monkeypatch)
+    state = FakeState()
+    updater = FakeUpdater(state)
+    updater.selected_code = "999999"
+
+    updater._refresh_selected()
+
+    assert updater.selected_code == "000001"
+    assert state.status["rest_live_metrics_runtime_selected_code"] == "999999"
+    assert state.status["rest_live_metrics_runtime_selected_rejected"] is True
+    assert state.status["rest_live_metrics_selected_source"] == "canonical_rank1_fallback"
 
 
 def test_same_source_row_keeps_real_change_time_and_tracks_poll(monkeypatch):
