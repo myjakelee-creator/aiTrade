@@ -4,7 +4,7 @@ import ast
 import threading
 from pathlib import Path
 
-from realtime_v2.worker_rest_live_metrics_stage2_fix_patch import install
+from realtime_v2.worker_rest_live_metrics_stage2_fix_patch import PATCH_VERSION, install
 
 ROOT = Path(__file__).resolve().parents[1]
 PATCH_PATH = ROOT / "realtime_v2" / "worker_rest_live_metrics_stage2_fix_patch.py"
@@ -64,6 +64,14 @@ def _install_with_module(monkeypatch):
     monkeypatch.setattr(real_module, "RestLiveMetricUpdater", FakeUpdater)
     monkeypatch.setattr(real_module, "PERSIST_KEYS", ())
     install(FakeBase)
+
+
+def test_patch_installation_is_exposed_in_state_status(monkeypatch):
+    _install_with_module(monkeypatch)
+    state = FakeState()
+
+    assert state.status["rest_live_metrics_stage2_fix_installed"] is True
+    assert state.status["rest_live_metrics_stage2_fix_version"] == PATCH_VERSION
 
 
 def test_missing_selection_falls_back_to_trade_value_top1(monkeypatch):
