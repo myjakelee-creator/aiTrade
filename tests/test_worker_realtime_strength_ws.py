@@ -80,7 +80,7 @@ def test_parse_realtime_0b_fid228_message():
                 {
                     "type": "0B",
                     "name": "주식체결",
-                    "item": "000660_NX",
+                    "item": "000660_AL",
                     "values": {
                         "20": "181501",
                         "10": "+2067000",
@@ -101,7 +101,7 @@ def test_parse_realtime_0b_fid228_message():
             "execution_strength_exchange": "2",
             "execution_strength_market_phase": "3",
             "execution_strength_trade_price": 2067000.0,
-            "raw_item": "000660_NX",
+            "raw_item": "000660_AL",
         }
     ]
 
@@ -151,20 +151,21 @@ def test_install_applies_fid228_and_hides_legacy_ka10046_snapshot():
     assert rows["010950"]["execution_strength_legacy_snapshot"] == 88.0
 
 
-def test_stage4_keeps_realtime_strength_and_five_minute_lane():
+def test_stage4_uses_one_top20_websocket_and_batch_apply():
     config = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
 
     assert config["rollout_stage"] == 4
     assert config["metrics"]["strength"]["stage"] == 3
     assert config["metrics"]["large_trade"]["stage"] == 4
     assert config["realtime_strength_ws"]["stage"] == 2
-    assert config["realtime_strength_ws"]["scope"] == "s1_only"
+    assert config["realtime_strength_ws"]["scope"] == "top20"
+    assert config["realtime_strength_ws"]["max_symbols"] == 20
     assert config["realtime_strength_ws"]["type"] == "0B"
     assert config["realtime_strength_ws"]["strength_field"] == "228"
     contract = config["performance_contract"]
     assert contract["realtime_strength_ws_connections"] == 1
-    assert contract["realtime_strength_ws_symbols"] == 1
-    assert contract["realtime_strength_apply_hz_max"] == 1
+    assert contract["realtime_strength_ws_symbols"] == 20
+    assert contract["realtime_strength_batch_apply_hz_max"] == 1
 
 
 def test_websocket_patch_does_not_modify_qax_price_collector():
