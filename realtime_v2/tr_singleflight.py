@@ -6,6 +6,7 @@ import os
 import threading
 import time
 from copy import deepcopy
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable
 
@@ -20,7 +21,7 @@ class TRSingleFlightCoordinator:
     """Cross-process single-flight cache for slow TR/HTTP sources.
 
     A logical request key is normalized from provider, TR code, parameters,
-    trading date and market session.  Only the process that atomically creates
+    trading date and market session. Only the process that atomically creates
     the lease file executes the physical request. Other callers reuse the same
     cache or wait for the owner result.
     """
@@ -59,6 +60,39 @@ class TRSingleFlightCoordinator:
             "trading_date": str(trading_date or "").strip(),
             "market_session": str(market_session or "").strip().lower(),
         }
+
+    @staticmethod
+    def _json_safe(value: Any) -> Any:
+        """Return a JSON-native copy of a slow-source payload.
+
+        Kiwoom helpers may expose Decimal metadata such as unit divisors. The
+        single-flight cache must persist the same payload for all processes, so
+        normalize only serialization types here instead of changing TR values or
+        issuing another request.
+        """
+
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        if isinstance(value, Decimal):
+            if not value.is_finite():
+                return str(value)
+            integral = value.to_integral_value()
+            return int(integral) if value == integral else float(value)
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, dict):
+            return {
+                str(key): TRSingleFlightCoordinator._json_safe(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, (list, tuple)):
+            return [TRSingleFlightCoordinator._json_safe(item) for item in value]
+        if isinstance(value, (set, frozenset)):
+            return [
+                TRSingleFlightCoordinator._json_safe(item)
+                for item in sorted(value, key=repr)
+            ]
+        return str(value)
 
     @staticmethod
     def _digest(key: dict[str, Any]) -> str:
@@ -170,9 +204,10 @@ class TRSingleFlightCoordinator:
                     with self._lock:
                         self._physical_fetch_count += 1
                         self._last_mode = "physical_fetch"
-                    payload = fetcher()
-                    if not isinstance(payload, dict):
+                    raw_payload = fetcher()
+                    if not isinstance(raw_payload, dict):
                         raise TypeError("TR single-flight fetcher must return dict")
+                    payload = self._json_safe(raw_payload)
                     envelope = {
                         "schema_version": 1,
                         "source": "tr_singleflight_cache",

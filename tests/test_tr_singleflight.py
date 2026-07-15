@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
+from decimal import Decimal
 from pathlib import Path
 
 from realtime_v2.tr_singleflight import TRSingleFlightCoordinator
@@ -97,6 +99,52 @@ def test_normalized_params_share_cache_and_different_params_do_not(tmp_path: Pat
     assert second == {"fetch_count": 1}
     assert third == {"fetch_count": 2}
     assert coordinator.status()["cache_hit_count"] >= 1
+
+
+def test_decimal_payload_is_normalized_before_cache_write(tmp_path: Path):
+    coordinator = TRSingleFlightCoordinator(tmp_path)
+
+    result = coordinator.execute(
+        provider="kiwoom_rest",
+        tr_code="ka90004_program_net",
+        params={"scope": "stockboard_universe"},
+        trading_date="20260715",
+        market_session="regular_or_latest",
+        ttl_sec=60,
+        fetcher=lambda: {
+            "values": {"000001": Decimal("12.5")},
+            "divisor": Decimal("100"),
+            "metadata": {
+                "request_sleep_seconds": Decimal("0.25"),
+                "path": Path("cache/source.json"),
+            },
+        },
+    )
+
+    assert result == {
+        "values": {"000001": 12.5},
+        "divisor": 100,
+        "metadata": {
+            "request_sleep_seconds": 0.25,
+            "path": "cache/source.json",
+        },
+    }
+
+    cache_files = list(tmp_path.glob("*.json"))
+    assert len(cache_files) == 1
+    cached = json.loads(cache_files[0].read_text(encoding="utf-8"))
+    assert cached["payload"] == result
+
+    cached_again = coordinator.execute(
+        provider="kiwoom_rest",
+        tr_code="ka90004_program_net",
+        params={"scope": "stockboard_universe"},
+        trading_date="20260715",
+        market_session="regular_or_latest",
+        ttl_sec=60,
+        fetcher=lambda: (_ for _ in ()).throw(AssertionError("cache was not reused")),
+    )
+    assert cached_again == result
 
 
 def test_stale_cache_is_returned_when_refresh_fails(tmp_path: Path):
