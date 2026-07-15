@@ -1,0 +1,88 @@
+name: StockBoard CI
+
+on:
+  pull_request:
+    branches:
+      - main
+      - hot-priority-integrated-20260630
+      - fix/restore-stable-collector-20260713
+  push:
+    branches:
+      - main
+      - hot-priority-integrated-20260630
+      - "fix/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stockboard-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-regression:
+    name: Windows Python regression
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          architecture: "x64"
+
+      - name: Show Python environment
+        shell: pwsh
+        run: |
+          python --version
+          python -c "import struct; print('python_bits=', struct.calcsize('P') * 8)"
+
+      - name: Install CI dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest websockets websocket-client
+
+      - name: Check Python syntax
+        shell: pwsh
+        run: |
+          python -m py_compile `
+            realtime_v2\worker_market_metric_session_manager.py `
+            realtime_v2\worker_tr_singleflight_patch.py `
+            realtime_v2\worker_metric_provenance_patch.py `
+            realtime_v2\worker_realtime_strength_ws_top20_patch.py `
+            realtime_v2\worker_strength5_only_patch.py `
+            realtime_v2\worker_six_metric_lifecycle_patch.py `
+            realtime_v2\worker_six_metric_output_guard.py `
+            realtime_v2\html_opening_render_guard_patch.py
+
+      - name: Run StockBoard targeted tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force test-results | Out-Null
+          python -m pytest -q `
+            tests\test_worker_market_metric_session_manager.py `
+            tests\test_worker_metric_session_alignment.py `
+            tests\test_worker_rest_live_metrics_aftermarket.py `
+            tests\test_worker_six_metric_lifecycle.py `
+            tests\test_worker_six_metric_runtime_guards.py `
+            tests\test_worker_large_trade_stage4.py `
+            tests\test_html_metric_display_patches.py `
+            tests\test_worker_realtime_strength_ws.py `
+            tests\test_worker_rest_live_metrics_patch.py `
+            tests\test_tr_singleflight.py `
+            --junitxml=test-results\pytest.xml
+
+      - name: Upload pytest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stockboard-pytest-results
+          path: test-results
+          retention-days: 14
+          if-no-files-found: warn
