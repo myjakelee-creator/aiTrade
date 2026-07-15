@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "enabled": true,
-  "rollout_stage": 1,
+  "rollout_stage": 2,
   "mode": "kiwoom_rest_lowload_v1",
   "query_suffix": "_AL",
   "query_suffix_by_session": {

@@ -115,6 +115,7 @@ def test_strength_parser_applies_five_minute_only_from_stage_three():
     stage_three = parse_strength_payload(payload, apply_five_minute=True)
 
     assert stage_two["execution_strength"] == 118.25
+    assert stage_two["execution_strength_source"] == "ka10046_rest_lowload"
     assert "strength_5m" not in stage_two
     assert stage_three["execution_strength"] == 118.25
     assert stage_three["strength_5m"] == 112.5
@@ -164,6 +165,29 @@ def test_rollout_stage_one_requests_only_bidask():
     assert updater._metric_enabled("large_trade") is False
 
 
+def test_rollout_stage_two_adds_strength_but_not_five_minute_or_large_trade():
+    updater = RestLiveMetricUpdater(FakeState(), config=_config(2))
+
+    assert updater._metric_enabled("bidask") is True
+    assert updater._metric_enabled("strength") is True
+    assert updater._metric_enabled("large_trade") is False
+
+    values = parse_strength_payload(
+        {
+            "cntr_str_tm": [
+                {
+                    "cntr_tm": "160500",
+                    "cntr_str": "121.5",
+                    "cntr_str_5min": "110.2",
+                }
+            ]
+        },
+        apply_five_minute=updater.stage >= 3,
+    )
+    assert values["execution_strength"] == 121.5
+    assert "strength_5m" not in values
+
+
 def test_install_applies_values_and_requests_one_coalesced_rebuild():
     class LocalState(FakeState):
         pass
@@ -186,13 +210,17 @@ def test_install_applies_values_and_requests_one_coalesced_rebuild():
             "bid_volume": 600,
             "ask_volume": 400,
             "orderbook_received_at": "2026-07-15T15:03:00+09:00",
+            "orderbook_source": "ka10004_rest_lowload",
+            "orderbook_status": "ok",
         },
         "bidask",
     )
 
     assert updated == 1
     assert state.quotes["000001"]["bid_ask_ratio"] == 1.5
+    assert state.quotes["000001"]["orderbook_source"] == "ka10004_rest_lowload"
     assert state.daily_values_by_code["000001"]["bid_ask_ratio"] == 1.5
+    assert state.daily_values_by_code["000001"]["orderbook_status"] == "ok"
     assert state.rebuild_reasons == [("rest_live_metric:bidask", False)]
 
 
@@ -271,4 +299,4 @@ def test_patch_does_not_add_qax_realtime_or_browser_calculation():
     assert contract["new_qax_processes"] == 0
     assert contract["new_realtime_fids"] == 0
     assert contract["browser_calculation"] is False
-    assert config["rollout_stage"] == 1
+    assert config["rollout_stage"] == 2

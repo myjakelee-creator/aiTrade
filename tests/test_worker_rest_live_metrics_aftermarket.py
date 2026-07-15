@@ -47,6 +47,8 @@ def test_aftermarket_uses_nxt_suffix_and_active_intervals():
     assert updater._query_code("000660") == "000660_NX"
     assert updater._interval("bidask", "s1") == 10
     assert updater._interval("bidask", "top20") == 60
+    assert updater._interval("strength", "s1") == 30
+    assert updater._interval("strength", "top20") == 180
     assert updater.state.status["rest_live_metrics_query_suffix"] == "_NX"
     assert updater.state.status["rest_live_metrics_market_phase"] == "aftermarket"
 
@@ -77,7 +79,7 @@ def test_aftermarket_patch_does_not_touch_qax_or_price_callback():
     assert '_REALTIME_FIDS = "10;12;20;14"' in collector_source
 
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    assert config["rollout_stage"] == 1
+    assert config["rollout_stage"] == 2
     assert config["query_suffix_by_session"] == {
         "regular": "_AL",
         "aftermarket": "_NX",
