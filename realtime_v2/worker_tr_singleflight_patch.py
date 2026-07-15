@@ -118,6 +118,7 @@ def install(base) -> None:
     )
     from realtime_v2.worker_market_metric_session_manager import (
         install as install_market_metric_session_manager,
+        market_metric_phase,
     )
     from realtime_v2.worker_six_metric_lifecycle_runtime_opt import (
         install as install_six_metric_runtime_opt,
@@ -147,6 +148,14 @@ def install(base) -> None:
     install_realtime_strength_ws(base)
     install_realtime_strength_ws_coalesce(base)
     realtime_strength_module._read_config = read_live_metric_config
+
+    def execution_ws_phase(config):
+        phase = market_metric_phase(config=config)
+        if phase in {"opening_burst", "regular", "closing_call", "aftermarket"}:
+            return phase
+        return "outside"
+
+    realtime_strength_module._session_phase = execution_ws_phase
     install_realtime_strength_ws_top20(base)
     install_metric_provenance(base)
     install_market_metric_session_manager(base)
