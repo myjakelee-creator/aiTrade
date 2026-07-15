@@ -10,13 +10,15 @@ if not defined STOCKBOARD_HEAVY_SNAPSHOT_INTERVAL_MS set "STOCKBOARD_HEAVY_SNAPS
 if not defined STOCKBOARD_HEAVY_SNAPSHOT_MAX_AGE_MS set "STOCKBOARD_HEAVY_SNAPSHOT_MAX_AGE_MS=2000"
 if not defined STOCKBOARD_BACKGROUND_REBUILD_POLL_MS set "STOCKBOARD_BACKGROUND_REBUILD_POLL_MS=50"
 if not defined STOCKBOARD_STATUS_WRITE_INTERVAL_SEC set "STOCKBOARD_STATUS_WRITE_INTERVAL_SEC=5"
+if not defined STOCKBOARD_LARGE_TRADE_SIDECAR_ENABLED set "STOCKBOARD_LARGE_TRADE_SIDECAR_ENABLED=1"
+if not defined STOCKBOARD_LARGE_TRADE_OPENING_LIMIT set "STOCKBOARD_LARGE_TRADE_OPENING_LIMIT=20"
 rem A manually refreshed full Kiwoom catalog is preferred. If it is absent, the
 rem ThemeMembershipLoader continues to the existing static 10-theme fallback.
 if not defined STOCKBOARD_THEME_MEMBERSHIP_FILE set "STOCKBOARD_THEME_MEMBERSHIP_FILE=C:\aiTrade\data\runtime\stockboard_v2\theme_membership.json"
 
 set "ACTION=%~1"
 if "%ACTION%"=="" goto menu
- goto run
+goto run
 
 :menu
 echo.
@@ -49,6 +51,7 @@ if "%ACTION%"=="" (
 set "SAFE=%~dp0scripts\stockboard_v2_large_safe.ps1"
 set "PREFLIGHT=%~dp0scripts\stockboard_v2_openapi_preflight.ps1"
 set "CONTEXT_SINGLEFLIGHT=%~dp0scripts\start_context_singleflight.ps1"
+set "LARGE_TRADE_SIDECAR=%~dp0scripts\stockboard_large_trade_sidecar.ps1"
 
 if /I "%ACTION%"=="start" (
   set "START_ACTION=start"
@@ -70,6 +73,7 @@ if /I "%ACTION%"=="restart-fast" (
 goto direct_action
 
 :prepare_start
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%LARGE_TRADE_SIDECAR%" -Action stop
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SAFE%" -Action stop
 if errorlevel 1 goto failed
 
@@ -87,6 +91,11 @@ if not "%SAFE_RC%"=="0" goto failed_with_safe_rc
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%CONTEXT_SINGLEFLIGHT%"
 if errorlevel 1 goto failed
 
+rem Fail-open auxiliary lane: its own QAx process can stop without touching the
+rem verified price collector. Startup failure is reported but does not stop StockBoard.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%LARGE_TRADE_SIDECAR%" -Action start
+if errorlevel 1 echo WARNING: Large-trade sidecar start failed; price collector remains running.
+
 set "RC=0"
 goto finish
 
@@ -95,8 +104,11 @@ set "RC=%SAFE_RC%"
 goto finish
 
 :direct_action
+if /I "%ACTION%"=="stop" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%LARGE_TRADE_SIDECAR%" -Action stop
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SAFE%" -Action "%ACTION%"
 set "RC=%ERRORLEVEL%"
+if /I "%ACTION%"=="status" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%LARGE_TRADE_SIDECAR%" -Action status
+if /I "%ACTION%"=="doctor" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%LARGE_TRADE_SIDECAR%" -Action status
 goto finish
 
 :failed
