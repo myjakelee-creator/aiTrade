@@ -305,4 +305,4 @@ def test_patch_does_not_add_qax_realtime_or_browser_calculation():
     assert contract["new_qax_processes"] == 0
     assert contract["new_realtime_fids"] == 0
     assert contract["browser_calculation"] is False
-    assert config["rollout_stage"] == 2
+    assert config["rollout_stage"] == 4

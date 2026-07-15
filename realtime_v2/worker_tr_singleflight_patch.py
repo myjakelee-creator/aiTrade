@@ -7,9 +7,11 @@ from realtime_v2.tr_singleflight import get_shared_tr_coordinator
 def install(base) -> None:
     """Route slow REST and S1 realtime-strength sources through isolated lanes.
 
-    The production price collector remains the only QAx owner. Bid/ask and future
-    five-minute/large-trade stages use low-load REST. Stage 2 instantaneous strength
-    uses one official Kiwoom REST WebSocket subscription for S1 only.
+    The production price collector remains the only QAx owner. Bid/ask, five-minute
+    strength, and large trades use one low-load REST budget. Execution strength uses
+    one official Kiwoom REST WebSocket subscription for S1 only. The final six-metric
+    lifecycle wrapper is authoritative for amount ratio, bid/ask, execution strength,
+    five-minute strength, program net, and large-trade display across sessions.
     """
 
     updater_class = getattr(base, "ProgramNetUpdater", None)
@@ -66,14 +68,27 @@ def install(base) -> None:
     from realtime_v2.worker_rest_live_metrics_stage2_fix_patch import (
         install as install_rest_live_metrics_stage2_fix,
     )
+    from realtime_v2.worker_large_trade_stage4_patch import (
+        install as install_large_trade_stage4,
+    )
     from realtime_v2.worker_realtime_strength_ws_patch import (
         install as install_realtime_strength_ws,
     )
     from realtime_v2.worker_realtime_strength_ws_coalesce_patch import (
         install as install_realtime_strength_ws_coalesce,
     )
-    from realtime_v2.worker_realtime_strength_close_hold_patch import (
-        install as install_realtime_strength_close_hold,
+    from realtime_v2.worker_six_metric_lifecycle_runtime_opt import (
+        install as install_six_metric_runtime_opt,
+    )
+    from realtime_v2.worker_six_metric_lifecycle_patch import (
+        install as install_six_metric_lifecycle,
+    )
+    from realtime_v2.worker_six_metric_output_guard import (
+        install as install_six_metric_output_guard,
+    )
+    from realtime_v2.html_null_metric_patch import install as install_html_null_metric
+    from realtime_v2.html_execution_strength_label_patch import (
+        install as install_execution_strength_label,
     )
 
     install_metric_restore(base)
@@ -81,6 +96,11 @@ def install(base) -> None:
     install_rest_live_metrics_aftermarket()
     install_rest_live_metric_metadata(base)
     install_rest_live_metrics_stage2_fix(base)
+    install_large_trade_stage4(base)
     install_realtime_strength_ws(base)
     install_realtime_strength_ws_coalesce(base)
-    install_realtime_strength_close_hold(base)
+    install_six_metric_runtime_opt()
+    install_six_metric_lifecycle(base)
+    install_six_metric_output_guard(base)
+    install_html_null_metric()
+    install_execution_strength_label()

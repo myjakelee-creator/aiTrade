@@ -1,7 +1,7 @@
 {
-  "schema_version": 4,
+  "schema_version": 7,
   "enabled": true,
-  "rollout_stage": 2,
+  "rollout_stage": 4,
   "mode": "kiwoom_rest_lowload_v1",
   "query_suffix": "_AL",
   "query_suffix_by_session": {
@@ -42,19 +42,25 @@
     "selection_refresh_sec": 5,
     "reconnect_backoff_sec": 10,
     "connect_timeout_sec": 10,
-    "receive_timeout_sec": 2,
-    "close_hold": {
-      "enabled": true,
-      "save_interval_sec": 5,
-      "display_until": "next_premarket",
-      "display_phases": [
-        "closed",
-        "before_market",
-        "weekend",
-        "holiday"
-      ],
-      "snapshot_file": "realtime_strength_final_hold.json"
-    }
+    "receive_timeout_sec": 2
+  },
+  "six_metric_lifecycle": {
+    "enabled": true,
+    "groups": [
+      "amount_ratio",
+      "orderbook",
+      "execution",
+      "strength5",
+      "program",
+      "large_trade"
+    ],
+    "snapshot_file": "six_metric_lifecycle.json",
+    "save_interval_sec": 5,
+    "closed_display_until": "next_premarket",
+    "active_session_policy": "current_trading_date_only",
+    "closed_session_policy": "last_completed_trading_date_only",
+    "unknown_date_policy": "hide",
+    "missing_numeric_policy": "dash_not_zero"
   },
   "metrics": {
     "bidask": {
@@ -76,7 +82,7 @@
     },
     "strength": {
       "stage": 3,
-      "purpose": "5분·20분·60분 강도 전용; 순간강도에는 사용 금지",
+      "purpose": "5분·20분·60분 강도 전용; 체결강도에는 사용 금지",
       "strength_5m_apply_stage": 3,
       "api_id": "ka10046",
       "path": "/api/dostk/mrkcond",
@@ -99,19 +105,19 @@
       "path": "/api/dostk/stkinfo",
       "threshold_krw": 50000000,
       "regular_interval_sec": {
-        "s1": 30,
-        "top20": 180
-      },
-      "aftermarket_interval_sec": {
         "s1": 60,
         "top20": 300
       },
-      "opening_interval_sec": {
+      "aftermarket_interval_sec": {
         "s1": 120,
+        "top20": 600
+      },
+      "opening_interval_sec": {
+        "s1": 180,
         "top20": 0
       },
       "first_page_only": true,
-      "baseline_first_response": true
+      "baseline_first_response": false
     }
   },
   "performance_contract": {
@@ -125,7 +131,10 @@
     "realtime_strength_ws_connections": 1,
     "realtime_strength_ws_symbols": 1,
     "realtime_strength_apply_hz_max": 1,
-    "realtime_strength_close_hold_threads": 0,
-    "realtime_strength_close_hold_network_requests": 0
+    "six_metric_lifecycle_threads": 0,
+    "six_metric_lifecycle_network_requests": 0,
+    "six_metric_lifecycle_snapshot_write_min_interval_sec": 5,
+    "large_trade_stage4_threads": 0,
+    "large_trade_stage4_min_request_gap_sec": 2
   }
 }

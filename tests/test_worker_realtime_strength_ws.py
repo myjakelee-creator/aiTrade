@@ -151,11 +151,12 @@ def test_install_applies_fid228_and_hides_legacy_ka10046_snapshot():
     assert rows["010950"]["execution_strength_legacy_snapshot"] == 88.0
 
 
-def test_stage2_disables_ka10046_instant_and_enables_one_s1_websocket():
+def test_stage4_keeps_realtime_strength_and_five_minute_lane():
     config = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
 
-    assert config["rollout_stage"] == 2
+    assert config["rollout_stage"] == 4
     assert config["metrics"]["strength"]["stage"] == 3
+    assert config["metrics"]["large_trade"]["stage"] == 4
     assert config["realtime_strength_ws"]["stage"] == 2
     assert config["realtime_strength_ws"]["scope"] == "s1_only"
     assert config["realtime_strength_ws"]["type"] == "0B"
