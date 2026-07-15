@@ -1,27 +1,40 @@
 from __future__ import annotations
 
-from realtime_v2.common import trading_date_text
 from realtime_v2.tr_singleflight import get_shared_tr_coordinator
 
 
 def install(base) -> None:
-    """Route slow REST and realtime execution strength through isolated lanes.
+    """Route all auxiliary metrics through one calendar-driven low-load owner.
 
     The production price collector remains the only QAx owner. Bid/ask, five-minute
-    strength, and large trades use one low-load REST budget. Execution strength uses
-    one official Kiwoom REST WebSocket connection for Top20 with one batched state
-    commit per second. The final six-metric lifecycle wrapper is authoritative for
-    amount ratio, bid/ask, execution strength, five-minute strength, program net, and
-    large-trade display across sessions.
+    strength, and large trades share one REST thread and one single-flight budget.
+    Execution strength uses one WebSocket connection for Top20 with one batch commit
+    per second. The market-session manager owns Top1/Top20/Top100 scope, trading-date
+    rollover, holidays, delayed openings, close completion, and restart recovery.
     """
 
     updater_class = getattr(base, "ProgramNetUpdater", None)
     if updater_class is None or getattr(updater_class, "_stockboard_tr_singleflight_installed", False):
         return
 
+    def patched_load_existing_snapshots(self) -> None:
+        # Daily-state alignment is the only trusted bootstrap. The historical docs
+        # snapshot has no reliable source-trading-date and must never be re-labelled.
+        with self.state.lock:
+            self.state.status["program_snapshot_bootstrap"] = "calendar_daily_state_only"
+
     def patched_fetch_once(self) -> None:
+        from realtime_v2.worker_market_metric_session_manager import (
+            market_metric_phase,
+            metric_target_trading_date,
+        )
+
         coordinator = get_shared_tr_coordinator()
-        trade_date = trading_date_text()
+        trade_date = metric_target_trading_date()
+        phase = market_metric_phase()
+        if not trade_date:
+            self.state.set_program_net_error("program target trading date unresolved")
+            return
 
         def physical_fetch():
             from kiwoom_data_provider import fetch_program_net, issue_access_token
@@ -33,9 +46,9 @@ def install(base) -> None:
             result = coordinator.execute(
                 provider="kiwoom_rest",
                 tr_code="ka90004_program_net",
-                params={"scope": "stockboard_universe"},
+                params={"scope": "stockboard_universe", "target_date": trade_date},
                 trading_date=trade_date,
-                market_session="regular_or_latest",
+                market_session=phase,
                 ttl_sec=max(15.0, float(self.interval_sec) * 0.8),
                 wait_timeout_sec=max(30.0, float(self.interval_sec)),
                 fetcher=physical_fetch,
@@ -50,12 +63,23 @@ def install(base) -> None:
                 )
             with self.state.lock:
                 self.state.status["tr_singleflight"] = coordinator.status()
+                self.state.status["program_request_target_trading_date"] = trade_date
+                self.state.status["program_request_market_phase"] = phase
         except Exception as error:
             self.state.set_program_net_error(str(error))
             with self.state.lock:
                 self.state.status["tr_singleflight"] = coordinator.status()
 
+    def patched_program_run(self) -> None:
+        self._load_existing_snapshots()
+        if not self.stop_event.is_set():
+            self._fetch_once()
+        while not self.stop_event.wait(self.interval_sec):
+            self._fetch_once()
+
+    updater_class._load_existing_snapshots = patched_load_existing_snapshots
     updater_class._fetch_once = patched_fetch_once
+    updater_class.run = patched_program_run
     updater_class._stockboard_tr_singleflight_installed = True
 
     from realtime_v2.worker_metric_restore_patch import install as install_metric_restore
@@ -92,6 +116,9 @@ def install(base) -> None:
     from realtime_v2.worker_metric_provenance_patch import (
         install as install_metric_provenance,
     )
+    from realtime_v2.worker_market_metric_session_manager import (
+        install as install_market_metric_session_manager,
+    )
     from realtime_v2.worker_six_metric_lifecycle_runtime_opt import (
         install as install_six_metric_runtime_opt,
     )
@@ -122,6 +149,7 @@ def install(base) -> None:
     realtime_strength_module._read_config = read_live_metric_config
     install_realtime_strength_ws_top20(base)
     install_metric_provenance(base)
+    install_market_metric_session_manager(base)
     install_six_metric_runtime_opt()
     install_six_metric_lifecycle(base)
     install_six_metric_output_guard(base)
