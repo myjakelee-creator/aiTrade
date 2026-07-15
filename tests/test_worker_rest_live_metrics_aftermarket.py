@@ -38,20 +38,20 @@ def test_regular_session_keeps_integrated_suffix():
     assert updater.state.status["rest_live_metrics_query_suffix"] == "_AL"
 
 
-def test_aftermarket_uses_nxt_suffix_and_active_intervals():
+def test_aftermarket_uses_integrated_suffix_and_active_intervals():
     install()
     updater = _updater_at(16 * 60 + 10)
 
     assert updater._session_phase() == "aftermarket"
     assert updater._in_regular_session() is True
-    assert updater._query_code("000660") == "000660_NX"
+    assert updater._query_code("000660") == "000660_AL"
     assert updater._interval("bidask", "s1") == 10
     assert updater._interval("bidask", "top20") == 60
     assert updater._interval("strength", "s1") == 30
     assert updater._interval("strength", "top20") == 180
     assert updater._interval("large_trade", "s1") == 120
     assert updater._interval("large_trade", "top20") == 600
-    assert updater.state.status["rest_live_metrics_query_suffix"] == "_NX"
+    assert updater.state.status["rest_live_metrics_query_suffix"] == "_AL"
     assert updater.state.status["rest_live_metrics_market_phase"] == "aftermarket"
 
 
@@ -83,8 +83,9 @@ def test_aftermarket_patch_does_not_touch_qax_or_price_callback():
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     assert config["rollout_stage"] == 4
     assert config["query_suffix_by_session"] == {
+        "before_market": "_AL",
         "regular": "_AL",
-        "aftermarket": "_NX",
+        "aftermarket": "_AL",
     }
     assert config["aftermarket_session"] == {
         "start": "15:30",
