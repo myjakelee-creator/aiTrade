@@ -57,6 +57,10 @@ def install(base) -> None:
 
     from realtime_v2.worker_metric_restore_patch import install as install_metric_restore
     from realtime_v2.worker_rest_live_metrics_patch import install as install_rest_live_metrics
+    from realtime_v2.worker_rest_live_metrics_aftermarket_patch import (
+        install as install_rest_live_metrics_aftermarket,
+    )
 
     install_metric_restore(base)
     install_rest_live_metrics(base)
+    install_rest_live_metrics_aftermarket()

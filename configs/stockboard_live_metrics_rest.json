@@ -1,9 +1,13 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "enabled": true,
   "rollout_stage": 1,
   "mode": "kiwoom_rest_lowload_v1",
   "query_suffix": "_AL",
+  "query_suffix_by_session": {
+    "regular": "_AL",
+    "aftermarket": "_NX"
+  },
   "max_top_codes": 20,
   "global_min_request_gap_sec": 2.0,
   "health_stable_sec": 10,
@@ -15,6 +19,10 @@
     "start": "09:00",
     "end": "15:30"
   },
+  "aftermarket_session": {
+    "start": "15:30",
+    "end": "20:00"
+  },
   "opening_window": {
     "start": "09:00",
     "end": "09:10"
@@ -25,6 +33,10 @@
       "api_id": "ka10004",
       "path": "/api/dostk/mrkcond",
       "regular_interval_sec": {
+        "s1": 10,
+        "top20": 60
+      },
+      "aftermarket_interval_sec": {
         "s1": 10,
         "top20": 60
       },
@@ -42,6 +54,10 @@
         "s1": 15,
         "top20": 90
       },
+      "aftermarket_interval_sec": {
+        "s1": 30,
+        "top20": 180
+      },
       "opening_interval_sec": {
         "s1": 45,
         "top20": 300
@@ -55,6 +71,10 @@
       "regular_interval_sec": {
         "s1": 30,
         "top20": 180
+      },
+      "aftermarket_interval_sec": {
+        "s1": 60,
+        "top20": 300
       },
       "opening_interval_sec": {
         "s1": 120,
