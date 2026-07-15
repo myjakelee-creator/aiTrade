@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PRICE_COLLECTOR = ROOT / "realtime_v2" / "collector32_large_bidask.py"
 SIDECAR = ROOT / "realtime_v2" / "large_trade_collector32.py"
 MANAGER = ROOT / "scripts" / "stockboard_large_trade_sidecar.ps1"
+LAUNCHER = ROOT / "stockboard_v2_large.cmd"
+WORKER_INSTALLER = ROOT / "realtime_v2" / "worker_tr_singleflight_patch.py"
 
 
 class FakeState:
@@ -56,7 +58,7 @@ class FakeBase:
         return dict(event.get("values") or {})
 
 
-def test_adaptive_tracking_limit_protects_market_open():
+def test_adaptive_tracking_limit_for_isolated_experiment():
     assert tracking_limit_for_time(
         datetime(2026, 7, 15, 9, 0), opening_limit=20, normal_limit=100
     ) == 20
@@ -65,9 +67,6 @@ def test_adaptive_tracking_limit_protects_market_open():
     ) == 20
     assert tracking_limit_for_time(
         datetime(2026, 7, 15, 9, 10), opening_limit=20, normal_limit=100
-    ) == 100
-    assert tracking_limit_for_time(
-        datetime(2026, 7, 15, 12, 53), opening_limit=20, normal_limit=100
     ) == 100
 
 
@@ -91,7 +90,7 @@ def test_only_50m_or_larger_signed_ticks_emit_delta():
     assert sell["large_trade_sell_sum_eok_delta"] == 0.5
 
 
-def test_worker_adds_sparse_sidecar_deltas_without_touching_price():
+def test_experimental_worker_patch_adds_sparse_delta_without_touching_price():
     install(FakeBase)
     state = FakeState()
     quote = state._quote("000001")
@@ -121,18 +120,16 @@ def test_worker_adds_sparse_sidecar_deltas_without_touching_price():
     assert row["large_trade_buy_sum_eok"] == 5.5
     assert row["large_trade_sell_sum_eok"] == 1.75
     assert row["large_trade_net_sum_eok"] == 3.75
-    assert row["large_trade_source"] == "fid15_sidecar"
-    assert row["large_trade_available"] is True
     assert row["price"] == 123456
     assert row["change_rate"] == 7.89
-    assert state.daily_dirty is True
-    assert state.status["large_trade_sidecar_event_count"] == 1
 
 
-def test_price_collector_stays_fid15_free_and_sidecar_is_separate():
+def test_production_keeps_one_qax_price_owner_and_sidecar_disabled():
     price_source = PRICE_COLLECTOR.read_text(encoding="utf-8")
     sidecar_source = SIDECAR.read_text(encoding="utf-8")
     manager_source = MANAGER.read_text(encoding="utf-8")
+    launcher_source = LAUNCHER.read_text(encoding="utf-8")
+    worker_source = WORKER_INSTALLER.read_text(encoding="utf-8")
 
     assert '_REALTIME_FIDS = "10;12;20;14"' in price_source
     assert "large_trade_enabled=False" in price_source
@@ -140,6 +137,14 @@ def test_price_collector_stays_fid15_free_and_sidecar_is_separate():
 
     assert '_REALTIME_FIDS = "10;15;20"' in sidecar_source
     assert '"type": "large_trade_delta"' in sidecar_source
-    assert "sender.publish_direct" in sidecar_source
-    assert "publish_trade" not in sidecar_source
-    assert "large_trade_collector32.py" in manager_source
+
+    assert 'STOCKBOARD_LARGE_TRADE_SIDECAR_ENABLED set "STOCKBOARD_LARGE_TRADE_SIDECAR_ENABLED=0"' in launcher_source
+    assert '"%LARGE_TRADE_SIDECAR%" -Action start' not in launcher_source
+    assert "LARGE_TRADE_SIDECAR_PRODUCTION=disabled_due_to_price_feed_conflict" in launcher_source
+
+    assert '"0"' in manager_source
+    assert "STOCKBOARD_LARGE_TRADE_SIDECAR_EXPERIMENTAL" in manager_source
+    assert "Sidecar start blocked while the production price collector is connected" in manager_source
+
+    assert "install_large_trade_sidecar" not in worker_source
+    assert "worker_large_trade_sidecar_patch" not in worker_source

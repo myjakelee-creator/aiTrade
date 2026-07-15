@@ -90,11 +90,14 @@ function Stop-Sidecar {
         Start-Sleep -Milliseconds 300
     }
     Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $StatusFile -Force -ErrorAction SilentlyContinue
 }
 
 function Show-Status {
     Ensure-RuntimeDir
     $processId = Read-Pid
+    Write-Host "LARGE_TRADE_SIDECAR_PRODUCTION_ENABLED=False"
+    Write-Host "LARGE_TRADE_SIDECAR_POLICY=isolated_experiment_only_due_to_price_feed_conflict"
     Write-Host "LARGE_TRADE_SIDECAR_PID=$processId"
     Write-Host "LARGE_TRADE_SIDECAR_ALIVE=$(Test-Alive $processId)"
     if (Test-Path -LiteralPath $StatusFile) {
@@ -122,7 +125,7 @@ function Show-Status {
             Write-Warning "Sidecar status read failed: $($_.Exception.Message)"
         }
     } else {
-        Write-Host "LARGE_TRADE_SIDECAR_STATUS=missing"
+        Write-Host "LARGE_TRADE_SIDECAR_STATUS=stopped"
     }
     $price = Get-PriceCollectorState
     Write-Host "PRICE_COLLECTOR_READY=$(Test-PriceCollectorReady $price)"
@@ -137,13 +140,22 @@ function Start-Sidecar {
     Stop-Sidecar
 
     $enabled = if ($null -eq $env:STOCKBOARD_LARGE_TRADE_SIDECAR_ENABLED) {
-        "1"
+        "0"
     } else {
         [string]$env:STOCKBOARD_LARGE_TRADE_SIDECAR_ENABLED
     }
+    $experimental = if ($null -eq $env:STOCKBOARD_LARGE_TRADE_SIDECAR_EXPERIMENTAL) {
+        "0"
+    } else {
+        [string]$env:STOCKBOARD_LARGE_TRADE_SIDECAR_EXPERIMENTAL
+    }
     if ($enabled -notin @("1", "true", "TRUE", "on", "ON")) {
+        Write-Warning "Large-trade sidecar is production-disabled after it stopped the main price feed."
         Write-Host "LARGE_TRADE_SIDECAR_ENABLED=False"
         return
+    }
+    if ($experimental -notin @("1", "true", "TRUE", "on", "ON")) {
+        throw "Sidecar start blocked. Set STOCKBOARD_LARGE_TRADE_SIDECAR_EXPERIMENTAL=1 only in an isolated validation session with the production price collector stopped."
     }
     if (-not (Test-Path -LiteralPath $ScriptPath)) {
         throw "Sidecar script not found: $ScriptPath"
@@ -153,9 +165,8 @@ function Start-Sidecar {
     }
 
     $priceBefore = Get-PriceCollectorState
-    if (-not (Test-PriceCollectorReady $priceBefore)) {
-        Write-Warning "Price collector is not ready; large-trade sidecar startup skipped."
-        return
+    if (Test-PriceCollectorReady $priceBefore) {
+        throw "Sidecar start blocked while the production price collector is connected. Stop StockBoard first and use an isolated test session."
     }
 
     $python32 = Resolve-Python32
@@ -196,6 +207,7 @@ function Start-Sidecar {
         -PassThru
     Set-Content -LiteralPath $PidFile -Value $process.Id -Encoding ASCII
     Write-Host "LARGE_TRADE_SIDECAR_PID=$($process.Id)"
+    Write-Host "LARGE_TRADE_SIDECAR_MODE=isolated_experiment_only"
     Write-Host "LARGE_TRADE_SIDECAR_OPENING_LIMIT=$openingLimit"
     Write-Host "LARGE_TRADE_SIDECAR_NORMAL_LIMIT=$normalLimit"
     Write-Host "LARGE_TRADE_SIDECAR_STDOUT=$stdout"
@@ -203,18 +215,9 @@ function Start-Sidecar {
 
     Start-Sleep -Seconds 5
     if (-not (Test-Alive $process.Id)) {
-        Write-Warning "Large-trade sidecar exited during startup. Price collector remains independent."
+        Write-Warning "Large-trade sidecar exited during isolated startup."
         Get-Content -LiteralPath $stderr -Tail 40 -ErrorAction SilentlyContinue
-        return
     }
-
-    $priceAfter = Get-PriceCollectorState
-    if (-not (Test-PriceCollectorReady $priceAfter)) {
-        Write-Warning "Price collector readiness changed after sidecar startup; sidecar is being stopped."
-        Stop-Sidecar
-        return
-    }
-    Write-Host "PRICE_COLLECTOR_GUARD=passed"
 }
 
 Set-Location -LiteralPath $ProjectRoot

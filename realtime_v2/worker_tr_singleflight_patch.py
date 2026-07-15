@@ -5,7 +5,12 @@ from realtime_v2.tr_singleflight import get_shared_tr_coordinator
 
 
 def install(base) -> None:
-    """Route program net through shared single-flight and install metric lanes."""
+    """Route program net through shared single-flight and restore cached metrics.
+
+    The large-trade sidecar is intentionally not installed in production. A second
+    Kiwoom QAx realtime registration stopped the verified price feed, so that lane
+    remains isolated experiment code only.
+    """
 
     updater_class = getattr(base, "ProgramNetUpdater", None)
     if updater_class is None or getattr(updater_class, "_stockboard_tr_singleflight_installed", False):
@@ -50,12 +55,6 @@ def install(base) -> None:
     updater_class._fetch_once = patched_fetch_once
     updater_class._stockboard_tr_singleflight_installed = True
 
-    # Both patches operate in the 64-bit worker only. Neither touches the stable
-    # price collector callback or introduces a worker thread/TR/browser calculation.
     from realtime_v2.worker_metric_restore_patch import install as install_metric_restore
-    from realtime_v2.worker_large_trade_sidecar_patch import (
-        install as install_large_trade_sidecar,
-    )
 
     install_metric_restore(base)
-    install_large_trade_sidecar(base)

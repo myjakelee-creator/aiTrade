@@ -3,15 +3,16 @@ setlocal EnableExtensions
 cd /d C:\aiTrade
 
 rem Safe opening-burst defaults. The internal universe remains up to 300/filter 100~200;
-rem only the 32-bit realtime registration is capped at 100 until 09:00 validation.
+rem only the verified 32-bit price collector is allowed in the production OpenAPI session.
 if not defined STOCKBOARD_V2_COLLECTOR_LIMIT set "STOCKBOARD_V2_COLLECTOR_LIMIT=100"
 if not defined STOCKBOARD_TRADE_VALUE_SAMPLE_MS set "STOCKBOARD_TRADE_VALUE_SAMPLE_MS=500"
 if not defined STOCKBOARD_HEAVY_SNAPSHOT_INTERVAL_MS set "STOCKBOARD_HEAVY_SNAPSHOT_INTERVAL_MS=500"
 if not defined STOCKBOARD_HEAVY_SNAPSHOT_MAX_AGE_MS set "STOCKBOARD_HEAVY_SNAPSHOT_MAX_AGE_MS=2000"
 if not defined STOCKBOARD_BACKGROUND_REBUILD_POLL_MS set "STOCKBOARD_BACKGROUND_REBUILD_POLL_MS=50"
 if not defined STOCKBOARD_STATUS_WRITE_INTERVAL_SEC set "STOCKBOARD_STATUS_WRITE_INTERVAL_SEC=5"
-if not defined STOCKBOARD_LARGE_TRADE_SIDECAR_ENABLED set "STOCKBOARD_LARGE_TRADE_SIDECAR_ENABLED=1"
-if not defined STOCKBOARD_LARGE_TRADE_OPENING_LIMIT set "STOCKBOARD_LARGE_TRADE_OPENING_LIMIT=20"
+rem A second Kiwoom QAx realtime registration stopped the verified price feed.
+rem Keep the large-trade sidecar production-disabled; files remain for isolated testing only.
+if not defined STOCKBOARD_LARGE_TRADE_SIDECAR_ENABLED set "STOCKBOARD_LARGE_TRADE_SIDECAR_ENABLED=0"
 rem A manually refreshed full Kiwoom catalog is preferred. If it is absent, the
 rem ThemeMembershipLoader continues to the existing static 10-theme fallback.
 if not defined STOCKBOARD_THEME_MEMBERSHIP_FILE set "STOCKBOARD_THEME_MEMBERSHIP_FILE=C:\aiTrade\data\runtime\stockboard_v2\theme_membership.json"
@@ -73,6 +74,7 @@ if /I "%ACTION%"=="restart-fast" (
 goto direct_action
 
 :prepare_start
+rem Always terminate any experimental second QAx owner before touching production.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%LARGE_TRADE_SIDECAR%" -Action stop
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SAFE%" -Action stop
 if errorlevel 1 goto failed
@@ -91,11 +93,7 @@ if not "%SAFE_RC%"=="0" goto failed_with_safe_rc
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%CONTEXT_SINGLEFLIGHT%"
 if errorlevel 1 goto failed
 
-rem Fail-open auxiliary lane: its own QAx process can stop without touching the
-rem verified price collector. Startup failure is reported but does not stop StockBoard.
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%LARGE_TRADE_SIDECAR%" -Action start
-if errorlevel 1 echo WARNING: Large-trade sidecar start failed; price collector remains running.
-
+echo LARGE_TRADE_SIDECAR_PRODUCTION=disabled_due_to_price_feed_conflict
 set "RC=0"
 goto finish
 
