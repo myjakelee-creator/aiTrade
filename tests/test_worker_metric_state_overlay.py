@@ -120,6 +120,10 @@ def test_amount_ratio_is_not_relabelled_when_state_date_mismatches(monkeypatch):
     state = MismatchBase.State()
     row = state.rows(100)[0]
 
-    assert row["amount_ratio"] == 2.0
+    assert "amount_ratio" not in row
     assert "amount_ratio_source_trading_date" not in row
+    assert row.get("amount_ratio_status") in {
+        "source_date_mismatch_hidden",
+        "final_output_guard_hidden",
+    }
     assert state.status["metric_state_overlay_amount_ratio_stamped_count"] == 0
