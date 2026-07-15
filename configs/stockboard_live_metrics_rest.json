@@ -1,15 +1,21 @@
 {
-  "schema_version": 8,
+  "schema_version": 9,
   "enabled": true,
   "rollout_stage": 4,
   "mode": "kiwoom_rest_lowload_v1",
   "query_suffix": "_AL",
   "query_suffix_by_session": {
     "before_market": "_AL",
+    "premarket": "_AL",
+    "opening_call": "_AL",
+    "opening_burst": "_AL",
     "regular": "_AL",
-    "aftermarket": "_AL"
+    "closing_call": "_AL",
+    "after_wait": "_AL",
+    "aftermarket": "_AL",
+    "closed": "_AL"
   },
-  "max_top_codes": 20,
+  "max_top_codes": 100,
   "global_min_request_gap_sec": 2.0,
   "health_stable_sec": 10,
   "price_stall_guard_sec": 30,
@@ -31,6 +37,124 @@
   "opening_window": {
     "start": "09:00",
     "end": "09:10"
+  },
+  "session_manager": {
+    "enabled": true,
+    "scope_max_codes": 100,
+    "opening_burst_minutes": 10,
+    "phase_policies": {
+      "before_market": {
+        "active": true,
+        "scope": 100,
+        "missing_only": true,
+        "require_trade_fresh": false,
+        "min_request_gap_sec": 2.5,
+        "intervals": {
+          "bidask": {"s1": 900, "top20": 21600, "top100": 21600},
+          "strength": {"s1": 900, "top20": 21600, "top100": 21600},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
+        }
+      },
+      "premarket": {
+        "active": true,
+        "scope": 100,
+        "missing_only": false,
+        "require_trade_fresh": false,
+        "min_request_gap_sec": 3.0,
+        "intervals": {
+          "bidask": {"s1": 15, "top20": 120, "top100": 900},
+          "strength": {"s1": 0, "top20": 0, "top100": 0},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
+        }
+      },
+      "opening_call": {
+        "active": true,
+        "scope": 20,
+        "missing_only": false,
+        "require_trade_fresh": false,
+        "min_request_gap_sec": 4.0,
+        "intervals": {
+          "bidask": {"s1": 15, "top20": 180, "top100": 0},
+          "strength": {"s1": 0, "top20": 0, "top100": 0},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
+        }
+      },
+      "opening_burst": {
+        "active": true,
+        "scope": 1,
+        "missing_only": false,
+        "require_trade_fresh": true,
+        "min_request_gap_sec": 5.0,
+        "intervals": {
+          "bidask": {"s1": 60, "top20": 0, "top100": 0},
+          "strength": {"s1": 0, "top20": 0, "top100": 0},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
+        }
+      },
+      "regular": {
+        "active": true,
+        "scope": 100,
+        "missing_only": false,
+        "require_trade_fresh": true,
+        "min_request_gap_sec": 2.0,
+        "intervals": {
+          "bidask": {"s1": 10, "top20": 60, "top100": 900},
+          "strength": {"s1": 15, "top20": 90, "top100": 900},
+          "large_trade": {"s1": 60, "top20": 300, "top100": 1800}
+        }
+      },
+      "closing_call": {
+        "active": true,
+        "scope": 20,
+        "missing_only": false,
+        "require_trade_fresh": true,
+        "min_request_gap_sec": 5.0,
+        "intervals": {
+          "bidask": {"s1": 30, "top20": 300, "top100": 0},
+          "strength": {"s1": 60, "top20": 300, "top100": 0},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
+        }
+      },
+      "after_wait": {
+        "active": true,
+        "scope": 100,
+        "missing_only": false,
+        "require_trade_fresh": false,
+        "min_request_gap_sec": 2.0,
+        "intervals": {
+          "bidask": {"s1": 10, "top20": 60, "top100": 300},
+          "strength": {"s1": 15, "top20": 90, "top100": 300},
+          "large_trade": {"s1": 120, "top20": 600, "top100": 3600}
+        }
+      },
+      "aftermarket": {
+        "active": true,
+        "scope": 100,
+        "missing_only": false,
+        "require_trade_fresh": false,
+        "min_request_gap_sec": 2.0,
+        "intervals": {
+          "bidask": {"s1": 10, "top20": 60, "top100": 600},
+          "strength": {"s1": 30, "top20": 180, "top100": 900},
+          "large_trade": {"s1": 120, "top20": 600, "top100": 1800}
+        }
+      },
+      "closed": {
+        "active": true,
+        "scope": 100,
+        "missing_only": true,
+        "require_trade_fresh": false,
+        "min_request_gap_sec": 2.5,
+        "intervals": {
+          "bidask": {"s1": 900, "top20": 21600, "top100": 21600},
+          "strength": {"s1": 900, "top20": 21600, "top100": 21600},
+          "large_trade": {"s1": 3600, "top20": 21600, "top100": 21600}
+        }
+      },
+      "weekend": {"active": false, "scope": 0},
+      "holiday": {"active": false, "scope": 0},
+      "outside": {"active": false, "scope": 0}
+    }
   },
   "realtime_strength_ws": {
     "stage": 2,
@@ -72,68 +196,20 @@
     "bidask": {
       "stage": 1,
       "api_id": "ka10004",
-      "path": "/api/dostk/mrkcond",
-      "regular_interval_sec": {
-        "s1": 10,
-        "top20": 60
-      },
-      "aftermarket_interval_sec": {
-        "s1": 10,
-        "top20": 60
-      },
-      "before_market_interval_sec": {
-        "s1": 900,
-        "top20": 21600
-      },
-      "opening_interval_sec": {
-        "s1": 30,
-        "top20": 300
-      }
+      "path": "/api/dostk/mrkcond"
     },
     "strength": {
       "stage": 3,
       "purpose": "5분·20분·60분 강도 전용; 체결강도에는 사용 금지",
       "strength_5m_apply_stage": 3,
       "api_id": "ka10046",
-      "path": "/api/dostk/mrkcond",
-      "regular_interval_sec": {
-        "s1": 15,
-        "top20": 90
-      },
-      "aftermarket_interval_sec": {
-        "s1": 30,
-        "top20": 180
-      },
-      "before_market_interval_sec": {
-        "s1": 900,
-        "top20": 21600
-      },
-      "opening_interval_sec": {
-        "s1": 45,
-        "top20": 300
-      }
+      "path": "/api/dostk/mrkcond"
     },
     "large_trade": {
       "stage": 4,
       "api_id": "ka10055",
       "path": "/api/dostk/stkinfo",
       "threshold_krw": 50000000,
-      "regular_interval_sec": {
-        "s1": 60,
-        "top20": 300
-      },
-      "aftermarket_interval_sec": {
-        "s1": 120,
-        "top20": 600
-      },
-      "before_market_interval_sec": {
-        "s1": 0,
-        "top20": 0
-      },
-      "opening_interval_sec": {
-        "s1": 180,
-        "top20": 0
-      },
       "first_page_only": true,
       "baseline_first_response": false
     }
@@ -145,7 +221,7 @@
     "browser_calculation": false,
     "single_background_thread": true,
     "single_request_inflight": true,
-    "top_scope_only": true,
+    "display_scope_max_codes": 100,
     "realtime_strength_ws_connections": 1,
     "realtime_strength_ws_symbols": 20,
     "realtime_strength_batch_apply_hz_max": 1,
@@ -154,6 +230,7 @@
     "six_metric_lifecycle_snapshot_write_min_interval_sec": 5,
     "large_trade_stage4_threads": 0,
     "large_trade_stage4_min_request_gap_sec": 2,
-    "opening_heavy_render_interval_ms": 1000
+    "opening_heavy_render_interval_ms": 1000,
+    "opening_rest_scope_max_codes": 1
   }
 }
