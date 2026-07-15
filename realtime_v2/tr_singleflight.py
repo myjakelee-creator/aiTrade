@@ -68,7 +68,8 @@ class TRSingleFlightCoordinator:
         Kiwoom helpers may expose Decimal metadata such as unit divisors. The
         single-flight cache must persist the same payload for all processes, so
         normalize only serialization types here instead of changing TR values or
-        issuing another request.
+        issuing another request. Paths use POSIX separators to keep cache payloads
+        deterministic across Windows and non-Windows test/runtime environments.
         """
 
         if value is None or isinstance(value, (bool, int, float, str)):
@@ -79,7 +80,7 @@ class TRSingleFlightCoordinator:
             integral = value.to_integral_value()
             return int(integral) if value == integral else float(value)
         if isinstance(value, Path):
-            return str(value)
+            return value.as_posix()
         if isinstance(value, dict):
             return {
                 str(key): TRSingleFlightCoordinator._json_safe(item)
