@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "enabled": true,
   "rollout_stage": 2,
   "mode": "kiwoom_rest_lowload_v1",
@@ -42,7 +42,19 @@
     "selection_refresh_sec": 5,
     "reconnect_backoff_sec": 10,
     "connect_timeout_sec": 10,
-    "receive_timeout_sec": 2
+    "receive_timeout_sec": 2,
+    "close_hold": {
+      "enabled": true,
+      "save_interval_sec": 5,
+      "display_until": "next_premarket",
+      "display_phases": [
+        "closed",
+        "before_market",
+        "weekend",
+        "holiday"
+      ],
+      "snapshot_file": "realtime_strength_final_hold.json"
+    }
   },
   "metrics": {
     "bidask": {
@@ -112,6 +124,8 @@
     "top_scope_only": true,
     "realtime_strength_ws_connections": 1,
     "realtime_strength_ws_symbols": 1,
-    "realtime_strength_apply_hz_max": 1
+    "realtime_strength_apply_hz_max": 1,
+    "realtime_strength_close_hold_threads": 0,
+    "realtime_strength_close_hold_network_requests": 0
   }
 }

@@ -72,6 +72,9 @@ def install(base) -> None:
     from realtime_v2.worker_realtime_strength_ws_coalesce_patch import (
         install as install_realtime_strength_ws_coalesce,
     )
+    from realtime_v2.worker_realtime_strength_close_hold_patch import (
+        install as install_realtime_strength_close_hold,
+    )
 
     install_metric_restore(base)
     install_rest_live_metrics(base)
@@ -80,3 +83,4 @@ def install(base) -> None:
     install_rest_live_metrics_stage2_fix(base)
     install_realtime_strength_ws(base)
     install_realtime_strength_ws_coalesce(base)
+    install_realtime_strength_close_hold(base)
