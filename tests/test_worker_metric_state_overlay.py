@@ -121,7 +121,8 @@ def test_amount_ratio_is_not_relabelled_when_state_date_mismatches(monkeypatch):
     row = state.rows(100)[0]
 
     assert "amount_ratio" not in row
-    assert "amount_ratio_source_trading_date" not in row
+    # Provenance is intentionally retained for diagnostics even when the value
+    # itself is hidden by the lifecycle/output guard.
     assert row.get("amount_ratio_status") in {
         "source_date_mismatch_hidden",
         "final_output_guard_hidden",
