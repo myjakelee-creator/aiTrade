@@ -17,6 +17,7 @@ PRICE_COLLECTOR_PATH = ROOT / "realtime_v2" / "collector32_large_bidask.py"
 TOP20_PATCH = ROOT / "realtime_v2" / "worker_realtime_strength_ws_top20_patch.py"
 PROVENANCE_PATCH = ROOT / "realtime_v2" / "worker_metric_provenance_patch.py"
 STRENGTH5_PATCH = ROOT / "realtime_v2" / "worker_strength5_only_patch.py"
+MARKET_MANAGER_PATCH = ROOT / "realtime_v2" / "worker_market_metric_session_manager.py"
 AHK_PATH = ROOT / "scripts" / "stockboard_kiwoom_link_v1.ahk"
 RENDER_PATCH = ROOT / "realtime_v2" / "html_opening_render_guard_patch.py"
 
@@ -72,9 +73,17 @@ def test_before_market_backfill_is_integrated_and_large_trade_disabled():
     assert updater._session_phase() == "before_market"
     assert updater._in_regular_session() is True
     assert updater._query_code("000660") == "000660_AL"
-    assert updater._interval("bidask", "s1") == 900
-    assert updater._interval("strength", "s1") == 900
-    assert updater._interval("large_trade", "s1") == 0
+
+    policy = _config()["session_manager"]["phase_policies"]["before_market"]
+    assert policy["scope"] == 100
+    assert policy["missing_only"] is True
+    assert policy["intervals"]["bidask"]["s1"] == 900
+    assert policy["intervals"]["strength"]["s1"] == 900
+    assert policy["intervals"]["large_trade"] == {
+        "s1": 0,
+        "top20": 0,
+        "top100": 0,
+    }
 
 
 def test_program_poll_time_is_separate_from_previous_session_source_date(monkeypatch):
@@ -142,10 +151,11 @@ def test_ahk_selects_unique_ranked_edit6_instead_of_rejecting_all_duplicates():
     assert "PostMessage, 0x100" in source
 
 
-def test_opening_render_guard_keeps_price_collector_unchanged():
+def test_opening_render_guard_follows_calendar_and_keeps_price_collector_unchanged():
     source = RENDER_PATCH.read_text(encoding="utf-8")
     ast.parse(source)
-    assert "m>=540&&m<550?1000:500" in source
+    assert "regular_start" in source
+    assert "start+10?1000:500" in source
     assert "__sbv2HeavyRenderIntervalMs()" in source
 
     for forbidden in (
@@ -170,7 +180,12 @@ def test_ka10046_patch_keeps_only_five_minute_fields():
 
 
 def test_new_worker_patches_have_valid_python_syntax_and_no_qax():
-    for path in (TOP20_PATCH, PROVENANCE_PATCH, STRENGTH5_PATCH):
+    for path in (
+        TOP20_PATCH,
+        PROVENANCE_PATCH,
+        STRENGTH5_PATCH,
+        MARKET_MANAGER_PATCH,
+    ):
         source = path.read_text(encoding="utf-8")
         ast.parse(source)
         for forbidden in (
