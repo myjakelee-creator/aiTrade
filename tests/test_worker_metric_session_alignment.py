@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PRICE_COLLECTOR_PATH = ROOT / "realtime_v2" / "collector32_large_bidask.py"
 TOP20_PATCH = ROOT / "realtime_v2" / "worker_realtime_strength_ws_top20_patch.py"
 PROVENANCE_PATCH = ROOT / "realtime_v2" / "worker_metric_provenance_patch.py"
+STRENGTH5_PATCH = ROOT / "realtime_v2" / "worker_strength5_only_patch.py"
 AHK_PATH = ROOT / "scripts" / "stockboard_kiwoom_link_v1.ahk"
 RENDER_PATCH = ROOT / "realtime_v2" / "html_opening_render_guard_patch.py"
 
@@ -160,8 +161,16 @@ def test_opening_render_guard_keeps_price_collector_unchanged():
     assert '_REALTIME_FIDS = "10;12;20;14"' in collector
 
 
+def test_ka10046_patch_keeps_only_five_minute_fields():
+    source = STRENGTH5_PATCH.read_text(encoding="utf-8")
+    ast.parse(source)
+    assert '"strength_5m"' in source
+    assert '"execution_strength"' not in source
+    assert "apply_rest_live_metric_values" in source
+
+
 def test_new_worker_patches_have_valid_python_syntax_and_no_qax():
-    for path in (TOP20_PATCH, PROVENANCE_PATCH):
+    for path in (TOP20_PATCH, PROVENANCE_PATCH, STRENGTH5_PATCH):
         source = path.read_text(encoding="utf-8")
         ast.parse(source)
         for forbidden in (
