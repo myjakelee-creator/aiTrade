@@ -78,6 +78,7 @@ def install(base) -> None:
     from realtime_v2.worker_large_trade_stage4_patch import (
         install as install_large_trade_stage4,
     )
+    from realtime_v2.worker_strength5_only_patch import install as install_strength5_only
     from realtime_v2 import worker_realtime_strength_ws_patch as realtime_strength_module
     from realtime_v2.worker_realtime_strength_ws_patch import (
         install as install_realtime_strength_ws,
@@ -115,6 +116,7 @@ def install(base) -> None:
     install_rest_live_metric_metadata(base)
     install_rest_live_metrics_stage2_fix(base)
     install_large_trade_stage4(base)
+    install_strength5_only()
     install_realtime_strength_ws(base)
     install_realtime_strength_ws_coalesce(base)
     realtime_strength_module._read_config = read_live_metric_config
