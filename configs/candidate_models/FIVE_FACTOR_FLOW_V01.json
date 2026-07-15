@@ -1,17 +1,41 @@
 {
-  "schema_version":5,
-  "id":"FIVE_FACTOR_FLOW_V01",
-  "name":"거래대금 순위 v0.1",
-  "label":"거래대금 순위 v0.1",
-  "runtime_status":"READY",
-  "purpose":"필터를 통과한 전체 종목을 당일 누적 거래대금 순위만으로 평가한다. 1위부터 100위까지 100점부터 1점을 부여하고 101위 이하는 0점 처리한다.",
-  "required_features":[],
-  "score_structure":{
-    "final_score":[{"key":"trade_value_rank","weight":100}],
-    "entry_score":[{"key":"trade_value_rank","weight":100}],
-    "confirmation_score":[{"key":"trade_value_rank","weight":100}],
-    "focus_score":[{"key":"trade_value_rank","weight":100}]
+  "schema_version": 6,
+  "id": "FIVE_FACTOR_FLOW_V01",
+  "name": "거래대금 순위 v0.1",
+  "label": "거래대금 순위 v0.1",
+  "runtime_status": "READY",
+  "purpose": "필터를 통과한 전체 종목을 당일 누적 거래대금 순위만으로 평가한다. 점수 공식과 등급 경계는 이 JSON을 단일 원천으로 사용한다.",
+  "required_features": [],
+  "feature_policies": {
+    "trade_value_rank": {
+      "type": "linear_rank",
+      "rank_key": "rank",
+      "start_rank": 1,
+      "end_rank": 100,
+      "start_score": 100,
+      "end_score": 1,
+      "outside_score": 0,
+      "missing_score": 0,
+      "source": "candidate_model_json"
+    }
   },
-  "grade_guards":[],
-  "funnel":{"top50":{"take":50},"top20":{"take":20},"top5":{"take":5}}
+  "grade_bands": [
+    {"grade": "A", "class": "a", "min_score": 90},
+    {"grade": "B", "class": "b", "min_score": 80},
+    {"grade": "C", "class": "c", "min_score": 70},
+    {"grade": "D", "class": "d", "min_score": 60},
+    {"grade": "F", "class": "f", "min_score": 0}
+  ],
+  "score_structure": {
+    "final_score": [{"key": "trade_value_rank", "weight": 100}],
+    "entry_score": [{"key": "trade_value_rank", "weight": 100}],
+    "confirmation_score": [{"key": "trade_value_rank", "weight": 100}],
+    "focus_score": [{"key": "trade_value_rank", "weight": 100}]
+  },
+  "grade_guards": [],
+  "funnel": {
+    "top50": {"take": 50},
+    "top20": {"take": 20},
+    "top5": {"take": 5}
+  }
 }
