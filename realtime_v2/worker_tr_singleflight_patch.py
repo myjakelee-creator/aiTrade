@@ -59,7 +59,10 @@ def install(base) -> None:
     updater_class._stockboard_tr_singleflight_installed = True
 
     from realtime_v2.worker_metric_restore_patch import install as install_metric_restore
-    from realtime_v2.worker_rest_live_metrics_patch import install as install_rest_live_metrics
+    from realtime_v2.worker_rest_live_metrics_patch import (
+        _read_config as read_live_metric_config,
+        install as install_rest_live_metrics,
+    )
     from realtime_v2.worker_rest_live_metrics_aftermarket_patch import (
         install as install_rest_live_metrics_aftermarket,
     )
@@ -75,6 +78,7 @@ def install(base) -> None:
     from realtime_v2.worker_large_trade_stage4_patch import (
         install as install_large_trade_stage4,
     )
+    from realtime_v2 import worker_realtime_strength_ws_patch as realtime_strength_module
     from realtime_v2.worker_realtime_strength_ws_patch import (
         install as install_realtime_strength_ws,
     )
@@ -113,6 +117,7 @@ def install(base) -> None:
     install_large_trade_stage4(base)
     install_realtime_strength_ws(base)
     install_realtime_strength_ws_coalesce(base)
+    realtime_strength_module._read_config = read_live_metric_config
     install_realtime_strength_ws_top20(base)
     install_metric_provenance(base)
     install_six_metric_runtime_opt()
