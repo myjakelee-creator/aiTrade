@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 from copy import deepcopy
 from typing import Any
 
 from realtime_v2.common import normalize_code, now_text, to_number
 
+PATCH_VERSION = "stage2_s1_source_diagnostics_v2"
 SELECTION_STATUS_KEYS = (
     "selected_code",
     "active_code",
@@ -68,6 +68,7 @@ def install(base) -> None:
     ):
         return
 
+    original_state_init = state_class.__init__
     original_refresh_selected = updater_class._refresh_selected
     original_apply = updater_class._apply
     original_rows = state_class.rows
@@ -76,6 +77,12 @@ def install(base) -> None:
     base.DAILY_PERSIST_KEYS = tuple(
         dict.fromkeys((*getattr(base, "DAILY_PERSIST_KEYS", ()), *SOURCE_TIME_KEYS))
     )
+
+    def state_init(self, *args, **kwargs):
+        original_state_init(self, *args, **kwargs)
+        with self.lock:
+            self.status["rest_live_metrics_stage2_fix_installed"] = True
+            self.status["rest_live_metrics_stage2_fix_version"] = PATCH_VERSION
 
     def resolve_selected(self) -> None:
         original_refresh_selected(self)
@@ -201,6 +208,7 @@ def install(base) -> None:
                     row[key] = deepcopy(source.get(key))
         return result
 
+    state_class.__init__ = state_init
     updater_class._refresh_selected = resolve_selected
     updater_class._apply = patched_apply
     state_class.rows = rows
