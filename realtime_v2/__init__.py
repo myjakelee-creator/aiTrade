@@ -9,6 +9,12 @@ from realtime_v2.stockboard_global_sort_patch import install as install_stockboa
 from realtime_v2.stockboard_manual_sort_mode_patch import (
     install as install_stockboard_manual_sort_mode,
 )
+from realtime_v2.candidate_json_eight_criteria_patch import (
+    install as install_candidate_json_eight_criteria,
+)
+from realtime_v2.candidate_json_default_policy_patch import (
+    install as install_candidate_json_default_policy,
+)
 from realtime_v2.trade_value_rank_score_patch import (
     install as install_trade_value_rank_score,
 )
@@ -24,6 +30,8 @@ from realtime_v2.display_order_model_reset_patch import (
 
 install_runtime_wrappers()
 install_script_hotfix()
+install_candidate_json_eight_criteria()
+install_candidate_json_default_policy()
 install_trade_value_rank_score()
 install_candidate_score_unification()
 install_three_lane_display_order()
