@@ -63,8 +63,12 @@ def install(base) -> None:
     from realtime_v2.worker_rest_live_metric_metadata_patch import (
         install as install_rest_live_metric_metadata,
     )
+    from realtime_v2.worker_rest_live_metrics_stage2_fix_patch import (
+        install as install_rest_live_metrics_stage2_fix,
+    )
 
     install_metric_restore(base)
     install_rest_live_metrics(base)
     install_rest_live_metrics_aftermarket()
     install_rest_live_metric_metadata(base)
+    install_rest_live_metrics_stage2_fix(base)
