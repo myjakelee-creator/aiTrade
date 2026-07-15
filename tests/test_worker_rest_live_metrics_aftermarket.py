@@ -27,35 +27,46 @@ def _updater_at(minute: int) -> RestLiveMetricUpdater:
     return updater
 
 
-def test_regular_session_keeps_integrated_suffix():
+def test_regular_and_aftermarket_keep_integrated_suffix():
     install()
-    updater = _updater_at(10 * 60)
+    regular = _updater_at(10 * 60)
+    aftermarket = _updater_at(16 * 60 + 10)
 
-    assert updater._session_phase() == "regular"
-    assert updater._in_regular_session() is True
-    assert updater._query_code("000660") == "000660_AL"
-    assert updater._interval("bidask", "s1") == 10
-    assert updater.state.status["rest_live_metrics_query_suffix"] == "_AL"
+    assert regular._session_phase() == "regular"
+    assert regular._in_regular_session() is True
+    assert regular._query_code("000660") == "000660_AL"
+    assert regular.state.status["rest_live_metrics_query_suffix"] == "_AL"
 
-
-def test_aftermarket_uses_integrated_suffix_and_active_intervals():
-    install()
-    updater = _updater_at(16 * 60 + 10)
-
-    assert updater._session_phase() == "aftermarket"
-    assert updater._in_regular_session() is True
-    assert updater._query_code("000660") == "000660_AL"
-    assert updater._interval("bidask", "s1") == 10
-    assert updater._interval("bidask", "top20") == 60
-    assert updater._interval("strength", "s1") == 30
-    assert updater._interval("strength", "top20") == 180
-    assert updater._interval("large_trade", "s1") == 120
-    assert updater._interval("large_trade", "top20") == 600
-    assert updater.state.status["rest_live_metrics_query_suffix"] == "_AL"
-    assert updater.state.status["rest_live_metrics_market_phase"] == "aftermarket"
+    assert aftermarket._session_phase() == "aftermarket"
+    assert aftermarket._in_regular_session() is True
+    assert aftermarket._query_code("000660") == "000660_AL"
+    assert aftermarket.state.status["rest_live_metrics_query_suffix"] == "_AL"
+    assert aftermarket.state.status["rest_live_metrics_market_phase"] == "aftermarket"
 
 
-def test_outside_active_sessions_stays_disabled():
+def test_authoritative_session_manager_owns_aftermarket_intervals_and_top100_scope():
+    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    policy = config["session_manager"]["phase_policies"]["aftermarket"]
+
+    assert policy["scope"] == 100
+    assert policy["intervals"]["bidask"] == {
+        "s1": 10,
+        "top20": 60,
+        "top100": 600,
+    }
+    assert policy["intervals"]["strength"] == {
+        "s1": 30,
+        "top20": 180,
+        "top100": 900,
+    }
+    assert policy["intervals"]["large_trade"] == {
+        "s1": 120,
+        "top20": 600,
+        "top100": 1800,
+    }
+
+
+def test_legacy_aftermarket_wrapper_still_pauses_after_twenty_hundred():
     install()
     updater = _updater_at(20 * 60 + 1)
 
@@ -82,11 +93,18 @@ def test_aftermarket_patch_does_not_touch_qax_or_price_callback():
 
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     assert config["rollout_stage"] == 4
-    assert config["query_suffix_by_session"] == {
-        "before_market": "_AL",
-        "regular": "_AL",
-        "aftermarket": "_AL",
-    }
+    for phase in (
+        "before_market",
+        "premarket",
+        "opening_call",
+        "opening_burst",
+        "regular",
+        "closing_call",
+        "after_wait",
+        "aftermarket",
+        "closed",
+    ):
+        assert config["query_suffix_by_session"][phase] == "_AL"
     assert config["aftermarket_session"] == {
         "start": "15:30",
         "end": "20:00",
