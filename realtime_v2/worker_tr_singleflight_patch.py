@@ -5,7 +5,7 @@ from realtime_v2.tr_singleflight import get_shared_tr_coordinator
 
 
 def install(base) -> None:
-    """Route the worker-owned program-net TR through the shared coordinator."""
+    """Route program net through shared single-flight and restore its startup display."""
 
     updater_class = getattr(base, "ProgramNetUpdater", None)
     if updater_class is None or getattr(updater_class, "_stockboard_tr_singleflight_installed", False):
@@ -49,3 +49,9 @@ def install(base) -> None:
 
     updater_class._fetch_once = patched_fetch_once
     updater_class._stockboard_tr_singleflight_installed = True
+
+    # Install after _fetch_once has been routed through single-flight. The restore
+    # patch reuses this same updater thread and never touches the price collector.
+    from realtime_v2.worker_metric_restore_patch import install as install_metric_restore
+
+    install_metric_restore(base)
