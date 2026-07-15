@@ -1,12 +1,22 @@
-"""Config-driven candidate scoring, funnel execution, and public compatibility API."""
+"""JSON-driven candidate scoring, funnel execution, and compatibility API."""
 from __future__ import annotations
+
 from typing import Any, Iterable
 
 from stockboard_candidate_config import (
-    FEATURE_LABELS, FIVE_FACTOR_FLOW_V01, NET_BUY_STRENGTH_TOTAL_POINTS,
-    NET_BUY_STRENGTH_V02, _current_rank, _number_or_none, _now_text,
-    _round_score, _score_text, grade_for_percent, grade_text_for_percent,
-    load_candidate_model_config, validate_candidate_model_config,
+    FEATURE_LABELS,
+    FIVE_FACTOR_FLOW_V01,
+    NET_BUY_STRENGTH_TOTAL_POINTS,
+    NET_BUY_STRENGTH_V02,
+    _current_rank,
+    _number_or_none,
+    _now_text,
+    _round_score,
+    _score_text,
+    grade_for_percent,
+    grade_text_for_percent,
+    load_candidate_model_config,
+    validate_candidate_model_config,
 )
 from stockboard_candidate_features import FeatureSnapshot
 
@@ -19,13 +29,15 @@ class ConfigDrivenCandidateRankingEngine:
             raise ValueError(f"invalid candidate model config {self.config.get('id')}: {errors}")
         self.model_id = str(self.config.get("id"))
         self.model_name = str(self.config.get("label") or self.config.get("name") or self.model_id)
+        self.grade_bands = list(self.config.get("grade_bands") or [])
+        self.feature_policies = dict(self.config.get("feature_policies") or {})
 
     def enrich(self, rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         enriched = [dict(row) for row in rows]
         for index, row in enumerate(enriched):
             row["_source_rank"] = _current_rank(row) or index + 1
             row.setdefault("trade_value_rank", row["_source_rank"])
-        snapshot = FeatureSnapshot(enriched)
+        snapshot = FeatureSnapshot(enriched, self.feature_policies)
         structure = self.config["score_structure"]
         required = [str(key) for key in self.config.get("required_features") or []]
         for index, row in enumerate(enriched):
@@ -58,7 +70,7 @@ class ConfigDrivenCandidateRankingEngine:
                     score = min(score, float(guard.get("max_score", 89)))
                     guard_failures.append(str(guard.get("name") or guard.get("type")))
             score = _round_score(score)
-            grade, grade_class = grade_for_percent(score)
+            grade, grade_class = grade_for_percent(score, self.grade_bands)
             status = (
                 "WAIT_DATA" if coverage < .60 or required_missing
                 else "READY" if score >= 80
@@ -66,10 +78,17 @@ class ConfigDrivenCandidateRankingEngine:
                 else "EARLY" if score >= 60
                 else "WEAK"
             )
+            config_hash = str(self.config.get("config_hash") or "")
             row.update({
                 "candidate_model_id": self.model_id,
                 "candidate_model_name": self.model_name,
-                "candidate_score_version": self.model_id,
+                "candidate_score_version": config_hash or self.model_id,
+                "candidate_config_id": self.model_id,
+                "candidate_config_schema_version": self.config.get("schema_version"),
+                "candidate_config_source": self.config.get("config_source"),
+                "candidate_config_hash": config_hash,
+                "candidate_config_loaded_at": self.config.get("config_loaded_at"),
+                "candidate_config_validation_status": self.config.get("validation_status"),
                 "entry_score": entry_score,
                 "confirmation_score": confirmation_score,
                 "focus_score": focus_score,
@@ -81,9 +100,9 @@ class ConfigDrivenCandidateRankingEngine:
                 "score_percent": score,
                 "grade_score": score,
                 "candidate_grade": grade,
-                "candidate_grade_text": grade_text_for_percent(score),
+                "candidate_grade_text": grade_text_for_percent(score, self.grade_bands),
                 "candidate_grade_class": grade_class,
-                "display_grade_source": "candidate_model_config_v3",
+                "display_grade_source": "candidate_model_json_single_v1",
                 "score_total": score,
                 "score_total_points": score,
                 "score_possible_points": 100,
@@ -100,6 +119,7 @@ class ConfigDrivenCandidateRankingEngine:
                         "entry_score": entry_score,
                         "confirmation_score": confirmation_score,
                         "focus_score": focus_score,
+                        "config_hash": config_hash,
                         "items": final_items,
                     },
                     "total": {
@@ -107,7 +127,7 @@ class ConfigDrivenCandidateRankingEngine:
                         "raw_score": final_score,
                         "possible_points": 100,
                         "percent": score,
-                        "grade": grade_text_for_percent(score),
+                        "grade": grade_text_for_percent(score, self.grade_bands),
                     },
                 },
                 "candidate_score_items": {
@@ -213,28 +233,19 @@ class ConfigDrivenCandidateRankingEngine:
 
 
 class FiveFactorFlowV01RankingEngine(ConfigDrivenCandidateRankingEngine):
-    def enrich(self, rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-        result = super().enrich(rows)
-        for row in result:
-            items = row.get("score_breakdown", {}).get("candidate_model", {}).get("items", [])
-            by_key = {item.get("key"): item for item in items}
-            row["rank_rise_score"] = (by_key.get("rank_gap") or {}).get("points", 0)
-            row["amount_ratio_score"] = (by_key.get("amount_ratio") or {}).get("points", 0)
-            row["instant_strength_score"] = (by_key.get("instant_strength") or {}).get("points", 0)
-            row["program_score"] = (by_key.get("program_net") or {}).get("points", 0)
-            row["large_trade_score"] = (by_key.get("large_trade") or {}).get("points", 0)
-            combo = by_key.get("combination_quality") or {}
-            row["combination_score"] = round((combo.get("points") or 0) * (combo.get("weight") or 0) / 100.0, 2)
-        return result
+    """Compatibility class name; it executes the single final JSON model."""
 
 
 class NetBuyStrengthV02RankingEngine(ConfigDrivenCandidateRankingEngine):
-    pass
+    """Compatibility class name; old model configs are no longer registered."""
 
 
-def enrich_net_buy_strength_v02_fields(rows: Iterable[dict[str, Any]], model: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def enrich_net_buy_strength_v02_fields(
+    rows: Iterable[dict[str, Any]],
+    model: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     config = model or load_candidate_model_config(NET_BUY_STRENGTH_V02)
-    result = NetBuyStrengthV02RankingEngine(config).enrich(rows)
+    result = ConfigDrivenCandidateRankingEngine(config).enrich(rows)
     for row in result:
         items = list(row.get("score_breakdown", {}).get("candidate_model", {}).get("items", []))
         total_points = round((row.get("candidate_score") or 0) * 7, 2)
@@ -245,15 +256,14 @@ def enrich_net_buy_strength_v02_fields(rows: Iterable[dict[str, Any]], model: di
             "possible_points": NET_BUY_STRENGTH_TOTAL_POINTS,
             "percent": row.get("candidate_score"),
             "items": items,
+            "compatibility_only": True,
         }
     return result
 
 
-def enrich_candidate_model_fields(rows: Iterable[dict[str, Any]], model_id: str | None = None) -> list[dict[str, Any]]:
+def enrich_candidate_model_fields(
+    rows: Iterable[dict[str, Any]],
+    model_id: str | None = None,
+) -> list[dict[str, Any]]:
     config = load_candidate_model_config(model_id)
-    selected_id = str(config.get("id"))
-    if selected_id == FIVE_FACTOR_FLOW_V01:
-        return FiveFactorFlowV01RankingEngine(config).enrich(rows)
-    if selected_id == NET_BUY_STRENGTH_V02:
-        return enrich_net_buy_strength_v02_fields(rows, config)
     return ConfigDrivenCandidateRankingEngine(config).enrich(rows)

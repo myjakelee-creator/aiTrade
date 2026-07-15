@@ -1,61 +1,31 @@
+"""Compatibility helpers for the JSON-driven trade-value rank policy.
+
+The production engine passes ``feature_policies`` from the final model JSON
+straight into ``FeatureSnapshot``. ``install`` remains a no-op so older runtime
+import order stays harmless while no Python constant overrides the JSON policy.
+"""
 from __future__ import annotations
 
 from typing import Any
 
+from stockboard_candidate_config import load_candidate_model_config
+from stockboard_candidate_features import linear_rank_points
 
-POLICY = "trade_value_rank_top100_linear_100_to_1_v1"
+POLICY = "candidate_model_json"
 
 
-def trade_value_rank_points(rank: Any) -> float:
-    """Return the exact requested Top100 liquidity score.
-
-    Rank 1 receives 100 points, rank 100 receives 1 point, and ranks outside
-    the current Top100 receive 0. This is independent of the internal universe
-    size, so an internal universe of 170-190 symbols cannot dilute rank 100.
-    """
-
-    try:
-        numeric_rank = int(float(rank))
-    except (TypeError, ValueError):
-        return 0.0
-    if numeric_rank < 1 or numeric_rank > 100:
-        return 0.0
-    return float(101 - numeric_rank)
+def trade_value_rank_points(
+    rank: Any,
+    policy: dict[str, Any] | None = None,
+) -> float:
+    selected_policy = policy
+    if selected_policy is None:
+        config = load_candidate_model_config()
+        selected_policy = dict(config.get("feature_policies", {}).get("trade_value_rank") or {})
+    return linear_rank_points(rank, selected_policy)
 
 
 def install() -> None:
-    import stockboard_candidate_config as config
-    import stockboard_candidate_features as features
+    """Retained for import compatibility; no runtime monkey patch is installed."""
 
-    snapshot_class = features.FeatureSnapshot
-    if getattr(snapshot_class, "_stockboard_trade_value_rank_score_installed", False):
-        return
-
-    original_calculate = snapshot_class._calculate
-
-    def patched_calculate(self, index: int, key: str):
-        if key != "trade_value_rank":
-            return original_calculate(self, index, key)
-
-        row = self.rows[index]
-        rank = config._current_rank(row)
-        if rank is None or rank <= 0:
-            return features.FeatureResult(
-                key,
-                0.0,
-                None,
-                POLICY,
-                "missing",
-            )
-
-        points = trade_value_rank_points(rank)
-        return features.FeatureResult(
-            key,
-            points,
-            float(rank),
-            POLICY,
-            "ok",
-        )
-
-    snapshot_class._calculate = patched_calculate
-    snapshot_class._stockboard_trade_value_rank_score_installed = True
+    return None
