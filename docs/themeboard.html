@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>aiTrade ThemeBoard</title>
+<style>
+:root{--red:#d71920;--blue:#1266d6;--green:#067a2a;--text:#111827;--muted:#64748b;--grid:#c7d1dc;--head:#eaf0f6;--bg:#f5f7fa;--selected:#eaf3ff}
+*{box-sizing:border-box}html,body{margin:0;min-width:0;background:var(--bg);color:var(--text);font:12px "Malgun Gothic",Arial,sans-serif}
+a{color:inherit;text-decoration:none}button{font:inherit}.wrap{width:100%;min-width:0}
+.topbar{position:sticky;top:0;left:0;z-index:30;display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;align-content:flex-start;justify-content:flex-start;width:calc(100vw - 18px);max-width:calc(100vw - 18px);min-width:0;height:112px;min-height:112px;max-height:112px;gap:3px 5px;padding:4px 6px;border-bottom:1px solid #aab7c6;background:#dde7f1;white-space:normal;overflow-y:auto;overflow-x:visible;scrollbar-gutter:stable}
+.metric-row{display:contents}.title{flex:0 0 auto;min-width:0;font-size:12px;font-weight:800;white-space:nowrap}.badge,.control,.board-shell-tab{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;min-width:0;max-width:none;min-height:22px;margin:0;padding:2px 5px;border:1px solid #9aa8b5;border-radius:3px;background:#fff;color:var(--text);font:12px "Malgun Gothic",Arial,sans-serif;line-height:1.2;white-space:nowrap;overflow:visible;text-overflow:clip;box-sizing:border-box}.control{cursor:pointer}.board-shell-tab{padding:1px 7px;background:#edf3f8;font-weight:800}.board-shell-tab.active{color:#fff;border-color:#1d4ed8;background:#1d4ed8}.board-shell-tab.disabled{color:#94a3b8;background:#f8fafc;pointer-events:none}.ok{color:var(--green);font-weight:900}.warn{color:#92400e;border-color:#facc15;background:#fef9c3;font-weight:900}.bad{color:var(--red);font-weight:900}.small{flex:0 0 auto;min-width:0;color:#4b5563;white-space:nowrap}
+.summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:4px 5px;background:#edf2f7;border-bottom:1px solid #b7c3cf}.summary-card{min-width:0;padding:5px 7px;border:1px solid var(--grid);background:#fff}.summary-card span{display:block;color:var(--muted)}.summary-card b{display:block;margin-top:2px;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.section-head{display:flex;align-items:center;gap:7px;padding:4px 7px;border-top:1px solid #9aa8b5;border-bottom:1px solid #b8c3cf;background:var(--head);font-weight:900}.section-note{color:var(--muted);font-weight:600}
+.plus{color:var(--red);font-weight:900}.minus{color:var(--blue);font-weight:900}.zero{color:#4b5563}
+.state,.grade,.role,.coverage{display:inline-flex;align-items:center;justify-content:center;min-height:17px;padding:0 4px;border-radius:3px;font-size:10px;font-weight:900}
+.surge,.grade-a,.lead{color:#991b1b;background:#fee2e2}.rising,.grade-b,.co{color:#9a3412;background:#ffedd5}.steady,.grade-c{color:#166534;background:#dcfce7}.cooling,.grade-d,.follow{color:#1e40af;background:#dbeafe}.wait-data,.grade-f,.watch{color:#374151;background:#e5e7eb}
+.READY{color:#166534;background:#dcfce7}.PARTIAL{color:#9a3412;background:#ffedd5}.LOW_COVERAGE,.WAIT_DATA{color:#374151;background:#e5e7eb}
+.radar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:5px;background:#eef3f8}.theme-card{min-width:0;padding:5px;border:1px solid #b8c4cf;border-radius:3px;background:#fff;cursor:pointer}.theme-card.selected{border-color:#2563eb;background:var(--selected)}
+.card-head{display:flex;align-items:center;gap:4px;min-width:0}.rank{flex:0 0 23px;padding:2px 0;text-align:center;border-radius:2px;color:#fff;background:#4b5563;font-weight:900}.card-name{flex:1;min-width:0;font-weight:900;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.flow{display:grid;grid-template-columns:27px minmax(0,1fr) 64px;align-items:center;gap:4px;margin-top:4px}.track{height:6px;overflow:hidden;border-radius:2px;background:#e5e7eb}.fill{height:100%;background:linear-gradient(90deg,#fecaca,#d71920)}
+.card-sub{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px 5px;margin-top:4px;color:#374151}.leaders{margin-top:4px;padding-top:3px;border-top:1px dashed #d4dce4;white-space:normal}.stock-link{border:0;padding:0 2px;background:transparent;font-weight:900;cursor:pointer}.stock-link:hover{color:#1d4ed8;background:#dbeafe}
+.layout{display:grid;grid-template-columns:minmax(620px,47%) minmax(720px,53%);gap:5px;padding:5px}.panel{min-width:0;border:1px solid #aab7c6;background:#fff}.panel h2{margin:0;padding:5px 7px;border-bottom:1px solid var(--grid);background:var(--head);font-size:12px}
+.table-wrap{overflow:auto;max-height:calc(100vh - 345px)}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{height:23px;padding:3px 4px;border:1px solid var(--grid);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}th{position:sticky;top:0;z-index:2;background:var(--head);font-weight:900}
+tbody tr{cursor:pointer}tbody tr:hover{background:#eef6ff}tbody tr.selected{background:var(--selected)}.num{text-align:right;font-variant-numeric:tabular-nums}.center{text-align:center}.name{font-weight:900}.empty{padding:20px;text-align:center;color:var(--muted)}
+.footer{padding:5px 8px;border-top:1px solid #cbd5e1;color:#475569;background:#f8fafc}
+@media(max-width:1250px){.radar{grid-template-columns:repeat(3,minmax(0,1fr))}.layout{grid-template-columns:1fr}.table-wrap{max-height:none}}
+@media(max-width:900px){.radar{grid-template-columns:repeat(2,minmax(0,1fr))}.summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){body{font-size:11px}.radar,.summary{grid-template-columns:1fr}.topbar{padding:4px}.layout{padding:3px}.hide-narrow{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="topbar" class="topbar">
+    <div class="metric-row">
+      <span class="title">ThemeBoard v2 Realtime</span>
+      <a class="board-shell-tab" href="/">StockBoard</a>
+      <a class="board-shell-tab active" href="/theme">ThemeBoard</a>
+      <span class="board-shell-tab disabled">StrategyBoard</span>
+      <span id="clock" class="badge">-</span>
+      <span id="connection" class="badge bad">연결 대기</span>
+      <button id="newWindow" class="control" type="button">새 창</button>
+    </div>
+    <div class="metric-row">
+      <span id="version" class="badge">Theme v-</span>
+      <span id="featureVersion" class="badge">Feature v-</span>
+      <span id="calculate" class="badge">계산 -</span>
+      <span id="master" class="badge">Master -</span>
+    </div>
+    <div class="metric-row">
+      <span class="badge">공용 FeatureSnapshot · 1초 latest-only Projection</span>
+      <span class="small">종목 클릭=HTS/S1 연동 · HTML 계산 없음 · ThemeBoard 신규 TR 없음</span>
+    </div>
+  </div>
+
+  <div class="summary">
+    <div class="summary-card"><span>유효 테마</span><b id="summaryCount">-</b></div>
+    <div class="summary-card"><span>현재 1위</span><b id="summaryTop">-</b></div>
+    <div class="summary-card"><span>입력 Feature</span><b id="summaryFeature">-</b></div>
+    <div class="summary-card"><span>테마 마스터</span><b id="summaryMaster">-</b></div>
+  </div>
+
+  <div class="section-head">상위 테마 레이더 <span class="section-note">서버 순위·점수·막대 그대로 표시</span></div>
+  <div id="radar" class="radar"><div class="empty">테마 데이터 수신 대기</div></div>
+
+  <main class="layout">
+    <section class="panel">
+      <h2>테마 돈쏠림 순위 · 1초 공용 Projection</h2>
+      <div class="table-wrap">
+        <table id="themeTable">
+          <colgroup>
+            <col style="width:40px"><col style="width:44px"><col style="width:48px"><col style="width:132px"><col style="width:68px">
+            <col style="width:70px"><col style="width:70px"><col style="width:74px"><col style="width:58px"><col style="width:58px">
+            <col style="width:58px"><col style="width:64px"><col style="width:74px"><col style="width:110px">
+          </colgroup>
+          <thead><tr><th>순위</th><th>등급</th><th>점수</th><th>테마</th><th>상태</th><th>1분</th><th>5분</th><th>누적</th><th>확산</th><th>가속</th><th>집중</th><th>Coverage</th><th>대량체결</th><th>주도주</th></tr></thead>
+          <tbody><tr><td colspan="14" class="empty">테마 데이터 수신 대기</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 id="detailTitle">선택 테마 구성종목</h2>
+      <div class="table-wrap">
+        <table id="detailTable">
+          <colgroup>
+            <col style="width:42px"><col style="width:48px"><col style="width:48px"><col style="width:116px"><col style="width:72px"><col style="width:62px">
+            <col style="width:70px"><col style="width:68px"><col style="width:68px"><col style="width:62px"><col style="width:58px"><col style="width:58px">
+            <col style="width:68px"><col style="width:72px"><col style="width:62px">
+          </colgroup>
+          <thead><tr><th>역할</th><th>등급</th><th>점수</th><th>종목명</th><th>현재가</th><th>등락률</th><th>누적대금</th><th>1분</th><th>5분</th><th>기여율</th><th>대금비</th><th>순간</th><th>5분강도</th><th>프로</th><th>대량체결</th></tr></thead>
+          <tbody><tr><td colspan="15" class="empty">테마를 선택하십시오.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <div class="footer">계산·점수·등급·정렬·Coverage·막대 비율은 서버 Projection이 완성합니다. HTML은 표시와 선택·HTS 연동만 수행합니다.</div>
+</div>
+
+<script>
+const byId=id=>document.getElementById(id);
+const radarEl=byId('radar');
+const themeBody=byId('themeTable').tBodies[0];
+const detailBody=byId('detailTable').tBodies[0];
+let selectedThemeId=localStorage.getItem('aitrade.theme.selected.v2')||'';
+let lastPayload=null;
+let lastDetailVersion=0;
+let stream=null;
+
+function esc(value){return String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));}
+function token(value){return String(value??'').replace(/[^a-zA-Z0-9_-]/g,'');}
+function pctWidth(value){const text=String(value??'0');return /^\d+(\.\d+)?$/.test(text)?text:'0';}
+function tone(value){const safe=token(value);return ['plus','minus','zero'].includes(safe)?safe:'zero';}
+function stateClass(value){const safe=token(value);return ['surge','rising','steady','cooling','wait-data'].includes(safe)?safe:'wait-data';}
+function gradeClass(value){const safe=token(value);return ['grade-a','grade-b','grade-c','grade-d','grade-f'].includes(safe)?safe:'grade-f';}
+function roleClass(value){const safe=token(value);return ['lead','co','follow','watch'].includes(safe)?safe:'watch';}
+function coverageClass(value){const safe=token(value);return ['READY','PARTIAL','LOW_COVERAGE','WAIT_DATA'].includes(safe)?safe:'WAIT_DATA';}
+function rows(payload){return Array.isArray(payload&&payload.rows)?payload.rows:[];}
+
+function leadersHtml(theme){
+  const items=Array.isArray(theme.leaders)?theme.leaders:[];
+  if(!items.length)return '-';
+  return items.map(item=>`<button type="button" class="stock-link" data-code="${esc(item.stock_code)}">${esc(item.stock_name)}</button>`).join(' · ');
+}
+
+function radarHtml(theme){
+  return `<article class="theme-card ${String(theme.theme_id)===selectedThemeId?'selected':''}" data-theme-id="${esc(theme.theme_id)}">
+    <div class="card-head"><span class="rank">${esc(theme.display_rank)}</span><span class="card-name">${esc(theme.theme_name)}</span><span class="grade ${gradeClass(theme.grade_class)}">${esc(theme.grade)}</span><span class="state ${stateClass(theme.state_class)}">${esc(theme.state_text)}</span></div>
+    <div class="flow"><span>1분</span><div class="track"><div class="fill" style="width:${pctWidth(theme.trade_value_1m_bar_pct)}%"></div></div><b class="${tone(theme.trade_value_1m_tone)}">${esc(theme.trade_value_1m_text)}</b></div>
+    <div class="flow"><span>5분</span><div class="track"><div class="fill" style="width:${pctWidth(theme.trade_value_5m_bar_pct)}%"></div></div><b class="${tone(theme.trade_value_5m_tone)}">${esc(theme.trade_value_5m_text)}</b></div>
+    <div class="card-sub"><span>점수 ${esc(theme.score_text)}</span><span>누적 ${esc(theme.trade_value_text)}</span><span>${esc(theme.breadth_text)}</span><span>가속 ${esc(theme.acceleration_text)}</span><span>집중 ${esc(theme.concentration_text)}</span><span>Coverage ${esc(theme.coverage_text)}</span></div>
+    <div class="leaders"><b>주도</b> ${leadersHtml(theme)}</div>
+  </article>`;
+}
+
+function themeRowHtml(theme){
+  return `<tr data-theme-id="${esc(theme.theme_id)}" class="${String(theme.theme_id)===selectedThemeId?'selected':''}">
+    <td class="center">${esc(theme.display_rank)}</td>
+    <td class="center"><span class="grade ${gradeClass(theme.grade_class)}">${esc(theme.grade)}</span></td>
+    <td class="num">${esc(theme.score_text)}</td>
+    <td class="name">${esc(theme.theme_name)}</td>
+    <td class="center"><span class="state ${stateClass(theme.state_class)}">${esc(theme.state_text)}</span></td>
+    <td class="num ${tone(theme.trade_value_1m_tone)}">${esc(theme.trade_value_1m_text)}</td>
+    <td class="num ${tone(theme.trade_value_5m_tone)}">${esc(theme.trade_value_5m_text)}</td>
+    <td class="num">${esc(theme.trade_value_text)}</td>
+    <td class="num">${esc(theme.breadth_text)}</td>
+    <td class="num">${esc(theme.acceleration_text)}</td>
+    <td class="num">${esc(theme.concentration_text)}</td>
+    <td class="center"><span class="coverage ${coverageClass(theme.coverage_status)}">${esc(theme.coverage_text)}</span></td>
+    <td class="num">${esc(theme.large_trade_text)}</td>
+    <td>${leadersHtml(theme)}</td>
+  </tr>`;
+}
+
+function memberRowHtml(member){
+  return `<tr data-code="${esc(member.stock_code)}">
+    <td class="center"><span class="role ${roleClass(member.role_class)}">${esc(member.leadership_role)}</span></td>
+    <td class="center"><span class="grade ${gradeClass(`grade-${String(member.candidate_grade||'F').toLowerCase()}`)}">${esc(member.candidate_grade)}</span></td>
+    <td class="num">${esc(member.candidate_score_text)}</td>
+    <td class="name">${esc(member.stock_name)}</td>
+    <td class="num">${esc(member.price_text)}</td>
+    <td class="num ${tone(member.change_rate_tone)}">${esc(member.change_rate_text)}</td>
+    <td class="num">${esc(member.trade_value_text)}</td>
+    <td class="num">${esc(member.trade_value_1m_text)}</td>
+    <td class="num">${esc(member.trade_value_5m_text)}</td>
+    <td class="num">${esc(member.contribution_text)}</td>
+    <td class="num">${esc(member.amount_ratio_text)}</td>
+    <td class="num">${esc(member.execution_strength_text)}</td>
+    <td class="num">${esc(member.strength_5m_text)}</td>
+    <td class="num ${tone(member.program_net_tone)}">${esc(member.program_net_text)}</td>
+    <td class="num ${tone(member.large_trade_tone)}">${esc(member.large_trade_text)}</td>
+  </tr>`;
+}
+
+function bindStockLinks(root){
+  root.querySelectorAll('[data-code]').forEach(element=>element.addEventListener('click',event=>{
+    event.stopPropagation();
+    linkStock(element.dataset.code);
+  }));
+}
+
+function bindThemes(){
+  document.querySelectorAll('[data-theme-id]').forEach(element=>element.addEventListener('click',()=>selectTheme(element.dataset.themeId)));
+  bindStockLinks(radarEl);
+  bindStockLinks(themeBody);
+}
+
+function renderSummary(payload){
+  const list=rows(payload);
+  const top=list[0]||{};
+  byId('summaryCount').textContent=payload.theme_count??'-';
+  byId('summaryTop').textContent=top.theme_name?`${top.theme_name} · ${top.grade} ${top.score_text}`:'-';
+  byId('summaryFeature').textContent=`v${payload.input_feature_version??'-'}`;
+  byId('summaryMaster').textContent=payload.mapping?.master_version||'-';
+}
+
+function renderThemes(payload){
+  const list=rows(payload);
+  if(!selectedThemeId&&list[0])selectedThemeId=String(list[0].theme_id||'');
+  radarEl.innerHTML=list.length?list.map(radarHtml).join(''):'<div class="empty">유효 테마 데이터 없음</div>';
+  themeBody.innerHTML=list.length?list.map(themeRowHtml).join(''):'<tr><td colspan="14" class="empty">유효 테마 데이터 없음</td></tr>';
+  bindThemes();
+}
+
+function renderPayload(payload){
+  lastPayload=payload;
+  renderSummary(payload);
+  renderThemes(payload);
+  byId('version').textContent=`Theme v${payload.projection_version??'-'}`;
+  byId('featureVersion').textContent=`Feature v${payload.input_feature_version??'-'}`;
+  byId('calculate').textContent=`계산 ${payload.calculate_ms??'-'}ms`;
+  byId('master').textContent=`Master ${payload.mapping?.theme_count??'-'}테마`;
+  byId('connection').textContent='연결 정상';
+  byId('connection').className='badge ok';
+  if(selectedThemeId)loadDetail(false);
+}
+
+async function selectTheme(themeId){
+  selectedThemeId=String(themeId||'');
+  localStorage.setItem('aitrade.theme.selected.v2',selectedThemeId);
+  if(lastPayload)renderThemes(lastPayload);
+  await loadDetail(true);
+}
+
+async function loadDetail(force){
+  if(!selectedThemeId||!lastPayload)return;
+  const version=Number(lastPayload.projection_version||0);
+  if(!force&&version===lastDetailVersion)return;
+  try{
+    const response=await fetch(`/api/v2/hub/theme/detail?theme_id=${encodeURIComponent(selectedThemeId)}&ts=${Date.now()}`,{cache:'no-store'});
+    if(!response.ok)throw new Error(`HTTP ${response.status}`);
+    const payload=await response.json();
+    const theme=payload.theme||{};
+    const members=Array.isArray(theme.members)?theme.members:[];
+    lastDetailVersion=Number(payload.projection_version||version);
+    byId('detailTitle').textContent=`${theme.theme_name||'선택 테마'} · ${theme.active_member_count??0}/${theme.master_member_count??0}종목 · Coverage ${theme.coverage_text||'-'}`;
+    detailBody.innerHTML=members.length?members.map(memberRowHtml).join(''):'<tr><td colspan="15" class="empty">유효 구성종목 없음</td></tr>';
+    bindStockLinks(detailBody);
+  }catch(error){
+    detailBody.innerHTML=`<tr><td colspan="15" class="empty">상세 조회 실패: ${esc(error.message)}</td></tr>`;
+  }
+}
+
+async function linkStock(code){
+  if(!/^\d{6}$/.test(String(code||'')))return;
+  const command=`SBV2|${Date.now()}|${code}`;
+  try{
+    await navigator.clipboard.writeText(command);
+    byId('connection').textContent=`HTS 연동 ${code}`;
+    byId('connection').className='badge ok';
+  }catch(_error){
+    byId('connection').textContent=`클립보드 실패 ${code}`;
+    byId('connection').className='badge warn';
+  }
+}
+
+async function initialLoad(){
+  try{
+    const response=await fetch(`/api/v2/hub/theme?ts=${Date.now()}`,{cache:'no-store'});
+    if(response.ok)renderPayload(await response.json());
+  }catch(_error){}
+}
+
+function connect(){
+  if(stream)stream.close();
+  stream=new EventSource(`/api/v2/hub/theme/stream?interval_ms=1000&ts=${Date.now()}`);
+  stream.addEventListener('themes',event=>{
+    try{renderPayload(JSON.parse(event.data));}
+    catch(error){console.warn(error);}
+  });
+  stream.onerror=()=>{
+    byId('connection').textContent='재연결 중';
+    byId('connection').className='badge warn';
+  };
+}
+
+byId('newWindow').addEventListener('click',()=>window.open('/theme','aitrade-themeboard'));
+setInterval(()=>{byId('clock').textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});},500);
+byId('clock').textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});
+initialLoad();
+connect();
+</script>
+</body>
+</html>

@@ -1,16 +1,18 @@
 {
-  "schema_version": 2,
+  "schema_version": 4,
   "default_model_id": "FIVE_FACTOR_FLOW_V01",
-  "runtime_status": "validated_config_models_v3",
+  "runtime_status": "single_final_model_json_v1",
   "models": [
-    {"id":"FIVE_FACTOR_FLOW_V01","label":"5요소 수급선발 v0.1","file":"FIVE_FACTOR_FLOW_V01.json","recommended":true},
-    {"id":"NET_BUY_STRENGTH_V02","label":"순매수 강도 v0.2 · 5분강도","file":"NET_BUY_STRENGTH_V02.json"},
-    {"id":"NET_BUY_STRENGTH_V01","label":"순매수 강도 v0.1 · 5분강도","file":"NET_BUY_STRENGTH_V01.json"},
-    {"id":"OPENING_MONEY_FLOW_V01","label":"돈쏠림 시작형 · 5분강도","file":"OPENING_MONEY_FLOW_V01.json"},
-    {"id":"OPENING_ACCUMULATION_V01","label":"조용한 매집형","file":"OPENING_ACCUMULATION_V01.json"},
-    {"id":"OPENING_BURST_V01","label":"폭발 확인형 · 5분강도","file":"OPENING_BURST_V01.json"},
-    {"id":"PROGRAM_FLOW_V01","label":"프로그램 동행형","file":"PROGRAM_FLOW_V01.json"},
-    {"id":"RELATIVE_STRENGTH_OPENING_V01","label":"보드 대비 상대강도형","file":"RELATIVE_STRENGTH_OPENING_V01.json"}
+    {
+      "id": "FIVE_FACTOR_FLOW_V01",
+      "label": "거래대금 순위 v0.1",
+      "file": "FIVE_FACTOR_FLOW_V01.json",
+      "recommended": true
+    }
   ],
-  "ui_target":{"control":"topbar_dropdown","storage_key":"stockboard.candidateModel.v1","api_query":"candidate_model"}
+  "ui_target": {
+    "control": "topbar_dropdown",
+    "storage_key": "stockboard.candidateModel.v1",
+    "api_query": "candidate_model"
+  }
 }

@@ -1,20 +1,16 @@
-"""StockBoard server-side candidate ranking engine.
-
-Only validated, server-side features are used. The browser receives calculated
-score/grade/funnel metadata and never calculates candidate scores.
-"""
+"""Validated JSON configuration for the StockBoard final candidate model."""
 from __future__ import annotations
 
+import hashlib
 import json
-from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from statistics import median
-from typing import Any, Iterable
+from typing import Any
 
-NET_BUY_STRENGTH_V02 = "NET_BUY_STRENGTH_V02"
-FIVE_FACTOR_FLOW_V01 = "FIVE_FACTOR_FLOW_V01"
+FIVE_FACTOR_FLOW_V01 = "FIVE_FACTOR_FLOW_V01"  # compatibility model id
+FINAL_CANDIDATE_MODEL_ID = FIVE_FACTOR_FLOW_V01
+NET_BUY_STRENGTH_V02 = "NET_BUY_STRENGTH_V02"  # compatibility constant only
 NET_BUY_STRENGTH_REGULAR_TOTAL_POINTS = 700
 NET_BUY_STRENGTH_AFTER_CLOSE_TOTAL_POINTS = 700
 NET_BUY_STRENGTH_TOTAL_POINTS = 700
@@ -25,7 +21,9 @@ CANDIDATE_MODEL_DIR = Path(__file__).resolve().parent / "configs" / "candidate_m
 _REGISTRY_CACHE: dict[str, Any] | None = None
 _CONFIG_CACHE: dict[str, dict[str, Any]] = {}
 
-FORBIDDEN_MODEL_TOKENS = ("bid_ask", "sell_wall", "strength_1m", "one_min", "vwap", "foreign", "institution")
+FORBIDDEN_MODEL_TOKENS = (
+    "bid_ask", "sell_wall", "strength_1m", "one_min", "vwap", "foreign", "institution"
+)
 FEATURE_LABELS = {
     "trade_value_rank": "순위",
     "rank_gap": "순위상승",
@@ -55,6 +53,7 @@ SUPPORTED_GUARD_TYPES = frozenset({
     "feature_value_min", "feature_value_max", "feature_score_min", "any_value_min",
     "any_positive", "all_nonnegative",
 })
+SUPPORTED_FEATURE_POLICY_TYPES = frozenset({"linear_rank"})
 
 
 def _first(row: dict[str, Any], *keys: str) -> Any:
@@ -115,23 +114,37 @@ def _age_sec(value: Any) -> float | None:
     return max(0.0, (datetime.now() - parsed).total_seconds()) if parsed else None
 
 
-def grade_for_percent(score: int | float | None) -> tuple[str | None, str]:
+def _grade_bands(grade_bands: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    bands = grade_bands
+    if bands is None:
+        bands = load_candidate_model_config().get("grade_bands")
+    if not isinstance(bands, list):
+        return []
+    return sorted(
+        (dict(item) for item in bands if isinstance(item, dict)),
+        key=lambda item: -float(item.get("min_score", 0)),
+    )
+
+
+def grade_for_percent(
+    score: int | float | None,
+    grade_bands: list[dict[str, Any]] | None = None,
+) -> tuple[str | None, str]:
     if score is None:
         return None, ""
     number = int(round(_clamp(float(score))))
-    if number >= 90:
-        return "A", "a"
-    if number >= 80:
-        return "B", "b"
-    if number >= 70:
-        return "C", "c"
-    if number >= 60:
-        return "D", "d"
-    return "F", "f"
+    for band in _grade_bands(grade_bands):
+        minimum = _number_or_none(band.get("min_score"))
+        if minimum is not None and number >= minimum:
+            return str(band.get("grade") or ""), str(band.get("class") or "")
+    return None, ""
 
 
-def grade_text_for_percent(score: int | float | None) -> str:
-    grade, _ = grade_for_percent(score)
+def grade_text_for_percent(
+    score: int | float | None,
+    grade_bands: list[dict[str, Any]] | None = None,
+) -> str:
+    grade, _ = grade_for_percent(score, grade_bands)
     return "-" if grade is None or score is None else f"{grade}{int(round(_clamp(float(score))))}"
 
 
@@ -246,13 +259,62 @@ def _raw_registry() -> dict[str, Any]:
     return dict(_REGISTRY_CACHE)
 
 
+def _validate_grade_bands(config: dict[str, Any], errors: list[str]) -> None:
+    bands = config.get("grade_bands")
+    if not isinstance(bands, list) or not bands:
+        errors.append("grade_bands_missing")
+        return
+    seen: set[str] = set()
+    minimums: list[float] = []
+    for item in bands:
+        if not isinstance(item, dict):
+            errors.append("grade_band_invalid")
+            continue
+        grade = str(item.get("grade") or "")
+        minimum = _number_or_none(item.get("min_score"))
+        if not grade or grade in seen:
+            errors.append("grade_band_duplicate_or_missing")
+        seen.add(grade)
+        if minimum is None or minimum < 0 or minimum > 100:
+            errors.append(f"grade_band_min_invalid:{grade}")
+        else:
+            minimums.append(minimum)
+    if minimums and min(minimums) != 0:
+        errors.append("grade_band_floor_missing")
+
+
+def _validate_feature_policies(config: dict[str, Any], errors: list[str]) -> None:
+    policies = config.get("feature_policies")
+    if not isinstance(policies, dict):
+        errors.append("feature_policies_missing")
+        return
+    policy = policies.get("trade_value_rank")
+    if not isinstance(policy, dict):
+        errors.append("trade_value_rank_policy_missing")
+        return
+    policy_type = str(policy.get("type") or "")
+    if policy_type not in SUPPORTED_FEATURE_POLICY_TYPES:
+        errors.append(f"unsupported_feature_policy:{policy_type}")
+        return
+    start_rank = _number_or_none(policy.get("start_rank"))
+    end_rank = _number_or_none(policy.get("end_rank"))
+    for key in ("start_score", "end_score", "outside_score", "missing_score"):
+        value = _number_or_none(policy.get(key))
+        if value is None or value < 0 or value > 100:
+            errors.append(f"feature_policy_value_invalid:{key}")
+    if start_rank is None or end_rank is None or start_rank < 1 or end_rank < start_rank:
+        errors.append("feature_policy_rank_range_invalid")
+
+
 def validate_candidate_model_config(config: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     if not str(config.get("id") or ""):
         errors.append("model_id_missing")
+    _validate_grade_bands(config, errors)
+    _validate_feature_policies(config, errors)
     structure = config.get("score_structure")
     if not isinstance(structure, dict):
-        return [*errors, "score_structure_missing"]
+        return sorted(set([*errors, "score_structure_missing"]))
     for group_name in ("final_score", "entry_score", "confirmation_score", "focus_score"):
         items = structure.get(group_name)
         if not isinstance(items, list) or not items:
@@ -314,35 +376,42 @@ def load_candidate_model_registry(*, include_configs: bool = False) -> dict[str,
     result = {**raw, "models": valid_models, "invalid_models": invalid_models}
     if include_configs:
         result["configs"] = configs
+    if len(valid_models) != 1:
+        result["runtime_status"] = "INVALID_SINGLE_MODEL_REGISTRY"
     if not any(str(item.get("id")) == str(result.get("default_model_id")) for item in valid_models):
-        result["default_model_id"] = valid_models[0].get("id") if valid_models else FIVE_FACTOR_FLOW_V01
+        result["default_model_id"] = valid_models[0].get("id") if valid_models else FINAL_CANDIDATE_MODEL_ID
     return result
 
 
 def load_candidate_model_config(model_id: str | None = None) -> dict[str, Any]:
     raw = _raw_registry()
-    default_id = str(raw.get("default_model_id") or FIVE_FACTOR_FLOW_V01)
-    requested = str(model_id or default_id)
     models = [item for item in raw.get("models") or [] if isinstance(item, dict)]
-    item = next((item for item in models if str(item.get("id")) == requested), None)
-    if item is None and requested != default_id:
-        return load_candidate_model_config(default_id)
-    if item is None:
-        raise ValueError("candidate model registry is empty")
-    selected_id = str(item.get("id"))
+    if len(models) != 1:
+        raise ValueError(f"candidate model registry must contain exactly one final model, got {len(models)}")
+    item = models[0]
+    selected_id = str(item.get("id") or FINAL_CANDIDATE_MODEL_ID)
     if selected_id in _CONFIG_CACHE:
-        return dict(_CONFIG_CACHE[selected_id])
-    config = _read_json(CANDIDATE_MODEL_DIR / str(item.get("file") or "")) or {}
+        cached = dict(_CONFIG_CACHE[selected_id])
+        cached["requested_model_id"] = str(model_id or selected_id)
+        return cached
+    path = CANDIDATE_MODEL_DIR / str(item.get("file") or "")
+    config = _read_json(path) or {}
     config.setdefault("id", selected_id)
     config.setdefault("label", item.get("label") or selected_id)
     config.setdefault("name", config.get("label"))
     errors = validate_candidate_model_config(config)
     if errors:
-        if selected_id != default_id:
-            return load_candidate_model_config(default_id)
-        raise ValueError(f"invalid default candidate model {selected_id}: {errors}")
-    config["validation_status"] = "READY"
+        raise ValueError(f"invalid final candidate model {selected_id}: {errors}")
+    try:
+        config_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        config_hash = ""
+    config.update({
+        "validation_status": "READY",
+        "config_source": path.as_posix(),
+        "config_hash": config_hash,
+        "config_loaded_at": _now_text(),
+        "requested_model_id": str(model_id or selected_id),
+    })
     _CONFIG_CACHE[selected_id] = dict(config)
     return config
-
-

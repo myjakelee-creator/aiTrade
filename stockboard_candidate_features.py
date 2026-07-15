@@ -1,16 +1,29 @@
-"""Feature extraction for validated StockBoard candidate models."""
+"""Feature extraction for the JSON-driven StockBoard final candidate model."""
 from __future__ import annotations
+
 from dataclasses import dataclass
 from statistics import median
 from typing import Any
 
 from stockboard_candidate_config import (
-    _age_sec, _clamp, _current_rank, _first, _five_min_strength,
-    _number_or_none, _previous_trade_value, _program_net,
-    _rank_position_score, _rank_rise_score, _rank_value_scores,
-    _realtime_strength, _round_score, _row_ohlc_value,
-    _strength_score, _trade_value,
+    _age_sec,
+    _clamp,
+    _current_rank,
+    _first,
+    _five_min_strength,
+    _number_or_none,
+    _previous_trade_value,
+    _program_net,
+    _rank_position_score,
+    _rank_rise_score,
+    _rank_value_scores,
+    _realtime_strength,
+    _round_score,
+    _row_ohlc_value,
+    _strength_score,
+    _trade_value,
 )
+
 
 @dataclass(frozen=True)
 class FeatureResult:
@@ -34,10 +47,38 @@ class FeatureResult:
         }
 
 
+def linear_rank_points(rank: Any, policy: dict[str, Any]) -> float:
+    """Calculate a rank score from validated JSON policy values only."""
+
+    numeric_rank = _number_or_none(rank)
+    start_rank = _number_or_none(policy.get("start_rank"))
+    end_rank = _number_or_none(policy.get("end_rank"))
+    start_score = _number_or_none(policy.get("start_score"))
+    end_score = _number_or_none(policy.get("end_score"))
+    outside_score = _number_or_none(policy.get("outside_score"))
+    missing_score = _number_or_none(policy.get("missing_score"))
+
+    if numeric_rank is None:
+        return _round_score(missing_score)
+    if None in (start_rank, end_rank, start_score, end_score):
+        raise ValueError("linear_rank policy is incomplete")
+    if numeric_rank < start_rank or numeric_rank > end_rank:
+        return _round_score(outside_score)
+    if end_rank == start_rank:
+        return _round_score(start_score)
+    ratio = (numeric_rank - start_rank) / (end_rank - start_rank)
+    return _round_score(start_score + ratio * (end_score - start_score))
+
+
 class FeatureSnapshot:
-    def __init__(self, rows: list[dict[str, Any]]):
+    def __init__(
+        self,
+        rows: list[dict[str, Any]],
+        feature_policies: dict[str, dict[str, Any]] | None = None,
+    ):
         self.rows = rows
         self.total = len(rows)
+        self.feature_policies = dict(feature_policies or {})
         self.amount_ratio_values: dict[int, float] = {}
         self.trade_values: dict[int, float] = {}
         self.program_ratio_values: dict[int, float] = {}
@@ -82,8 +123,23 @@ class FeatureSnapshot:
     def _calculate(self, index: int, key: str) -> FeatureResult:
         row = self.rows[index]
         if key == "trade_value_rank":
-            rank = _current_rank(row)
-            return FeatureResult(key, _rank_position_score(int(rank), self.total) if rank else 0, rank, "rank", "ok" if rank else "missing")
+            policy = self.feature_policies.get(key)
+            if not isinstance(policy, dict):
+                raise ValueError("trade_value_rank feature policy is missing from final model JSON")
+            if str(policy.get("type") or "") != "linear_rank":
+                raise ValueError(f"unsupported trade_value_rank policy: {policy.get('type')}")
+            rank_key = str(policy.get("rank_key") or "rank")
+            rank = _number_or_none(row.get(rank_key))
+            if rank is None:
+                rank = _current_rank(row)
+            status = "missing" if rank is None else "ok"
+            return FeatureResult(
+                key,
+                linear_rank_points(rank, policy),
+                rank,
+                str(policy.get("source") or "candidate_model_json"),
+                status,
+            )
         if key == "rank_gap":
             points, value, status = _rank_rise_score(row)
             return FeatureResult(key, points, value, "prev_rank/current_rank", status)
@@ -193,5 +249,3 @@ class FeatureSnapshot:
             score = money * .32 + (100 if execution >= 60 and flow >= 70 else 60 if execution >= 60 and flow >= 50 else 20 if execution >= 60 else 0) * .28 + dual * .20 + count_score * .20
             return FeatureResult(key, _round_score(score), score, "five_factor_alignment", "ok")
         raise KeyError(f"unsupported feature: {key}")
-
-
