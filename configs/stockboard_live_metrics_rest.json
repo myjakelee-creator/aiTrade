@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "enabled": true,
+  "rollout_stage": 1,
+  "mode": "kiwoom_rest_lowload_v1",
+  "query_suffix": "_AL",
+  "max_top_codes": 20,
+  "global_min_request_gap_sec": 2.0,
+  "health_stable_sec": 10,
+  "price_stall_guard_sec": 30,
+  "selected_refresh_sec": 5,
+  "loop_sleep_sec": 1.0,
+  "error_backoff_sec": 30,
+  "regular_session": {
+    "start": "09:00",
+    "end": "15:30"
+  },
+  "opening_window": {
+    "start": "09:00",
+    "end": "09:10"
+  },
+  "metrics": {
+    "bidask": {
+      "stage": 1,
+      "api_id": "ka10004",
+      "path": "/api/dostk/mrkcond",
+      "regular_interval_sec": {
+        "s1": 10,
+        "top20": 60
+      },
+      "opening_interval_sec": {
+        "s1": 30,
+        "top20": 300
+      }
+    },
+    "strength": {
+      "stage": 2,
+      "strength_5m_apply_stage": 3,
+      "api_id": "ka10046",
+      "path": "/api/dostk/mrkcond",
+      "regular_interval_sec": {
+        "s1": 15,
+        "top20": 90
+      },
+      "opening_interval_sec": {
+        "s1": 45,
+        "top20": 300
+      }
+    },
+    "large_trade": {
+      "stage": 4,
+      "api_id": "ka10055",
+      "path": "/api/dostk/stkinfo",
+      "threshold_krw": 50000000,
+      "regular_interval_sec": {
+        "s1": 30,
+        "top20": 180
+      },
+      "opening_interval_sec": {
+        "s1": 120,
+        "top20": 0
+      },
+      "first_page_only": true,
+      "baseline_first_response": true
+    }
+  },
+  "performance_contract": {
+    "price_collector_changes": 0,
+    "new_qax_processes": 0,
+    "new_realtime_fids": 0,
+    "browser_calculation": false,
+    "single_background_thread": true,
+    "single_request_inflight": true,
+    "top_scope_only": true
+  }
+}

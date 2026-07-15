@@ -5,11 +5,11 @@ from realtime_v2.tr_singleflight import get_shared_tr_coordinator
 
 
 def install(base) -> None:
-    """Route program net through shared single-flight and restore cached metrics.
+    """Route slow REST sources through shared low-priority worker lanes.
 
-    The large-trade sidecar is intentionally not installed in production. A second
-    Kiwoom QAx realtime registration stopped the verified price feed, so that lane
-    remains isolated experiment code only.
+    The large-trade QAx sidecar remains production-disabled. Restored bid/ask,
+    strength, and large-trade metrics use official Kiwoom REST endpoints from one
+    sleeping worker thread and never alter the verified price collector.
     """
 
     updater_class = getattr(base, "ProgramNetUpdater", None)
@@ -56,5 +56,7 @@ def install(base) -> None:
     updater_class._stockboard_tr_singleflight_installed = True
 
     from realtime_v2.worker_metric_restore_patch import install as install_metric_restore
+    from realtime_v2.worker_rest_live_metrics_patch import install as install_rest_live_metrics
 
     install_metric_restore(base)
+    install_rest_live_metrics(base)
