@@ -120,6 +120,9 @@ def install(base) -> None:
         install as install_market_metric_session_manager,
         market_metric_phase,
     )
+    from realtime_v2.worker_metric_state_overlay_patch import (
+        install as install_metric_state_overlay,
+    )
     from realtime_v2.worker_six_metric_lifecycle_runtime_opt import (
         install as install_six_metric_runtime_opt,
     )
@@ -159,6 +162,7 @@ def install(base) -> None:
     install_realtime_strength_ws_top20(base)
     install_metric_provenance(base)
     install_market_metric_session_manager(base)
+    install_metric_state_overlay(base)
     install_six_metric_runtime_opt()
     install_six_metric_lifecycle(base)
     install_six_metric_output_guard(base)
