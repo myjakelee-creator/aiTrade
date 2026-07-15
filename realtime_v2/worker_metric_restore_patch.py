@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import os
-import time
 from copy import deepcopy
 from typing import Any
 
-from realtime_v2.common import normalize_code, now_text, to_number, trading_date_text
+from realtime_v2.common import normalize_code, to_number, trading_date_text
 
 PROGRAM_KEYS = (
     "program_net",
@@ -50,14 +48,6 @@ LARGE_TRADE_DATE_KEYS = (
     "trading_date",
     "large_trade_updated_at",
 )
-
-
-def _env_float(name: str, default: float, minimum: float, maximum: float) -> float:
-    try:
-        value = float(str(os.getenv(name, default)).strip())
-    except (TypeError, ValueError):
-        value = default
-    return max(minimum, min(maximum, value))
 
 
 def _source_text(source: dict[str, Any], key: str) -> str:
@@ -185,7 +175,7 @@ def _restore_metric_row(
     if not program_available:
         # The browser converts null to zero. Omitting the key correctly displays '-'.
         row.pop("program_net", None)
-        row["program_net_source"] = "startup_refresh_pending"
+        row["program_net_source"] = "background_refresh_pending"
         row["program_net_status"] = "unavailable_waiting_refresh"
         row["program_net_display_basis"] = "unavailable"
 
@@ -220,17 +210,16 @@ def _restore_metric_row(
 
 
 def install(base) -> None:
-    """Restore program/large-trade display without touching the price callback.
+    """Restore program/large-trade display without touching startup or price paths.
 
-    Program net performs one startup refresh on its existing background thread and
-    then keeps the original interval. Large trade restores only same-day persisted
-    aggregates from already existing caches; no FID, TR, thread, or browser work is
-    added.
+    Program net keeps the existing stable background updater cadence. This patch
+    never invokes a REST/TR request at worker startup. Large trade restores only
+    same-day persisted aggregates from already existing caches; no FID, TR, thread,
+    socket, or browser work is added.
     """
 
     state_class = getattr(base, "State", None)
-    updater_class = getattr(base, "ProgramNetUpdater", None)
-    if state_class is None or updater_class is None:
+    if state_class is None:
         return
     if getattr(state_class, "_stockboard_metric_restore_installed", False):
         return
@@ -306,38 +295,14 @@ def install(base) -> None:
             self.status["large_trade_display_available_count"] = large_trade_available_count
             self.status["metric_restore_applied_rows"] = restored_rows
             self.status["metric_restore_applied_fields"] = restored_fields
+            self.status["program_net_refresh_policy"] = (
+                "existing_background_updater; no startup REST/TR request"
+            )
             self.status["large_trade_live_policy"] = (
                 "same_day_persisted_only; price collector remains FID15-free"
             )
         return result
 
-    def run(self) -> None:
-        self._load_existing_snapshots()
-        delay_sec = _env_float(
-            "STOCKBOARD_PROGRAM_STARTUP_REFRESH_DELAY_SEC", 0.5, 0.0, 10.0
-        )
-        if not self.stop_event.wait(delay_sec):
-            started = time.perf_counter()
-            with self.state.lock:
-                self.state.status["program_net_startup_refresh_status"] = "running"
-                self.state.status["program_net_startup_refresh_started_at"] = now_text()
-            self._fetch_once()
-            duration_ms = round((time.perf_counter() - started) * 1000.0, 3)
-            with self.state.lock:
-                error = self.state.status.get("program_net_last_error")
-                self.state.status["program_net_startup_refresh_status"] = (
-                    "error" if error else "ok"
-                )
-                self.state.status["program_net_startup_refresh_duration_ms"] = duration_ms
-                self.state.status["program_net_startup_refresh_completed_at"] = now_text()
-                self.state.status["program_net_startup_refresh_count"] = int(
-                    self.state.status.get("program_net_startup_refresh_count") or 0
-                ) + 1
-        while not self.stop_event.wait(self.interval_sec):
-            self._fetch_once()
-
     state_class.apply_program_net_values = apply_program_net_values
     state_class.rows = rows
-    updater_class.run = run
     state_class._stockboard_metric_restore_installed = True
-    updater_class._stockboard_metric_restore_installed = True

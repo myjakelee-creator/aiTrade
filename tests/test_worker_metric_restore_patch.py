@@ -66,12 +66,11 @@ class FakeUpdater:
         self.stop_event = threading.Event()
         self.calls = []
 
-    def _load_existing_snapshots(self):
-        self.calls.append("load")
+    def run(self):
+        self.calls.append("stable_background_run")
 
     def _fetch_once(self):
         self.calls.append("fetch")
-        self.stop_event.set()
 
 
 class FakeBase:
@@ -83,17 +82,17 @@ def install_once():
     install(FakeBase)
 
 
-def test_program_fetch_runs_at_startup_on_existing_updater_thread(monkeypatch):
+def test_program_updater_run_is_not_overridden_or_called_at_startup():
+    original_run = FakeUpdater.run
     install_once()
-    monkeypatch.setenv("STOCKBOARD_PROGRAM_STARTUP_REFRESH_DELAY_SEC", "0")
+
+    assert FakeUpdater.run is original_run
     state = FakeState()
     updater = FakeUpdater(state)
+    assert updater.calls == []
 
     updater.run()
-
-    assert updater.calls == ["load", "fetch"]
-    assert state.status["program_net_startup_refresh_count"] == 1
-    assert state.status["program_net_startup_refresh_status"] == "ok"
+    assert updater.calls == ["stable_background_run"]
 
 
 def test_program_update_requests_one_background_snapshot_rebuild():
@@ -153,6 +152,9 @@ def test_same_day_program_and_large_trade_values_are_restored():
     assert row["large_trade_net_count"] == 8
     assert row["large_trade_available"] is True
     assert row["large_trade_cache_restored"] is True
+    assert state.status["program_net_refresh_policy"] == (
+        "existing_background_updater; no startup REST/TR request"
+    )
 
 
 def test_current_session_hold_and_continuity_caches_are_valid_sources():
@@ -296,7 +298,7 @@ def test_genuine_zero_with_valid_source_is_not_hidden():
     assert row["large_trade_available"] is True
 
 
-def test_patch_adds_no_price_collector_or_parallel_market_data_work():
+def test_patch_adds_no_startup_request_price_collector_or_parallel_market_work():
     source = PATCH_PATH.read_text(encoding="utf-8")
     ast.parse(source)
     for forbidden in (
@@ -310,6 +312,8 @@ def test_patch_adds_no_price_collector_or_parallel_market_data_work():
         "Thread(",
         "EventSource(",
         "fetch(",
+        "updater_class.run =",
+        "self._fetch_once()",
     ):
         assert forbidden not in source
 
