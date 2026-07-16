@@ -92,7 +92,11 @@ def install(base) -> None:
         previous = _date_digits(getattr(self, "_approved_pipeline_date", ""))
         if target and target != previous:
             phase = str(getattr(market_session_now(datetime.now()), "phase", "") or "")
-            reset_for_date(self, target, phase)
+            final_reset = getattr(self, "reset_approved_minute_pipeline_for_date", None)
+            if callable(final_reset):
+                final_reset(target, phase)
+            else:
+                reset_for_date(self, target, phase)
         return target
 
     def rows(self, limit: int = 300):
