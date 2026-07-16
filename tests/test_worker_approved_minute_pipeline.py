@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
+import realtime_v2.worker_minute_value_hold_patch as minute_hold
 from realtime_v2.worker_approved_minute_pipeline import (
     LARGE_THRESHOLD_DEFAULT,
     parse_orderbook_events,
@@ -14,6 +16,7 @@ CONFIG = ROOT / "configs" / "stockboard_live_metrics_rest.json"
 PIPELINE = ROOT / "realtime_v2" / "worker_approved_minute_pipeline.py"
 HTML_PATCH = ROOT / "realtime_v2" / "html_approved_minute_metrics_patch.py"
 COLLECTOR = ROOT / "realtime_v2" / "collector32_large_bidask.py"
+ROLLOVER = ROOT / "realtime_v2" / "worker_approved_minute_rollover_guard.py"
 
 
 def test_parse_trade_event_keeps_raw_signed_quantity_before_ui_coalescing():
@@ -137,3 +140,71 @@ def test_minute_trade_value_ui_is_compact_and_colored_at_100_percent():
     assert "`${minuteValue.toFixed(1)} ${minutePctText}`" in source
     assert "minutePct>=100?'plus':'minus'" in source
     assert "최근 완료 1분" in source
+
+
+def test_minute_value_policy_holds_without_positive_completed_bucket():
+    assert minute_hold.minute_value_should_hold("closed", {100: 12.3}, 100) is True
+    assert minute_hold.minute_value_should_hold("before_market", {100: 12.3}, 100) is True
+    assert minute_hold.minute_value_should_hold("regular", {}, 100) is True
+    assert minute_hold.minute_value_should_hold("regular", {100: 0.0}, 100) is True
+    assert minute_hold.minute_value_should_hold("regular", {100: 12.3}, 100) is False
+
+
+def test_closed_session_restores_last_good_minute_value(monkeypatch):
+    monkeypatch.setattr(minute_hold, "_phase_name", lambda: "closed")
+    monkeypatch.setattr(minute_hold, "_completed_minute", lambda: 100)
+
+    class FakeState:
+        def __init__(self):
+            self.lock = threading.RLock()
+            self.status = {}
+            self.quotes = {
+                "000001": {
+                    "stock_code": "000001",
+                    "trade_value_1m_eok": 12.3,
+                    "trade_value_prev_1m_eok": 8.5,
+                    "trade_value_1m_ratio_pct": 144.7,
+                    "trade_value_1m_quality": "COMPLETE_MINUTE",
+                }
+            }
+            self.daily_values_by_code = {
+                "000001": dict(self.quotes["000001"])
+            }
+            self._approved_trade_value_buckets = {}
+
+        def rows(self, limit=300):
+            for target in (
+                self.quotes["000001"],
+                self.daily_values_by_code["000001"],
+            ):
+                target.update(
+                    {
+                        "trade_value_1m_eok": 0.0,
+                        "trade_value_prev_1m_eok": 0.0,
+                        "trade_value_1m_ratio_pct": 0.0,
+                        "trade_value_1m_quality": "COMPLETE_MINUTE",
+                    }
+                )
+            return [dict(self.quotes["000001"])]
+
+    class FakeBase:
+        State = FakeState
+
+    minute_hold.install(FakeBase)
+    state = FakeState()
+    row = state.rows()[0]
+
+    assert row["trade_value_1m_eok"] == 12.3
+    assert row["trade_value_prev_1m_eok"] == 8.5
+    assert row["trade_value_1m_ratio_pct"] == 144.7
+    assert state.quotes["000001"]["trade_value_1m_eok"] == 12.3
+    assert state.daily_values_by_code["000001"]["trade_value_1m_eok"] == 12.3
+    assert state.status["minute_value_hold_count"] == 1
+
+
+def test_rollover_installs_minute_value_hold_after_momentum():
+    source = ROLLOVER.read_text(encoding="utf-8")
+    assert "install_minute_value_hold" in source
+    assert source.index("install_momentum_1m(base)") < source.index(
+        "install_minute_value_hold(base)"
+    )
