@@ -77,8 +77,8 @@ def test_before_market_backfill_is_integrated_and_large_trade_disabled():
     policy = _config()["session_manager"]["phase_policies"]["before_market"]
     assert policy["scope"] == 100
     assert policy["missing_only"] is True
-    assert policy["intervals"]["bidask"]["s1"] == 900
-    assert policy["intervals"]["strength"]["s1"] == 900
+    assert policy["intervals"]["bidask"]["s1"] == 0
+    assert policy["intervals"]["strength"]["s1"] == 21600
     assert policy["intervals"]["large_trade"] == {
         "s1": 0,
         "top20": 0,
