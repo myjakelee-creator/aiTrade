@@ -6,11 +6,11 @@ from realtime_v2.tr_singleflight import get_shared_tr_coordinator
 def install(base) -> None:
     """Route all auxiliary metrics through one calendar-driven low-load owner.
 
-    The production price collector remains the only QAx owner. Five-minute strength and
-    large trades share one REST thread and one single-flight budget. Execution strength
-    uses one WebSocket connection for Top100 with one batch commit per second. The
-    market-session manager owns Top1/Top20/Top100 scope, trading-date rollover, holidays,
-    delayed openings, close completion, and restart recovery.
+    The production price collector remains the only QAx owner. Five-minute strength uses
+    one REST thread and one single-flight budget. One 64-bit WebSocket connection carries
+    Top100 trade events plus a rotating 20-symbol orderbook group. The market-session
+    manager owns trading-date rollover, holidays, delayed openings, close completion and
+    restart recovery; approved UI fields publish on minute boundaries.
     """
 
     updater_class = getattr(base, "ProgramNetUpdater", None)
@@ -136,9 +136,18 @@ def install(base) -> None:
     from realtime_v2.worker_aux_metric_runtime_policy import (
         install as install_aux_metric_runtime_policy,
     )
+    from realtime_v2.worker_approved_minute_pipeline import (
+        install as install_approved_minute_pipeline,
+    )
+    from realtime_v2.worker_approved_minute_pipeline_runtime_fix import (
+        install as install_approved_minute_runtime_fix,
+    )
     from realtime_v2.html_null_metric_patch import install as install_html_null_metric
     from realtime_v2.html_execution_strength_label_patch import (
         install as install_execution_strength_label,
+    )
+    from realtime_v2.html_approved_minute_metrics_patch import (
+        install as install_approved_minute_metrics_html,
     )
     from realtime_v2.html_opening_render_guard_patch import (
         install as install_opening_render_guard,
@@ -158,7 +167,15 @@ def install(base) -> None:
 
     def execution_ws_phase(config):
         phase = market_metric_phase(config=config)
-        if phase in {"opening_burst", "regular", "closing_call", "aftermarket"}:
+        if phase in {
+            "premarket",
+            "opening_call",
+            "opening_burst",
+            "regular",
+            "closing_call",
+            "after_wait",
+            "aftermarket",
+        }:
             return phase
         return "outside"
 
@@ -172,6 +189,9 @@ def install(base) -> None:
     install_six_metric_output_guard(base)
     install_five_metric_display_policy(base)
     install_aux_metric_runtime_policy(base)
+    install_approved_minute_pipeline(base)
+    install_approved_minute_runtime_fix(base)
     install_html_null_metric()
     install_execution_strength_label()
+    install_approved_minute_metrics_html()
     install_opening_render_guard()
