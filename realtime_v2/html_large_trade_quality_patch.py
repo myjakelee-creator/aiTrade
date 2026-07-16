@@ -6,6 +6,10 @@ MARKER = "STOCKBOARD_V2_LARGE_TRADE_QUALITY_20260716"
 def install() -> None:
     """Prefix uncertain reconnect totals with ~ and expose the quality in a tooltip."""
 
+    from realtime_v2.html_momentum_badge_patch import install as install_momentum_badges
+
+    install_momentum_badges()
+
     from realtime_v2 import worker64_guarded_large as large
 
     if getattr(large, "_large_trade_quality_html_installed", False):
