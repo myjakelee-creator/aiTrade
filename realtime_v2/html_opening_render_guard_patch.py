@@ -8,7 +8,15 @@ def install() -> None:
 
     The opening window follows the market calendar carried in the latest snapshot, so
     delayed-open special days receive the same ten-minute protection automatically.
+    The realtime-candle-close patch is installed first so both protections compose in
+    the single HTML transformation chain.
     """
+
+    from realtime_v2.html_realtime_candle_close_patch import (
+        install as install_realtime_candle_close,
+    )
+
+    install_realtime_candle_close()
 
     from realtime_v2 import worker64_guarded_large as large
 
