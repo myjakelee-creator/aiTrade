@@ -70,6 +70,7 @@ jobs:
             realtime_v2\worker_aux_metric_runtime_policy.py `
             realtime_v2\worker_approved_minute_pipeline.py `
             realtime_v2\worker_approved_minute_pipeline_runtime_fix.py `
+            realtime_v2\worker_approved_minute_pipeline_safety.py `
             realtime_v2\worker_tr_singleflight_patch.py `
             realtime_v2\worker_metric_provenance_patch.py `
             realtime_v2\worker_realtime_strength_ws_top20_patch.py `
@@ -77,6 +78,7 @@ jobs:
             realtime_v2\worker_six_metric_lifecycle_patch.py `
             realtime_v2\worker_six_metric_output_guard.py `
             realtime_v2\html_approved_minute_metrics_patch.py `
+            realtime_v2\html_large_trade_quality_patch.py `
             realtime_v2\html_opening_render_guard_patch.py
 
       - name: Run StockBoard targeted tests
@@ -89,6 +91,7 @@ jobs:
             tests\test_worker_five_metric_display_policy.py `
             tests\test_worker_aux_metric_runtime_policy.py `
             tests\test_worker_approved_minute_pipeline.py `
+            tests\test_worker_approved_minute_pipeline_safety.py `
             tests\test_worker_metric_session_alignment.py `
             tests\test_worker_rest_live_metrics_aftermarket.py `
             tests\test_worker_six_metric_lifecycle.py `
