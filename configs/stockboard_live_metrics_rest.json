@@ -1,5 +1,5 @@
 {
-  "schema_version": 9,
+  "schema_version": 10,
   "enabled": true,
   "rollout_stage": 4,
   "mode": "kiwoom_rest_lowload_v1",
@@ -62,7 +62,7 @@
         "require_trade_fresh": false,
         "min_request_gap_sec": 3.0,
         "intervals": {
-          "bidask": {"s1": 15, "top20": 120, "top100": 900},
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
           "strength": {"s1": 0, "top20": 0, "top100": 0},
           "large_trade": {"s1": 0, "top20": 0, "top100": 0}
         }
@@ -74,7 +74,7 @@
         "require_trade_fresh": false,
         "min_request_gap_sec": 4.0,
         "intervals": {
-          "bidask": {"s1": 15, "top20": 180, "top100": 0},
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
           "strength": {"s1": 0, "top20": 0, "top100": 0},
           "large_trade": {"s1": 0, "top20": 0, "top100": 0}
         }
@@ -86,7 +86,7 @@
         "require_trade_fresh": true,
         "min_request_gap_sec": 5.0,
         "intervals": {
-          "bidask": {"s1": 60, "top20": 0, "top100": 0},
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
           "strength": {"s1": 0, "top20": 0, "top100": 0},
           "large_trade": {"s1": 0, "top20": 0, "top100": 0}
         }
@@ -98,9 +98,9 @@
         "require_trade_fresh": true,
         "min_request_gap_sec": 2.0,
         "intervals": {
-          "bidask": {"s1": 10, "top20": 60, "top100": 900},
-          "strength": {"s1": 15, "top20": 90, "top100": 900},
-          "large_trade": {"s1": 60, "top20": 300, "top100": 1800}
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
+          "strength": {"s1": 15, "top20": 90, "top100": 600},
+          "large_trade": {"s1": 60, "top20": 300, "top100": 1200}
         }
       },
       "closing_call": {
@@ -159,8 +159,8 @@
   "realtime_strength_ws": {
     "stage": 2,
     "enabled": true,
-    "scope": "top20",
-    "max_symbols": 20,
+    "scope": "top100",
+    "max_symbols": 100,
     "url": "wss://api.kiwoom.com:10000/api/dostk/websocket",
     "type": "0B",
     "strength_field": "228",
@@ -169,7 +169,7 @@
     "group_no": "41",
     "apply_interval_ms": 1000,
     "stale_after_sec": 20,
-    "selection_refresh_sec": 5,
+    "selection_refresh_sec": 300,
     "reconnect_backoff_sec": 10,
     "connect_timeout_sec": 10,
     "receive_timeout_sec": 2
@@ -190,7 +190,8 @@
     "active_session_policy": "current_trading_date_only",
     "closed_session_policy": "last_completed_trading_date_only",
     "unknown_date_policy": "hide",
-    "missing_numeric_policy": "dash_not_zero"
+    "missing_numeric_policy": "dash_not_zero",
+    "snapshot_metric_retention_policy": "hold_current_trading_date_until_successful_refresh"
   },
   "metrics": {
     "bidask": {
@@ -223,8 +224,9 @@
     "single_request_inflight": true,
     "display_scope_max_codes": 100,
     "realtime_strength_ws_connections": 1,
-    "realtime_strength_ws_symbols": 20,
+    "realtime_strength_ws_symbols": 100,
     "realtime_strength_batch_apply_hz_max": 1,
+    "snapshot_metric_retention_until_successful_refresh": true,
     "six_metric_lifecycle_threads": 0,
     "six_metric_lifecycle_network_requests": 0,
     "six_metric_lifecycle_snapshot_write_min_interval_sec": 5,
