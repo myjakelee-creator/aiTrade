@@ -48,6 +48,18 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pytest websockets websocket-client
 
+      - name: Verify Windows PowerShell dependency auto-recovery
+        shell: pwsh
+        run: |
+          $python64 = (Get-Command python).Source
+          python -m pip uninstall -y websockets
+          $env:STOCKBOARD_PYTHON64 = $python64
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\stockboard_v2_python64_dependencies.ps1
+          if ($LASTEXITCODE -ne 0) {
+            throw "dependency bootstrap failed with exit code $LASTEXITCODE"
+          }
+          python -c "from websockets.sync.client import connect; print('dependency_bootstrap_verified')"
+
       - name: Check Python syntax
         shell: pwsh
         run: |
