@@ -6,11 +6,11 @@ from realtime_v2.tr_singleflight import get_shared_tr_coordinator
 def install(base) -> None:
     """Route all auxiliary metrics through one calendar-driven low-load owner.
 
-    The production price collector remains the only QAx owner. Bid/ask, five-minute
-    strength, and large trades share one REST thread and one single-flight budget.
-    Execution strength uses one WebSocket connection for Top20 with one batch commit
-    per second. The market-session manager owns Top1/Top20/Top100 scope, trading-date
-    rollover, holidays, delayed openings, close completion, and restart recovery.
+    The production price collector remains the only QAx owner. Five-minute strength and
+    large trades share one REST thread and one single-flight budget. Execution strength
+    uses one WebSocket connection for Top100 with one batch commit per second. The
+    market-session manager owns Top1/Top20/Top100 scope, trading-date rollover, holidays,
+    delayed openings, close completion, and restart recovery.
     """
 
     updater_class = getattr(base, "ProgramNetUpdater", None)
@@ -133,6 +133,9 @@ def install(base) -> None:
     from realtime_v2.worker_five_metric_display_policy import (
         install as install_five_metric_display_policy,
     )
+    from realtime_v2.worker_aux_metric_runtime_policy import (
+        install as install_aux_metric_runtime_policy,
+    )
     from realtime_v2.html_null_metric_patch import install as install_html_null_metric
     from realtime_v2.html_execution_strength_label_patch import (
         install as install_execution_strength_label,
@@ -168,6 +171,7 @@ def install(base) -> None:
     install_six_metric_lifecycle(base)
     install_six_metric_output_guard(base)
     install_five_metric_display_policy(base)
+    install_aux_metric_runtime_policy(base)
     install_html_null_metric()
     install_execution_strength_label()
     install_opening_render_guard()
