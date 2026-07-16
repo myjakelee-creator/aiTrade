@@ -3,7 +3,15 @@ $ErrorActionPreference = "Stop"
 function Get-PythonBits([string]$Path) {
     if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return 0 }
     try {
-        $value = & $Path -c "import struct; print(struct.calcsize('P') * 8)" 2>$null
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $value = & $Path -c "import struct; print(struct.calcsize('P') * 8)" 2>$null
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousPreference
+        }
+        if ($exitCode -ne 0) { return 0 }
         return [int]([string]$value).Trim()
     } catch {
         return 0
@@ -35,8 +43,36 @@ function Resolve-Python64 {
 }
 
 function Test-WebSocketDependency([string]$Python64) {
-    & $Python64 -c "from websockets.sync.client import connect; print('websockets_sync_ok')" 2>$null | Out-Null
-    return $LASTEXITCODE -eq 0
+    try {
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & $Python64 -c "from websockets.sync.client import connect; print('websockets_sync_ok')" *> $null
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousPreference
+        }
+        return $exitCode -eq 0
+    } catch {
+        return $false
+    }
+}
+
+function Install-WebSocketDependency([string]$Python64) {
+    try {
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & $Python64 -m pip install --disable-pip-version-check "websockets>=14,<17"
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousPreference
+        }
+        return $exitCode -eq 0
+    } catch {
+        Write-Warning "WebSocket dependency installation raised: $($_.Exception.Message)"
+        return $false
+    }
 }
 
 $python64 = Resolve-Python64
@@ -44,8 +80,7 @@ Write-Host "STOCKBOARD_PYTHON64=$python64"
 
 if (-not (Test-WebSocketDependency $python64)) {
     Write-Host "Installing missing StockBoard WebSocket dependency..." -ForegroundColor Yellow
-    & $python64 -m pip install --disable-pip-version-check "websockets>=14,<17"
-    if ($LASTEXITCODE -ne 0) {
+    if (-not (Install-WebSocketDependency $python64)) {
         throw "Failed to install the 64-bit Python 'websockets' package."
     }
 }
