@@ -34,14 +34,15 @@ def install(base) -> None:
     original_state_init = state_class.__init__
     original_ensure = getattr(state_class, "ensure_metric_session_state_date", None)
     original_stage_trade = getattr(state_class, "stage_approved_trade_events", None)
+    original_rows = state_class.rows
 
     def state_init(self, *args, **kwargs):
         original_state_init(self, *args, **kwargs)
         session = market_session_now(datetime.now())
         target = _date_digits(
-            getattr(session, "trading_date", "")
+            self.status.get("metric_session_state_date")
+            or getattr(session, "trading_date", "")
             or getattr(session, "calendar_date", "")
-            or self.status.get("metric_session_state_date")
         )
         phase = str(getattr(session, "phase", "") or "")
         restored = int(self.status.get("approved_large_checkpoint_restored_count") or 0)
@@ -94,7 +95,14 @@ def install(base) -> None:
             reset_for_date(self, target, phase)
         return target
 
+    def rows(self, limit: int = 300):
+        if callable(original_ensure):
+            ensure_date(self)
+        return original_rows(self, limit)
+
     def stage_trade_events(self, events):
+        if callable(original_ensure):
+            ensure_date(self)
         result = original_stage_trade(self, events) if callable(original_stage_trade) else None
         if not bool(getattr(self, "_approved_large_full_session_coverage", False)):
             with self.lock:
@@ -108,6 +116,7 @@ def install(base) -> None:
     state_class.reset_approved_minute_pipeline_for_date = reset_for_date
     if callable(original_ensure):
         state_class.ensure_metric_session_state_date = ensure_date
+    state_class.rows = rows
     if callable(original_stage_trade):
         state_class.stage_approved_trade_events = stage_trade_events
     state_class._stockboard_approved_minute_rollover_guard_installed = True
