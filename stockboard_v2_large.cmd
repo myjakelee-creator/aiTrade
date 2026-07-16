@@ -51,6 +51,7 @@ if "%ACTION%"=="" (
 :run
 set "SAFE=%~dp0scripts\stockboard_v2_large_safe.ps1"
 set "PREFLIGHT=%~dp0scripts\stockboard_v2_openapi_preflight.ps1"
+set "PY64_DEPS=%~dp0scripts\stockboard_v2_python64_dependencies.ps1"
 set "CONTEXT_SINGLEFLIGHT=%~dp0scripts\start_context_singleflight.ps1"
 set "LARGE_TRADE_SIDECAR=%~dp0scripts\stockboard_large_trade_sidecar.ps1"
 
@@ -80,6 +81,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SAFE%" -Action stop
 if errorlevel 1 goto failed
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PREFLIGHT%"
+if errorlevel 1 goto failed
+
+rem Ensure the 64-bit worker can open the Kiwoom REST WebSocket used by FID228.
+rem The package is installed only when missing and verified before the worker starts.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PY64_DEPS%"
 if errorlevel 1 goto failed
 
 rem The older safe launcher still invokes the historical context path. Defer that
