@@ -7,7 +7,7 @@ from typing import Any
 from realtime_v2.common import normalize_code, now_text, to_number
 from realtime_v2.market_session import market_session_now
 
-PATCH_VERSION = "minute_value_hold_v1"
+PATCH_VERSION = "minute_value_hold_v2"
 ACTIVE_MINUTE_VALUE_PHASES = {
     "opening_call",
     "opening_burst",
@@ -55,38 +55,66 @@ def minute_value_should_hold(
     return value is None or float(value) <= 0
 
 
+def _has_positive_last_good(mapping: dict[str, Any] | None) -> bool:
+    if not isinstance(mapping, dict):
+        return False
+    value = to_number(mapping.get("trade_value_1m_eok"))
+    return value is not None and float(value) > 0
+
+
 def _snapshot(mapping: dict[str, Any] | None) -> dict[str, tuple[bool, Any]]:
+    """Keep the metric group only when its current one-minute value is positive."""
+
     mapping = mapping if isinstance(mapping, dict) else {}
+    valid = _has_positive_last_good(mapping)
     return {
-        key: (key in mapping, deepcopy(mapping.get(key)))
+        key: (bool(valid and key in mapping), deepcopy(mapping.get(key)) if valid else None)
         for key in MINUTE_VALUE_KEYS
     }
 
 
-def _restore(mapping: dict[str, Any] | None, snapshot: dict[str, tuple[bool, Any]]) -> None:
+def _restore(
+    mapping: dict[str, Any] | None,
+    snapshot: dict[str, tuple[bool, Any]],
+) -> int:
     if not isinstance(mapping, dict):
-        return
+        return 0
+    changed = 0
     for key, (present, value) in snapshot.items():
         if present:
-            mapping[key] = deepcopy(value)
-        else:
+            next_value = deepcopy(value)
+            if key not in mapping or mapping.get(key) != next_value:
+                mapping[key] = next_value
+                changed += 1
+        elif key in mapping:
             mapping.pop(key, None)
+            changed += 1
+    return changed
 
 
 def _restore_row(
     row: dict[str, Any],
     quote_snapshot: dict[str, tuple[bool, Any]],
     daily_snapshot: dict[str, tuple[bool, Any]],
-) -> None:
+) -> int:
+    changed = 0
     for key in MINUTE_VALUE_KEYS:
         quote_present, quote_value = quote_snapshot[key]
         daily_present, daily_value = daily_snapshot[key]
         if quote_present:
-            row[key] = deepcopy(quote_value)
+            next_value = deepcopy(quote_value)
+            if key not in row or row.get(key) != next_value:
+                row[key] = next_value
+                changed += 1
         elif daily_present:
-            row[key] = deepcopy(daily_value)
-        else:
+            next_value = deepcopy(daily_value)
+            if key not in row or row.get(key) != next_value:
+                row[key] = next_value
+                changed += 1
+        elif key in row:
             row.pop(key, None)
+            changed += 1
+    return changed
 
 
 def install(base) -> None:
@@ -109,7 +137,7 @@ def install(base) -> None:
                 {
                     "minute_value_hold_installed": True,
                     "minute_value_hold_version": PATCH_VERSION,
-                    "minute_value_hold_policy": "active_positive_completed_bucket_only",
+                    "minute_value_hold_policy": "positive_last_good_only_zero_cleared",
                 }
             )
 
@@ -142,24 +170,38 @@ def install(base) -> None:
                 )
         return phase, completed, protected
 
-    def restore_internal(self, protected) -> None:
+    def restore_internal(self, protected) -> int:
+        changed = 0
         with self.lock:
+            quotes = getattr(self, "quotes", {})
+            daily_values = getattr(self, "daily_values_by_code", {})
             for code, (quote_snapshot, daily_snapshot) in protected.items():
-                _restore(getattr(self, "quotes", {}).get(code), quote_snapshot)
-                daily = getattr(self, "daily_values_by_code", {}).setdefault(code, {})
-                _restore(daily, daily_snapshot)
+                changed += _restore(quotes.get(code), quote_snapshot)
+                changed += _restore(daily_values.get(code), daily_snapshot)
+            if changed:
+                mark_dirty = getattr(self, "_mark_daily_dirty", None)
+                if callable(mark_dirty):
+                    mark_dirty()
+        return changed
 
-    def update_status(self, phase: str, completed: int, count: int) -> None:
+    def update_status(
+        self,
+        phase: str,
+        completed: int,
+        count: int,
+        cleared_fields: int,
+    ) -> None:
         with self.lock:
             self.status["minute_value_hold_phase"] = phase
             self.status["minute_value_hold_completed_minute"] = completed
             self.status["minute_value_hold_count"] = count
+            self.status["minute_value_invalid_zero_cleared_fields"] = cleared_fields
             self.status["minute_value_hold_last_at"] = now_text()
 
     def rows(self, limit: int = 300):
         phase, completed, protected = protected_snapshots(self)
         result = original_rows(self, limit)
-        restore_internal(self, protected)
+        cleared = restore_internal(self, protected)
         if isinstance(result, list):
             for row in result:
                 if not isinstance(row, dict):
@@ -167,15 +209,15 @@ def install(base) -> None:
                 code = normalize_code(row.get("stock_code"))
                 snapshots = protected.get(code)
                 if snapshots is not None:
-                    _restore_row(row, snapshots[0], snapshots[1])
-        update_status(self, phase, completed, len(protected))
+                    cleared += _restore_row(row, snapshots[0], snapshots[1])
+        update_status(self, phase, completed, len(protected), cleared)
         return result
 
     def publish(self, force: bool = False):
         phase, completed, protected = protected_snapshots(self)
         result = original_publish(self, force) if callable(original_publish) else False
-        restore_internal(self, protected)
-        update_status(self, phase, completed, len(protected))
+        cleared = restore_internal(self, protected)
+        update_status(self, phase, completed, len(protected), cleared)
         return result
 
     state_class.__init__ = state_init
