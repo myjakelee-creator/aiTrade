@@ -18,8 +18,6 @@ def install(base) -> None:
         return
 
     def patched_load_existing_snapshots(self) -> None:
-        # Daily-state alignment is the only trusted bootstrap. The historical docs
-        # snapshot has no reliable source-trading-date and must never be re-labelled.
         with self.state.lock:
             self.state.status["program_snapshot_bootstrap"] = "calendar_daily_state_only"
 
@@ -132,8 +130,8 @@ def install(base) -> None:
     from realtime_v2.worker_six_metric_output_guard import (
         install as install_six_metric_output_guard,
     )
-    from realtime_v2.worker_orderbook_live_display_guard import (
-        install as install_orderbook_live_display_guard,
+    from realtime_v2.worker_five_metric_display_policy import (
+        install as install_five_metric_display_policy,
     )
     from realtime_v2.html_null_metric_patch import install as install_html_null_metric
     from realtime_v2.html_execution_strength_label_patch import (
@@ -169,7 +167,7 @@ def install(base) -> None:
     install_six_metric_runtime_opt()
     install_six_metric_lifecycle(base)
     install_six_metric_output_guard(base)
-    install_orderbook_live_display_guard(base)
+    install_five_metric_display_policy(base)
     install_html_null_metric()
     install_execution_strength_label()
     install_opening_render_guard()
