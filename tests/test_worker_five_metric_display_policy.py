@@ -45,13 +45,13 @@ def _base_for(row):
             quote["orderbook_received_at"] = event.get("ts")
 
     class Base:
-        State = State
         DAILY_PERSIST_KEYS = ()
 
         @staticmethod
         def merged_event_values(event):
             return dict(event.get("values") or {})
 
+    Base.State = State
     return Base
 
 
