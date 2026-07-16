@@ -142,12 +142,18 @@ def install(base) -> None:
     from realtime_v2.worker_approved_minute_pipeline_runtime_fix import (
         install as install_approved_minute_runtime_fix,
     )
+    from realtime_v2.worker_approved_minute_pipeline_safety import (
+        install as install_approved_minute_safety,
+    )
     from realtime_v2.html_null_metric_patch import install as install_html_null_metric
     from realtime_v2.html_execution_strength_label_patch import (
         install as install_execution_strength_label,
     )
     from realtime_v2.html_approved_minute_metrics_patch import (
         install as install_approved_minute_metrics_html,
+    )
+    from realtime_v2.html_large_trade_quality_patch import (
+        install as install_large_trade_quality_html,
     )
     from realtime_v2.html_opening_render_guard_patch import (
         install as install_opening_render_guard,
@@ -191,7 +197,9 @@ def install(base) -> None:
     install_aux_metric_runtime_policy(base)
     install_approved_minute_pipeline(base)
     install_approved_minute_runtime_fix(base)
+    install_approved_minute_safety(base)
     install_html_null_metric()
     install_execution_strength_label()
     install_approved_minute_metrics_html()
+    install_large_trade_quality_html()
     install_opening_render_guard()
