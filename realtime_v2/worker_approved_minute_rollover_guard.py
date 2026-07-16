@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
+from typing import Any
 
+from realtime_v2.common import normalize_code
 from realtime_v2.market_session import market_session_now
 
-PATCH_VERSION = "approved_minute_rollover_guard_v1"
+PATCH_VERSION = "approved_minute_rollover_guard_v2"
 COMPLETE_START_PHASES = {"premarket", "opening_call"}
+NON_TRADING_HOLD_GROUPS = ("orderbook", "execution", "strength5")
 
 
 def _date_digits(value) -> str:
@@ -14,13 +17,149 @@ def _date_digits(value) -> str:
     return digits[:8] if len(digits) >= 8 else ""
 
 
-def install(base) -> None:
-    """Reset internal minute accumulators exactly at the calendar trading-day rollover.
+def _is_trading_session(session: Any) -> bool:
+    explicit = getattr(session, "is_trading_day", None)
+    if explicit is not None:
+        return bool(explicit)
+    return str(getattr(session, "phase", "") or "") not in {"weekend", "holiday"}
 
-    A worker that starts after regular trading has already begun cannot prove that the
-    earlier large trades were observed, so its quality starts as GAP_POSSIBLE. A worker
-    already running at the next premarket rollover clears all intraday accumulators and
-    starts the new trading date with complete coverage.
+
+def _approved_ui_fallback(source: dict[str, Any]) -> dict[str, Any]:
+    values = dict(source)
+    aliases = {
+        "bid_ask_ratio": "ui_bid_ask_ratio",
+        "bid_pct": "ui_bid_pct",
+        "ask_pct": "ui_ask_pct",
+        "bid_volume": "ui_bid_volume",
+        "ask_volume": "ui_ask_volume",
+        "best_ask_price": "ui_best_ask_price",
+        "best_bid_price": "ui_best_bid_price",
+        "orderbook_received_at": "ui_orderbook_observed_at",
+        "orderbook_source_trading_date": "ui_orderbook_source_trading_date",
+        "execution_strength": "ui_execution_strength",
+        "execution_strength_received_at": "ui_execution_strength_observed_at",
+        "execution_source_trading_date": "ui_execution_source_trading_date",
+        "strength_5m": "ui_strength_5m",
+        "strength_20m": "ui_strength_20m",
+        "strength_60m": "ui_strength_60m",
+        "strength_snapshot_at": "ui_strength_observed_at",
+        "strength_source_trading_date": "ui_strength_source_trading_date",
+    }
+    for target, fallback in aliases.items():
+        if values.get(target) in (None, "") and values.get(fallback) not in (None, ""):
+            values[target] = values[fallback]
+    if values.get("bid_ask_ratio") not in (None, ""):
+        values.setdefault("orderbook_source", "kiwoom_rest_ws_0D_rotating")
+        values.setdefault("orderbook_status", "published_60s_last_good")
+    if values.get("execution_strength") not in (None, ""):
+        values.setdefault("execution_strength_source", "kiwoom_rest_ws_0B_fid228")
+        values.setdefault("execution_strength_status", "published_60s_last_good")
+    if values.get("strength_5m") not in (None, ""):
+        values.setdefault("strength_source", "ka10046_rest_lowload")
+        values.setdefault("strength_status", "published_minute_batch_last_good")
+    return values
+
+
+def _non_trading_entry(lifecycle, entry, *, code: str, group: str, expected: str, now: datetime):
+    if isinstance(entry, dict):
+        values = entry.get("values")
+        if (
+            str(entry.get("group") or "") == group
+            and _date_digits(entry.get("source_trading_date")) == _date_digits(expected)
+            and isinstance(values, dict)
+            and lifecycle._group_usable(values, group)
+        ):
+            rebased = dict(entry)
+            rebased["expires_at"] = lifecycle._next_premarket_boundary(now).isoformat(
+                timespec="seconds"
+            )
+            return rebased, rebased.get("expires_at") != entry.get("expires_at")
+    return None, False
+
+
+def _restore_non_trading_hold(self, result, session, now: datetime) -> tuple[int, int]:
+    if not isinstance(result, list):
+        return 0, 0
+
+    import realtime_v2.worker_six_metric_lifecycle_patch as lifecycle
+
+    expected = lifecycle._expected_date(session, now)
+    cache = getattr(self, "six_metric_lifecycle_by_group", None)
+    cache = cache if isinstance(cache, dict) else {}
+    codes = {
+        normalize_code(row.get("stock_code"))
+        for row in result
+        if isinstance(row, dict) and normalize_code(row.get("stock_code"))
+    }
+    with self.lock:
+        source_by_code = {
+            code: _approved_ui_fallback(
+                {
+                    **dict(getattr(self, "daily_values_by_code", {}).get(code) or {}),
+                    **dict(getattr(self, "quotes", {}).get(code) or {}),
+                }
+            )
+            for code in codes
+        }
+
+    restored = 0
+    rebased_count = 0
+    for row in result:
+        if not isinstance(row, dict):
+            continue
+        code = normalize_code(row.get("stock_code"))
+        if not code:
+            continue
+        for group in NON_TRADING_HOLD_GROUPS:
+            group_cache = cache.setdefault(group, {})
+            raw_entry = group_cache.get(code) if isinstance(group_cache, dict) else None
+            entry, rebased = _non_trading_entry(
+                lifecycle,
+                raw_entry,
+                code=code,
+                group=group,
+                expected=expected,
+                now=now,
+            )
+            if entry is None:
+                entry = lifecycle._entry_from_values(
+                    code,
+                    group,
+                    source_by_code.get(code, {}),
+                    source_date=expected,
+                    now=now,
+                )
+                entry, rebased = _non_trading_entry(
+                    lifecycle,
+                    entry,
+                    code=code,
+                    group=group,
+                    expected=expected,
+                    now=now,
+                )
+            if entry is None:
+                continue
+            if isinstance(group_cache, dict) and group_cache.get(code) != entry:
+                group_cache[code] = entry
+                self.six_metric_lifecycle_dirty = True
+            lifecycle._overlay_entry(
+                row,
+                group,
+                entry,
+                phase=str(getattr(session, "phase", "") or "holiday"),
+            )
+            restored += 1
+            rebased_count += int(bool(rebased))
+    return restored, rebased_count
+
+
+def install(base) -> None:
+    """Protect approved minute state across non-trading weekdays and real rollover.
+
+    Holiday/weekend rows retain the verified previous-session orderbook, execution
+    strength and five-minute strength lifecycle entries. Non-trading sessions do not
+    publish a new minute, clear intraday accumulators, or downgrade large-trade quality.
+    The next real premarket still performs the original one-time rollover.
     """
 
     state_class = getattr(base, "State", None)
@@ -34,6 +173,7 @@ def install(base) -> None:
     original_state_init = state_class.__init__
     original_ensure = getattr(state_class, "ensure_metric_session_state_date", None)
     original_stage_trade = getattr(state_class, "stage_approved_trade_events", None)
+    original_publish = getattr(state_class, "publish_approved_minute_metrics", None)
     original_rows = state_class.rows
 
     def state_init(self, *args, **kwargs):
@@ -45,19 +185,21 @@ def install(base) -> None:
             or getattr(session, "calendar_date", "")
         )
         phase = str(getattr(session, "phase", "") or "")
+        trading_session = _is_trading_session(session)
         restored = int(self.status.get("approved_large_checkpoint_restored_count") or 0)
         self._approved_pipeline_date = target
         self._approved_large_full_session_coverage = (
-            phase in COMPLETE_START_PHASES and restored == 0
+            trading_session and phase in COMPLETE_START_PHASES and restored == 0
         )
         with self.lock:
             self.status["approved_minute_rollover_guard_installed"] = True
             self.status["approved_minute_rollover_guard_version"] = PATCH_VERSION
             self.status["approved_pipeline_trading_date"] = target or None
+            self.status["approved_pipeline_non_trading_hold"] = not trading_session
             self.status["approved_large_full_session_coverage"] = bool(
                 self._approved_large_full_session_coverage
             )
-            if not self._approved_large_full_session_coverage:
+            if trading_session and not self._approved_large_full_session_coverage:
                 for live in self._approved_large_live.values():
                     if isinstance(live, dict):
                         live["quality"] = "GAP_POSSIBLE"
@@ -87,11 +229,22 @@ def install(base) -> None:
             )
 
     def ensure_date(self, *args, **kwargs):
+        session = market_session_now(datetime.now())
         target = original_ensure(self, *args, **kwargs) if callable(original_ensure) else ""
         target = _date_digits(target)
         previous = _date_digits(getattr(self, "_approved_pipeline_date", ""))
+        if not _is_trading_session(session):
+            if target:
+                self._approved_pipeline_date = target
+            with self.lock:
+                self.status["approved_pipeline_non_trading_hold"] = True
+                self.status["approved_pipeline_rollover_suppressed_non_trading"] = int(
+                    self.status.get("approved_pipeline_rollover_suppressed_non_trading") or 0
+                ) + 1
+                self.status["approved_pipeline_trading_date"] = target or previous or None
+            return target or previous
         if target and target != previous:
-            phase = str(getattr(market_session_now(datetime.now()), "phase", "") or "")
+            phase = str(getattr(session, "phase", "") or "")
             final_reset = getattr(self, "reset_approved_minute_pipeline_for_date", None)
             if callable(final_reset):
                 final_reset(target, phase)
@@ -102,12 +255,26 @@ def install(base) -> None:
     def rows(self, limit: int = 300):
         if callable(original_ensure):
             ensure_date(self)
-        return original_rows(self, limit)
+        result = original_rows(self, limit)
+        now = datetime.now()
+        session = market_session_now(now)
+        restored = 0
+        rebased = 0
+        if not _is_trading_session(session):
+            restored, rebased = _restore_non_trading_hold(self, result, session, now)
+        with self.lock:
+            self.status["approved_pipeline_non_trading_hold"] = not _is_trading_session(session)
+            self.status["approved_non_trading_hold_restored_group_count"] = restored
+            self.status["approved_non_trading_hold_rebased_entry_count"] = rebased
+        return result
 
     def stage_trade_events(self, events):
         if callable(original_ensure):
             ensure_date(self)
         result = original_stage_trade(self, events) if callable(original_stage_trade) else None
+        session = market_session_now(datetime.now())
+        if not _is_trading_session(session):
+            return result
         if not bool(getattr(self, "_approved_large_full_session_coverage", False)):
             with self.lock:
                 for live in self._approved_large_live.values():
@@ -116,6 +283,19 @@ def install(base) -> None:
                 self.status["approved_large_full_session_coverage"] = False
         return result
 
+    def publish(self, force: bool = False):
+        session = market_session_now(datetime.now())
+        if not _is_trading_session(session):
+            with self.lock:
+                self.status["approved_minute_publish_suppressed_non_trading"] = int(
+                    self.status.get("approved_minute_publish_suppressed_non_trading") or 0
+                ) + 1
+                self.status["approved_minute_publish_suppressed_phase"] = str(
+                    getattr(session, "phase", "") or ""
+                )
+            return False
+        return original_publish(self, force) if callable(original_publish) else False
+
     state_class.__init__ = state_init
     state_class.reset_approved_minute_pipeline_for_date = reset_for_date
     if callable(original_ensure):
@@ -123,6 +303,8 @@ def install(base) -> None:
     state_class.rows = rows
     if callable(original_stage_trade):
         state_class.stage_approved_trade_events = stage_trade_events
+    if callable(original_publish):
+        state_class.publish_approved_minute_metrics = publish
     state_class._stockboard_approved_minute_rollover_guard_installed = True
 
     if callable(getattr(state_class, "_quote", None)):
