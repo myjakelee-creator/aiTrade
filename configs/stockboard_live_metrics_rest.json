@@ -1,5 +1,5 @@
 {
-  "schema_version": 10,
+  "schema_version": 11,
   "enabled": true,
   "rollout_stage": 4,
   "mode": "kiwoom_rest_lowload_v1",
@@ -16,11 +16,11 @@
     "closed": "_AL"
   },
   "max_top_codes": 100,
-  "global_min_request_gap_sec": 2.0,
+  "global_min_request_gap_sec": 3.0,
   "health_stable_sec": 10,
   "price_stall_guard_sec": 30,
   "selected_refresh_sec": 5,
-  "loop_sleep_sec": 1.0,
+  "loop_sleep_sec": 0.5,
   "error_backoff_sec": 30,
   "regular_session": {
     "start": "09:00",
@@ -38,6 +38,13 @@
     "start": "09:00",
     "end": "09:10"
   },
+  "approved_minute_pipeline": {
+    "ui_publish_sec": 60,
+    "strength_publish_batch_per_minute": 20,
+    "strength_open_delay_minutes": 5,
+    "hold_until_next_premarket": true,
+    "minute_trade_value_source": "qax_fid14_delta"
+  },
   "session_manager": {
     "enabled": true,
     "scope_max_codes": 100,
@@ -48,10 +55,10 @@
         "scope": 100,
         "missing_only": true,
         "require_trade_fresh": false,
-        "min_request_gap_sec": 2.5,
+        "min_request_gap_sec": 3.0,
         "intervals": {
-          "bidask": {"s1": 900, "top20": 21600, "top100": 21600},
-          "strength": {"s1": 900, "top20": 21600, "top100": 21600},
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
+          "strength": {"s1": 21600, "top20": 21600, "top100": 21600},
           "large_trade": {"s1": 0, "top20": 0, "top100": 0}
         }
       },
@@ -69,10 +76,10 @@
       },
       "opening_call": {
         "active": true,
-        "scope": 20,
+        "scope": 100,
         "missing_only": false,
         "require_trade_fresh": false,
-        "min_request_gap_sec": 4.0,
+        "min_request_gap_sec": 3.0,
         "intervals": {
           "bidask": {"s1": 0, "top20": 0, "top100": 0},
           "strength": {"s1": 0, "top20": 0, "top100": 0},
@@ -81,13 +88,13 @@
       },
       "opening_burst": {
         "active": true,
-        "scope": 1,
+        "scope": 100,
         "missing_only": false,
         "require_trade_fresh": true,
-        "min_request_gap_sec": 5.0,
+        "min_request_gap_sec": 3.0,
         "intervals": {
           "bidask": {"s1": 0, "top20": 0, "top100": 0},
-          "strength": {"s1": 0, "top20": 0, "top100": 0},
+          "strength": {"s1": 300, "top20": 300, "top100": 300},
           "large_trade": {"s1": 0, "top20": 0, "top100": 0}
         }
       },
@@ -96,22 +103,22 @@
         "scope": 100,
         "missing_only": false,
         "require_trade_fresh": true,
-        "min_request_gap_sec": 2.0,
+        "min_request_gap_sec": 3.0,
         "intervals": {
           "bidask": {"s1": 0, "top20": 0, "top100": 0},
-          "strength": {"s1": 15, "top20": 90, "top100": 600},
-          "large_trade": {"s1": 60, "top20": 300, "top100": 1200}
+          "strength": {"s1": 300, "top20": 300, "top100": 300},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
         }
       },
       "closing_call": {
         "active": true,
-        "scope": 20,
+        "scope": 100,
         "missing_only": false,
         "require_trade_fresh": true,
-        "min_request_gap_sec": 5.0,
+        "min_request_gap_sec": 3.0,
         "intervals": {
-          "bidask": {"s1": 30, "top20": 300, "top100": 0},
-          "strength": {"s1": 60, "top20": 300, "top100": 0},
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
+          "strength": {"s1": 300, "top20": 300, "top100": 300},
           "large_trade": {"s1": 0, "top20": 0, "top100": 0}
         }
       },
@@ -120,11 +127,11 @@
         "scope": 100,
         "missing_only": false,
         "require_trade_fresh": false,
-        "min_request_gap_sec": 2.0,
+        "min_request_gap_sec": 3.0,
         "intervals": {
-          "bidask": {"s1": 10, "top20": 60, "top100": 300},
-          "strength": {"s1": 15, "top20": 90, "top100": 300},
-          "large_trade": {"s1": 120, "top20": 600, "top100": 3600}
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
+          "strength": {"s1": 300, "top20": 300, "top100": 300},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
         }
       },
       "aftermarket": {
@@ -132,11 +139,11 @@
         "scope": 100,
         "missing_only": false,
         "require_trade_fresh": false,
-        "min_request_gap_sec": 2.0,
+        "min_request_gap_sec": 3.0,
         "intervals": {
-          "bidask": {"s1": 10, "top20": 60, "top100": 600},
-          "strength": {"s1": 30, "top20": 180, "top100": 900},
-          "large_trade": {"s1": 120, "top20": 600, "top100": 1800}
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
+          "strength": {"s1": 300, "top20": 300, "top100": 300},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
         }
       },
       "closed": {
@@ -144,11 +151,11 @@
         "scope": 100,
         "missing_only": true,
         "require_trade_fresh": false,
-        "min_request_gap_sec": 2.5,
+        "min_request_gap_sec": 3.0,
         "intervals": {
-          "bidask": {"s1": 900, "top20": 21600, "top100": 21600},
-          "strength": {"s1": 900, "top20": 21600, "top100": 21600},
-          "large_trade": {"s1": 3600, "top20": 21600, "top100": 21600}
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
+          "strength": {"s1": 21600, "top20": 21600, "top100": 21600},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
         }
       },
       "weekend": {"active": false, "scope": 0},
@@ -164,15 +171,32 @@
     "url": "wss://api.kiwoom.com:10000/api/dostk/websocket",
     "type": "0B",
     "strength_field": "228",
+    "signed_trade_qty_field": "15",
+    "cumulative_volume_field": "13",
     "time_field": "20",
     "exchange_field": "9081",
     "group_no": "41",
     "apply_interval_ms": 1000,
-    "stale_after_sec": 20,
-    "selection_refresh_sec": 300,
+    "ui_publish_sec": 60,
+    "stale_after_sec": 120,
+    "selection_refresh_sec": 60,
     "reconnect_backoff_sec": 10,
     "connect_timeout_sec": 10,
-    "receive_timeout_sec": 2
+    "receive_timeout_sec": 1
+  },
+  "realtime_orderbook_ws": {
+    "enabled": true,
+    "type": "0D",
+    "group_no": "42",
+    "rotation_symbols": 20,
+    "rotation_sec": 12,
+    "ui_publish_sec": 60,
+    "total_ask_field": "121",
+    "total_bid_field": "125",
+    "best_ask_field": "27",
+    "best_bid_field": "28",
+    "no_event_disable_after_sec": 180,
+    "fallback_policy": "disable_without_rest_fallback"
   },
   "six_metric_lifecycle": {
     "enabled": true,
@@ -196,23 +220,27 @@
   "metrics": {
     "bidask": {
       "stage": 1,
+      "enabled": false,
       "api_id": "ka10004",
-      "path": "/api/dostk/mrkcond"
+      "path": "/api/dostk/mrkcond",
+      "usage": "closed_diagnostic_only"
     },
     "strength": {
       "stage": 3,
-      "purpose": "5분·20분·60분 강도 전용; 체결강도에는 사용 금지",
+      "purpose": "5분·20분·60분 강도 전용; 100종목 300초 순환",
       "strength_5m_apply_stage": 3,
       "api_id": "ka10046",
       "path": "/api/dostk/mrkcond"
     },
     "large_trade": {
       "stage": 4,
+      "enabled": false,
       "api_id": "ka10055",
       "path": "/api/dostk/stkinfo",
       "threshold_krw": 50000000,
-      "first_page_only": true,
-      "baseline_first_response": false
+      "first_page_only": false,
+      "baseline_first_response": false,
+      "usage": "gap_reconciliation_only"
     }
   },
   "performance_contract": {
@@ -223,16 +251,17 @@
     "single_background_thread": true,
     "single_request_inflight": true,
     "display_scope_max_codes": 100,
-    "realtime_strength_ws_connections": 1,
+    "realtime_aux_ws_connections": 1,
     "realtime_strength_ws_symbols": 100,
-    "realtime_strength_batch_apply_hz_max": 1,
+    "realtime_orderbook_active_symbols": 20,
+    "realtime_orderbook_rotation_sec": 12,
+    "realtime_aux_ui_publish_sec": 60,
+    "strength_rest_requests_per_minute": 20,
+    "strength_ui_publish_batch_per_minute": 20,
     "snapshot_metric_retention_until_successful_refresh": true,
-    "six_metric_lifecycle_threads": 0,
-    "six_metric_lifecycle_network_requests": 0,
-    "six_metric_lifecycle_snapshot_write_min_interval_sec": 5,
-    "large_trade_stage4_threads": 0,
-    "large_trade_stage4_min_request_gap_sec": 2,
+    "minute_trade_value_extra_network_requests": 0,
+    "minute_trade_value_extra_qax_fids": 0,
     "opening_heavy_render_interval_ms": 1000,
-    "opening_rest_scope_max_codes": 1
+    "opening_rest_scope_max_codes_before_minute_5": 0
   }
 }
