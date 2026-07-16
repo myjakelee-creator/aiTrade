@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 import realtime_v2.worker_approved_minute_pipeline_safety as safety
+import realtime_v2.worker_realtime_strength_ws_patch as ws_module
 
 
 class FakeState:
@@ -38,11 +40,8 @@ class FakeBase:
     DAILY_PERSIST_KEYS = ()
 
 
-def test_safety_restores_checkpoint_as_gap_possible(monkeypatch):
-    original_status = safety.__import__(
-        "realtime_v2.worker_realtime_strength_ws_patch",
-        fromlist=["RealtimeStrengthWebSocket"],
-    ).RealtimeStrengthWebSocket._status
+def test_safety_restores_checkpoint_as_gap_possible():
+    original_status = ws_module.RealtimeStrengthWebSocket._status
     try:
         safety.install(FakeBase)
         state = FakeState()
@@ -53,15 +52,11 @@ def test_safety_restores_checkpoint_as_gap_possible(monkeypatch):
         assert state.status["approved_large_checkpoint_restored_count"] == 1
         assert "approved_large_checkpoint_buy_count" in FakeBase.DAILY_PERSIST_KEYS
     finally:
-        safety.__import__(
-            "realtime_v2.worker_realtime_strength_ws_patch",
-            fromlist=["RealtimeStrengthWebSocket"],
-        ).RealtimeStrengthWebSocket._status = original_status
+        ws_module.RealtimeStrengthWebSocket._status = original_status
 
 
 def test_safety_source_has_fail_closed_orderbook_and_no_rest_fallback():
-    source = safety.__file__
-    text = open(source, encoding="utf-8").read()
+    text = Path(safety.__file__).read_text(encoding="utf-8")
     assert '"disabled_no_events"' in text
     assert '"dash_no_rest_fallback"' in text
     assert "connection.close()" in text
