@@ -151,20 +151,20 @@ def test_install_applies_fid228_and_hides_legacy_ka10046_snapshot():
     assert rows["010950"]["execution_strength_legacy_snapshot"] == 88.0
 
 
-def test_stage4_uses_one_top20_websocket_and_batch_apply():
+def test_stage4_uses_one_top100_websocket_and_batch_apply():
     config = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
 
     assert config["rollout_stage"] == 4
     assert config["metrics"]["strength"]["stage"] == 3
     assert config["metrics"]["large_trade"]["stage"] == 4
     assert config["realtime_strength_ws"]["stage"] == 2
-    assert config["realtime_strength_ws"]["scope"] == "top20"
-    assert config["realtime_strength_ws"]["max_symbols"] == 20
+    assert config["realtime_strength_ws"]["scope"] == "top100"
+    assert config["realtime_strength_ws"]["max_symbols"] == 100
     assert config["realtime_strength_ws"]["type"] == "0B"
     assert config["realtime_strength_ws"]["strength_field"] == "228"
     contract = config["performance_contract"]
     assert contract["realtime_strength_ws_connections"] == 1
-    assert contract["realtime_strength_ws_symbols"] == 20
+    assert contract["realtime_strength_ws_symbols"] == 100
     assert contract["realtime_strength_batch_apply_hz_max"] == 1
 
 
