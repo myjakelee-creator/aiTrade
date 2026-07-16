@@ -1,189 +1,264 @@
 # StockBoard v2 실시간 파이프라인
 
-최종 갱신: 2026-07-16
+최종 갱신: 2026-07-16 18:20 KST
 
-이 문서는 StockBoard v2의 실시간 구조, 시장시간 정책, 보조지표 수집·유지, 선발모델, 행 위치와 실전 검증 상태를 기록하는 단일 기준 문서이다. 기존 StockBoard v0.3.x 문서와 섞지 않는다.
+이 문서는 StockBoard v2의 실시간 가격 경로, 분 단위 보조지표, 거래일 유지정책과 실전 검증 상태를 기록하는 단일 기준 문서이다. 과거 v0.3.x 구조와 섞지 않는다.
 
-## 1. 현재 구조
+## 1. 현재 생산 구조
 
 ```text
 32-bit Kiwoom QAx price-only collector
-  FID 10 / 12 / 20 / sampled 14
-        ↓
+  FID 10 현재가
+  FID 12 등락률
+  FID 20 체결시각
+  FID 14 누적거래대금 500ms sampling
+        ↓ latest-only sender
 64-bit canonical worker
-  ├─ ka10004 통합 호가잔량비 REST
-  ├─ WebSocket 0B/FID228 Top20 체결강도
-  ├─ ka10046 5분·20분·60분강도 REST
-  ├─ ka90004 프로그램 순매수 REST
-  ├─ ka10055 대량체결 저속 REST
-  ├─ 시장 캘린더 기반 Top1·Top20·Top100 세션 관리자
-  ├─ 6지표 거래일 수명주기·최종 출력 가드
+  ├─ WebSocket 0B Top100: 체결강도 FID228 + signed 체결량 FID15
+  ├─ WebSocket 0D: 호가 20종목 × 12초 순환
+  ├─ ka10046: 5분강도 3초당 1종목
+  ├─ ka90004: 프로그램 순매수 60초 일괄조회
+  ├─ FID14 차분: 1분대금
+  ├─ 거래일 lifecycle / minute publisher / safety guard
   └─ SSE /api/v2/stream → 표시 전용 HTML
 ```
 
-생산 가격 collector 계약:
+생산 가격 collector 불가침 계약:
 
 ```text
 _REALTIME_FIDS = 10;12;20;14
-single QAx owner
-large_trade_enabled = False
+single 32-bit QAx owner
+추가 QAx owner 0
+가격 callback 추가 계산 0
+FID15·호가 FID를 가격 collector에 추가하지 않음
 ```
 
-두 번째 QAx 로그인·실시간 등록과 FID15 재도입은 금지한다.
+두 번째 QAx 로그인·실시간 owner는 가격 수신을 멈춘 전력이 있으므로 생산에서 금지한다.
 
-## 2. 6개 표시 지표 원천
+## 2. 표시 열 원천과 UI 갱신
 
-| 지표 | 장중 원천 | 장마감·08:00 전 |
-|---|---|---|
-| 대금비 | 당일 누적 거래대금 / 전일 거래대금 | 직전 거래일 최종값 |
-| 잔량비 | `ka10004`, 통합 `_AL` | 직전 거래일 최종 정상값 |
-| 체결강도 | WebSocket 주식체결 `0B/FID228`, Top20 | 마지막 정상 FID228 |
-| 5분강도 | `ka10046`의 5·20·60분 필드만 | 직전 거래일 최종 정상값 |
-| 프로(억) | `ka90004` | 직전 거래일 최종값 |
-| 대량체결 | `ka10055` 저속 최근 페이지, 5천만원 기준 | 직전 거래일 최종 누적값 |
+| 열 | 데이터 원천 | 수집·계산 | UI 반영 |
+|---|---|---|---|
+| 현재가 | QAx FID10 | 체결마다 | fast patch 약 50~150ms |
+| 등락률 | QAx FID12 | 체결마다 | fast patch 약 50~150ms |
+| 금액(억) | QAx FID14 | 종목별 최대 500ms | 일반 약 500ms, 개장 첫 10분 1초 |
+| 대금비 | 당일 누적대금 / 전일대금 | 금액 갱신 시 | 금액과 동일 |
+| 1분대금 | FID14 누적값 차분 | 완료 1분과 직전 1분 | 매분 |
+| 일봉 | 기존 OHLC + 실시간 현재가 | 시·고·저 기존 OHLC, 종가 row.price 우선 | 일반 500ms, 개장 첫 10분 1초 |
+| 잔량비 | WebSocket 0D FID121/125 | 20종목씩 12초 순환 | 매분 last-good |
+| 체결강도 | WebSocket 0B/FID228 | Top100 연속 수집 | 매분 latest |
+| 5분강도 | ka10046 | 3초당 1종목, 분당 약 20종목 | 완료된 종목을 매분 |
+| 프로(억) | ka90004 | 일괄조회 | 60초 |
+| 대량체결 | WebSocket 0B/FID15 | 원시 이벤트마다 5천만원 기준 누적 | 60초 |
 
-`ka10046`의 일반 체결강도 필드는 폐기하며 체결강도를 덮어쓰지 않는다. 화면 열 제목은 키움 원래 명칭인 `체결강도`를 사용한다.
-
-결측 `null`·빈문자열은 `0`이 아니라 `-`로 표시한다. 프로그램과 대량체결은 원천·거래일이 있는 실제 0만 0으로 인정한다.
-
-## 3. 공통 거래일 수명주기
+### 2.1 일봉 종가 원칙
 
 ```text
-장중·애프터마켓   현재 거래일 값만 허용
-20:00 이후·08:00 전 직전 완료 거래일 최종값만 허용
-08:00 프리마켓      전일 보존값 만료·새 daily state로 전환
-주말·공휴일         신규조회 중지·직전 거래일 최종값 유지
-날짜 불명·과거오염  최종 출력 가드에서 제거
+시가 = 기존 OHLC.open
+고가 = 기존 OHLC.high
+저가 = 기존 OHLC.low
+종가 = row.price → trade_price → OHLC.current → OHLC.close
 ```
 
-통합 snapshot:
+일봉 종가만 화면의 실시간 현재가를 우선한다. 추가 네트워크·QAx·Worker 계산·렌더 주기는 없다.
+
+### 2.2 1분대금 표시
 
 ```text
-data/runtime/stockboard_v2/six_metric_lifecycle.json
+21.4 79%
 ```
 
-값이 실제로 바뀔 때 최대 5초에 한 번 저장한다. 조회시각과 값의 실제 대상 거래일을 분리한다.
+- 앞 숫자: 최근 완료 1분 거래대금(억원)
+- 뒤 숫자: 직전 완료 1분 대비 비율
+- 100% 미만 파랑, 100% 이상 빨강
+- 직전값 0이고 현재값이 양수면 `NEW`
+
+## 3. 잔량비
 
 ```text
-program_source_trading_date
-orderbook_source_trading_date
-execution_source_trading_date
-strength_source_trading_date
-large_trade_source_trading_date
+1~20위    12초 구독
+21~40위   12초 구독
+41~60위   12초 구독
+61~80위   12초 구독
+81~100위  12초 구독
 ```
 
-00:00~08:00 프로그램 조회 결과는 조회일이 아니라 직전 완료 거래일로 태깅한다.
-
-## 4. 캘린더 기반 세션 관리자
-
-`realtime_v2/worker_market_metric_session_manager.py`가 시장 캘린더와 특별일 설정을 기준으로 조회 범위·간격·거래일 전환을 소유한다. 고정 09:00이 아니라 `regular_start`를 사용하므로 지연개장에도 같은 정책이 적용된다.
-
-| 구간 | REST 범위 | 정책 |
-|---|---:|---|
-| 00:00~프리마켓 전 | Top100 | 빠진 직전 거래일 잔량비·5분강도만 저빈도 보충 |
-| 프리마켓 | Top100 | 당일 잔량비 준비, 5분강도·대량체결 중지 |
-| 장전 동시호가 | Top20 | 잔량비만 저속 |
-| 정규장 시작 후 10분 | S1 | 가격 fast patch 우선, REST 최소화, heavy render 1초 |
-| 정규장 10분 이후 | Top100 | 잔량비·5분강도·대량체결 순차 조회 |
-| 장마감 동시호가 | Top20 | REST 축소 |
-| 15:30~15:40 | Top100 | 장마감 누락값 우선 보충 |
-| 애프터마켓 | Top100 | 통합 `_AL`, NXT 미거래 종목 정규장 최종값 유지 |
-| 20:00 이후 | Top100 | 누락 최종값만 한 번씩 보충 |
-| 주말·공휴일 | 0 | 네트워크 조회 중지 |
-
-기존 REST updater thread 하나와 single-flight budget 하나만 재사용한다. Top100 순환은 64비트 Worker에서 수행하며 가격 QAx callback과 분리한다.
-
-## 5. 개장 성능 보호
+한 WebSocket 연결의 별도 REG 그룹을 사용한다. 호가 이벤트마다 UI·파일·background rebuild를 하지 않고 종목별 최신 총매수·총매도잔량만 덮어쓴다.
 
 ```text
-정규장 시작~10분 REST 범위 S1
-REST 최소 간격          5초
-전체 테이블 heavy render 1000ms
-가격·등락률 fast patch  계속 유지
+잔량비 = 총매수잔량 / 총매도잔량
 ```
 
-지연개장일은 캘린더의 `regular_start`부터 10분간 같은 보호를 적용한다.
+운영 원칙:
 
-위험 신호는 단발성 render 40ms가 아니라 다음 항목의 지속 증가이다.
+- 60초 경계에서 확보된 Top100 last-good 값을 발행
+- `0D` 이벤트를 받은 종목만 표시
+- 못 받은 종목은 `-`
+- ka10004 REST 값을 실시간처럼 대체하지 않음
+- 180초 동안 호가 이벤트가 전혀 없으면 호가 기능만 fail-closed
+- 20:00 이후 확보한 마지막 정상값은 다음 프리마켓 전까지 유지
 
-```text
-collector_q
-worker_q
-logdrop
-drop
-stream latency
-stale / lag
-```
+20종목 순환 중 호가 변화가 없는 종목은 이벤트가 없을 수 있어 Top100 완전 커버리지를 보장하지 않는다. 속도와 정확성을 위해 이 한계를 허용한다.
 
-## 6. 체결강도
+## 4. 체결강도
 
-- 공식 실시간 원천: WebSocket `0B/FID228`
+- 공식 실시간 원천: WebSocket 주식체결 `0B/FID228`
 - 연결 수: 1
-- 구독 범위: Top20
-- 반영 방식: 종목별 마지막 값을 1초 동안 모아 한 state lock과 한 background rebuild로 배치 반영
-- 20초 이상 새 체결이 없으면 장중 현재값으로 표시하지 않음
-- 장중 수집된 마지막 정상값은 장마감부터 다음 프리마켓 전까지 유지
+- 구독 범위: Top100
+- 수집: 이벤트마다
+- UI: 매분 종목별 latest 값 발행
+- 동일 거래일 last-good은 다음 정상값 또는 다음 프리마켓까지 유지
 
-## 7. 5분강도
+`ka10046`의 일반 체결강도 필드는 체결강도를 덮어쓰지 않는다.
+
+## 5. 5분강도
 
 - `ka10046`의 5분·20분·60분 필드만 저장
-- 일반 체결강도 필드는 폐기
-- Top1 → Top20 → Top100 순차 저속 조회
-- 0·빈값·오류는 정상값을 덮어쓰지 않음
-- 애프터마켓과 장마감은 통합 `_AL` 기준
+- 전역 REST 최소 간격 3초
+- 분당 약 20종목
+- 5분에 Top100 한 바퀴
+- 5분 전체 완료를 기다리지 않고 완료된 약 20종목을 매분 발행
+- 같은 거래일 정상값은 다음 성공 조회까지 유지
+- 시간 경과만으로 정상값 삭제 금지
+- 실제 정규장 시작 후 첫 5분은 가격 보호를 위해 조회 중지
 
-## 8. 잔량비·대금비·프로그램·대량체결
+## 6. 프로그램 순매수
 
-잔량비는 `ka10004` 통합 `_AL` 기준이다. NXT 미거래 종목도 정규장 최종값을 유지하며 날짜가 다른 과거값은 제거한다.
+- 원천: `ka90004`
+- 일괄조회 주기: 60초
+- one thread / one in-flight / single-flight
+- 오류·부분응답 시 기존 당일 정상값 유지
+- 실제 0은 0, 미수신은 `-`
+- 조회시각과 실제 대상 거래일을 분리해 태깅
 
-대금비:
+## 7. 대량체결
 
 ```text
-amount_ratio = trade_value_eok / prev_trade_value_eok
+체결금액 = abs(체결가 × signed 체결량)
+체결금액 >= 50,000,000원 → 매수 또는 매도 1건 누적
 ```
 
-08:00 거래일 전환 시 직전 거래일 최종 누적 거래대금을 새 거래일의 `prev_trade_value_eok`로 승격한다.
+- 같은 `0B` 원시 메시지의 FID15 사용
+- 체결강도 latest coalescing 전에 원시 이벤트를 먼저 집계
+- 매수·매도 건수와 금액을 당일 누적
+- UI 60초
+- 5초 단위 daily-state checkpoint
 
-프로그램은 정적 docs snapshot을 현재값으로 재태깅하지 않는다. 캘린더 거래일 daily state와 실제 `ka90004` 조회만 신뢰한다.
-
-대량체결은 QAx FID15가 아니라 저속 `ka10055`를 사용한다. 첫 페이지 기준이므로 상태는 `partial_recent_page_since_activation`으로 표시하며 전 종일 완전 집계라고 과장하지 않는다.
-
-## 9. AHK 키움 연동
-
-`Edit6`가 여러 개면 다음을 점수화해 유일한 최고점 컨트롤만 사용한다.
+품질 상태:
 
 ```text
-nkre.exe
-_NKHeroMainClass / NHeroMainClass
-영웅문 제목
-가시·활성 상태
-최소화 여부
-창 크기
+EXACT_LIVE       프리마켓 이전부터 연속 수집
+EXACT_RECONCILED 공백을 완전히 복구
+GAP_POSSIBLE     장중 재시작·재접속 공백 가능
 ```
 
-동점이면 안전하게 전송하지 않는다. HTS 활성화·포커스 이동·전경 키 입력은 금지한다.
+`GAP_POSSIBLE`은 화면에 `~`를 붙인다. 장중 새 버전을 시작한 날은 이전 체결을 완전히 증명할 수 없으므로 `~`가 정상이다.
 
-## 10. 운영·검증
+## 8. 공통 거래일 유지정책
 
-기준 실행기:
+초기화하지 않는 시점:
 
 ```text
-stockboard_v2_large.cmd
+15:30 정규장 종료
+20:00 NXT 종료
+자정
+브라우저 새로고침
+Worker 재시작
+WebSocket 재접속
+토요일·일요일·공휴일
+```
+
+초기화 시점:
+
+```text
+다음 실제 거래일 프리마켓 시작
+```
+
+운영 규칙:
+
+- NXT 거래 종목: `_AL` 기준 20:00까지 갱신
+- NXT 미거래 종목: 15:30 정규장 마지막 정상값 유지
+- 20:00 이후: 신규 수집 중지, 마지막 정상값 고정
+- 주말·공휴일: 신규조회 중지, 직전 완료 거래일 유지
+- 지연개장: 캘린더의 실제 프리마켓·정규장 시작시각 사용
+- 재시작: daily state와 lifecycle snapshot에서 복원
+- 다음 프리마켓: 전일 내부 누적·분 bucket·stage 일괄 초기화
+
+## 9. 개장 성능 보호
+
+```text
+가격 QAx 경로                  불변
+가격·등락률 fast patch         계속
+전체 heavy render              개장 첫 10분 1000ms
+ka10046                         실제 개장 후 첫 5분 중지
+체결강도·대량체결              같은 64-bit 0B 스트림
+1분대금                         기존 FID14 차분
+잔량비                           20종목 순환, 무응답 시 자동 포기
+```
+
+위험 신호:
+
+```text
+collector_q 지속 증가
+worker_q 지속 증가
+drop / logdrop 증가
+stream latency 지속 상승
+stale / top20 lag 증가
+render 70ms 초과 지속
+```
+
+가격 경로가 최우선이며, 문제 발생 시 잔량비 → 5분강도 순으로 중지·지연한다.
+
+## 10. 2026-07-16 실전 확인
+
+애프터마켓 적용 후 확인:
+
+```text
+realtime_strength_ws_status         ok
+realtime_strength_ws_backend        websockets.sync
+realtime_strength_ws_selected_count 100
+0B event_count와 raw 처리 count     일치
+0D orderbook raw events             정상 증가
+ka10046 request/success/error        57 / 57 / 0
+worker_q / drop / logdrop            0 / 0 / 0
+1분대금 quality                      COMPLETE_MINUTE
+```
+
+판정:
+
+| 항목 | 상태 |
+|---|---|
+| 가격·등락률·누적대금 | 통과 |
+| 1분대금 | 통과 |
+| 체결강도 Top100 | 통과 |
+| 5분강도 조회·유지 | 통과 |
+| 프로그램 | 통과 |
+| 잔량비 | 실시간 원천 통과, 종목 커버리지는 조건부 |
+| 대량체결 | 수집 통과, 장중 시작일은 `GAP_POSSIBLE` |
+| 일봉 종가 실시간 현재가 일치 | 통과 |
+
+## 11. 운영 명령
+
+```powershell
+cd C:\aiTrade
+git fetch origin
+git switch fix/restore-live-metrics-rest-20260715
+git reset --hard origin/fix/restore-live-metrics-rest-20260715
+.\stockboard_v2_large.cmd restart-fast
+```
+
+접속:
+
+```text
 http://127.0.0.1:8765/
 ```
 
-장중 검증:
+## 12. 남은 실전 검증
 
-```text
-가격·등락률 정확성
-거래대금 정확성
-collector PID 유지
-queue·drop·logdrop 0 유지
-stream 지연
-Top100 잔량비·5분강도 순차 채움
-Top20 FID228 체결강도 HTS 대조
-프로그램 HTS 대조
-NXT 미거래 종목 정규장 최종값 유지
-```
+1. 다음 거래일 프리마켓 이전부터 실행해 대량체결 `EXACT_LIVE` 확인
+2. 09:00~09:10 개장 폭주에서 queue·drop·stream·stale 확인
+3. 잔량비 3회전 이상 후 Top100 최종 커버리지 측정
+4. 15:30·20:00·자정·익일 프리마켓 rollover 확인
+5. NXT 거래·미거래 종목의 마지막 정상값 유지 확인
 
-실제 프리마켓·정규장·장마감·애프터마켓 검증 전에는 관련 PR을 Draft로 유지한다.
+실제 다음 개장·장마감 검증 전에는 PR을 Draft로 유지하고 병합하지 않는다.
