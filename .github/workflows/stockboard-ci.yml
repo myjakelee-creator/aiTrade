@@ -97,6 +97,7 @@ jobs:
             tests\test_worker_approved_minute_pipeline_safety.py `
             tests\test_worker_approved_minute_rollover_guard.py `
             tests\test_worker_momentum_1m.py `
+            tests\test_html_momentum_full_chain.py `
             tests\test_worker_metric_session_alignment.py `
             tests\test_worker_rest_live_metrics_aftermarket.py `
             tests\test_worker_six_metric_lifecycle.py `
