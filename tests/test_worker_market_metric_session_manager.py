@@ -80,7 +80,7 @@ def test_metric_completion_requires_expected_date_and_valid_source():
     assert manager._metric_complete(
         {
             "large_trade_net_count": 0,
-            "large_trade_source": "ka10055_rest_incremental",
+            "large_trade_source": "kiwoom_rest_ws_0B_fid15",
             "large_trade_source_trading_date": "20260715",
         },
         "large_trade",
@@ -94,19 +94,24 @@ def test_config_has_top100_completion_and_opening_protection():
 
     assert config["max_top_codes"] == 100
     assert config["query_suffix_by_session"]["aftermarket"] == "_AL"
-    assert policies["opening_burst"]["scope"] == 1
-    assert policies["opening_burst"]["min_request_gap_sec"] == 5.0
+    assert policies["opening_burst"]["scope"] == 100
+    assert policies["opening_burst"]["min_request_gap_sec"] == 3.0
+    assert config["approved_minute_pipeline"]["strength_open_delay_minutes"] == 5
     assert policies["after_wait"]["scope"] == 100
     assert policies["aftermarket"]["scope"] == 100
     assert policies["closed"]["scope"] == 100
     assert policies["weekend"]["active"] is False
     assert policies["holiday"]["active"] is False
 
-    # Active-session ka10004 snapshots are hidden by the final display policy, so the
-    # regular-session REST budget must be reserved for visible strength/large-trade work.
+    # Active-session ka10004 and ka10055 polling are replaced by one auxiliary stream.
+    # The one REST lane is reserved for 100 ka10046 calls over each 300-second cycle.
     assert policies["regular"]["intervals"]["bidask"]["top100"] == 0
-    assert policies["regular"]["intervals"]["strength"]["top100"] > 0
-    assert policies["regular"]["intervals"]["large_trade"]["top100"] > 0
+    assert policies["regular"]["intervals"]["strength"] == {
+        "s1": 300,
+        "top20": 300,
+        "top100": 300,
+    }
+    assert policies["regular"]["intervals"]["large_trade"]["top100"] == 0
 
 
 def test_patch_has_no_new_thread_qax_or_price_callback():
