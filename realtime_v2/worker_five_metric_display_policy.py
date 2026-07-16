@@ -60,10 +60,10 @@ def _contains_source(*tokens: str) -> Callable[[str], bool]:
 
 
 def _orderbook_live_source(row: dict[str, Any]) -> bool:
-    if row.get("orderbook_live") is True:
-        return True
-    source = str(row.get("orderbook_source") or "").lower()
-    return bool(source) and "rest_lowload" not in source and any(
+    source = str(row.get("orderbook_source") or "").strip().lower()
+    if not source or "rest_lowload" in source or "opt10004" in source:
+        return False
+    return any(
         token in source
         for token in (
             "qax_realtime_orderbook",
@@ -111,10 +111,14 @@ POLICIES: dict[str, dict[str, Any]] = {
         "basis_key": "orderbook_display_basis",
         "age_key": "orderbook_age_sec",
         "active_source": lambda row: _orderbook_live_source(row),
-        "hold_source": lambda row: bool(
-            str(row.get("orderbook_source") or "")
-            or _positive(row, "bid_ask_ratio")
-        ),
+        "hold_source": lambda row: _contains_source(
+            "qax_realtime_orderbook",
+            "realtime_orderbook",
+            "websocket_orderbook",
+            "ws_orderbook",
+            "ka10004_rest_lowload",
+            "opt10004",
+        )(str(row.get("orderbook_source") or "")),
         "value_valid": lambda row: _positive(row, "bid_ask_ratio"),
         "max_age": lambda row: 3.0,
         "active_basis": "fresh_live_orderbook",
