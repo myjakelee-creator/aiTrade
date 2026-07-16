@@ -54,7 +54,7 @@ jobs:
           python -m py_compile `
             realtime_v2\worker_market_metric_session_manager.py `
             realtime_v2\worker_metric_state_overlay_patch.py `
-            realtime_v2\worker_orderbook_live_display_guard.py `
+            realtime_v2\worker_five_metric_display_policy.py `
             realtime_v2\worker_tr_singleflight_patch.py `
             realtime_v2\worker_metric_provenance_patch.py `
             realtime_v2\worker_realtime_strength_ws_top20_patch.py `
@@ -70,7 +70,7 @@ jobs:
           python -m pytest -q `
             tests\test_worker_market_metric_session_manager.py `
             tests\test_worker_metric_state_overlay.py `
-            tests\test_worker_orderbook_live_display_guard.py `
+            tests\test_worker_five_metric_display_policy.py `
             tests\test_worker_metric_session_alignment.py `
             tests\test_worker_rest_live_metrics_aftermarket.py `
             tests\test_worker_six_metric_lifecycle.py `
