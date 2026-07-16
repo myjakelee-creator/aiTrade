@@ -10,6 +10,13 @@
     "aftermarket_start": "15:40",
     "aftermarket_end": "20:00"
   },
-  "holidays": [],
-  "special_days": {}
+  "holidays": [
+    "20260717"
+  ],
+  "special_days": {
+    "20260717": {
+      "closed": true,
+      "reason": "market_holiday"
+    }
+  }
 }
