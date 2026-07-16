@@ -101,7 +101,10 @@ def test_config_has_top100_completion_and_opening_protection():
     assert policies["closed"]["scope"] == 100
     assert policies["weekend"]["active"] is False
     assert policies["holiday"]["active"] is False
-    assert policies["regular"]["intervals"]["bidask"]["top100"] > 0
+
+    # Active-session ka10004 snapshots are hidden by the final display policy, so the
+    # regular-session REST budget must be reserved for visible strength/large-trade work.
+    assert policies["regular"]["intervals"]["bidask"]["top100"] == 0
     assert policies["regular"]["intervals"]["strength"]["top100"] > 0
     assert policies["regular"]["intervals"]["large_trade"]["top100"] > 0
 
