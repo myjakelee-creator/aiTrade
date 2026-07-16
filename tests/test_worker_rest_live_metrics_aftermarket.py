@@ -50,19 +50,19 @@ def test_authoritative_session_manager_owns_aftermarket_intervals_and_top100_sco
 
     assert policy["scope"] == 100
     assert policy["intervals"]["bidask"] == {
-        "s1": 10,
-        "top20": 60,
-        "top100": 600,
+        "s1": 0,
+        "top20": 0,
+        "top100": 0,
     }
     assert policy["intervals"]["strength"] == {
-        "s1": 30,
-        "top20": 180,
-        "top100": 900,
+        "s1": 300,
+        "top20": 300,
+        "top100": 300,
     }
     assert policy["intervals"]["large_trade"] == {
-        "s1": 120,
-        "top20": 600,
-        "top100": 1800,
+        "s1": 0,
+        "top20": 0,
+        "top100": 0,
     }
 
 
