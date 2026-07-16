@@ -127,5 +127,9 @@ def install(base) -> None:
 
     if callable(getattr(state_class, "_quote", None)):
         from realtime_v2.worker_momentum_1m_patch import install as install_momentum_1m
+        from realtime_v2.worker_minute_value_hold_patch import (
+            install as install_minute_value_hold,
+        )
 
         install_momentum_1m(base)
+        install_minute_value_hold(base)
