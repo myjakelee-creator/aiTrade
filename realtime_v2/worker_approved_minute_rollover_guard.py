@@ -121,6 +121,7 @@ def install(base) -> None:
         state_class.stage_approved_trade_events = stage_trade_events
     state_class._stockboard_approved_minute_rollover_guard_installed = True
 
-    from realtime_v2.worker_momentum_1m_patch import install as install_momentum_1m
+    if callable(getattr(state_class, "_quote", None)):
+        from realtime_v2.worker_momentum_1m_patch import install as install_momentum_1m
 
-    install_momentum_1m(base)
+        install_momentum_1m(base)
