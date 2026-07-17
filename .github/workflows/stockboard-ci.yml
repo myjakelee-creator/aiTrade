@@ -104,6 +104,7 @@ jobs:
             tests\test_execution_strength_source_separation.py `
             tests\test_worker_execution_strength_diagnostics.py `
             tests\test_momentum_badge_engine.py `
+            tests\test_worker_momentum_badge_policy.py `
             tests\test_worker_market_metric_session_manager.py `
             tests\test_worker_metric_state_overlay.py `
             tests\test_worker_five_metric_display_policy.py `
