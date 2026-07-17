@@ -1,6 +1,6 @@
 # StockBoard v2 실시간 파이프라인
 
-최종 갱신: 2026-07-17 19:32 KST
+최종 갱신: 2026-07-17 21:05 KST
 
 이 문서는 StockBoard v2의 실시간 가격 경로, 분 단위 보조지표, 거래일 유지정책과 실전 검증 상태를 기록하는 단일 기준 문서이다. 과거 v0.3.x 구조와 섞지 않는다.
 
@@ -205,6 +205,20 @@ GAP_POSSIBLE     장중 재시작·재접속 공백 가능
 - 기존 fast-price DOM 패치는 모바일에서 현재가 셀을 건너뛰고 모바일 `등락률` 셀 인덱스만 갱신하도록 분기한다.
 - 신규 QAx·FID·Kiwoom REST·WebSocket·Worker thread·SSE payload는 0이며, 모바일에서는 행당 DOM 셀이 8개로 유지된다.
 
+### 7.3 국내시장 수급 last-good 유지
+
+- 설정 파일은 `config/stockboard_market_context.json`, 표시 보호 패치는 `realtime_v2/worker_market_supply_hold_patch.py`이다.
+- 기존 `/api/v2/context` 15초 조회 경로를 그대로 사용하며 새로운 시장수급 요청을 만들지 않는다.
+- KOSPI·KOSDAQ 모두 지수, 등락률, 상승·하락 수, 개인·외인·기관·프로그램 수급이 숫자로 확인될 때만 정상 스냅샷으로 승인한다.
+- 개인·외인·기관·프로그램의 실제 `0`은 정상값으로 인정한다.
+- 지수·등락률·상승·하락이 없고 수급만 0인 20:00 초기화 스냅샷은 거부한다.
+- 마지막 정상값은 `data/runtime/stockboard_v2/market_supply_last_good_YYYYMMDD.json`에 거래일별로 저장한다.
+- 20:00 이후 장마감, 자정, 주말·공휴일, Worker 재시작에도 직전 완료 거래일의 마지막 정상값을 유지한다.
+- 다음 거래일 08:00은 삭제 시점이 아니라 신규 당일값 수용 시작 시각이다. 당일 첫 정상 스냅샷이 확인될 때까지 직전 거래일 값을 유지하고 정상값 수신 즉시 교체한다.
+- 후보 원천은 실제 runtime 파일 `data/runtime/stockboard_v2/market_supply.json`, `data/runtime/market_supply.json`만 사용한다. 체크아웃 수정시각으로 오래된 값을 오늘 값처럼 오인할 수 있는 정적 `docs/assets` 파일은 자동 원천에서 제외한다.
+- `/api/v2/context`의 `market_supply_status`에 표시 기준, 원천 거래일, 마지막 정상시각, 후보 거부 사유를 진단용으로 제공한다.
+- 추가 QAx·FID·Kiwoom REST·WebSocket·Worker thread·브라우저 계산·타이머·SSE payload는 0이다.
+
 ## 8. 공통 거래일 유지정책
 
 초기화하지 않는 시점:
@@ -235,6 +249,7 @@ WebSocket 재접속
 - 지연개장: 캘린더의 실제 프리마켓·정규장 시작시각 사용
 - 재시작: daily state와 lifecycle snapshot에서 복원
 - 다음 프리마켓: 전일 내부 누적·분 bucket·stage 일괄 초기화
+- 국내시장 수급은 프리마켓 시각에 즉시 지우지 않고 첫 정상 당일 스냅샷으로 교체될 때까지 별도 last-good을 유지
 
 ## 9. 개장 성능 보호
 
@@ -249,6 +264,7 @@ ka10046                         실제 개장 후 첫 5분 중지
 모멘텀                          완료 1분봉에서만 규칙 평가
 모바일                          기존 SSE, 행당 8개 셀만 생성
 모바일 성능 배지                기존 렌더 값 문자열 재사용
+국내시장 수급 hold              기존 context 조회에서 작은 딕셔너리 검증
 ```
 
 위험 신호:
@@ -353,6 +369,22 @@ worker_q / drop / logdrop            0 / 0 / 0
 - 최종 정상 UI 복원 브랜치 `restore/stockboard-mobile-final-verified-20260717`을 커밋 `0c736556876a797f5875fc5a459a12b5d61e5a94`에 고정
 - 문서 반영 전 최종 StockBoard CI Run #335 성공
 
+### 10.6 국내시장 수급 20:00 last-good 구현
+
+2026-07-17 20:41 KST 대표님 브라우저 관찰:
+
+- 20:00 이후 국내시장 지수·등락률·상승·하락이 `-`로 바뀌고 개인·외인·기관·프로그램이 0으로 초기화되는 현상 확인
+- 가격·종목·미국시장·stream·render는 정상으로 국내시장 context lifecycle 문제로 판정
+- 비정상 초기화 스냅샷 거부와 거래일별 last-good 저장 구현
+- 장마감·자정·주말·휴장·Worker 재시작 후 같은 완료 거래일값 복원 구현
+- 다음 거래일 프리마켓에서 이전값을 유지하고 첫 정상 당일 스냅샷 수신 시 교체 구현
+- 실제 0 수급값 허용, 지수·등락률·breadth 누락과 결합된 전체 0 초기화만 거부
+- 정적 docs 스냅샷의 체크아웃 수정시각 오인을 막기 위해 runtime 원천만 신뢰
+- `/api/v2/context.market_supply_status` 진단 추가
+- 추가 QAx·FID·REST·WebSocket·thread·timer·SSE payload 0
+- StockBoard CI Run #349 Windows regression 성공
+- Targeted pytest 119 passed / 0 failed
+
 ## 11. 운영 명령
 
 ```powershell
@@ -377,6 +409,8 @@ http://127.0.0.1:8765/
 
 `doctor`는 기존 `large_doctor_report.txt`에 FID228/5분강도 진단을 이어서 기록한다. 다음 거래일에는 `EXECUTION_SOURCE_CONTRACT_OK=True`, `EXECUTION_TRUSTED_FID228_COUNT>0`, `EXECUTION_UNTRUSTED_POSITIVE_COUNT=0`을 우선 확인한다.
 
+국내시장 수급 진단은 `/api/v2/context`의 `market_supply_status`에서 `display_basis`, `source_trading_date`, `candidate_reject_reason`을 확인한다.
+
 ## 12. 남은 실전 검증
 
 1. 다음 거래일 프리마켓 이전부터 실행해 대량체결 `EXACT_LIVE` 확인
@@ -386,7 +420,10 @@ http://127.0.0.1:8765/
 5. 실제 휴대전화 세로·가로 회전과 360~760px 폭에서 표·상단 모멘텀 알림 확인
 6. 09:00~09:10 개장 폭주에서 queue·drop·stream·stale·render 확인
 7. 잔량비 3회전 이상 후 Top100 최종 커버리지 측정
-8. 15:30·20:00·자정·익일 프리마켓 rollover 확인
-9. NXT 거래·미거래 종목의 마지막 정상값 유지 확인
+8. 다음 거래일 19:59→20:00 국내시장 수급 last-good 유지와 비정상 초기화 거부 확인
+9. 자정·Worker 재시작·주말·휴장 후 국내시장 수급 복원 확인
+10. 다음 거래일 08:00 이전값 유지와 첫 정상 당일 스냅샷 자동 교체 확인
+11. 15:30·20:00·자정·익일 프리마켓 rollover 확인
+12. NXT 거래·미거래 종목의 마지막 정상값 유지 확인
 
 실제 다음 개장·장마감 검증 전에는 PR을 Draft로 유지하고 병합하지 않는다.
