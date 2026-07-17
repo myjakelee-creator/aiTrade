@@ -38,7 +38,7 @@ def _row(index: float, change: float, *, scale: int = 1) -> dict:
 
 def _supply(trading_date: str, *, scale: int = 1) -> dict:
     return {
-        "trading_date": trading_date,
+        "source_trading_date": trading_date,
         "kospi": _row(6820.6, -6.37, scale=scale),
         "kosdaq": _row(791.84, -4.53, scale=scale),
     }
@@ -46,7 +46,7 @@ def _supply(trading_date: str, *, scale: int = 1) -> dict:
 
 def _reset_payload(trading_date: str) -> dict:
     return {
-        "trading_date": trading_date,
+        "source_trading_date": trading_date,
         "kospi": {
             "individual_eok": 0,
             "foreign_spot_eok": 0,
@@ -91,6 +91,9 @@ def test_after_close_rejects_reset_and_keeps_same_day_last_good(tmp_path):
     displayed, status = manager.resolve({}, now=datetime(2026, 7, 20, 19, 59, 0))
     assert displayed == normal
     assert status["source_trading_date"] == "20260720"
+    assert status["source_date_field"] == "root.source_trading_date"
+    assert status["candidate_exact_match_count"] == 1
+    assert status["candidate_trading_dates"] == ["20260720"]
     assert (runtime / "market_supply_last_good_20260720.json").is_file()
 
     _write(candidate, _reset_payload("20260720"))
@@ -124,6 +127,7 @@ def test_premarket_keeps_previous_until_first_valid_current_day_snapshot(tmp_pat
     assert replaced == current
     assert live_status["display_basis"] == "live"
     assert live_status["source_trading_date"] == "20260721"
+    assert live_status["candidate_exact_match_count"] == 1
     assert (runtime / "market_supply_last_good_20260721.json").is_file()
 
 
@@ -143,6 +147,48 @@ def test_closed_restart_loads_persisted_same_day_value(tmp_path):
     assert displayed == normal
     assert status["display_basis"] == "after_close_hold"
     assert status["source_trading_date"] == "20260720"
+
+
+def test_timestamp_and_file_mtime_are_not_accepted_as_trading_date(tmp_path):
+    candidate = tmp_path / "candidate_market_supply.json"
+    runtime = tmp_path / "runtime"
+    payload = _supply("20260716")
+    payload.pop("source_trading_date")
+    payload["ts"] = "2026-07-17T22:30:00+09:00"
+    _write(candidate, payload)
+
+    manager = hold.MarketSupplyHold(_config(), root=tmp_path, runtime_dir=runtime)
+    displayed, status = manager.resolve({}, now=datetime(2026, 7, 17, 22, 31, 0))
+
+    assert displayed == {}
+    assert status["display_basis"] == "no_valid_market_supply"
+    assert status["candidate_valid_count"] == 0
+    assert status["candidate_rejected_count"] == 1
+    assert status["candidate_reject_reason"] == "missing_explicit_trading_date"
+    assert status["candidate_trading_dates"] == []
+
+
+def test_flow_date_is_explicit_and_precedes_wrong_query_date(tmp_path):
+    candidate = tmp_path / "candidate_market_supply.json"
+    runtime = tmp_path / "runtime"
+    payload = _supply("20260716")
+    payload.pop("source_trading_date")
+    payload["_status"] = {
+        "query_date": "20260717",
+        "flow_date": "20260716",
+    }
+    _write(candidate, payload)
+
+    manager = hold.MarketSupplyHold(_config(), root=tmp_path, runtime_dir=runtime)
+    displayed, status = manager.resolve({}, now=datetime(2026, 7, 17, 22, 31, 0))
+
+    assert displayed == payload
+    assert status["expected_trading_date"] == "20260716"
+    assert status["candidate_valid"] is True
+    assert status["candidate_exact_match_count"] == 1
+    assert status["source_trading_date"] == "20260716"
+    assert status["source_date_field"] == "_status.flow_date"
+    assert status["candidate_date_sources"][0]["date_source"] == "_status.flow_date"
 
 
 def test_market_supply_hold_config_and_production_install_are_locked():
