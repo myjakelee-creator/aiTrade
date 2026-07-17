@@ -26,6 +26,15 @@ def engine():
     return MomentumBadgeEngine(load_momentum_badge_config())
 
 
+def test_config_separates_cross_trigger_from_directional_stay_condition():
+    config = load_momentum_badge_config()
+    breakout = next(rule for rule in config["rules"] if rule.rule_id == "open_breakout")
+
+    assert config["schema_version"] == 2
+    assert len(breakout.trigger_conditions) == 2
+    assert len(breakout.stay_conditions) == 1
+
+
 def test_simultaneous_open_and_vwap_breakout_produces_two_badges():
     subject = engine()
     subject.seed_last_candle(
@@ -45,6 +54,31 @@ def test_simultaneous_open_and_vwap_breakout_produces_two_badges():
     assert all(item["phase"] == "active" for item in subject.badges("000660", 11))
 
 
+def test_breakout_stays_active_on_later_candle_above_both_reference_lines():
+    subject = engine()
+    subject.seed_last_candle(
+        "000660",
+        candle(10, open_price=99, high=101, low=98, close=99, vwap=100),
+    )
+    subject.observe_completed_candle(
+        "000660",
+        candle(11, open_price=101, high=104, low=100, close=103, vwap=102),
+        day_open=100,
+        trading_date="20260720",
+    )
+
+    changed = subject.observe_completed_candle(
+        "000660",
+        candle(12, open_price=103, high=105, low=102.5, close=104, vwap=102.5),
+        day_open=100,
+        trading_date="20260720",
+    )
+
+    assert changed is False
+    assert [item["badge"] for item in subject.badges("000660", 12)] == ["시돌", "중돌"]
+    assert all(item["phase"] == "active" for item in subject.badges("000660", 12))
+
+
 def test_exit_uses_two_minute_hold_then_one_minute_fade_then_disappears():
     subject = engine()
     subject.seed_last_candle(
@@ -58,9 +92,10 @@ def test_exit_uses_two_minute_hold_then_one_minute_fade_then_disappears():
         trading_date="20260720",
     )
 
+    # Equality is neither an opposite trigger nor a valid stay condition.
     subject.observe_completed_candle(
         "000660",
-        candle(12, open_price=104, high=105, low=103, close=104, vwap=102),
+        candle(12, open_price=100, high=101, low=99, close=100, vwap=100),
         day_open=100,
         trading_date="20260720",
     )
@@ -70,6 +105,39 @@ def test_exit_uses_two_minute_hold_then_one_minute_fade_then_disappears():
     assert all(item["phase"] == "fading" for item in subject.badges("000660", 14))
     assert subject.expire(15) == {"000660"}
     assert subject.badges("000660", 15) == []
+
+
+def test_condition_recovery_during_grace_reactivates_existing_badge():
+    subject = engine()
+    subject.seed_last_candle(
+        "000660",
+        candle(10, open_price=99, high=101, low=98, close=99, vwap=100),
+    )
+    subject.observe_completed_candle(
+        "000660",
+        candle(11, open_price=101, high=104, low=100, close=103, vwap=102),
+        day_open=100,
+        trading_date="20260720",
+    )
+    subject.observe_completed_candle(
+        "000660",
+        candle(12, open_price=100, high=101, low=99, close=100, vwap=100),
+        day_open=100,
+        trading_date="20260720",
+    )
+
+    changed = subject.observe_completed_candle(
+        "000660",
+        candle(13, open_price=101, high=103, low=100.5, close=102, vwap=101),
+        day_open=100,
+        trading_date="20260720",
+    )
+
+    assert changed is True
+    assert [item["phase"] for item in subject.badges("000660", 13)] == [
+        "active",
+        "active",
+    ]
 
 
 def test_last_matching_candle_stays_active_after_market_close_without_new_candle():
