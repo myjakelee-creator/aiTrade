@@ -156,13 +156,9 @@ def test_market_supply_hold_config_and_production_install_are_locked():
         encoding="utf-8"
     )
     assert "worker_market_supply_hold_runtime_fix" in source
-    assert "_install_market_supply_hold_fail_open(base)" in source
-    assert source.index("install_momentum_badge_policy(base)") < source.index(
-        "_install_market_supply_hold_fail_open(base)"
-    )
-    assert source.index("_install_market_supply_hold_fail_open(base)") < source.index(
-        "install_html_null_metric()"
-    )
+    call_index = source.rindex("    _install_market_supply_hold_fail_open(base)")
+    assert source.index("install_momentum_badge_policy(base)") < call_index
+    assert call_index < source.index("install_html_null_metric()")
 
 
 def test_market_supply_hold_adds_no_request_thread_timer_or_browser_path():
