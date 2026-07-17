@@ -70,6 +70,7 @@ jobs:
             realtime_v2\worker_momentum_badge_policy_patch.py `
             realtime_v2\worker_market_metric_session_manager.py `
             realtime_v2\worker_market_supply_hold_patch.py `
+            realtime_v2\worker_market_supply_hold_runtime_fix.py `
             realtime_v2\worker_metric_state_overlay_patch.py `
             realtime_v2\worker_five_metric_display_policy.py `
             realtime_v2\worker_aux_metric_runtime_policy.py `
@@ -110,6 +111,7 @@ jobs:
             tests\test_worker_momentum_badge_policy.py `
             tests\test_worker_market_metric_session_manager.py `
             tests\test_worker_market_supply_hold.py `
+            tests\test_worker_market_supply_hold_runtime_fix.py `
             tests\test_worker_metric_state_overlay.py `
             tests\test_worker_five_metric_display_policy.py `
             tests\test_worker_aux_metric_runtime_policy.py `
