@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "auto_mobile_max_width_px": 760,
   "mobile_columns": [
     "rank",
@@ -38,5 +38,12 @@
     "preserve_column_minimize": true,
     "enable_column_resize": true,
     "enable_document_horizontal_scroll": true
+  },
+  "mobile_performance": {
+    "enabled": true,
+    "throughput_metric": "recv_s",
+    "show_stream_ms": true,
+    "show_render_ms": true,
+    "position": "momentum_top_row"
   }
 }
