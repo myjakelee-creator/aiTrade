@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "enabled": true,
   "completed_candle_only": true,
   "exit_hold_minutes": 2,
@@ -28,6 +28,9 @@
       "all": [
         {"left": "C", "op": ">", "right": "dayOpen"},
         {"left": "C1", "op": "<", "right": "dayOpen"}
+      ],
+      "stay": [
+        {"left": "C", "op": ">", "right": "dayOpen"}
       ]
     },
     {
@@ -41,6 +44,9 @@
       "all": [
         {"left": "C", "op": "<", "right": "dayOpen"},
         {"left": "C1", "op": ">", "right": "dayOpen"}
+      ],
+      "stay": [
+        {"left": "C", "op": "<", "right": "dayOpen"}
       ]
     },
     {
@@ -55,6 +61,9 @@
         {"left": "C", "op": ">", "right": "dayOpen"},
         {"left": "O", "op": ">=", "right": "dayOpen"},
         {"left": "L", "op": "<=", "right": "dayOpen"}
+      ],
+      "stay": [
+        {"left": "C", "op": ">", "right": "dayOpen"}
       ]
     },
     {
@@ -69,6 +78,9 @@
         {"left": "C", "op": "<", "right": "dayOpen"},
         {"left": "O", "op": "<=", "right": "dayOpen"},
         {"left": "H", "op": ">=", "right": "dayOpen"}
+      ],
+      "stay": [
+        {"left": "C", "op": "<", "right": "dayOpen"}
       ]
     },
     {
@@ -82,6 +94,9 @@
       "all": [
         {"left": "C", "op": ">", "right": "V"},
         {"left": "C1", "op": "<", "right": "V1"}
+      ],
+      "stay": [
+        {"left": "C", "op": ">", "right": "V"}
       ]
     },
     {
@@ -95,6 +110,9 @@
       "all": [
         {"left": "C", "op": "<", "right": "V"},
         {"left": "C1", "op": ">", "right": "V1"}
+      ],
+      "stay": [
+        {"left": "C", "op": "<", "right": "V"}
       ]
     },
     {
@@ -109,6 +127,9 @@
         {"left": "C", "op": ">", "right": "V"},
         {"left": "O", "op": ">=", "right": "V"},
         {"left": "L", "op": "<=", "right": "V"}
+      ],
+      "stay": [
+        {"left": "C", "op": ">", "right": "V"}
       ]
     },
     {
@@ -123,6 +144,9 @@
         {"left": "C", "op": "<", "right": "V"},
         {"left": "O", "op": "<=", "right": "V"},
         {"left": "H", "op": ">=", "right": "V"}
+      ],
+      "stay": [
+        {"left": "C", "op": "<", "right": "V"}
       ]
     }
   ]
