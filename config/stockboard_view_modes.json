@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "auto_mobile_max_width_px": 760,
   "mobile_columns": [
     "rank",
@@ -11,25 +11,32 @@
     "execution_strength",
     "program_net"
   ],
-  "mobile_column_width_percent": {
-    "rank": 7,
-    "rank_change": 8,
-    "grade": 9,
-    "stock_name": 23,
-    "change_rate": 14,
-    "amount_ratio": 12,
-    "execution_strength": 14,
-    "program_net": 13
+  "mobile_column_default_width_px": {
+    "rank": 46,
+    "rank_change": 52,
+    "grade": 50,
+    "stock_name": 132,
+    "change_rate": 68,
+    "amount_ratio": 62,
+    "execution_strength": 70,
+    "program_net": 68
   },
   "mobile_market": {
-    "us_min_visible_columns": 4,
-    "domestic_min_visible_columns": 4,
-    "momentum_alert_page_size": 1
+    "momentum_alert_page_size": 1,
+    "wrap_us_market": true,
+    "show_all_domestic_columns": true,
+    "market_graph_layout": "1x4"
   },
   "mobile_behavior": {
-    "disable_hts_clipboard_link": true,
+    "disable_hts_clipboard_link": false,
     "hide_strategyboard_entry": true,
     "preserve_themeboard": true,
     "reload_on_mode_change": true
+  },
+  "mobile_controls": {
+    "preserve_ui_zoom": true,
+    "preserve_column_minimize": true,
+    "enable_column_resize": true,
+    "enable_document_horizontal_scroll": true
   }
 }
