@@ -173,6 +173,9 @@ def install(base) -> None:
     from realtime_v2.html_mobile_view_patch import (
         install as install_mobile_view_html,
     )
+    from realtime_v2.html_mobile_top_status_patch import (
+        install as install_mobile_top_status_html,
+    )
 
     install_metric_restore(base)
     install_rest_live_metrics(base)
@@ -223,3 +226,4 @@ def install(base) -> None:
     install_opening_render_guard()
     install_momentum_badge_html()
     install_mobile_view_html()
+    install_mobile_top_status_html()
