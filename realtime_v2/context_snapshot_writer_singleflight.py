@@ -6,6 +6,7 @@ import importlib
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +14,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from realtime_v2.common import trading_date_text  # noqa: E402
+from realtime_v2.market_session import (  # noqa: E402
+    last_completed_trading_date,
+    market_session_now,
+)
 from realtime_v2.tr_singleflight import get_shared_tr_coordinator  # noqa: E402
 
 
@@ -26,6 +31,15 @@ _original_write_status = base.write_status
 _original_atomic_write = base._atomic_write
 
 _CONTEXT_RUNTIME_VERSION = "singleflight_explicit_loop_v3"
+_MARKET_SUPPLY_DATE_POLICY_VERSION = "market_supply_actual_trading_date_v1"
+_ACTIVE_MARKET_SUPPLY_PHASES = {
+    "premarket",
+    "opening_call",
+    "regular",
+    "closing_call",
+    "after_wait",
+    "aftermarket",
+}
 
 
 def _file_fingerprint(path: Path) -> str:
@@ -41,6 +55,7 @@ def _inject_context_status(payload):
     status["context_entrypoint"] = "realtime_v2.context_snapshot_writer_singleflight"
     status["context_process_pid"] = os.getpid()
     status["context_runtime_version"] = _CONTEXT_RUNTIME_VERSION
+    status["market_supply_date_policy_version"] = _MARKET_SUPPLY_DATE_POLICY_VERSION
     status["tr_singleflight"] = coordinator.status()
     return status
 
@@ -65,18 +80,63 @@ def fetch_yahoo_snapshot(timeout: float = 5.0):
     )
 
 
+def market_supply_target_context(now: datetime | None = None) -> tuple[str, str]:
+    current = now or datetime.now()
+    session = market_session_now(current)
+    phase = str(session.phase or "")
+    if session.is_trading_day and phase in _ACTIVE_MARKET_SUPPLY_PHASES:
+        target_date = str(session.trading_date or "")
+    else:
+        target_date = str(last_completed_trading_date(current) or "")
+    if not target_date:
+        target_date = str(session.trading_date or trading_date_text())
+    return target_date, phase
+
+
+def _physical_market_supply_fetch(target_date: str, phase: str):
+    original_date_function = base.trading_date_text
+    base.trading_date_text = lambda: target_date
+    try:
+        payload = _original_fetch_live_market_supply_snapshot()
+    finally:
+        base.trading_date_text = original_date_function
+
+    if not isinstance(payload, dict):
+        raise RuntimeError("market supply fetch returned non-dict payload")
+    payload = dict(payload)
+    payload["source_trading_date"] = target_date
+    payload["trading_date"] = target_date
+    payload["target_date"] = target_date
+    payload["query_date"] = target_date
+    payload["market_phase"] = phase
+    payload["market_supply_date_policy_version"] = _MARKET_SUPPLY_DATE_POLICY_VERSION
+    payload.setdefault("snapshot_at", base.now_text())
+    return payload
+
+
 def fetch_live_market_supply_snapshot():
-    trade_date = trading_date_text()
-    return coordinator.execute(
+    target_date, phase = market_supply_target_context()
+    payload = coordinator.execute(
         provider="kiwoom_rest",
         tr_code="market_supply_bundle",
-        params={"markets": ["KOSPI", "KOSDAQ"]},
-        trading_date=trade_date,
-        market_session="regular_or_latest",
+        params={
+            "markets": ["KOSPI", "KOSDAQ"],
+            "target_trading_date": target_date,
+        },
+        trading_date=target_date,
+        market_session=phase or "unknown",
         ttl_sec=20.0,
         wait_timeout_sec=60.0,
-        fetcher=_original_fetch_live_market_supply_snapshot,
+        fetcher=lambda: _physical_market_supply_fetch(target_date, phase),
     )
+    payload = dict(payload) if isinstance(payload, dict) else {}
+    payload["source_trading_date"] = target_date
+    payload["trading_date"] = target_date
+    payload["target_date"] = target_date
+    payload["query_date"] = target_date
+    payload["market_phase"] = phase
+    payload["market_supply_date_policy_version"] = _MARKET_SUPPLY_DATE_POLICY_VERSION
+    return payload
 
 
 def fetch_ohlc_bootstrap(
@@ -126,6 +186,10 @@ def _run_cycle(status: dict) -> None:
                 market_payload = fetch_live_market_supply_snapshot()
                 status["market_supply_status"] = "live_ok"
                 status["market_supply_source"] = market_payload.get("source")
+                status["market_supply_target_trading_date"] = market_payload.get(
+                    "source_trading_date"
+                )
+                status["market_supply_market_phase"] = market_payload.get("market_phase")
                 status.pop("market_supply_live_error", None)
                 status.pop("market_supply_source_file", None)
             except Exception as live_error:
