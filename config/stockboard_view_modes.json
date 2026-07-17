@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "auto_mobile_max_width_px": 760,
+  "mobile_columns": [
+    "rank",
+    "rank_change",
+    "grade",
+    "stock_name",
+    "change_rate",
+    "amount_ratio",
+    "execution_strength",
+    "program_net"
+  ],
+  "mobile_column_width_percent": {
+    "rank": 7,
+    "rank_change": 8,
+    "grade": 9,
+    "stock_name": 23,
+    "change_rate": 14,
+    "amount_ratio": 12,
+    "execution_strength": 14,
+    "program_net": 13
+  },
+  "mobile_market": {
+    "us_min_visible_columns": 4,
+    "domestic_min_visible_columns": 4,
+    "momentum_alert_page_size": 1
+  },
+  "mobile_behavior": {
+    "disable_hts_clipboard_link": true,
+    "hide_strategyboard_entry": true,
+    "preserve_themeboard": true,
+    "reload_on_mode_change": true
+  }
+}
