@@ -276,7 +276,14 @@ def _restore_non_trading_hold(self, result, session, now: datetime) -> tuple[int
 
     with self.lock:
         self.status["approved_non_trading_exact_daily_count"] = len(exact_previous)
-        self.status["approved_non_trading_previous_daily_used_count"] = previous_daily_used
+        self.status["approved_non_trading_previous_daily_used_last_count"] = previous_daily_used
+        self.status["approved_non_trading_previous_daily_used_count"] = max(
+            int(
+                self.status.get("approved_non_trading_previous_daily_used_count")
+                or 0
+            ),
+            previous_daily_used,
+        )
     return restored, rebased_count
 
 
