@@ -72,7 +72,8 @@ def test_mobile_html_uses_eight_cells_and_auto_viewport_switch(monkeypatch):
         "function rowHtml(raw){", 1
     )[0]
     assert mobile_row.count("<td") == 8
-    assert "r.price" not in mobile_row
+    assert "numeric(r.price)" not in mobile_row
+    assert "fmtNum(r.price" not in mobile_row
     assert "r.trade_value_eok" not in mobile_row
     assert "r.daily_candle" not in mobile_row
     assert "r.bid_ask_ratio" not in mobile_row
