@@ -28,27 +28,42 @@ def _date_digits(value: Any) -> str:
 
 def _latest_timestamp(values: list[Any]) -> str | None:
     latest_text: str | None = None
-    latest_dt: datetime | None = None
+    latest_key: float | str | None = None
+    latest_is_parsed = False
     for value in values:
         text = str(value or "").strip()
         if not text:
             continue
         try:
-            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        except (TypeError, ValueError):
-            parsed = None
-        if parsed is not None:
-            if latest_dt is None or parsed > latest_dt:
-                latest_dt = parsed
-                latest_text = text
-        elif latest_dt is None and (latest_text is None or text > latest_text):
+            parsed_key: float | str = datetime.fromisoformat(
+                text.replace("Z", "+00:00")
+            ).timestamp()
+            parsed = True
+        except (OSError, OverflowError, TypeError, ValueError):
+            parsed_key = text
+            parsed = False
+        if latest_key is None:
+            latest_key = parsed_key
+            latest_text = text
+            latest_is_parsed = parsed
+            continue
+        if parsed and not latest_is_parsed:
+            latest_key = parsed_key
+            latest_text = text
+            latest_is_parsed = True
+            continue
+        if parsed == latest_is_parsed and parsed_key > latest_key:
+            latest_key = parsed_key
             latest_text = text
     return latest_text
 
 
 def _rank_key(row: dict[str, Any]) -> tuple[int, str]:
     rank = _number(row.get("rank"))
-    return (int(rank) if rank is not None and rank > 0 else 999999, normalize_code(row.get("stock_code")))
+    return (
+        int(rank) if rank is not None and rank > 0 else 999999,
+        normalize_code(row.get("stock_code")),
+    )
 
 
 def _collector_queue(status: dict[str, Any]) -> int | None:
@@ -105,7 +120,11 @@ def build_execution_strength_diagnostics(
                 execution_untrusted += 1
         if strength5 is not None:
             strength5_positive += 1
-        if execution is not None and strength5 is not None and abs(execution - strength5) <= 0.0001:
+        if (
+            execution is not None
+            and strength5 is not None
+            and abs(execution - strength5) <= 0.0001
+        ):
             same_value += 1
 
     samples: list[dict[str, Any]] = []
@@ -117,14 +136,20 @@ def build_execution_strength_diagnostics(
                 "stock_name": row.get("stock_name"),
                 "execution_strength": row.get("execution_strength"),
                 "execution_strength_source": row.get("execution_strength_source"),
-                "execution_source_trading_date": row.get("execution_source_trading_date")
+                "execution_source_trading_date": row.get(
+                    "execution_source_trading_date"
+                )
                 or row.get("ui_execution_source_trading_date"),
-                "execution_strength_observed_at": row.get("execution_strength_received_at")
+                "execution_strength_observed_at": row.get(
+                    "execution_strength_received_at"
+                )
                 or row.get("execution_strength_updated_at")
                 or row.get("ui_execution_strength_observed_at"),
                 "strength_5m": row.get("strength_5m"),
                 "strength_source": row.get("strength_source"),
-                "strength_source_trading_date": row.get("strength_source_trading_date")
+                "strength_source_trading_date": row.get(
+                    "strength_source_trading_date"
+                )
                 or row.get("strength5_source_trading_date")
                 or row.get("ui_strength_source_trading_date"),
             }
@@ -142,11 +167,19 @@ def build_execution_strength_diagnostics(
         "strength5_visible_count": strength5_positive,
         "execution_strength5_same_value_count": same_value,
         "last_fid228_received_at": _latest_timestamp(observed_times),
-        "execution_hidden_date_count": int(state.get("five_metric_execution_date_count") or 0),
-        "execution_hidden_source_count": int(state.get("five_metric_execution_source_count") or 0),
-        "execution_hidden_stale_count": int(state.get("five_metric_execution_stale_count") or 0),
+        "execution_hidden_date_count": int(
+            state.get("five_metric_execution_date_count") or 0
+        ),
+        "execution_hidden_source_count": int(
+            state.get("five_metric_execution_source_count") or 0
+        ),
+        "execution_hidden_stale_count": int(
+            state.get("five_metric_execution_stale_count") or 0
+        ),
         "websocket_status": state.get("realtime_strength_ws_status"),
-        "websocket_selected_count": int(state.get("realtime_strength_ws_selected_count") or 0),
+        "websocket_selected_count": int(
+            state.get("realtime_strength_ws_selected_count") or 0
+        ),
         "collector_queue": _collector_queue(state),
         "worker_queue": int(state.get("event_log_queue_size") or 0),
         "drop_count": int(state.get("dropped_trade_count") or 0),
@@ -209,7 +242,9 @@ def install(base) -> None:
                 "execution_diag_last_fid228_received_at": diagnostics[
                     "last_fid228_received_at"
                 ],
-                "execution_diag_source_contract_ok": diagnostics["source_contract_ok"],
+                "execution_diag_source_contract_ok": diagnostics[
+                    "source_contract_ok"
+                ],
             }
         )
         return payload
