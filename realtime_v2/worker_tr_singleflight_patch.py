@@ -154,6 +154,9 @@ def install(base) -> None:
     from realtime_v2.worker_momentum_badge_policy_patch import (
         install as install_momentum_badge_policy,
     )
+    from realtime_v2.worker_market_supply_hold_patch import (
+        install as install_market_supply_hold,
+    )
     from realtime_v2.html_null_metric_patch import install as install_html_null_metric
     from realtime_v2.html_execution_strength_label_patch import (
         install as install_execution_strength_label,
@@ -219,6 +222,7 @@ def install(base) -> None:
     install_approved_minute_rollover_guard(base)
     install_execution_strength_diagnostics(base)
     install_momentum_badge_policy(base)
+    install_market_supply_hold()
     install_html_null_metric()
     install_execution_strength_label()
     install_approved_minute_metrics_html()
