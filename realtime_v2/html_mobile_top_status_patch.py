@@ -20,9 +20,13 @@ def _load_config() -> dict[str, Any]:
     if throughput_metric != "recv_s":
         raise ValueError("mobile performance throughput_metric must be recv_s")
 
-    position = str(config.get("position") or "momentum_top_row")
-    if position != "momentum_top_row":
-        raise ValueError("mobile performance position must be momentum_top_row")
+    position = str(config.get("position") or "after_candidate_selector")
+    if position != "after_candidate_selector":
+        raise ValueError("mobile performance position must be after_candidate_selector")
+
+    display_mode = str(config.get("display_mode") or "separate_badges")
+    if display_mode != "separate_badges":
+        raise ValueError("mobile performance display_mode must be separate_badges")
 
     return {
         "enabled": bool(config.get("enabled", True)),
@@ -30,14 +34,16 @@ def _load_config() -> dict[str, Any]:
         "show_stream_ms": bool(config.get("show_stream_ms", True)),
         "show_render_ms": bool(config.get("show_render_ms", True)),
         "position": position,
+        "display_mode": display_mode,
+        "wrap": bool(config.get("wrap", True)),
     }
 
 
 def install() -> None:
-    """Place momentum and existing browser performance values in one mobile top row.
+    """Keep momentum full-width and reuse existing performance values as mobile badges.
 
-    This patch only reuses values already calculated by the StockBoard renderer. It adds no
-    request, SSE field, worker calculation, thread, observer, or periodic timer.
+    The patch adds no request, SSE field, worker calculation, thread, observer, or periodic
+    timer. The topbar's existing flex-wrap handles narrow widths automatically.
     """
 
     from realtime_v2 import worker64_guarded_large as large
@@ -56,52 +62,56 @@ def install() -> None:
         if not config["enabled"]:
             return patched
 
-        momentum_anchor = '''    <div id="momentum-alert-strip" class="momentum-alert-strip">
-      <span class="momentum-alert-empty">모멘텀 신호 없음</span>
-    </div>'''
-        top_row = '''    <div id="stockboard-mobile-top-status-row" class="stockboard-mobile-top-status-row">
-      <div id="momentum-alert-strip" class="momentum-alert-strip">
-        <span class="momentum-alert-empty">모멘텀 신호 없음</span>
-      </div>
-      <span id="stockboard-mobile-performance" class="stockboard-mobile-performance">recv -/s · stream -ms · render -ms</span>
-    </div>'''
-        if momentum_anchor not in patched:
-            raise RuntimeError("mobile top status momentum anchor not found")
-        patched = patched.replace(momentum_anchor, top_row, 1)
+        candidate_anchor = (
+            '<label class="badge">선발기준 '
+            '<select id="candidate-model-selector" class="control" disabled>'
+            '<option value="">모델 설정 로딩</option></select></label>'
+        )
+        performance_badges = candidate_anchor + (
+            '<span id="stockboard-mobile-recv" '
+            'class="badge stockboard-mobile-performance-badge">recv/s -</span>'
+            '<span id="stockboard-mobile-stream" '
+            'class="badge stockboard-mobile-performance-badge">stream - ms</span>'
+            '<span id="stockboard-mobile-render" '
+            'class="badge stockboard-mobile-performance-badge">render - ms</span>'
+        )
+        if candidate_anchor not in patched:
+            raise RuntimeError("mobile performance candidate selector anchor not found")
+        patched = patched.replace(candidate_anchor, performance_badges, 1)
 
         element_anchor = (
-            "  const momentumAlertStripEl = document.getElementById('momentum-alert-strip');"
+            "  const candidateModelSelector = document.getElementById('candidate-model-selector');"
         )
         if element_anchor not in patched:
-            raise RuntimeError("mobile top status element anchor not found")
+            raise RuntimeError("mobile performance element anchor not found")
         patched = patched.replace(
             element_anchor,
             element_anchor
-            + "\n  const stockboardMobilePerformanceEl = document.getElementById('stockboard-mobile-performance');",
+            + "\n  const stockboardMobileRecvEl = document.getElementById('stockboard-mobile-recv');"
+            + "\n  const stockboardMobileStreamEl = document.getElementById('stockboard-mobile-stream');"
+            + "\n  const stockboardMobileRenderEl = document.getElementById('stockboard-mobile-render');",
             1,
         )
 
         runtime_anchor = "  function stockboardSetMobileClass(){"
         if runtime_anchor not in patched:
-            raise RuntimeError("mobile top status runtime anchor not found")
+            raise RuntimeError("mobile performance runtime anchor not found")
         runtime = f'''  const STOCKBOARD_MOBILE_PERFORMANCE_CONFIG = {config_json};
   function stockboardUpdateMobilePerformance(rates,lag,renderMs,mode){{
-    if(stockboardViewMode!=='mobile'||!stockboardMobilePerformanceEl)return;
+    if(stockboardViewMode!=='mobile')return;
     const config=STOCKBOARD_MOBILE_PERFORMANCE_CONFIG||{{}};
-    const parts=[];
-    if(config.throughput_metric==='recv_s'){{
+    if(stockboardMobileRecvEl&&config.throughput_metric==='recv_s'){{
       const recv=Number.isFinite(rates?.recvPerSec)?fmtRate(rates.recvPerSec):'-';
-      parts.push(`recv ${{recv}}/s`);
+      stockboardMobileRecvEl.textContent=`recv/s ${{recv}}`;
     }}
-    if(config.show_stream_ms){{
+    if(stockboardMobileStreamEl&&config.show_stream_ms){{
       const stream=Number.isFinite(lag)?Number(lag).toFixed(0):'-';
-      parts.push(`${{mode==='stream'?'stream':'poll'}} ${{stream}}ms`);
+      stockboardMobileStreamEl.textContent=`${{mode==='stream'?'stream':'poll'}} ${{stream}} ms`;
     }}
-    if(config.show_render_ms){{
+    if(stockboardMobileRenderEl&&config.show_render_ms){{
       const render=Number.isFinite(renderMs)?Number(renderMs).toFixed(1):'-';
-      parts.push(`render ${{render}}ms`);
+      stockboardMobileRenderEl.textContent=`render ${{render}} ms`;
     }}
-    stockboardMobilePerformanceEl.textContent=parts.join(' · ');
   }}
 '''
         patched = patched.replace(runtime_anchor, runtime + runtime_anchor, 1)
@@ -111,7 +121,7 @@ def install() -> None:
             "renderMetricsEl.className=ms>70?'badge warn':'badge';"
         )
         if render_anchor not in patched:
-            raise RuntimeError("mobile top status render anchor not found")
+            raise RuntimeError("mobile performance render anchor not found")
         patched = patched.replace(
             render_anchor,
             render_anchor + "stockboardUpdateMobilePerformance(rates,lag,ms,mode);",
@@ -121,46 +131,27 @@ def install() -> None:
         style = f'''
 <style id="stockboard-v2-mobile-top-status">
   /* {MARKER} */
-  #stockboard-mobile-top-status-row {{ display:contents; }}
-  #stockboard-mobile-performance {{ display:none; }}
-  html.stockboard-mobile #stockboard-mobile-top-status-row {{
-    display:flex;
-    order:-10;
-    align-items:center;
-    gap:5px;
-    width:100%;
-    min-width:0;
+  .stockboard-mobile-performance-badge {{ display:none; }}
+  html.stockboard-mobile #momentum-alert-strip {{
+    order:-20 !important;
+    flex:0 0 100% !important;
+    width:100% !important;
+    min-width:0 !important;
+    max-width:100% !important;
     height:22px;
   }}
-  html.stockboard-mobile #stockboard-mobile-top-status-row #momentum-alert-strip {{
-    order:0 !important;
-    flex:1 1 auto;
-    width:auto;
-    min-width:0;
-    height:22px;
-  }}
-  html.stockboard-mobile #stockboard-mobile-performance {{
+  html.stockboard-mobile .stockboard-mobile-performance-badge {{
     display:inline-flex;
     flex:0 0 auto;
     align-items:center;
-    height:20px;
-    padding:0 3px;
-    color:#374151;
-    font-size:10px;
-    font-weight:700;
-    line-height:20px;
+    font-size:inherit;
+    font-weight:inherit;
     white-space:nowrap;
-  }}
-  html.stockboard-mobile #momentum-alert-strip .momentum-alert-item {{ min-width:0; }}
-  html.stockboard-mobile #momentum-alert-strip .momentum-alert-name {{
-    max-width:88px;
-    overflow:hidden;
-    text-overflow:ellipsis;
   }}
 </style>
 '''
         if "</head>" not in patched:
-            raise RuntimeError("mobile top status head anchor not found")
+            raise RuntimeError("mobile performance head anchor not found")
         patched = patched.replace("</head>", style + "</head>", 1)
         return patched.replace("<script>", f"<script>\n  /* {MARKER} */", 1)
 
