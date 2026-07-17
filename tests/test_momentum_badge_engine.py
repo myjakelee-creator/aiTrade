@@ -161,7 +161,7 @@ def test_last_matching_candle_stays_active_after_market_close_without_new_candle
     ]
 
 
-def test_alerts_include_low_rank_internal_universe_codes():
+def test_alerts_include_lower_rows_inside_realtime_top100():
     subject = engine()
     subject.seed_last_candle(
         "123456",
@@ -178,14 +178,14 @@ def test_alerts_include_low_rank_internal_universe_codes():
         {
             "123456": {
                 "stock_name": "하단종목",
-                "rank": 287,
+                "rank": 87,
             }
         },
         11,
     )
 
     assert len(rows) == 1
-    assert rows[0]["rank"] == 287
+    assert rows[0]["rank"] == 87
     assert rows[0]["stock_name"] == "하단종목"
     assert [item["badge"] for item in rows[0]["badges"]] == ["시돌", "중돌"]
 
