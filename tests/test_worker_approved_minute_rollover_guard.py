@@ -232,3 +232,115 @@ def test_holiday_repeated_rows_hold_metrics_without_rollover_or_publish(monkeypa
         == "2026-07-20T08:00:00"
     )
     assert state.status["approved_minute_publish_suppressed_non_trading"] == 1
+
+
+def test_holiday_restores_missing_strengths_from_exact_previous_daily_state(monkeypatch):
+    expires_at = "2026-07-20T08:00:00"
+
+    def orderbook_entry():
+        return {
+            "stock_code": "000660",
+            "group": "orderbook",
+            "source_trading_date": "20260716",
+            "captured_at": "2026-07-16T15:30:00",
+            "expires_at": expires_at,
+            "values": {
+                "bid_ask_ratio": 1.56,
+                "orderbook_source": "qax_realtime_orderbook",
+                "orderbook_status": "ok",
+                "orderbook_received_at": "2026-07-16T15:30:00",
+            },
+        }
+
+    class PreviousDailyState:
+        def __init__(self):
+            self.lock = threading.RLock()
+            self.status = {
+                "metric_session_state_date": "20260716",
+                "approved_large_checkpoint_restored_count": 0,
+            }
+            self._approved_execution_stage = {}
+            self._approved_orderbook_stage = {}
+            self._approved_strength_stage = {}
+            self._approved_large_live = {}
+            self._approved_large_seen = {}
+            self._approved_trade_value_last = {}
+            self._approved_trade_value_buckets = {}
+            self._approved_trade_value_partial = set()
+            self._approved_last_publish_minute = 1
+            self.daily_values_by_code = {}
+            self.quotes = {}
+            self.six_metric_lifecycle_dirty = False
+            self.six_metric_lifecycle_by_group = {
+                "orderbook": {"000660": orderbook_entry()},
+                "execution": {},
+                "strength5": {},
+            }
+
+        def ensure_metric_session_state_date(self, *args, **kwargs):
+            return "20260716"
+
+        def rows(self, limit=300):
+            return [{"stock_code": "000660"}]
+
+    class PreviousDailyBase:
+        State = PreviousDailyState
+
+    monkeypatch.setattr(
+        guard,
+        "market_session_now",
+        lambda now=None: _session("holiday", "20260717", is_trading_day=False),
+    )
+    monkeypatch.setattr(lifecycle, "_expected_date", lambda session, now: "20260716")
+    monkeypatch.setattr(
+        lifecycle,
+        "_next_premarket_boundary",
+        lambda now=None: datetime(2026, 7, 20, 8, 0),
+    )
+
+    def read_exact(path):
+        assert str(path).endswith("daily_state_20260716.json")
+        return {
+            "trading_date": "20260716",
+            "codes": {
+                "000660": {
+                    "last_valid_execution_strength": 97.2,
+                    "last_valid_strength_5m": 93.4,
+                    "last_valid_strength_at": "2026-07-16T15:30:00",
+                }
+            },
+        }
+
+    monkeypatch.setattr(lifecycle, "_read_json", read_exact)
+    guard.install(PreviousDailyBase)
+    state = PreviousDailyState()
+
+    first = state.rows()[0]
+    second = state.rows()[0]
+
+    for row in (first, second):
+        assert row["bid_ask_ratio"] == 1.56
+        assert row["execution_strength"] == 97.2
+        assert row["strength_5m"] == 93.4
+        assert row["execution_strength_source"] == "kiwoom_rest_ws_0B_fid228"
+        assert row["strength_source"] == "ka10046_rest_lowload"
+        assert row["execution_source_trading_date"] == "20260716"
+        assert row["strength5_source_trading_date"] == "20260716"
+    assert state.status["approved_non_trading_exact_daily_count"] == 1
+    assert state.status["approved_non_trading_previous_daily_used_count"] == 1
+    assert state.status["approved_non_trading_hold_restored_group_count"] == 3
+
+
+def test_exact_previous_daily_state_rejects_mismatched_payload_date(monkeypatch):
+    monkeypatch.setattr(
+        lifecycle,
+        "_read_json",
+        lambda path: {
+            "trading_date": "20260715",
+            "codes": {"000660": {"last_valid_execution_strength": 99.9}},
+        },
+    )
+
+    result = guard._exact_previous_daily_values(lifecycle, "20260716")
+
+    assert result == {}
