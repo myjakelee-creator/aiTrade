@@ -1,6 +1,6 @@
 # StockBoard v2 실시간 파이프라인
 
-최종 갱신: 2026-07-17 17:33 KST
+최종 갱신: 2026-07-17 18:34 KST
 
 이 문서는 StockBoard v2의 실시간 가격 경로, 분 단위 보조지표, 거래일 유지정책과 실전 검증 상태를 기록하는 단일 기준 문서이다. 과거 v0.3.x 구조와 섞지 않는다.
 
@@ -190,7 +190,7 @@ GAP_POSSIBLE     장중 재시작·재접속 공백 가능
 - 모바일 8열의 헤더·본문은 데스크톱과 같은 12px 글꼴과 기본 셀 높이·여백을 사용한다.
 - 모바일 기본 열폭은 데스크톱과 같은 8개 열의 기본 폭을 사용하며, `stockboard.v2.mobileColumnWidths.v1`에 데스크톱 열폭과 분리해 저장한다.
 - 열 경계 마우스 드래그, 경계 더블클릭 자동맞춤, `폭 최소화` 전체 자동 최소화를 모바일에서도 유지한다.
-- 모바일 상단에서 `화면 100%`와 `폭 최소화` 버튼을 유지하고, 행 위치·HTS 안내와 속도·queue·drop·render 정보는 숨긴다.
+- 모바일 상단에서 `화면 100%`와 `폭 최소화` 버튼을 유지하고, 행 위치·HTS 안내와 속도·queue·drop·render 원본 배지는 숨긴다.
 - 종목 행 클릭은 데스크톱과 동일하게 기존 클립보드 명령을 전송해 PC AHK·키움 HTS 연동을 수행한다. 실제 스마트폰의 클립보드는 PC AHK와 공유되지 않는다.
 - 표시 요소가 없는 상단 metric 행은 모드 적용 시 한 번 판정해 행 전체를 숨기며, 모멘텀 알림 아래 빈 행을 남기지 않는다.
 - ThemeBoard 링크·경로·데이터 허브·선택 상세·CSS 파일은 수정하지 않으며 모바일 hide selector에도 ThemeBoard를 포함하지 않는다.
@@ -199,6 +199,8 @@ GAP_POSSIBLE     장중 재시작·재접속 공백 가능
 - 국내시장 수급·등락 그래프 4개는 원래 크기를 유지한 1×4 배열로 표시한다.
 - 국내시장 숫자표는 12px 원래 글꼴과 전체 열을 유지하며 오른쪽 열을 자동으로 숨기지 않는다.
 - 모바일 표는 실제 열폭 합계로 렌더링하고 문서 가로 overflow를 허용해 브라우저 하단 가로 스크롤로 이동한다.
+- `realtime_v2/html_mobile_top_status_patch.py`는 모바일에서 모멘텀 스트립을 상단 첫 행으로 고정하고 남는 공간 오른쪽에 `recv/s · stream ms · render ms`를 압축 표시한다.
+- 성능 요약은 기존 `computeRates`, payload lag, render 측정값을 그대로 재사용하며 추가 타이머·API·SSE·Worker 계산이 없다.
 - 기존 fast-price DOM 패치는 모바일에서 현재가 셀을 건너뛰고 모바일 `등락률` 셀 인덱스만 갱신하도록 분기한다.
 - 신규 QAx·FID·Kiwoom REST·WebSocket·Worker thread·SSE payload는 0이며, 모바일에서는 행당 DOM 셀이 8개로 유지된다.
 
@@ -245,6 +247,7 @@ ka10046                         실제 개장 후 첫 5분 중지
 잔량비                           20종목 순환, 무응답 시 자동 포기
 모멘텀                          완료 1분봉에서만 규칙 평가
 모바일                          기존 SSE, 행당 8개 셀만 생성
+모바일 성능 요약                기존 렌더 값 문자열 재사용
 ```
 
 위험 신호:
@@ -326,10 +329,11 @@ worker_q / drop / logdrop            0 / 0 / 0
 - 모멘텀 아래 비어 있는 상단 metric 행 자동 숨김 구현
 - 미국시장 전체 항목 12px 줄바꿈, 국내 그래프 원래 크기 1×4, 국내 숫자표 12px 전체 열 유지
 - 문서 하단 가로 스크롤과 모바일 8열 12px 원래 글꼴 구현
-- 속도·queue·drop·render 정보와 StrategyBoard·새 창은 계속 숨김
+- 모멘텀 스트립을 모바일 최상단에 고정하고 `recv/s · stream · render` 압축 요약 추가
+- 속도·queue·drop·render 원본 배지와 StrategyBoard·새 창은 계속 숨김
 - ThemeBoard 링크 유지와 ThemeBoard 선택자·데이터 경로 비접촉 회귀 고정
-- StockBoard CI Run #309 Windows regression 성공
-- Targeted pytest 108 passed / 0 failed
+- StockBoard CI Run #323 Windows regression 성공
+- Targeted pytest 113 passed / 0 failed
 
 ## 11. 운영 명령
 
@@ -366,10 +370,11 @@ http://127.0.0.1:8765/
 7. 미국시장 전체 항목 줄바꿈, 국내 그래프 1×4, 국내 숫자표 전체 열과 하단 가로 스크롤 확인
 8. 모바일 종목 클릭으로 데스크톱 PC의 AHK·키움 HTS 연동 확인
 9. StrategyBoard 숨김, ThemeBoard 유지, 모멘텀 아래 빈 행 제거 확인
-10. 휴대전화 세로·가로 회전과 360~760px 폭에서 표·상단 모멘텀 알림 확인
-11. 09:00~09:10 개장 폭주에서 queue·drop·stream·stale·render 확인
-12. 잔량비 3회전 이상 후 Top100 최종 커버리지 측정
-13. 15:30·20:00·자정·익일 프리마켓 rollover 확인
-14. NXT 거래·미거래 종목의 마지막 정상값 유지 확인
+10. 모바일 최상단에서 모멘텀과 `recv/s · stream · render`가 한 줄로 유지되는지 확인
+11. 휴대전화 세로·가로 회전과 360~760px 폭에서 표·상단 모멘텀 알림 확인
+12. 09:00~09:10 개장 폭주에서 queue·drop·stream·stale·render 확인
+13. 잔량비 3회전 이상 후 Top100 최종 커버리지 측정
+14. 15:30·20:00·자정·익일 프리마켓 rollover 확인
+15. NXT 거래·미거래 종목의 마지막 정상값 유지 확인
 
 실제 다음 개장·장마감 검증 전에는 PR을 Draft로 유지하고 병합하지 않는다.
