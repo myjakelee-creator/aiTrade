@@ -43,7 +43,7 @@ def _render_mobile_chain(monkeypatch) -> str:
 
 def test_mobile_config_matches_approved_columns_controls_and_widths():
     config = mobile._load_config()
-    assert config["schema_version"] == 2
+    assert config["schema_version"] == 3
     assert config["auto_mobile_max_width_px"] == 760
     assert config["mobile_columns"] == [
         "rank",
