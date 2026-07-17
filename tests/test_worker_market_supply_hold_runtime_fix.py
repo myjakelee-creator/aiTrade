@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -7,6 +8,8 @@ from types import ModuleType, SimpleNamespace
 import realtime_v2
 from realtime_v2 import worker_market_supply_hold_runtime_fix as runtime_fix
 from realtime_v2 import worker_tr_singleflight_patch as tr_patch
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class _FakeHolder:
@@ -65,21 +68,30 @@ def test_market_supply_install_failure_is_fail_open_and_clears_after_recovery(
 
 
 def test_production_entrypoint_keeps_mobile_patch_after_market_hold_install():
-    import importlib
+    script = r'''
+import importlib
+from pathlib import Path
 
-    production = importlib.import_module("realtime_v2.worker64_guarded_large_bidask")
-    guarded = importlib.import_module("realtime_v2.worker64_guarded")
-    large = importlib.import_module("realtime_v2.worker64_guarded_large")
+production = importlib.import_module("realtime_v2.worker64_guarded_large_bidask")
+guarded = importlib.import_module("realtime_v2.worker64_guarded")
+large = importlib.import_module("realtime_v2.worker64_guarded_large")
 
-    assert production is not None
-    assert getattr(guarded, "_market_supply_hold_patch_installed", False) is True
-
-    payload = guarded._runtime_context_payload()
-    assert "market_supply_status" in payload
-
-    root = Path(__file__).resolve().parents[1]
-    html = (root / "docs" / "stockboard_v2.html").read_text(encoding="utf-8-sig")
-    patched = large._ui_safety_patch(html)
-
-    assert "STOCKBOARD_V2_RESPONSIVE_MOBILE_VIEW_20260717" in patched
-    assert 'id="stockboard-view-toggle"' in patched
+assert production is not None
+assert getattr(guarded, "_market_supply_hold_patch_installed", False) is True
+payload = guarded._runtime_context_payload()
+assert "market_supply_status" in payload
+html = Path("docs/stockboard_v2.html").read_text(encoding="utf-8-sig")
+patched = large._ui_safety_patch(html)
+assert "STOCKBOARD_V2_RESPONSIVE_MOBILE_VIEW_20260717" in patched
+assert 'id="stockboard-view-toggle"' in patched
+print("production_patch_chain_ok")
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+    assert "production_patch_chain_ok" in result.stdout
