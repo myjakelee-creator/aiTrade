@@ -6,9 +6,20 @@ MARKER = "STOCKBOARD_V2_MOMENTUM_GRADE_ALERTS_20260717"
 
 
 def _strip_non_candle_tooltips(html: str) -> str:
-    candle_token = "__STOCKBOARD_DAILY_CANDLE_TITLE__"
-    candle_title = 'title="${escapeHtml(candleTitle(r,o))}"'
-    html = html.replace(candle_title, candle_token)
+    preserved: list[tuple[str, str]] = []
+
+    def preserve_candle_title(match: re.Match[str]) -> str:
+        token = f"__STOCKBOARD_DAILY_CANDLE_TITLE_{len(preserved)}__"
+        preserved.append((token, match.group("title")))
+        return f'{match.group("prefix")} {token}'
+
+    html = re.sub(
+        r'(?P<prefix><div class="mini-candle[^"]*")\s+(?P<title>title="[^"]*")',
+        preserve_candle_title,
+        html,
+    )
+    if not preserved:
+        raise RuntimeError("daily candle tooltip anchor not found")
     html = re.sub(r"\s+title=\"[^\"]*\"", "", html)
     html = re.sub(r"\n\s*uiZoomToggle\.title\s*=\s*'[^']*';", "", html)
     html = re.sub(
@@ -19,7 +30,9 @@ def _strip_non_candle_tooltips(html: str) -> str:
         flags=re.DOTALL,
     )
     html = re.sub(r"\n\s*el\.title\s*=\s*`[^`]*`;", "", html)
-    return html.replace(candle_token, candle_title)
+    for token, title in preserved:
+        html = html.replace(token, title)
+    return html
 
 
 def install() -> None:
