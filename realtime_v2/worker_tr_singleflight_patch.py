@@ -1,6 +1,51 @@
 from __future__ import annotations
 
+import traceback
+from pathlib import Path
+
 from realtime_v2.tr_singleflight import get_shared_tr_coordinator
+
+
+def _runtime_dir(base) -> Path:
+    try:
+        return Path(base.RUNTIME_DIR)
+    except Exception:
+        return Path(__file__).resolve().parents[1] / "data" / "runtime" / "stockboard_v2"
+
+
+def _write_optional_patch_error(base, filename: str, error: Exception) -> None:
+    try:
+        runtime = _runtime_dir(base)
+        runtime.mkdir(parents=True, exist_ok=True)
+        (runtime / filename).write_text(
+            f"{type(error).__name__}: {error}\n\n{traceback.format_exc()}",
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _clear_optional_patch_error(base, filename: str) -> None:
+    try:
+        (_runtime_dir(base) / filename).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _install_market_supply_hold_fail_open(base) -> bool:
+    """Keep optional context protection from blocking the remaining UI patches."""
+
+    try:
+        from realtime_v2.worker_market_supply_hold_runtime_fix import (
+            install as install_market_supply_hold,
+        )
+
+        install_market_supply_hold()
+        _clear_optional_patch_error(base, "market_supply_hold_patch_error.txt")
+        return True
+    except Exception as error:
+        _write_optional_patch_error(base, "market_supply_hold_patch_error.txt", error)
+        return False
 
 
 def install(base) -> None:
@@ -154,9 +199,6 @@ def install(base) -> None:
     from realtime_v2.worker_momentum_badge_policy_patch import (
         install as install_momentum_badge_policy,
     )
-    from realtime_v2.worker_market_supply_hold_patch import (
-        install as install_market_supply_hold,
-    )
     from realtime_v2.html_null_metric_patch import install as install_html_null_metric
     from realtime_v2.html_execution_strength_label_patch import (
         install as install_execution_strength_label,
@@ -222,7 +264,11 @@ def install(base) -> None:
     install_approved_minute_rollover_guard(base)
     install_execution_strength_diagnostics(base)
     install_momentum_badge_policy(base)
-    install_market_supply_hold()
+
+    # Market-supply hold is optional context protection. It must never block the
+    # remaining HTML/mobile patches if its own installation fails.
+    _install_market_supply_hold_fail_open(base)
+
     install_html_null_metric()
     install_execution_strength_label()
     install_approved_minute_metrics_html()
@@ -231,3 +277,6 @@ def install(base) -> None:
     install_momentum_badge_html()
     install_mobile_view_html()
     install_mobile_top_status_html()
+
+    # Remove a stale outer fail-open report after the complete chain succeeds.
+    _clear_optional_patch_error(base, "tr_singleflight_patch_error.txt")
