@@ -12,7 +12,7 @@ from realtime_v2.market_session import last_completed_trading_date, market_sessi
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "config" / "stockboard_market_context.json"
-PATCH_VERSION = "market_supply_hold_v1"
+PATCH_VERSION = "market_supply_hold_v2"
 
 MARKET_ALIASES = {
     "kospi": ("kospi", "KOSPI"),
@@ -28,21 +28,15 @@ FIELD_ALIASES = {
     "institution_eok": ("institution_eok", "institution", "기관"),
     "program_market_eok": ("program_market_eok", "program", "프로"),
 }
-DATE_KEYS = (
+EXPLICIT_DATE_KEYS = (
     "source_trading_date",
     "trading_date",
     "target_date",
+    "flow_date",
     "query_date",
     "business_date",
     "market_date",
     "date",
-)
-TIMESTAMP_KEYS = (
-    "updated_at",
-    "snapshot_at",
-    "received_at",
-    "built_at",
-    "ts",
 )
 ACTIVE_CURRENT_DAY_PHASES = {
     "premarket",
@@ -100,6 +94,13 @@ def _first(mapping: dict[str, Any], keys: tuple[str, ...]) -> Any:
     return None
 
 
+def _market_supply_payload(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    nested = payload.get("market_supply")
+    return nested if isinstance(nested, dict) else payload
+
+
 def _market_row(payload: dict[str, Any], market: str) -> dict[str, Any] | None:
     aliases = MARKET_ALIASES.get(market, (market, market.upper()))
     for key in aliases:
@@ -118,11 +119,12 @@ def validate_market_supply(
     payload: Any,
     required_markets: tuple[str, ...] | list[str] = ("kospi", "kosdaq"),
 ) -> tuple[bool, str | None]:
-    if not isinstance(payload, dict) or not payload:
+    market_supply = _market_supply_payload(payload)
+    if not market_supply:
         return False, "market_supply_not_object"
 
     for market in required_markets:
-        row = _market_row(payload, str(market).lower())
+        row = _market_row(market_supply, str(market).lower())
         if not isinstance(row, dict):
             return False, f"missing_market:{market}"
 
@@ -152,35 +154,35 @@ def validate_market_supply(
     return True, None
 
 
-def _payload_date(payload: dict[str, Any]) -> str:
-    containers = [payload]
-    for key in ("meta", "status", "summary"):
+def _payload_date_info(payload: dict[str, Any]) -> tuple[str, str | None]:
+    containers: list[tuple[str, dict[str, Any]]] = [("root", payload)]
+    nested_market_supply = payload.get("market_supply")
+    if isinstance(nested_market_supply, dict):
+        containers.append(("market_supply", nested_market_supply))
+    for key in ("meta", "status", "summary", "_status"):
         value = payload.get(key)
         if isinstance(value, dict):
-            containers.append(value)
+            containers.append((key, value))
+        if isinstance(nested_market_supply, dict):
+            nested_value = nested_market_supply.get(key)
+            if isinstance(nested_value, dict):
+                containers.append((f"market_supply.{key}", nested_value))
+    market_supply = _market_supply_payload(payload)
     for market in ("kospi", "kosdaq"):
-        row = _market_row(payload, market)
+        row = _market_row(market_supply, market)
         if isinstance(row, dict):
-            containers.append(row)
+            containers.append((market, row))
 
-    for container in containers:
-        for key in DATE_KEYS:
+    for key in EXPLICIT_DATE_KEYS:
+        for container_name, container in containers:
             date_text = _date_digits(container.get(key))
             if date_text:
-                return date_text
-    for container in containers:
-        for key in TIMESTAMP_KEYS:
-            date_text = _date_digits(container.get(key))
-            if date_text:
-                return date_text
-    return ""
+                return date_text, f"{container_name}.{key}"
+    return "", None
 
 
-def _file_date(path: Path) -> str:
-    try:
-        return datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y%m%d")
-    except OSError:
-        return ""
+def _payload_date(payload: dict[str, Any]) -> str:
+    return _payload_date_info(payload)[0]
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -278,6 +280,7 @@ class MarketSupplyHold:
         trading_date: str,
         source_path: str,
         source_mtime: float | None,
+        date_source: str | None = None,
     ) -> dict[str, Any]:
         signature = self._signature(trading_date, market_supply)
         if signature == self._last_saved_signature and self._last_good is not None:
@@ -290,6 +293,7 @@ class MarketSupplyHold:
             "updated_at": now_text(),
             "source_path": source_path,
             "source_mtime": source_mtime,
+            "source_date_field": date_source,
             "market_supply": deepcopy(market_supply),
         }
         atomic_write_json(self._persist_path(trading_date), payload)
@@ -305,17 +309,21 @@ class MarketSupplyHold:
             if not path.is_file():
                 continue
             payload = _read_json(path)
+            market_supply = _market_supply_payload(payload)
             valid, reason = validate_market_supply(
-                payload, self.config.get("required_markets") or ("kospi", "kosdaq")
+                market_supply, self.config.get("required_markets") or ("kospi", "kosdaq")
             )
             try:
                 mtime = path.stat().st_mtime
             except OSError:
                 mtime = 0.0
-            date_text = _payload_date(payload or {}) or _file_date(path)
+            date_text, date_source = _payload_date_info(payload or {})
+            if valid and not date_text:
+                reason = "missing_explicit_trading_date"
             item = {
-                "market_supply": payload or {},
+                "market_supply": market_supply,
                 "trading_date": date_text,
+                "date_source": date_source,
                 "source_path": str(path),
                 "source_mtime": mtime,
                 "priority": priority,
@@ -348,14 +356,15 @@ class MarketSupplyHold:
         with self.lock:
             persisted = self._load_latest_persisted()
             valid_items, rejected = self._scan_candidates()
-            exact = next(
-                (item for item in valid_items if item.get("trading_date") == expected_date),
-                None,
-            )
+            exact_matches = [
+                item for item in valid_items if item.get("trading_date") == expected_date
+            ]
+            exact = exact_matches[0] if exact_matches else None
             chosen_payload: dict[str, Any] | None = None
             display_basis = "no_valid_market_supply"
             source_path = None
             source_date = None
+            source_date_field = None
             last_good_at = persisted.get("updated_at") if isinstance(persisted, dict) else None
 
             if exact is not None:
@@ -364,6 +373,7 @@ class MarketSupplyHold:
                     str(exact["trading_date"]),
                     str(exact["source_path"]),
                     float(exact.get("source_mtime") or 0.0),
+                    str(exact.get("date_source") or "") or None,
                 )
                 display_basis = (
                     "live"
@@ -372,6 +382,7 @@ class MarketSupplyHold:
                 )
                 source_path = exact.get("source_path")
                 source_date = exact.get("trading_date")
+                source_date_field = exact.get("date_source")
                 last_good_at = chosen_payload.get("updated_at")
             else:
                 held = persisted
@@ -392,6 +403,7 @@ class MarketSupplyHold:
                             str(previous_item["trading_date"]),
                             str(previous_item["source_path"]),
                             float(previous_item.get("source_mtime") or 0.0),
+                            str(previous_item.get("date_source") or "") or None,
                         )
 
                 held_date = _date_digits(
@@ -408,6 +420,7 @@ class MarketSupplyHold:
                     chosen_payload = held
                     source_path = held.get("source_path")
                     source_date = held_date
+                    source_date_field = held.get("source_date_field")
                     last_good_at = held.get("updated_at")
                     if current_day_phase and allow_previous:
                         display_basis = (
@@ -428,20 +441,34 @@ class MarketSupplyHold:
                 )
 
             first_reject = rejected[0] if rejected else None
+            candidate_date_sources = [
+                {
+                    "path": item.get("source_path"),
+                    "trading_date": item.get("trading_date"),
+                    "date_source": item.get("date_source"),
+                }
+                for item in valid_items
+            ]
             status = {
                 "patch_version": PATCH_VERSION,
                 "market_phase": phase,
                 "expected_trading_date": expected_date or None,
                 "display_basis": display_basis,
                 "source_trading_date": source_date,
+                "source_date_field": source_date_field,
                 "last_good_at": last_good_at,
                 "source_path": source_path,
                 "candidate_valid": exact is not None,
+                "candidate_exact_match_count": len(exact_matches),
                 "candidate_source_path": exact.get("source_path") if exact else None,
                 "candidate_reject_reason": first_reject.get("reason") if first_reject else None,
                 "candidate_reject_path": first_reject.get("source_path") if first_reject else None,
                 "candidate_valid_count": len(valid_items),
                 "candidate_rejected_count": len(rejected),
+                "candidate_trading_dates": sorted(
+                    {str(item.get("trading_date") or "") for item in valid_items if item.get("trading_date")}
+                ),
+                "candidate_date_sources": candidate_date_sources,
                 "persist_path": str(self._persist_path(source_date)) if source_date else None,
             }
             return market_supply, status
@@ -454,13 +481,18 @@ def install() -> None:
     worker thread, browser calculation, or periodic timer is added.
     """
 
-    from realtime_v2 import worker64_guarded_large as large
+    from realtime_v2 import worker64_guarded as guarded
 
-    if getattr(large, "_market_supply_hold_patch_installed", False):
+    if getattr(guarded, "_market_supply_hold_patch_installed", False):
         return
 
+    original_context = getattr(guarded, "_runtime_context_payload", None)
+    if not callable(original_context):
+        raise AttributeError(
+            "realtime_v2.worker64_guarded._runtime_context_payload is unavailable"
+        )
+
     holder = MarketSupplyHold()
-    original_context = large._runtime_context_payload
 
     def patched_runtime_context_payload() -> dict[str, Any]:
         payload = original_context()
@@ -470,6 +502,6 @@ def install() -> None:
         payload["market_supply_status"] = status
         return payload
 
-    large._runtime_context_payload = patched_runtime_context_payload
-    large._market_supply_hold = holder
-    large._market_supply_hold_patch_installed = True
+    guarded._runtime_context_payload = patched_runtime_context_payload
+    guarded._market_supply_hold = holder
+    guarded._market_supply_hold_patch_installed = True
