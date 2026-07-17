@@ -151,6 +151,9 @@ def install(base) -> None:
     from realtime_v2.worker_execution_strength_diagnostics_patch import (
         install as install_execution_strength_diagnostics,
     )
+    from realtime_v2.worker_momentum_badge_policy_patch import (
+        install as install_momentum_badge_policy,
+    )
     from realtime_v2.html_null_metric_patch import install as install_html_null_metric
     from realtime_v2.html_execution_strength_label_patch import (
         install as install_execution_strength_label,
@@ -163,6 +166,9 @@ def install(base) -> None:
     )
     from realtime_v2.html_opening_render_guard_patch import (
         install as install_opening_render_guard,
+    )
+    from realtime_v2.html_momentum_badge_patch import (
+        install as install_momentum_badge_html,
     )
 
     install_metric_restore(base)
@@ -206,8 +212,10 @@ def install(base) -> None:
     install_approved_minute_safety(base)
     install_approved_minute_rollover_guard(base)
     install_execution_strength_diagnostics(base)
+    install_momentum_badge_policy(base)
     install_html_null_metric()
     install_execution_strength_label()
     install_approved_minute_metrics_html()
     install_large_trade_quality_html()
     install_opening_render_guard()
+    install_momentum_badge_html()
