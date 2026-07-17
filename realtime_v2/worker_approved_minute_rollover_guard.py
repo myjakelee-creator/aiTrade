@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import time
+from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
-from realtime_v2.common import normalize_code
+from realtime_v2.common import normalize_code, to_number
 from realtime_v2.market_session import market_session_now
 
-PATCH_VERSION = "approved_minute_rollover_guard_v2"
+PATCH_VERSION = "approved_minute_rollover_guard_v3"
 COMPLETE_START_PHASES = {"premarket", "opening_call"}
 NON_TRADING_HOLD_GROUPS = ("orderbook", "execution", "strength5")
 
@@ -24,30 +25,70 @@ def _is_trading_session(session: Any) -> bool:
     return str(getattr(session, "phase", "") or "") not in {"weekend", "holiday"}
 
 
+def _first_present(values: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = values.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _first_positive(values: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = values.get(key)
+        number = to_number(value)
+        if number is not None and float(number) > 0:
+            return value
+    return None
+
+
 def _approved_ui_fallback(source: dict[str, Any]) -> dict[str, Any]:
     values = dict(source)
     aliases = {
-        "bid_ask_ratio": "ui_bid_ask_ratio",
-        "bid_pct": "ui_bid_pct",
-        "ask_pct": "ui_ask_pct",
-        "bid_volume": "ui_bid_volume",
-        "ask_volume": "ui_ask_volume",
-        "best_ask_price": "ui_best_ask_price",
-        "best_bid_price": "ui_best_bid_price",
-        "orderbook_received_at": "ui_orderbook_observed_at",
-        "orderbook_source_trading_date": "ui_orderbook_source_trading_date",
-        "execution_strength": "ui_execution_strength",
-        "execution_strength_received_at": "ui_execution_strength_observed_at",
-        "execution_source_trading_date": "ui_execution_source_trading_date",
-        "strength_5m": "ui_strength_5m",
-        "strength_20m": "ui_strength_20m",
-        "strength_60m": "ui_strength_60m",
-        "strength_snapshot_at": "ui_strength_observed_at",
-        "strength_source_trading_date": "ui_strength_source_trading_date",
+        "bid_ask_ratio": ("ui_bid_ask_ratio", "last_valid_bid_ask_ratio"),
+        "bid_pct": ("ui_bid_pct", "last_valid_bid_pct"),
+        "ask_pct": ("ui_ask_pct", "last_valid_ask_pct"),
+        "bid_volume": ("ui_bid_volume", "last_valid_bid_volume"),
+        "ask_volume": ("ui_ask_volume", "last_valid_ask_volume"),
+        "best_ask_price": ("ui_best_ask_price",),
+        "best_bid_price": ("ui_best_bid_price",),
+        "orderbook_received_at": (
+            "ui_orderbook_observed_at",
+            "last_valid_orderbook_at",
+        ),
+        "orderbook_source_trading_date": ("ui_orderbook_source_trading_date",),
+        "execution_strength": (
+            "ui_execution_strength",
+            "last_valid_execution_strength",
+        ),
+        "execution_strength_received_at": (
+            "ui_execution_strength_observed_at",
+            "last_valid_strength_at",
+        ),
+        "execution_source_trading_date": ("ui_execution_source_trading_date",),
+        "strength_5m": ("ui_strength_5m", "last_valid_strength_5m"),
+        "strength_20m": ("ui_strength_20m",),
+        "strength_60m": ("ui_strength_60m",),
+        "strength_snapshot_at": (
+            "ui_strength_observed_at",
+            "last_valid_strength_at",
+        ),
+        "strength_source_trading_date": ("ui_strength_source_trading_date",),
     }
-    for target, fallback in aliases.items():
-        if values.get(target) in (None, "") and values.get(fallback) not in (None, ""):
-            values[target] = values[fallback]
+    positive_targets = {"bid_ask_ratio", "execution_strength", "strength_5m"}
+    for target, fallbacks in aliases.items():
+        current = to_number(values.get(target)) if target in positive_targets else None
+        missing = values.get(target) in (None, "") or (
+            target in positive_targets and (current is None or float(current) <= 0)
+        )
+        if missing:
+            fallback = (
+                _first_positive(values, *fallbacks)
+                if target in positive_targets
+                else _first_present(values, *fallbacks)
+            )
+            if fallback not in (None, ""):
+                values[target] = fallback
     if values.get("bid_ask_ratio") not in (None, ""):
         values.setdefault("orderbook_source", "kiwoom_rest_ws_0D_rotating")
         values.setdefault("orderbook_status", "published_60s_last_good")
@@ -60,7 +101,53 @@ def _approved_ui_fallback(source: dict[str, Any]) -> dict[str, Any]:
     return values
 
 
-def _non_trading_entry(lifecycle, entry, *, code: str, group: str, expected: str, now: datetime):
+def _exact_previous_daily_values(lifecycle, expected: str) -> dict[str, dict[str, Any]]:
+    expected = _date_digits(expected)
+    if not expected:
+        return {}
+    try:
+        payload = lifecycle._read_json(
+            lifecycle.RUNTIME_DIR / f"daily_state_{expected}.json"
+        )
+    except (AttributeError, OSError, TypeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    payload_date = _date_digits(
+        payload.get("trading_date") or payload.get("source_trading_date")
+    )
+    if payload_date and payload_date != expected:
+        return {}
+    raw_codes = payload.get("codes")
+    if not isinstance(raw_codes, dict):
+        raw_codes = payload.get("values")
+    if not isinstance(raw_codes, dict):
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for raw_code, raw_values in raw_codes.items():
+        code = normalize_code(raw_code)
+        if code and isinstance(raw_values, dict):
+            result[code] = dict(raw_values)
+    return result
+
+
+def _merge_metric_sources(*sources: Any) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for source in sources:
+        if isinstance(source, dict):
+            result.update(source)
+    return result
+
+
+def _non_trading_entry(
+    lifecycle,
+    entry,
+    *,
+    code: str,
+    group: str,
+    expected: str,
+    now: datetime,
+):
     if isinstance(entry, dict):
         values = entry.get("values")
         if (
@@ -91,25 +178,55 @@ def _restore_non_trading_hold(self, result, session, now: datetime) -> tuple[int
         for row in result
         if isinstance(row, dict) and normalize_code(row.get("stock_code"))
     }
+    exact_previous = _exact_previous_daily_values(lifecycle, expected)
+    prior_display = getattr(self, "previous_daily_display_values_by_code", None)
+    prior_display = prior_display if isinstance(prior_display, dict) else {}
+    prior_metric = getattr(self, "_previous_daily_display_cache", None)
+    prior_metric = prior_metric if isinstance(prior_metric, dict) else {}
+    row_by_code = {
+        normalize_code(row.get("stock_code")): row
+        for row in result
+        if isinstance(row, dict) and normalize_code(row.get("stock_code"))
+    }
+
     with self.lock:
         source_by_code = {
             code: _approved_ui_fallback(
-                {
-                    **dict(getattr(self, "daily_values_by_code", {}).get(code) or {}),
-                    **dict(getattr(self, "quotes", {}).get(code) or {}),
-                }
+                _merge_metric_sources(
+                    exact_previous.get(code),
+                    prior_display.get(code),
+                    prior_metric.get(code),
+                    row_by_code.get(code),
+                    getattr(self, "daily_values_by_code", {}).get(code),
+                    getattr(self, "quotes", {}).get(code),
+                )
             )
             for code in codes
         }
 
+    for values in source_by_code.values():
+        if not isinstance(values, dict):
+            continue
+        if values.get("bid_ask_ratio") not in (None, ""):
+            values.setdefault("orderbook_source_trading_date", expected)
+            values.setdefault("_session_hold_orderbook_date", expected)
+        if values.get("execution_strength") not in (None, ""):
+            values.setdefault("execution_source_trading_date", expected)
+            values.setdefault("_session_hold_execution_date", expected)
+        if values.get("strength_5m") not in (None, ""):
+            values.setdefault("strength_source_trading_date", expected)
+            values.setdefault("_session_hold_strength5_date", expected)
+
     restored = 0
     rebased_count = 0
+    previous_daily_used = 0
     for row in result:
         if not isinstance(row, dict):
             continue
         code = normalize_code(row.get("stock_code"))
         if not code:
             continue
+        used_previous_for_code = False
         for group in NON_TRADING_HOLD_GROUPS:
             group_cache = cache.setdefault(group, {})
             raw_entry = group_cache.get(code) if isinstance(group_cache, dict) else None
@@ -137,6 +254,11 @@ def _restore_non_trading_hold(self, result, session, now: datetime) -> tuple[int
                     expected=expected,
                     now=now,
                 )
+                used_previous_for_code = used_previous_for_code or (
+                    code in exact_previous
+                    or code in prior_display
+                    or code in prior_metric
+                )
             if entry is None:
                 continue
             if isinstance(group_cache, dict) and group_cache.get(code) != entry:
@@ -150,6 +272,11 @@ def _restore_non_trading_hold(self, result, session, now: datetime) -> tuple[int
             )
             restored += 1
             rebased_count += int(bool(rebased))
+        previous_daily_used += int(used_previous_for_code)
+
+    with self.lock:
+        self.status["approved_non_trading_exact_daily_count"] = len(exact_previous)
+        self.status["approved_non_trading_previous_daily_used_count"] = previous_daily_used
     return restored, rebased_count
 
 
@@ -157,7 +284,9 @@ def install(base) -> None:
     """Protect approved minute state across non-trading weekdays and real rollover.
 
     Holiday/weekend rows retain the verified previous-session orderbook, execution
-    strength and five-minute strength lifecycle entries. Non-trading sessions do not
+    strength and five-minute strength lifecycle entries. If lifecycle entries are
+    incomplete after moving to another PC, the exact previous trading day's daily-state
+    file supplies approved UI aliases and last-valid values. Non-trading sessions do not
     publish a new minute, clear intraday accumulators, or downgrade large-trade quality.
     The next real premarket still performs the original one-time rollover.
     """
