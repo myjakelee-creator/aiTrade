@@ -69,7 +69,7 @@ def test_breakout_stays_active_on_later_candle_above_both_reference_lines():
 
     changed = subject.observe_completed_candle(
         "000660",
-        candle(12, open_price=103, high=105, low=102.5, close=104, vwap=102.5),
+        candle(12, open_price=103, high=105, low=102.8, close=104, vwap=102.5),
         day_open=100,
         trading_date="20260720",
     )
