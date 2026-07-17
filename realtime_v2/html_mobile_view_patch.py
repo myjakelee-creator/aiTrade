@@ -97,7 +97,7 @@ def install() -> None:
 
     The patch does not add data requests, worker calculations, WebSockets or worker
     threads. Mobile mode builds only the approved eight table cells. ThemeBoard is
-    deliberately outside every selector and code path in this patch.
+    deliberately outside every hide selector and code path in this patch.
     """
 
     from realtime_v2 import worker64_guarded_large as large
@@ -219,7 +219,7 @@ def install() -> None:
     document.body.classList.toggle('stockboard-desktop',!mobile);
     if(stockboardViewToggle)stockboardViewToggle.textContent=mobile?'데스크톱 보기':'모바일 보기';
     if(mobile){
-      document.querySelectorAll('#topbar a,#topbar button').forEach(element=>{
+      document.querySelectorAll('#topbar a,#topbar button,#topbar span').forEach(element=>{
         const key=`${element.id||''} ${element.className||''} ${element.getAttribute('href')||''} ${element.textContent||''}`.toLowerCase();
         if(key.includes('strategyboard')||key.includes('전략보드'))element.classList.add('stockboard-mobile-strategy-hidden');
       });
@@ -310,6 +310,8 @@ def install() -> None:
   html.stockboard-mobile #render-metrics,
   html.stockboard-mobile #metric-mode-status,
   html.stockboard-mobile #topbar .small,
+  html.stockboard-mobile #topbar .board-shell-tab.disabled,
+  html.stockboard-mobile #topbar .board-shell-new-window,
   html.stockboard-mobile .stockboard-mobile-strategy-hidden,
   html.stockboard-mobile #topbar a[href*="strategyboard" i],
   html.stockboard-mobile #topbar [id*="strategyboard" i],
