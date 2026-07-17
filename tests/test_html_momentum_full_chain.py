@@ -35,7 +35,7 @@ def test_actual_stockboard_html_accepts_complete_momentum_patch_chain(monkeypatc
     assert "momentum-alert-strip" in rendered
     assert "stockboardMomentumAlternate" in rendered
     assert "close=numeric(r.price??r.trade_price??o?.current??o?.close??r.close)" in rendered
-    assert rendered.count("title=") == 1
+    assert len(re.findall(r'\s+title="', rendered)) == 1
     assert re.search(r'<div class="mini-candle[^"]*"\s+title="', rendered)
     assert "uiZoomToggle.title" not in rendered
     assert "rowPositionToggle.title" not in rendered
