@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "auto_mobile_max_width_px": 760,
   "mobile_columns": [
     "rank",
@@ -44,6 +44,8 @@
     "throughput_metric": "recv_s",
     "show_stream_ms": true,
     "show_render_ms": true,
-    "position": "momentum_top_row"
+    "position": "after_candidate_selector",
+    "display_mode": "separate_badges",
+    "wrap": true
   }
 }
