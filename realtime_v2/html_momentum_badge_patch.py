@@ -1,10 +1,29 @@
 from __future__ import annotations
 
-MARKER = "STOCKBOARD_V2_MOMENTUM_BADGES_20260716"
+import re
+
+MARKER = "STOCKBOARD_V2_MOMENTUM_GRADE_ALERTS_20260717"
+
+
+def _strip_non_candle_tooltips(html: str) -> str:
+    candle_token = "__STOCKBOARD_DAILY_CANDLE_TITLE__"
+    candle_title = 'title="${escapeHtml(candleTitle(r,o))}"'
+    html = html.replace(candle_title, candle_token)
+    html = re.sub(r"\s+title=\"[^\"]*\"", "", html)
+    html = re.sub(r"\n\s*uiZoomToggle\.title\s*=\s*'[^']*';", "", html)
+    html = re.sub(
+        r"\n\s*rowPositionToggle\.title\s*=\s*paused.*?;",
+        "",
+        html,
+        count=1,
+        flags=re.DOTALL,
+    )
+    html = re.sub(r"\n\s*el\.title\s*=\s*`[^`]*`;", "", html)
+    return html.replace(candle_token, candle_title)
 
 
 def install() -> None:
-    """Add one display-only momentum column with at most two horizontal badges."""
+    """Use the grade cell for momentum and add one lightweight global alert strip."""
 
     from realtime_v2 import worker64_guarded_large as large
 
@@ -17,71 +36,175 @@ def install() -> None:
         if MARKER in patched:
             return patched
 
-        column_anchor = "{ key:'large_trade_net_count', label:'대량체결', className:'num', sort:'large_trade_net_count', width:70, min:54 }"
-        column_replacement = (
-            column_anchor
-            + ",\n    { key:'momentum_badges', label:'모멘텀', className:'center', sort:null, width:142, min:112 }"
+        # Remove the earlier separate momentum-column experiment when present.
+        patched = patched.replace(
+            ",\n    { key:'momentum_badges', label:'모멘텀', className:'center', sort:null, width:142, min:112 }",
+            "",
         )
-        if column_anchor not in patched:
-            raise RuntimeError("momentum column anchor not found")
-        patched = patched.replace(column_anchor, column_replacement, 1)
+        patched = patched.replace(",\n    momentum_badges: 126", "")
+        patched = re.sub(
+            r"\n\s*<td class=\"center momentum-cell.*?</td>",
+            "",
+            patched,
+            count=1,
+        )
 
-        width_anchor = "large_trade_net_count: 58\n  };"
-        width_replacement = "large_trade_net_count: 58,\n    momentum_badges: 126\n  };"
-        if width_anchor not in patched:
-            raise RuntimeError("momentum width anchor not found")
-        patched = patched.replace(width_anchor, width_replacement, 1)
+        topbar_anchor = '<div id="topbar" class="topbar">'
+        topbar_replacement = topbar_anchor + '''
+    <div id="momentum-alert-strip" class="momentum-alert-strip">
+      <span class="momentum-alert-empty">모멘텀 신호 없음</span>
+    </div>'''
+        if topbar_anchor not in patched:
+            raise RuntimeError("momentum topbar anchor not found")
+        patched = patched.replace(topbar_anchor, topbar_replacement, 1)
 
-        helper_anchor = "  function rowHtml(raw){"
-        helpers = r'''
-  function momentumBadgeClass(label){
-    const text=String(label||'');
-    if(text.includes('돌파'))return 'momentum-breakout';
-    if(text.includes('붕괴'))return 'momentum-breakdown';
-    if(text.includes('지지'))return 'momentum-support';
-    if(text.includes('저항'))return 'momentum-resistance';
+        element_anchor = "  const marketSupplyRow = document.getElementById('market-supply-row');"
+        if element_anchor not in patched:
+            raise RuntimeError("momentum element anchor not found")
+        patched = patched.replace(
+            element_anchor,
+            element_anchor
+            + "\n  const momentumAlertStripEl = document.getElementById('momentum-alert-strip');",
+            1,
+        )
+
+        grade_start = patched.find("  function gradeHtml(r){")
+        grade_end = patched.find("  function deriveClientFields(row){", grade_start)
+        if grade_start < 0 or grade_end < 0:
+            raise RuntimeError("grade helper anchor not found")
+        helpers = r'''  function gradeHtml(r){
+    const t=r.candidate_grade_text||r.grade_text||r.grade||r.candidate_grade||'-';
+    const l=String(t).slice(0,1).toLowerCase();
+    return `<span class="grade ${['a','b','c','d','f'].includes(l)?l:''}">${escapeHtml(t)}</span>`;
+  }
+  function momentumToneClass(tone){
+    const text=String(tone||'');
+    if(text==='strong_up')return 'momentum-strong-up';
+    if(text==='strong_down')return 'momentum-strong-down';
+    if(text==='support')return 'momentum-support';
+    if(text==='resistance')return 'momentum-resistance';
     return 'momentum-neutral';
   }
-  function momentumHtml(r){
-    const badges=Array.isArray(r.momentum_badges)?r.momentum_badges:[];
-    if(!badges.length)return '-';
-    const hold=r.momentum_closed_hold?' momentum-close-hold':'';
-    return `<div class="momentum-badges${hold}">${badges.slice(0,2).map(item=>{
-      const label=String(item?.label||'');
-      return `<span class="momentum-badge ${momentumBadgeClass(label)}">${escapeHtml(label)}</span>`;
-    }).join('')}</div>`;
+  function momentumGradeHtml(r){
+    const badges=Array.isArray(r.momentum_badges)?r.momentum_badges.slice(0,2):[];
+    if(!badges.length)return gradeHtml(r);
+    const alternate=Math.max(400,Number(r.momentum_badge_alternate_ms)||1200);
+    const cycle=alternate*2;
+    const dual=badges.length>1?' dual':'';
+    return `<span class="momentum-grade-stack${dual}" style="--momentum-cycle:${cycle}ms">${badges.map(item=>{
+      const phase=String(item?.phase||'active');
+      const badge=String(item?.badge||'');
+      return `<span class="momentum-grade-badge ${momentumToneClass(item?.tone)} momentum-${escapeHtml(phase)}">${escapeHtml(badge)}</span>`;
+    }).join('')}</span>`;
   }
-  function momentumTitle(r){
-    const details=Array.isArray(r.momentum_details)?r.momentum_details:[];
-    if(!details.length)return `모멘텀 ${r.momentum_status||'-'}`;
-    return details.map(d=>{
-      const f=v=>{const n=Number(v);return Number.isFinite(n)?n.toLocaleString('en-US',{maximumFractionDigits:2}):'-';};
-      return [
-        `${d.label||'모멘텀'} · ${d.minute||'-'}`,
-        `O ${f(d.open)} H ${f(d.high)} L ${f(d.low)} C ${f(d.close)}`,
-        `VWAP ${f(d.vwap)} · 이전C ${f(d.previous_close)} · 이전VWAP ${f(d.previous_vwap)}`,
-        `dayOpen ${f(d.day_open)} · ${d.vwap_quality||'-'}`
-      ].join('\n');
-    }).join('\n\n');
+  let momentumAlertVersion=-1;
+  let momentumAlertFetchVersion=-1;
+  let momentumAlertItems=[];
+  let momentumAlertPageSize=4;
+  let momentumAlertRotateMs=1800;
+  let momentumAlertPage=0;
+  let momentumAlertNextRotateAt=0;
+  function momentumAlertBadgeHtml(item){
+    const badges=Array.isArray(item?.badges)?item.badges:[];
+    return badges.map(b=>`<span class="momentum-alert-badge ${momentumToneClass(b?.tone)} momentum-${escapeHtml(String(b?.phase||'active'))}">${escapeHtml(String(b?.badge||''))}</span>`).join('');
+  }
+  function renderMomentumAlertPage(){
+    if(!momentumAlertStripEl)return;
+    if(!momentumAlertItems.length){
+      momentumAlertStripEl.innerHTML='<span class="momentum-alert-empty">모멘텀 신호 없음</span>';
+      return;
+    }
+    const pages=Math.max(1,Math.ceil(momentumAlertItems.length/momentumAlertPageSize));
+    momentumAlertPage=((momentumAlertPage%pages)+pages)%pages;
+    const start=momentumAlertPage*momentumAlertPageSize;
+    const page=momentumAlertItems.slice(start,start+momentumAlertPageSize);
+    momentumAlertStripEl.innerHTML=`<span class="momentum-alert-count">모멘텀 ${momentumAlertItems.length}종목</span>${page.map(item=>`<span class="momentum-alert-item"><span class="momentum-alert-name">${escapeHtml(String(item.stock_name||item.stock_code||'-'))}</span>${momentumAlertBadgeHtml(item)}</span>`).join('')}`;
+  }
+  function tickMomentumAlertRotation(){
+    if(momentumAlertItems.length<=momentumAlertPageSize)return;
+    const now=Date.now();
+    if(now<momentumAlertNextRotateAt)return;
+    momentumAlertPage+=1;
+    momentumAlertNextRotateAt=now+momentumAlertRotateMs;
+    renderMomentumAlertPage();
+  }
+  async function fetchMomentumAlerts(version){
+    if(version===momentumAlertFetchVersion)return;
+    momentumAlertFetchVersion=version;
+    try{
+      const response=await fetch(`/api/v2/momentum_alerts?version=${encodeURIComponent(version)}&ts=${Date.now()}`,{cache:'no-store'});
+      if(!response.ok)throw new Error(`HTTP ${response.status}`);
+      const payload=await response.json();
+      if(Number(payload.version)!==version)return;
+      momentumAlertItems=Array.isArray(payload.items)?payload.items:[];
+      momentumAlertPageSize=Math.max(1,Number(payload.page_size)||4);
+      momentumAlertRotateMs=Math.max(500,Number(payload.rotate_interval_ms)||1800);
+      momentumAlertPage=0;
+      momentumAlertNextRotateAt=Date.now()+momentumAlertRotateMs;
+      renderMomentumAlertPage();
+    }catch(_error){
+      if(momentumAlertStripEl)momentumAlertStripEl.innerHTML='<span class="momentum-alert-empty">모멘텀 알림 연결 대기</span>';
+    }
+  }
+  function updateMomentumAlertSummary(payload){
+    const version=Number(payload?.status?.momentum_alert_version);
+    if(!Number.isFinite(version)||version<0)return;
+    if(version!==momentumAlertVersion){
+      momentumAlertVersion=version;
+      fetchMomentumAlerts(version);
+    }
+    tickMomentumAlertRotation();
   }
 '''
-        if helper_anchor not in patched:
-            raise RuntimeError("momentum helper anchor not found")
-        patched = patched.replace(helper_anchor, helpers + helper_anchor, 1)
+        patched = patched[:grade_start] + helpers + patched[grade_end:]
 
-        cell_anchor = "<td class=\"num ${clsSigned(r.large_trade_net_count)}${cellFlashClass(code,'large_trade_net_count',r.large_trade_net_count)}\">${largeText}</td>"
-        cell_replacement = (
-            cell_anchor
-            + "\n      <td class=\"center momentum-cell${cellFlashClass(code,'momentum_badges',JSON.stringify(r.momentum_badges||[]))}\" title=\"${escapeHtml(momentumTitle(r))}\">${momentumHtml(r)}</td>"
+        grade_cell = "<td class=\"center${cellFlashClass(code,'grade',r.candidate_grade_text||r.grade_text||r.grade||r.candidate_grade||'-')}\">${gradeHtml(r)}</td>"
+        grade_replacement = "<td class=\"center momentum-grade-cell${cellFlashClass(code,'grade',JSON.stringify(r.momentum_badges||[])+'|'+(r.candidate_grade_text||r.grade_text||r.grade||r.candidate_grade||'-'))}\">${momentumGradeHtml(r)}</td>"
+        if grade_cell not in patched:
+            raise RuntimeError("grade cell anchor not found")
+        patched = patched.replace(grade_cell, grade_replacement, 1)
+
+        render_anchor = "lastPayload=payload;markSortHeaders();"
+        if render_anchor not in patched:
+            raise RuntimeError("momentum render anchor not found")
+        patched = patched.replace(
+            render_anchor,
+            "lastPayload=payload;updateMomentumAlertSummary(payload);markSortHeaders();",
+            1,
         )
-        if cell_anchor not in patched:
-            raise RuntimeError("momentum cell anchor not found")
-        patched = patched.replace(cell_anchor, cell_replacement, 1)
+        patched = patched.replace(
+            "setInterval(()=>{clockEl.textContent=",
+            "setInterval(()=>{tickMomentumAlertRotation();clockEl.textContent=",
+            1,
+        )
 
-        style = f'''\n<style id="stockboard-v2-momentum-badges">\n  /* {MARKER} */\n  .board td.momentum-cell {{ padding:1px 3px; overflow:visible; }}\n  .momentum-badges {{ display:flex; align-items:center; justify-content:center; gap:3px; white-space:nowrap; }}\n  .momentum-badges.momentum-close-hold {{ opacity:.58; filter:saturate(.78); }}\n  .momentum-badge {{ display:inline-block; min-width:48px; padding:1px 4px; border:1px solid transparent; border-radius:3px; font-size:10px; font-weight:800; line-height:15px; text-align:center; letter-spacing:-.25px; box-sizing:border-box; }}\n  .momentum-breakout {{ color:#fff; background:#c81e1e; border-color:#991b1b; }}\n  .momentum-support {{ color:#991b1b; background:#fee2e2; border-color:#f87171; }}\n  .momentum-breakdown {{ color:#fff; background:#1559b7; border-color:#123f83; }}\n  .momentum-resistance {{ color:#174ea6; background:#dbeafe; border-color:#60a5fa; }}\n  .momentum-neutral {{ color:#374151; background:#e5e7eb; border-color:#9ca3af; }}\n</style>\n'''
+        style = f'''
+<style id="stockboard-v2-momentum-grade-alerts">
+  /* {MARKER} */
+  .momentum-alert-strip {{ display:flex; align-items:center; gap:7px; width:100%; min-width:0; height:22px; overflow:hidden; border:1px solid #9aa8b5; border-radius:3px; padding:1px 6px; background:#f8fafc; box-sizing:border-box; white-space:nowrap; }}
+  .momentum-alert-empty {{ color:#6b7280; font-weight:700; }}
+  .momentum-alert-count {{ flex:0 0 auto; color:#111827; font-weight:800; }}
+  .momentum-alert-item {{ display:inline-flex; align-items:center; gap:3px; min-width:0; }}
+  .momentum-alert-name {{ max-width:112px; overflow:hidden; text-overflow:ellipsis; color:#111827; font-weight:800; }}
+  .momentum-alert-badge, .momentum-grade-badge {{ display:inline-flex; align-items:center; justify-content:center; min-width:31px; height:16px; padding:0 3px; border:1px solid transparent; border-radius:3px; box-sizing:border-box; font-size:10px; font-weight:900; line-height:14px; letter-spacing:-.35px; }}
+  .momentum-grade-cell {{ padding:1px 2px !important; overflow:visible !important; }}
+  .momentum-grade-stack {{ position:relative; display:inline-flex; align-items:center; justify-content:center; min-width:34px; height:16px; vertical-align:middle; }}
+  .momentum-grade-stack.dual .momentum-grade-badge {{ position:absolute; inset:0 auto auto 50%; transform:translateX(-50%); animation:stockboardMomentumAlternate var(--momentum-cycle) linear infinite; }}
+  .momentum-grade-stack.dual .momentum-grade-badge:nth-child(2) {{ animation-delay:calc(var(--momentum-cycle) / -2); }}
+  .momentum-strong-up {{ color:#fff; background:#c81e1e; border-color:#991b1b; }}
+  .momentum-support {{ color:#991b1b; background:#fee2e2; border-color:#f87171; }}
+  .momentum-strong-down {{ color:#fff; background:#1559b7; border-color:#123f83; }}
+  .momentum-resistance {{ color:#174ea6; background:#dbeafe; border-color:#60a5fa; }}
+  .momentum-neutral {{ color:#374151; background:#e5e7eb; border-color:#9ca3af; }}
+  .momentum-grace {{ opacity:.86; }}
+  .momentum-fading {{ opacity:.42; }}
+  @keyframes stockboardMomentumAlternate {{ 0%,45%{{opacity:1}} 50%,95%{{opacity:0}} 100%{{opacity:1}} }}
+</style>
+'''
         if "</head>" not in patched:
             raise RuntimeError("momentum style anchor not found")
-        return patched.replace("</head>", style + "</head>", 1)
+        patched = patched.replace("</head>", style + "</head>", 1)
+        return _strip_non_candle_tooltips(patched)
 
     large._ui_safety_patch = patched_ui_safety_patch
     large._momentum_badge_html_installed = True
