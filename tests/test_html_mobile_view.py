@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import realtime_v2
 from realtime_v2 import html_mobile_view_patch as mobile
 from realtime_v2.html_momentum_badge_patch import install as install_momentum_html
+from realtime_v2.worker_board_shell_patch import install as install_board_shell
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +18,7 @@ def _render_mobile_chain(monkeypatch) -> str:
     fake_large = SimpleNamespace(_ui_safety_patch=lambda html: html)
     monkeypatch.setattr(realtime_v2, "worker64_guarded_large", fake_large, raising=False)
 
+    install_board_shell(fake_large)
     install_momentum_html()
     previous = fake_large._ui_safety_patch
     fast_patch = r'''
@@ -100,17 +102,22 @@ def test_mobile_topbar_market_fit_and_themeboard_is_untouched(monkeypatch):
     ):
         assert hidden_id in rendered
 
-    assert "strategyboard" in rendered.lower()
+    assert '<a class="board-shell-tab" href="/theme">ThemeBoard</a>' in rendered
+    assert '<span class="board-shell-tab disabled">StrategyBoard</span>' in rendered
+    assert "#topbar .board-shell-tab.disabled" in rendered
+    assert "#topbar .board-shell-new-window" in rendered
+    assert "document.querySelectorAll('#topbar a,#topbar button,#topbar span')" in rendered
     assert "stockboard-mobile-strategy-hidden" in rendered
     assert "stockboardFitTableRight" in rendered
     assert "stockboardFitMarketContext" in rendered
     assert "grid-template-columns:repeat(2,minmax(0,1fr))" in rendered
 
-    # ThemeBoard is intentionally not selected, hidden, renamed or linked by this patch.
-    assert '[href*="themeboard"' not in rendered.lower()
-    assert '[id*="themeboard"' not in rendered.lower()
-    assert '[class*="themeboard"' not in rendered.lower()
-    assert ".themeboard" not in rendered.lower()
+    # The mobile patch has no ThemeBoard hide selector or route rewrite.
+    patch_source = inspect.getsource(mobile).lower()
+    assert '[href*="themeboard"' not in patch_source
+    assert '[id*="themeboard"' not in patch_source
+    assert '[class*="themeboard"' not in patch_source
+    assert 'href="/theme"' not in patch_source
 
 
 def test_mobile_patch_adds_no_network_or_worker_data_path():
