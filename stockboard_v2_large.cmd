@@ -54,6 +54,7 @@ set "PREFLIGHT=%~dp0scripts\stockboard_v2_openapi_preflight.ps1"
 set "PY64_DEPS=%~dp0scripts\stockboard_v2_python64_dependencies.ps1"
 set "CONTEXT_SINGLEFLIGHT=%~dp0scripts\start_context_singleflight.ps1"
 set "LARGE_TRADE_SIDECAR=%~dp0scripts\stockboard_large_trade_sidecar.ps1"
+set "EXECUTION_DOCTOR=%~dp0scripts\stockboard_execution_strength_doctor.ps1"
 
 if /I "%ACTION%"=="start" (
   set "START_ACTION=start"
@@ -113,6 +114,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SAFE%" -Action "%ACTIO
 set "RC=%ERRORLEVEL%"
 if /I "%ACTION%"=="status" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%LARGE_TRADE_SIDECAR%" -Action status
 if /I "%ACTION%"=="doctor" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%LARGE_TRADE_SIDECAR%" -Action status
+if /I "%ACTION%"=="doctor" if "%RC%"=="0" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%EXECUTION_DOCTOR%"
+if /I "%ACTION%"=="doctor" if errorlevel 1 set "RC=1"
 goto finish
 
 :failed
