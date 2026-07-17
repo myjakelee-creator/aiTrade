@@ -106,8 +106,9 @@ def test_snapshot_patch_exposes_status_and_payload_without_new_runtime_work():
             return {"rows": _rows()[:limit], "status": dict(self.status)}
 
     class Base:
-        State = State
+        pass
 
+    Base.State = State
     diagnostics.install(Base)
     state = State()
     payload = state.snapshot(2)
