@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -96,8 +95,9 @@ def _replace_columns(html: str, config_json: str) -> str:
 def install() -> None:
     """Install a display-only responsive StockBoard mobile mode.
 
-    The patch does not add data requests, worker calculations, WebSockets, timers or
-    ThemeBoard integration. Mobile mode builds only the approved eight table cells.
+    The patch does not add data requests, worker calculations, WebSockets or worker
+    threads. Mobile mode builds only the approved eight table cells. ThemeBoard is
+    deliberately outside every selector and code path in this patch.
     """
 
     from realtime_v2 import worker64_guarded_large as large
@@ -137,7 +137,7 @@ def install() -> None:
         )
 
         old_column_width = "function columnWidth(i){ const c=columns[i]||{}; const saved=Number(columnWidths[c.key]); return Number.isFinite(saved)&&saved>0?saved:Number(c.width||70); }"
-        new_column_width = "function columnWidth(i){ const c=columns[i]||{}; if(stockboardViewMode==='mobile'){const pct=Number(STOCKBOARD_VIEW_CONFIG.mobile_column_width_percent?.[c.key])||0;return Math.max(26,Math.floor(stockboardViewportWidth()*pct/100));} const saved=Number(columnWidths[c.key]); return Number.isFinite(saved)&&saved>0?saved:Number(c.width||70); }"
+        new_column_width = "function columnWidth(i){ const c=columns[i]||{}; if(stockboardViewMode==='mobile'){const pct=Number(STOCKBOARD_VIEW_CONFIG.mobile_column_width_percent?.[c.key])||0;return Math.max(18,Math.floor(stockboardViewportWidth()*pct/100));} const saved=Number(columnWidths[c.key]); return Number.isFinite(saved)&&saved>0?saved:Number(c.width||70); }"
         if old_column_width not in patched:
             raise RuntimeError("StockBoard columnWidth anchor not found")
         patched = patched.replace(old_column_width, new_column_width, 1)
@@ -153,6 +153,12 @@ def install() -> None:
             "function maybeInitialAutoFit(){ if(stockboardViewMode==='mobile')return; if(firstAutoFitDone)return;",
             1,
         )
+
+        fast_cells_anchor = "const priceCell = tr.cells && tr.cells[4];\n      const rateCell = tr.cells && tr.cells[5];"
+        fast_cells_replacement = "const priceCell = stockboardViewMode==='mobile' ? null : (tr.cells && tr.cells[4]);\n      const rateCell = tr.cells && tr.cells[stockboardViewMode==='mobile'?4:5];"
+        if fast_cells_anchor not in patched:
+            raise RuntimeError("StockBoard fast price cell anchor not found")
+        patched = patched.replace(fast_cells_anchor, fast_cells_replacement, 1)
 
         row_anchor = "  function rowHtml(raw){"
         if row_anchor not in patched:
@@ -255,16 +261,24 @@ def install() -> None:
   }
   stockboardSetMobileClass();
   let stockboardPreviousAutomaticMode=stockboardAutomaticMode();
+  let stockboardPreviousViewportWidth=stockboardViewportWidth();
   let stockboardResizeTimer=null;
   window.addEventListener('resize',()=>{
     clearTimeout(stockboardResizeTimer);
     stockboardResizeTimer=setTimeout(()=>{
-      const nextAutomaticMode=stockboardAutomaticMode();
+      const width=stockboardViewportWidth();
+      const nextAutomaticMode=stockboardAutomaticMode(width);
+      const override=sessionStorage.getItem(STOCKBOARD_VIEW_OVERRIDE_KEY);
+      if(override&&Math.abs(width-stockboardPreviousViewportWidth)>=24){
+        sessionStorage.removeItem(STOCKBOARD_VIEW_OVERRIDE_KEY);
+        if(nextAutomaticMode!==stockboardViewMode){location.reload();return;}
+      }
       if(nextAutomaticMode!==stockboardPreviousAutomaticMode){
         sessionStorage.removeItem(STOCKBOARD_VIEW_OVERRIDE_KEY);
         location.reload();
         return;
       }
+      stockboardPreviousViewportWidth=width;
       stockboardPreviousAutomaticMode=nextAutomaticMode;
       if(stockboardViewMode==='mobile'){
         applyColumnWidths();
@@ -300,7 +314,8 @@ def install() -> None:
   html.stockboard-mobile #topbar a[href*="strategyboard" i],
   html.stockboard-mobile #topbar [id*="strategyboard" i],
   html.stockboard-mobile #topbar [class*="strategyboard" i] {{ display:none !important; }}
-  html.stockboard-mobile #topbar .metric-row:nth-of-type(n+2) {{ display:none !important; }}
+  html.stockboard-mobile #topbar .metric-row:has(#counts),
+  html.stockboard-mobile #topbar .metric-row:has(#lag-metrics) {{ display:none !important; }}
   html.stockboard-mobile #clock,
   html.stockboard-mobile #status,
   html.stockboard-mobile #stockboard-view-toggle,
