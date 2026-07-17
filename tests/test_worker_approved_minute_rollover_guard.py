@@ -4,6 +4,7 @@ import threading
 from datetime import datetime
 from types import SimpleNamespace
 
+import realtime_v2.execution_strength_alias_patch as separation
 import realtime_v2.market_session as market_session
 import realtime_v2.worker_approved_minute_rollover_guard as guard
 import realtime_v2.worker_six_metric_lifecycle_patch as lifecycle
@@ -234,7 +235,7 @@ def test_holiday_repeated_rows_hold_metrics_without_rollover_or_publish(monkeypa
     assert state.status["approved_minute_publish_suppressed_non_trading"] == 1
 
 
-def test_holiday_restores_missing_strengths_from_exact_previous_daily_state(monkeypatch):
+def test_holiday_restores_strength5_but_rejects_unknown_execution_source(monkeypatch):
     expires_at = "2026-07-20T08:00:00"
 
     def orderbook_entry():
@@ -312,6 +313,7 @@ def test_holiday_restores_missing_strengths_from_exact_previous_daily_state(monk
         }
 
     monkeypatch.setattr(lifecycle, "_read_json", read_exact)
+    separation._install_rollover_source_guard()
     guard.install(PreviousDailyBase)
     state = PreviousDailyState()
 
@@ -320,15 +322,15 @@ def test_holiday_restores_missing_strengths_from_exact_previous_daily_state(monk
 
     for row in (first, second):
         assert row["bid_ask_ratio"] == 1.56
-        assert row["execution_strength"] == 97.2
+        assert "execution_strength" not in row
+        assert "execution_strength_source" not in row
+        assert "execution_source_trading_date" not in row
         assert row["strength_5m"] == 93.4
-        assert row["execution_strength_source"] == "kiwoom_rest_ws_0B_fid228"
         assert row["strength_source"] == "ka10046_rest_lowload"
-        assert row["execution_source_trading_date"] == "20260716"
         assert row["strength5_source_trading_date"] == "20260716"
     assert state.status["approved_non_trading_exact_daily_count"] == 1
     assert state.status["approved_non_trading_previous_daily_used_count"] == 1
-    assert state.status["approved_non_trading_hold_restored_group_count"] == 3
+    assert state.status["approved_non_trading_hold_restored_group_count"] == 2
 
 
 def test_exact_previous_daily_state_rejects_mismatched_payload_date(monkeypatch):
