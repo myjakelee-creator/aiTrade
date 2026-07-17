@@ -26,12 +26,12 @@ class FakeState:
         self.lock = threading.RLock()
         self.status = {}
         self.name_by_code = {"123456": "하단종목"}
-        self.seed_rank_by_code = {"123456": 287}
+        self.seed_rank_by_code = {"123456": 87}
         self.quotes = {
             "123456": {
                 "stock_code": "123456",
                 "stock_name": "하단종목",
-                "rank": 287,
+                "rank": 87,
                 "day_open": 100,
             }
         }
@@ -81,7 +81,7 @@ class FakeBase:
     DAILY_PERSIST_KEYS = ()
 
 
-def test_policy_suppresses_candle_rebuild_and_surfaces_low_rank_alert(monkeypatch):
+def test_policy_suppresses_candle_rebuild_and_surfaces_lower_top100_alert(monkeypatch):
     mutable_minute = {"value": 11}
     monkeypatch.setattr(policy.momentum_1m, "install", lambda base: None)
     monkeypatch.setattr(policy.momentum_1m, "_expected_date", lambda now=None: "20260720")
@@ -130,6 +130,6 @@ def test_policy_suppresses_candle_rebuild_and_surfaces_low_rank_alert(monkeypatc
 
     alerts = state.momentum_alert_payload()
     assert alerts["count"] == 1
-    assert alerts["items"][0]["rank"] == 287
+    assert alerts["items"][0]["rank"] == 87
     assert [item["badge"] for item in alerts["items"][0]["badges"]] == ["시돌", "중돌"]
     assert "momentum_badge_state" in LocalBase.DAILY_PERSIST_KEYS
