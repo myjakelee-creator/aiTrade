@@ -41,8 +41,9 @@ def _render_mobile_chain(monkeypatch) -> str:
     return fake_large._ui_safety_patch(source)
 
 
-def test_mobile_config_matches_approved_columns_and_widths():
+def test_mobile_config_matches_approved_columns_controls_and_widths():
     config = mobile._load_config()
+    assert config["schema_version"] == 2
     assert config["auto_mobile_max_width_px"] == 760
     assert config["mobile_columns"] == [
         "rank",
@@ -54,12 +55,30 @@ def test_mobile_config_matches_approved_columns_and_widths():
         "execution_strength",
         "program_net",
     ]
-    assert sum(config["mobile_column_width_percent"].values()) == 100
+    assert config["mobile_column_default_width_px"] == {
+        "rank": 46,
+        "rank_change": 52,
+        "grade": 50,
+        "stock_name": 132,
+        "change_rate": 68,
+        "amount_ratio": 62,
+        "execution_strength": 70,
+        "program_net": 68,
+    }
     assert config["mobile_behavior"]["preserve_themeboard"] is True
-    assert config["mobile_behavior"]["disable_hts_clipboard_link"] is True
+    assert config["mobile_behavior"]["disable_hts_clipboard_link"] is False
+    assert config["mobile_controls"] == {
+        "preserve_ui_zoom": True,
+        "preserve_column_minimize": True,
+        "enable_column_resize": True,
+        "enable_document_horizontal_scroll": True,
+    }
+    assert config["mobile_market"]["wrap_us_market"] is True
+    assert config["mobile_market"]["show_all_domestic_columns"] is True
+    assert config["mobile_market"]["market_graph_layout"] == "1x4"
 
 
-def test_mobile_html_uses_eight_cells_and_auto_viewport_switch(monkeypatch):
+def test_mobile_html_uses_eight_cells_auto_switch_and_ahk(monkeypatch):
     rendered = _render_mobile_chain(monkeypatch)
 
     assert mobile.MARKER in rendered
@@ -84,10 +103,54 @@ def test_mobile_html_uses_eight_cells_and_auto_viewport_switch(monkeypatch):
 
     assert "stockboardViewMode==='mobile' ? null" in rendered
     assert "stockboardViewMode==='mobile'?4:5" in rendered
-    assert "if(!copyOnly&&stockboardViewMode!=='mobile')sendHtsCommand(text);" in rendered
+    assert "if(!copyOnly)sendHtsCommand(text);" in rendered
+    assert "if(!copyOnly&&stockboardViewMode!=='mobile')" not in rendered
 
 
-def test_mobile_topbar_market_fit_and_themeboard_is_untouched(monkeypatch):
+def test_mobile_restores_controls_resizers_and_independent_width_storage(monkeypatch):
+    rendered = _render_mobile_chain(monkeypatch)
+
+    assert "mobileColumnWidths:'stockboard.v2.mobileColumnWidths.v1'" in rendered
+    assert "STORAGE_KEYS.mobileColumnWidths:STORAGE_KEYS.columnWidths" in rendered
+    assert "mobile_column_default_width_px" in rendered
+    assert "html.stockboard-mobile .board .column-resizer { display:block !important; }" in rendered
+    assert "initColumnResizers()" in rendered
+    assert "autoFitColumn(i,true)" in rendered
+    assert "minimizeAllColumnWidths" in rendered
+
+    hidden_block = rendered.split("html.stockboard-mobile #topbar .title,", 1)[1].split(
+        "{ display:none !important; }", 1
+    )[0]
+    assert "#ui-zoom-toggle" not in hidden_block
+    assert "#column-minimize-toggle" not in hidden_block
+    assert "#row-position-toggle" in hidden_block
+
+
+def test_mobile_market_wrap_fonts_scroll_and_empty_row_cleanup(monkeypatch):
+    rendered = _render_mobile_chain(monkeypatch)
+
+    assert "stockboardHideEmptyMetricRows" in rendered
+    assert "stockboard-mobile-empty-row" in rendered
+    assert "stockboardShowAllMarketColumns" in rendered
+    assert "cell.hidden=false" in rendered
+    assert "stockboardFitTableRight" not in rendered
+
+    assert "html.stockboard-mobile .v2-us-grid tr" in rendered
+    assert "flex-wrap:wrap" in rendered
+    assert "html.stockboard-mobile .v2-us-grid td" in rendered
+    assert "font-size:12px" in rendered
+    assert "html.stockboard-mobile .v2-market-distribution" in rendered
+    assert "flex-wrap:nowrap" in rendered
+    assert "grid-template-columns:repeat(2" not in rendered
+    assert "html.stockboard-mobile .v2-market-grid td" in rendered
+
+    assert "overflow-x:auto !important" in rendered
+    assert "width:var(--board-width) !important" in rendered
+    assert "#sbv2-horizontal-scroll-spacer" in rendered
+    assert "html.stockboard-mobile .board th { font-size:12px; }" in rendered
+
+
+def test_mobile_strategy_hidden_and_themeboard_untouched(monkeypatch):
     rendered = _render_mobile_chain(monkeypatch)
 
     for hidden_id in (
@@ -108,11 +171,7 @@ def test_mobile_topbar_market_fit_and_themeboard_is_untouched(monkeypatch):
     assert "#topbar .board-shell-new-window" in rendered
     assert "document.querySelectorAll('#topbar a,#topbar button,#topbar span')" in rendered
     assert "stockboard-mobile-strategy-hidden" in rendered
-    assert "stockboardFitTableRight" in rendered
-    assert "stockboardFitMarketContext" in rendered
-    assert "grid-template-columns:repeat(2,minmax(0,1fr))" in rendered
 
-    # The mobile patch has no ThemeBoard hide selector or route rewrite.
     patch_source = inspect.getsource(mobile).lower()
     assert '[href*="themeboard"' not in patch_source
     assert '[id*="themeboard"' not in patch_source
