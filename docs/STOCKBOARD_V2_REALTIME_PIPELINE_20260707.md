@@ -1,6 +1,6 @@
 # StockBoard v2 실시간 파이프라인
 
-최종 갱신: 2026-07-17 14:00 KST
+최종 갱신: 2026-07-17 14:54 KST
 
 이 문서는 StockBoard v2의 실시간 가격 경로, 분 단위 보조지표, 거래일 유지정책과 실전 검증 상태를 기록하는 단일 기준 문서이다. 과거 v0.3.x 구조와 섞지 않는다.
 
@@ -285,7 +285,8 @@ worker_q / drop / logdrop            0 / 0 / 0
 - 실시간 Top100 상단 알림과 version-change 로컬 조회 구현
 - 일봉 캔들 외 title 툴팁 제거, 대량체결 패치의 숨은 모멘텀 선행 설치 결합 제거
 - 완료봉 단순 생성에 따른 불필요한 background rebuild 차단
-- StockBoard CI Run #279 Windows regression 성공
+- StockBoard CI Run #281 Windows regression 성공
+- Targeted pytest 101 passed / 0 failed
 
 ## 11. 운영 명령
 
