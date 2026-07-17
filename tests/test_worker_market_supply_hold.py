@@ -155,10 +155,13 @@ def test_market_supply_hold_config_and_production_install_are_locked():
     source = (ROOT / "realtime_v2" / "worker_tr_singleflight_patch.py").read_text(
         encoding="utf-8"
     )
-    assert "from realtime_v2.worker_market_supply_hold_patch import" in source
-    assert "install_market_supply_hold()" in source
+    assert "worker_market_supply_hold_runtime_fix" in source
+    assert "_install_market_supply_hold_fail_open(base)" in source
     assert source.index("install_momentum_badge_policy(base)") < source.index(
-        "install_market_supply_hold()"
+        "_install_market_supply_hold_fail_open(base)"
+    )
+    assert source.index("_install_market_supply_hold_fail_open(base)") < source.index(
+        "install_html_null_metric()"
     )
 
 
