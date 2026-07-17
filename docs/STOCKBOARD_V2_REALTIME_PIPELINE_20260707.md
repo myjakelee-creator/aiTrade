@@ -1,6 +1,6 @@
 # StockBoard v2 실시간 파이프라인
 
-최종 갱신: 2026-07-17 09:30 KST
+최종 갱신: 2026-07-17 10:59 KST
 
 이 문서는 StockBoard v2의 실시간 가격 경로, 분 단위 보조지표, 거래일 유지정책과 실전 검증 상태를 기록하는 단일 기준 문서이다. 과거 v0.3.x 구조와 섞지 않는다.
 
@@ -250,6 +250,16 @@ worker_q / drop / logdrop            0 / 0 / 0
 - 구형 opt10046 alias 제거 및 FID228 전용 source guard 적용
 - StockBoard CI Run #209 Windows regression 성공
 
+### 10.2 FID228 개장 검증 doctor
+
+- Worker snapshot에 `execution_strength_diagnostics`를 추가
+- FID228 신뢰 원천 수, 최종 체결강도 표시 수, 5분강도 표시 수를 분리 집계
+- 두 강도의 동일값 수, 원천·거래일 불일치 숨김 수, 마지막 FID228 수신시각을 기록
+- WebSocket 상태·구독 수와 collector_q·worker_q·drop·logdrop을 같은 진단에 포함
+- 상위 10종목의 체결강도·원천·거래일과 5분강도·원천·거래일을 한 줄씩 출력
+- 추가 QAx·FID·REST·WebSocket·thread·브라우저 계산 없음
+- StockBoard CI Run #227 Windows regression 성공
+
 ## 11. 운영 명령
 
 ```powershell
@@ -266,10 +276,18 @@ git reset --hard origin/fix/restore-live-metrics-rest-20260715
 http://127.0.0.1:8765/
 ```
 
+실전 진단:
+
+```powershell
+.\stockboard_v2_large.cmd doctor
+```
+
+`doctor`는 기존 `large_doctor_report.txt`에 FID228/5분강도 진단을 이어서 기록한다. 다음 거래일에는 `EXECUTION_SOURCE_CONTRACT_OK=True`, `EXECUTION_TRUSTED_FID228_COUNT>0`, `EXECUTION_UNTRUSTED_POSITIVE_COUNT=0`을 우선 확인한다.
+
 ## 12. 남은 실전 검증
 
 1. 다음 거래일 프리마켓 이전부터 실행해 대량체결 `EXACT_LIVE` 확인
-2. 다음 거래일 FID228 체결강도가 5분강도와 독립적으로 저장·표시되는지 확인
+2. 다음 거래일 FID228 체결강도가 5분강도와 독립적으로 저장·표시되는지 `doctor`로 확인
 3. 09:00~09:10 개장 폭주에서 queue·drop·stream·stale 확인
 4. 잔량비 3회전 이상 후 Top100 최종 커버리지 측정
 5. 15:30·20:00·자정·익일 프리마켓 rollover 확인
