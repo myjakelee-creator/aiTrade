@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "enabled": true,
+  "completed_candle_only": true,
+  "exit_hold_minutes": 2,
+  "fade_minutes": 1,
+  "reference_order": ["open", "vwap"],
+  "display": {
+    "replace_grade_badge": true,
+    "dual_badge_mode": "alternate",
+    "alternate_interval_ms": 1200
+  },
+  "top_alert": {
+    "enabled": true,
+    "page_size": 4,
+    "rotate_interval_ms": 1800,
+    "max_items": 300
+  },
+  "rules": [
+    {
+      "id": "open_breakout",
+      "reference": "open",
+      "badge": "시돌",
+      "label": "시가돌파",
+      "tone": "strong_up",
+      "priority": 100,
+      "requires_previous": true,
+      "all": [
+        {"left": "C", "op": ">", "right": "dayOpen"},
+        {"left": "C1", "op": "<", "right": "dayOpen"}
+      ]
+    },
+    {
+      "id": "open_breakdown",
+      "reference": "open",
+      "badge": "시붕",
+      "label": "시가붕괴",
+      "tone": "strong_down",
+      "priority": 100,
+      "requires_previous": true,
+      "all": [
+        {"left": "C", "op": "<", "right": "dayOpen"},
+        {"left": "C1", "op": ">", "right": "dayOpen"}
+      ]
+    },
+    {
+      "id": "open_support",
+      "reference": "open",
+      "badge": "시지",
+      "label": "시가지지",
+      "tone": "support",
+      "priority": 80,
+      "requires_previous": false,
+      "all": [
+        {"left": "C", "op": ">", "right": "dayOpen"},
+        {"left": "O", "op": ">=", "right": "dayOpen"},
+        {"left": "L", "op": "<=", "right": "dayOpen"}
+      ]
+    },
+    {
+      "id": "open_resistance",
+      "reference": "open",
+      "badge": "시저",
+      "label": "시가저항",
+      "tone": "resistance",
+      "priority": 80,
+      "requires_previous": false,
+      "all": [
+        {"left": "C", "op": "<", "right": "dayOpen"},
+        {"left": "O", "op": "<=", "right": "dayOpen"},
+        {"left": "H", "op": ">=", "right": "dayOpen"}
+      ]
+    },
+    {
+      "id": "vwap_breakout",
+      "reference": "vwap",
+      "badge": "중돌",
+      "label": "가중돌파",
+      "tone": "strong_up",
+      "priority": 100,
+      "requires_previous": true,
+      "all": [
+        {"left": "C", "op": ">", "right": "V"},
+        {"left": "C1", "op": "<", "right": "V1"}
+      ]
+    },
+    {
+      "id": "vwap_breakdown",
+      "reference": "vwap",
+      "badge": "중붕",
+      "label": "가중붕괴",
+      "tone": "strong_down",
+      "priority": 100,
+      "requires_previous": true,
+      "all": [
+        {"left": "C", "op": "<", "right": "V"},
+        {"left": "C1", "op": ">", "right": "V1"}
+      ]
+    },
+    {
+      "id": "vwap_support",
+      "reference": "vwap",
+      "badge": "중지",
+      "label": "가중지지",
+      "tone": "support",
+      "priority": 80,
+      "requires_previous": false,
+      "all": [
+        {"left": "C", "op": ">", "right": "V"},
+        {"left": "O", "op": ">=", "right": "V"},
+        {"left": "L", "op": "<=", "right": "V"}
+      ]
+    },
+    {
+      "id": "vwap_resistance",
+      "reference": "vwap",
+      "badge": "중저",
+      "label": "가중저항",
+      "tone": "resistance",
+      "priority": 80,
+      "requires_previous": false,
+      "all": [
+        {"left": "C", "op": "<", "right": "V"},
+        {"left": "O", "op": "<=", "right": "V"},
+        {"left": "H", "op": ">=", "right": "V"}
+      ]
+    }
+  ]
+}
