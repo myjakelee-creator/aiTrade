@@ -160,29 +160,35 @@ def test_installed_pipeline_builds_two_badges_from_completed_minutes(monkeypatch
     assert "momentum_last_completed_candle" in LocalBase.DAILY_PERSIST_KEYS
 
 
-def test_html_patch_adds_momentum_column_and_visual_badges(monkeypatch):
+def test_html_patch_replaces_grade_and_adds_global_alert_without_momentum_column(monkeypatch):
     fake_large = SimpleNamespace(_ui_safety_patch=lambda html: html)
     monkeypatch.setattr(realtime_v2, "worker64_guarded_large", fake_large, raising=False)
     html_patch.install()
 
-    html = """<html><head></head><body><script>
-const columns = [
-    { key:'large_trade_net_count', label:'대량체결', className:'num', sort:'large_trade_net_count', width:70, min:54 }
-];
-const COLUMN_MINIMIZE_MAX = {
-    large_trade_net_count: 58
-  };
+    html = """<html><head></head><body>
+<div id="topbar" class="topbar"></div>
+<div title="remove-me">x</div>
+<script>
+  const marketSupplyRow = document.getElementById('market-supply-row');
+  function escapeHtml(v){return String(v??'');}
+  function cellFlashClass(){return '';}
+  function gradeHtml(r){const t=r.candidate_grade_text||r.grade_text||r.grade||r.candidate_grade||'-';const l=String(t).slice(0,1).toLowerCase();return`<span class="grade ${['a','b','c','d','f'].includes(l)?l:''}" title="score ${r.grade_score??'-'}">${escapeHtml(t)}</span>`;}
+  function deriveClientFields(row){return row;}
   function rowHtml(raw){
-    return `<tr>
-      <td class="num ${clsSigned(r.large_trade_net_count)}${cellFlashClass(code,'large_trade_net_count',r.large_trade_net_count)}">${largeText}</td>
-    </tr>`;
+    const r=deriveClientFields(raw); const code=String(r.stock_code||'');
+    return `<tr><td class="center${cellFlashClass(code,'grade',r.candidate_grade_text||r.grade_text||r.grade||r.candidate_grade||'-')}">${gradeHtml(r)}</td><td><div class="mini-candle" title="${escapeHtml(candleTitle(r,o))}"></div></td></tr>`;
   }
+  function render(payload){lastPayload=payload;markSortHeaders();}
+  setInterval(()=>{clockEl.textContent='x';},500);
 </script></body></html>"""
 
     rendered = fake_large._ui_safety_patch(html)
-    assert "STOCKBOARD_V2_MOMENTUM_BADGES_20260716" in rendered
-    assert "label:'모멘텀'" in rendered
-    assert "momentum-breakout" in rendered
-    assert "momentum-resistance" in rendered
-    assert "badges.slice(0,2)" in rendered
-    assert "momentumHtml(r)" in rendered
+    assert "STOCKBOARD_V2_MOMENTUM_GRADE_ALERTS_20260717" in rendered
+    assert "momentum-alert-strip" in rendered
+    assert "momentumGradeHtml(r)" in rendered
+    assert "stockboardMomentumAlternate" in rendered
+    assert "label:'모멘텀'" not in rendered
+    assert "momentum-cell" not in rendered
+    assert 'title="remove-me"' not in rendered
+    assert 'title="score ' not in rendered
+    assert 'title="${escapeHtml(candleTitle(r,o))}"' in rendered
