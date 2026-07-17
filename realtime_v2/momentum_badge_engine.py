@@ -65,12 +65,20 @@ class CompiledRule:
     tone: str
     priority: int
     requires_previous: bool
-    conditions: tuple[Condition, ...]
+    trigger_conditions: tuple[Condition, ...]
+    stay_conditions: tuple[Condition, ...]
 
-    def matches(self, values: dict[str, float | None], has_previous: bool) -> bool:
+    def triggers(self, values: dict[str, float | None], has_previous: bool) -> bool:
         if self.requires_previous and not has_previous:
             return False
-        return bool(self.conditions) and all(condition.matches(values) for condition in self.conditions)
+        return bool(self.trigger_conditions) and all(
+            condition.matches(values) for condition in self.trigger_conditions
+        )
+
+    def stays(self, values: dict[str, float | None]) -> bool:
+        return bool(self.stay_conditions) and all(
+            condition.matches(values) for condition in self.stay_conditions
+        )
 
 
 def _load_payload(path: Path) -> dict[str, Any]:
@@ -78,6 +86,29 @@ def _load_payload(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("momentum badge config must be a JSON object")
     return payload
+
+
+def _compile_conditions(
+    raw_conditions: Any,
+    *,
+    rule_id: str,
+    field: str,
+) -> tuple[Condition, ...]:
+    conditions: list[Condition] = []
+    for raw_condition in raw_conditions or []:
+        if not isinstance(raw_condition, dict):
+            raise ValueError(f"momentum rule {rule_id} has an invalid {field} condition")
+        left = str(raw_condition.get("left") or "")
+        operator = str(raw_condition.get("op") or "")
+        right = str(raw_condition.get("right") or "")
+        if left not in ALLOWED_VARIABLES or right not in ALLOWED_VARIABLES:
+            raise ValueError(f"momentum rule {rule_id} uses an unsupported variable")
+        if operator not in ALLOWED_OPERATORS:
+            raise ValueError(f"momentum rule {rule_id} uses an unsupported operator")
+        conditions.append(Condition(left, operator, right))
+    if not conditions:
+        raise ValueError(f"momentum rule {rule_id} has no {field} conditions")
+    return tuple(conditions)
 
 
 def _compile_rules(payload: dict[str, Any]) -> tuple[CompiledRule, ...]:
@@ -97,20 +128,16 @@ def _compile_rules(payload: dict[str, Any]) -> tuple[CompiledRule, ...]:
             raise ValueError(f"unsupported momentum reference: {reference!r}")
         if not badge:
             raise ValueError(f"momentum rule {rule_id} has no badge")
-        conditions: list[Condition] = []
-        for raw_condition in raw.get("all") or []:
-            if not isinstance(raw_condition, dict):
-                raise ValueError(f"momentum rule {rule_id} has an invalid condition")
-            left = str(raw_condition.get("left") or "")
-            operator = str(raw_condition.get("op") or "")
-            right = str(raw_condition.get("right") or "")
-            if left not in ALLOWED_VARIABLES or right not in ALLOWED_VARIABLES:
-                raise ValueError(f"momentum rule {rule_id} uses an unsupported variable")
-            if operator not in ALLOWED_OPERATORS:
-                raise ValueError(f"momentum rule {rule_id} uses an unsupported operator")
-            conditions.append(Condition(left, operator, right))
-        if not conditions:
-            raise ValueError(f"momentum rule {rule_id} has no conditions")
+        trigger_conditions = _compile_conditions(
+            raw.get("all"),
+            rule_id=rule_id,
+            field="trigger",
+        )
+        stay_conditions = _compile_conditions(
+            raw.get("stay") or raw.get("all"),
+            rule_id=rule_id,
+            field="stay",
+        )
         seen_ids.add(rule_id)
         compiled.append(
             CompiledRule(
@@ -121,7 +148,8 @@ def _compile_rules(payload: dict[str, Any]) -> tuple[CompiledRule, ...]:
                 tone=tone,
                 priority=int(raw.get("priority") or 0),
                 requires_previous=bool(raw.get("requires_previous")),
-                conditions=tuple(conditions),
+                trigger_conditions=trigger_conditions,
+                stay_conditions=stay_conditions,
             )
         )
     if not compiled:
@@ -133,15 +161,19 @@ def load_momentum_badge_config(path: Path | None = None) -> dict[str, Any]:
     config_path = Path(path or DEFAULT_CONFIG_PATH)
     payload = _load_payload(config_path)
     rules = _compile_rules(payload)
-    reference_order = tuple(str(item) for item in payload.get("reference_order") or ("open", "vwap"))
-    if set(reference_order) != {"open", "vwap"}:
+    reference_order = tuple(
+        str(item) for item in payload.get("reference_order") or ("open", "vwap")
+    )
+    if len(reference_order) != 2 or set(reference_order) != {"open", "vwap"}:
         raise ValueError("reference_order must contain open and vwap exactly once")
     exit_hold = max(0, int(payload.get("exit_hold_minutes") or 0))
     fade = max(0, int(payload.get("fade_minutes") or 0))
     if exit_hold + fade <= 0:
         raise ValueError("exit hold and fade duration cannot both be zero")
     display = payload.get("display") if isinstance(payload.get("display"), dict) else {}
-    top_alert = payload.get("top_alert") if isinstance(payload.get("top_alert"), dict) else {}
+    top_alert = (
+        payload.get("top_alert") if isinstance(payload.get("top_alert"), dict) else {}
+    )
     return {
         "path": str(config_path),
         "schema_version": int(payload.get("schema_version") or 1),
@@ -152,12 +184,18 @@ def load_momentum_badge_config(path: Path | None = None) -> dict[str, Any]:
         "display": {
             "replace_grade_badge": bool(display.get("replace_grade_badge", True)),
             "dual_badge_mode": str(display.get("dual_badge_mode") or "alternate"),
-            "alternate_interval_ms": max(400, int(display.get("alternate_interval_ms") or 1200)),
+            "alternate_interval_ms": max(
+                400,
+                int(display.get("alternate_interval_ms") or 1200),
+            ),
         },
         "top_alert": {
             "enabled": bool(top_alert.get("enabled", True)),
             "page_size": max(1, min(10, int(top_alert.get("page_size") or 4))),
-            "rotate_interval_ms": max(500, int(top_alert.get("rotate_interval_ms") or 1800)),
+            "rotate_interval_ms": max(
+                500,
+                int(top_alert.get("rotate_interval_ms") or 1800),
+            ),
             "max_items": max(1, min(1000, int(top_alert.get("max_items") or 300))),
         },
         "rules": rules,
@@ -171,7 +209,9 @@ class MomentumBadgeEngine:
         self.config = config
         self.rules: tuple[CompiledRule, ...] = tuple(config["rules"])
         self.rules_by_reference = {
-            reference: tuple(rule for rule in self.rules if rule.reference == reference)
+            reference: tuple(
+                rule for rule in self.rules if rule.reference == reference
+            )
             for reference in config["reference_order"]
         }
         self.rule_by_id = {rule.rule_id: rule for rule in self.rules}
@@ -202,7 +242,12 @@ class MomentumBadgeEngine:
         if normalized and isinstance(candle, dict) and _minute(candle.get("minute_key")):
             self.last_candle_by_code[normalized] = deepcopy(candle)
 
-    def restore_code(self, code: Any, payload: dict[str, Any] | None, trading_date: str) -> None:
+    def restore_code(
+        self,
+        code: Any,
+        payload: dict[str, Any] | None,
+        trading_date: str,
+    ) -> None:
         normalized = normalize_code(code)
         if not normalized or not isinstance(payload, dict):
             return
@@ -255,6 +300,39 @@ class MomentumBadgeEngine:
         rule = self.rule_by_label.get(str(raw.get("label") or ""))
         return rule if rule is not None and rule.reference == reference else None
 
+    def _activate(
+        self,
+        reference: str,
+        rule: CompiledRule,
+        existing: dict[str, Any] | None,
+        current_minute: int,
+        trading_date: str,
+    ) -> tuple[dict[str, Any], bool]:
+        same_rule = isinstance(existing, dict) and existing.get("rule_id") == rule.rule_id
+        already_active = same_rule and existing.get("exit_minute") is None
+        if already_active:
+            existing["last_matched_minute"] = current_minute
+            existing["trading_date"] = str(trading_date or "")
+            return existing, False
+        next_state = {
+            "rule_id": rule.rule_id,
+            "reference": reference,
+            "badge": rule.badge,
+            "label": rule.label,
+            "tone": rule.tone,
+            "signal_minute": (
+                _minute(existing.get("signal_minute")) or current_minute
+                if same_rule and isinstance(existing, dict)
+                else current_minute
+            ),
+            "last_matched_minute": current_minute,
+            "exit_minute": None,
+            "fade_start_minute": None,
+            "expires_minute": None,
+            "trading_date": str(trading_date or ""),
+        }
+        return next_state, existing != next_state
+
     def observe_completed_candle(
         self,
         code: Any,
@@ -277,49 +355,61 @@ class MomentumBadgeEngine:
         state = self.states.setdefault(normalized, {})
         changed = False
         for reference in self.config["reference_order"]:
-            matched = next(
+            triggered = next(
                 (
                     rule
                     for rule in self.rules_by_reference[reference]
-                    if rule.matches(values, previous is not None)
+                    if rule.triggers(values, previous is not None)
                 ),
                 None,
             )
-            if matched is None and previous is None:
-                matched = self._legacy_rule(reference, current_minute, legacy_signals)
+            if triggered is None and previous is None:
+                triggered = self._legacy_rule(
+                    reference,
+                    current_minute,
+                    legacy_signals,
+                )
             existing = state.get(reference)
-            if matched is not None:
-                next_state = {
-                    "rule_id": matched.rule_id,
-                    "reference": reference,
-                    "badge": matched.badge,
-                    "label": matched.label,
-                    "tone": matched.tone,
-                    "signal_minute": (
-                        current_minute
-                        if not isinstance(existing, dict) or existing.get("rule_id") != matched.rule_id
-                        else _minute(existing.get("signal_minute")) or current_minute
-                    ),
-                    "last_matched_minute": current_minute,
-                    "exit_minute": None,
-                    "fade_start_minute": None,
-                    "expires_minute": None,
-                    "trading_date": str(trading_date or ""),
-                }
-                if existing != next_state:
-                    state[reference] = next_state
-                    changed = True
-            elif isinstance(existing, dict) and existing.get("exit_minute") is None:
+            if triggered is not None:
+                next_state, state_changed = self._activate(
+                    reference,
+                    triggered,
+                    existing,
+                    current_minute,
+                    trading_date,
+                )
+                state[reference] = next_state
+                changed = state_changed or changed
+                continue
+
+            existing_rule = (
+                self.rule_by_id.get(str(existing.get("rule_id") or ""))
+                if isinstance(existing, dict)
+                else None
+            )
+            if existing_rule is not None and existing_rule.stays(values):
+                next_state, state_changed = self._activate(
+                    reference,
+                    existing_rule,
+                    existing,
+                    current_minute,
+                    trading_date,
+                )
+                state[reference] = next_state
+                changed = state_changed or changed
+                continue
+
+            if isinstance(existing, dict) and existing.get("exit_minute") is None:
                 exit_minute = current_minute
-                next_state = {
+                state[reference] = {
                     **existing,
                     "exit_minute": exit_minute,
-                    "fade_start_minute": exit_minute + int(self.config["exit_hold_minutes"]),
+                    "fade_start_minute": exit_minute
+                    + int(self.config["exit_hold_minutes"]),
                     "expires_minute": exit_minute
                     + int(self.config["exit_hold_minutes"])
                     + int(self.config["fade_minutes"]),
                 }
-                state[reference] = next_state
                 changed = True
         if not state:
             self.states.pop(normalized, None)
@@ -356,7 +446,11 @@ class MomentumBadgeEngine:
             exit_minute = _minute(state.get("exit_minute"))
             if exit_minute is None:
                 phase = "active"
-            elif current_minute is not None and fade_start is not None and current_minute >= fade_start:
+            elif (
+                current_minute is not None
+                and fade_start is not None
+                and current_minute >= fade_start
+            ):
                 phase = "fading"
             else:
                 phase = "grace"
@@ -393,10 +487,19 @@ class MomentumBadgeEngine:
                     "rank": int(rank) if rank is not None and rank > 0 else 999999,
                     "badges": badges,
                     "latest_signal_minute": max(
-                        (_minute(item.get("signal_minute")) or 0 for item in badges),
+                        (
+                            _minute(item.get("signal_minute")) or 0
+                            for item in badges
+                        ),
                         default=0,
                     ),
                 }
             )
-        result.sort(key=lambda item: (-int(item["latest_signal_minute"]), int(item["rank"]), item["stock_code"]))
+        result.sort(
+            key=lambda item: (
+                -int(item["latest_signal_minute"]),
+                int(item["rank"]),
+                item["stock_code"],
+            )
+        )
         return result[: int(self.config["top_alert"]["max_items"])]
