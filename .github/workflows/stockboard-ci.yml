@@ -87,6 +87,7 @@ jobs:
             realtime_v2\html_approved_minute_metrics_patch.py `
             realtime_v2\html_momentum_badge_patch.py `
             realtime_v2\html_mobile_view_patch.py `
+            realtime_v2\html_mobile_top_status_patch.py `
             realtime_v2\html_large_trade_quality_patch.py `
             realtime_v2\html_opening_render_guard_patch.py
 
@@ -118,6 +119,7 @@ jobs:
             tests\test_momentum_rollover_integration.py `
             tests\test_html_momentum_full_chain.py `
             tests\test_html_mobile_view.py `
+            tests\test_html_mobile_top_status.py `
             tests\test_worker_metric_session_alignment.py `
             tests\test_worker_rest_live_metrics_aftermarket.py `
             tests\test_worker_six_metric_lifecycle.py `
