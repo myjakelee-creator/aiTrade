@@ -38,7 +38,10 @@ def test_actual_stockboard_html_accepts_complete_momentum_patch_chain(monkeypatc
 
     tooltip_tags = re.findall(r'<[^>]+\s+title="[^"]*"[^>]*>', rendered)
     assert tooltip_tags
-    assert all('class="mini-candle' in tag for tag in tooltip_tags)
+    non_candle_tooltips = [
+        tag for tag in tooltip_tags if 'class="mini-candle' not in tag
+    ]
+    assert non_candle_tooltips == [], non_candle_tooltips
     assert "uiZoomToggle.title" not in rendered
     assert "rowPositionToggle.title" not in rendered
     assert "el.title=" not in rendered
