@@ -28,33 +28,59 @@ def _load_config() -> dict[str, Any]:
     if columns != expected:
         raise ValueError("mobile_columns must match the approved eight-column order")
 
-    raw_widths = payload.get("mobile_column_width_percent")
+    raw_widths = payload.get("mobile_column_default_width_px")
     if not isinstance(raw_widths, dict):
-        raise ValueError("mobile_column_width_percent must be an object")
-    widths = {key: float(raw_widths.get(key) or 0) for key in columns}
-    if any(value <= 0 for value in widths.values()) or abs(sum(widths.values()) - 100.0) > 0.01:
-        raise ValueError("mobile column width percentages must be positive and sum to 100")
+        raise ValueError("mobile_column_default_width_px must be an object")
+    widths = {key: int(raw_widths.get(key) or 0) for key in columns}
+    if any(value <= 0 for value in widths.values()):
+        raise ValueError("mobile column default widths must be positive")
 
     market = payload.get("mobile_market") if isinstance(payload.get("mobile_market"), dict) else {}
     behavior = payload.get("mobile_behavior") if isinstance(payload.get("mobile_behavior"), dict) else {}
+    controls = payload.get("mobile_controls") if isinstance(payload.get("mobile_controls"), dict) else {}
     if not bool(behavior.get("preserve_themeboard", True)):
         raise ValueError("ThemeBoard preservation must remain enabled")
 
     return {
         "schema_version": int(payload.get("schema_version") or 1),
-        "auto_mobile_max_width_px": max(480, min(1200, int(payload.get("auto_mobile_max_width_px") or 760))),
+        "auto_mobile_max_width_px": max(
+            480, min(1200, int(payload.get("auto_mobile_max_width_px") or 760))
+        ),
         "mobile_columns": columns,
-        "mobile_column_width_percent": widths,
+        "mobile_column_default_width_px": widths,
         "mobile_market": {
-            "us_min_visible_columns": max(2, int(market.get("us_min_visible_columns") or 4)),
-            "domestic_min_visible_columns": max(2, int(market.get("domestic_min_visible_columns") or 4)),
-            "momentum_alert_page_size": max(1, int(market.get("momentum_alert_page_size") or 1)),
+            "momentum_alert_page_size": max(
+                1, int(market.get("momentum_alert_page_size") or 1)
+            ),
+            "wrap_us_market": bool(market.get("wrap_us_market", True)),
+            "show_all_domestic_columns": bool(
+                market.get("show_all_domestic_columns", True)
+            ),
+            "market_graph_layout": str(market.get("market_graph_layout") or "1x4"),
         },
         "mobile_behavior": {
-            "disable_hts_clipboard_link": bool(behavior.get("disable_hts_clipboard_link", True)),
-            "hide_strategyboard_entry": bool(behavior.get("hide_strategyboard_entry", True)),
+            "disable_hts_clipboard_link": bool(
+                behavior.get("disable_hts_clipboard_link", False)
+            ),
+            "hide_strategyboard_entry": bool(
+                behavior.get("hide_strategyboard_entry", True)
+            ),
             "preserve_themeboard": True,
-            "reload_on_mode_change": bool(behavior.get("reload_on_mode_change", True)),
+            "reload_on_mode_change": bool(
+                behavior.get("reload_on_mode_change", True)
+            ),
+        },
+        "mobile_controls": {
+            "preserve_ui_zoom": bool(controls.get("preserve_ui_zoom", True)),
+            "preserve_column_minimize": bool(
+                controls.get("preserve_column_minimize", True)
+            ),
+            "enable_column_resize": bool(
+                controls.get("enable_column_resize", True)
+            ),
+            "enable_document_horizontal_scroll": bool(
+                controls.get("enable_document_horizontal_scroll", True)
+            ),
         },
     }
 
@@ -126,6 +152,27 @@ def install() -> None:
 
         patched = _replace_columns(patched, config_json)
 
+        storage_anchor = (
+            "const STORAGE_KEYS = { sort:'stockboard.v2.sort', "
+            "selectedCode:'stockboard.v2.selectedCode', "
+            "candidateModel:'stockboard.candidateModel.v1', "
+            "columnWidths:'stockboard.v2.columnWidths.v4', "
+            "metricModes:'stockboard.v2.metricModes.v1', "
+            "uiScale:'stockboard.v2.uiScale.v1' };"
+        )
+        storage_replacement = (
+            "const STORAGE_KEYS = { sort:'stockboard.v2.sort', "
+            "selectedCode:'stockboard.v2.selectedCode', "
+            "candidateModel:'stockboard.candidateModel.v1', "
+            "columnWidths:'stockboard.v2.columnWidths.v4', "
+            "mobileColumnWidths:'stockboard.v2.mobileColumnWidths.v1', "
+            "metricModes:'stockboard.v2.metricModes.v1', "
+            "uiScale:'stockboard.v2.uiScale.v1' };"
+        )
+        if storage_anchor not in patched:
+            raise RuntimeError("StockBoard storage key anchor not found")
+        patched = patched.replace(storage_anchor, storage_replacement, 1)
+
         element_anchor = "  const clockEl = document.getElementById('clock');"
         if element_anchor not in patched:
             raise RuntimeError("StockBoard clock element anchor not found")
@@ -136,26 +183,61 @@ def install() -> None:
             1,
         )
 
-        old_column_width = "function columnWidth(i){ const c=columns[i]||{}; const saved=Number(columnWidths[c.key]); return Number.isFinite(saved)&&saved>0?saved:Number(c.width||70); }"
-        new_column_width = "function columnWidth(i){ const c=columns[i]||{}; if(stockboardViewMode==='mobile'){const pct=Number(STOCKBOARD_VIEW_CONFIG.mobile_column_width_percent?.[c.key])||0;return Math.max(18,Math.floor(stockboardViewportWidth()*pct/100));} const saved=Number(columnWidths[c.key]); return Number.isFinite(saved)&&saved>0?saved:Number(c.width||70); }"
+        old_load_widths = (
+            "function loadColumnWidths(){ try{const s=JSON.parse("
+            "localStorage.getItem(STORAGE_KEYS.columnWidths)||'{}'); "
+            "return s&&typeof s==='object'?s:{};}catch(_e){return{}} }"
+        )
+        new_load_widths = (
+            "function loadColumnWidths(){ try{const key=stockboardViewMode==='mobile'?"
+            "STORAGE_KEYS.mobileColumnWidths:STORAGE_KEYS.columnWidths;"
+            "const s=JSON.parse(localStorage.getItem(key)||'{}'); "
+            "return s&&typeof s==='object'?s:{};}catch(_e){return{}} }"
+        )
+        if old_load_widths not in patched:
+            raise RuntimeError("StockBoard loadColumnWidths anchor not found")
+        patched = patched.replace(old_load_widths, new_load_widths, 1)
+
+        old_save_widths = (
+            "function saveColumnWidths(){ try{localStorage.setItem("
+            "STORAGE_KEYS.columnWidths,JSON.stringify(columnWidths));}catch(_e){} }"
+        )
+        new_save_widths = (
+            "function saveColumnWidths(){ try{const key=stockboardViewMode==='mobile'?"
+            "STORAGE_KEYS.mobileColumnWidths:STORAGE_KEYS.columnWidths;"
+            "localStorage.setItem(key,JSON.stringify(columnWidths));}catch(_e){} }"
+        )
+        if old_save_widths not in patched:
+            raise RuntimeError("StockBoard saveColumnWidths anchor not found")
+        patched = patched.replace(old_save_widths, new_save_widths, 1)
+
+        old_column_width = (
+            "function columnWidth(i){ const c=columns[i]||{}; "
+            "const saved=Number(columnWidths[c.key]); "
+            "return Number.isFinite(saved)&&saved>0?saved:Number(c.width||70); }"
+        )
+        new_column_width = (
+            "function columnWidth(i){ const c=columns[i]||{};"
+            "const saved=Number(columnWidths[c.key]);"
+            "if(Number.isFinite(saved)&&saved>0)return saved;"
+            "if(stockboardViewMode==='mobile'){"
+            "const configured=Number(STOCKBOARD_VIEW_CONFIG.mobile_column_default_width_px?.[c.key]);"
+            "if(Number.isFinite(configured)&&configured>0)return configured;}"
+            "return Number(c.width||70); }"
+        )
         if old_column_width not in patched:
             raise RuntimeError("StockBoard columnWidth anchor not found")
         patched = patched.replace(old_column_width, new_column_width, 1)
 
-        old_set_width = "function setColumnWidth(i,w,save=true){ const c=columns[i]; if(!c)return; const px=clampWidth(i,w); document.querySelectorAll(`col[data-col-index=\"${i}\"]`).forEach(n=>n.style.width=`${px}px`); if(save){columnWidths[c.key]=px; saveColumnWidths();} updateBoardWidth(); }"
-        new_set_width = "function setColumnWidth(i,w,save=true){ const c=columns[i]; if(!c)return; const px=stockboardViewMode==='mobile'?columnWidth(i):clampWidth(i,w); document.querySelectorAll(`col[data-col-index=\"${i}\"]`).forEach(n=>n.style.width=`${px}px`); if(save&&stockboardViewMode!=='mobile'){columnWidths[c.key]=px; saveColumnWidths();} updateBoardWidth(); }"
-        if old_set_width not in patched:
-            raise RuntimeError("StockBoard setColumnWidth anchor not found")
-        patched = patched.replace(old_set_width, new_set_width, 1)
-
-        patched = patched.replace(
-            "function maybeInitialAutoFit(){ if(firstAutoFitDone)return;",
-            "function maybeInitialAutoFit(){ if(stockboardViewMode==='mobile')return; if(firstAutoFitDone)return;",
-            1,
+        fast_cells_anchor = (
+            "const priceCell = tr.cells && tr.cells[4];\n"
+            "      const rateCell = tr.cells && tr.cells[5];"
         )
-
-        fast_cells_anchor = "const priceCell = tr.cells && tr.cells[4];\n      const rateCell = tr.cells && tr.cells[5];"
-        fast_cells_replacement = "const priceCell = stockboardViewMode==='mobile' ? null : (tr.cells && tr.cells[4]);\n      const rateCell = tr.cells && tr.cells[stockboardViewMode==='mobile'?4:5];"
+        fast_cells_replacement = (
+            "const priceCell = stockboardViewMode==='mobile' ? null : "
+            "(tr.cells && tr.cells[4]);\n"
+            "      const rateCell = tr.cells && tr.cells[stockboardViewMode==='mobile'?4:5];"
+        )
         if fast_cells_anchor not in patched:
             raise RuntimeError("StockBoard fast price cell anchor not found")
         patched = patched.replace(fast_cells_anchor, fast_cells_replacement, 1)
@@ -195,7 +277,9 @@ def install() -> None:
     return stockboardViewMode==='mobile' ? mobileRowHtml(raw) : desktopRowHtml(raw);
   }
 '''
-        patched = patched.replace(render_table_anchor, mobile_row + render_table_anchor, 1)
+        patched = patched.replace(
+            render_table_anchor, mobile_row + render_table_anchor, 1
+        )
 
         if config["mobile_behavior"]["disable_hts_clipboard_link"]:
             hts_anchor = "if(!copyOnly)sendHtsCommand(text);"
@@ -207,7 +291,10 @@ def install() -> None:
                 1,
             )
 
-        init_anchor = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
+        init_anchor = (
+            "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});"
+            "loadCandidateModels();loadContext();markSortHeaders();connectStream();"
+        )
         if init_anchor not in patched:
             raise RuntimeError("StockBoard initialization anchor not found")
         runtime = r'''
@@ -218,39 +305,37 @@ def install() -> None:
     document.body.classList.toggle('stockboard-mobile',mobile);
     document.body.classList.toggle('stockboard-desktop',!mobile);
     if(stockboardViewToggle)stockboardViewToggle.textContent=mobile?'데스크톱 보기':'모바일 보기';
-    if(mobile){
-      document.querySelectorAll('#topbar a,#topbar button,#topbar span').forEach(element=>{
-        const key=`${element.id||''} ${element.className||''} ${element.getAttribute('href')||''} ${element.textContent||''}`.toLowerCase();
-        if(key.includes('strategyboard')||key.includes('전략보드'))element.classList.add('stockboard-mobile-strategy-hidden');
-      });
-    }
+    document.querySelectorAll('#topbar a,#topbar button,#topbar span').forEach(element=>{
+      const key=`${element.id||''} ${element.className||''} ${element.getAttribute('href')||''} ${element.textContent||''}`.toLowerCase();
+      const strategy=key.includes('strategyboard')||key.includes('전략보드');
+      element.classList.toggle('stockboard-mobile-strategy-hidden',mobile&&strategy);
+    });
   }
-  function stockboardSetColumnHidden(table,columnIndex,hidden){
-    if(!table||columnIndex<1)return;
-    table.querySelectorAll(`tr > *:nth-child(${columnIndex})`).forEach(cell=>{cell.hidden=!!hidden;});
-  }
-  function stockboardFitTableRight(table,minVisible){
-    if(stockboardViewMode!=='mobile'||!table)return;
-    const rows=Array.from(table.rows||[]);
-    const count=Math.max(0,...rows.map(row=>row.cells.length));
-    for(let index=1;index<=count;index++)stockboardSetColumnHidden(table,index,false);
-    const container=table.parentElement;
-    const available=Math.max(0,Number(container?.clientWidth)||stockboardViewportWidth());
-    for(let index=count;index>Math.max(1,minVisible);index--){
-      if(table.getBoundingClientRect().width<=available+0.5)break;
-      stockboardSetColumnHidden(table,index,true);
-    }
-  }
-  function stockboardFitMarketContext(){
+  function stockboardHideEmptyMetricRows(){
     if(stockboardViewMode!=='mobile')return;
-    const market=STOCKBOARD_VIEW_CONFIG.mobile_market||{};
-    stockboardFitTableRight(usMarketRow?.closest('table'),Number(market.us_min_visible_columns)||4);
-    stockboardFitTableRight(marketSupplyRow?.closest('table'),Number(market.domestic_min_visible_columns)||4);
+    document.querySelectorAll('#topbar .metric-row').forEach(row=>{
+      const visible=Array.from(row.children).some(child=>{
+        const style=getComputedStyle(child);
+        return !child.hidden&&style.display!=='none'&&style.visibility!=='hidden';
+      });
+      row.classList.toggle('stockboard-mobile-empty-row',!visible);
+    });
+  }
+  function stockboardShowAllMarketColumns(){
+    [usMarketRow?.closest('table'),marketSupplyRow?.closest('table')].forEach(table=>{
+      if(!table)return;
+      table.querySelectorAll('th,td').forEach(cell=>{cell.hidden=false;});
+    });
   }
   const stockboardOriginalRenderContext=renderContext;
   renderContext=function(payload){
     const result=stockboardOriginalRenderContext(payload);
-    requestAnimationFrame(stockboardFitMarketContext);
+    if(stockboardViewMode==='mobile'){
+      requestAnimationFrame(()=>{
+        stockboardShowAllMarketColumns();
+        stockboardHideEmptyMetricRows();
+      });
+    }
     return result;
   };
   if(stockboardViewToggle){
@@ -260,6 +345,10 @@ def install() -> None:
     });
   }
   stockboardSetMobileClass();
+  requestAnimationFrame(()=>{
+    stockboardShowAllMarketColumns();
+    stockboardHideEmptyMetricRows();
+  });
   let stockboardPreviousAutomaticMode=stockboardAutomaticMode();
   let stockboardPreviousViewportWidth=stockboardViewportWidth();
   let stockboardResizeTimer=null;
@@ -281,8 +370,8 @@ def install() -> None:
       stockboardPreviousViewportWidth=width;
       stockboardPreviousAutomaticMode=nextAutomaticMode;
       if(stockboardViewMode==='mobile'){
-        applyColumnWidths();
-        stockboardFitMarketContext();
+        stockboardShowAllMarketColumns();
+        stockboardHideEmptyMetricRows();
       }
     },140);
   });
@@ -292,13 +381,12 @@ def install() -> None:
         style = f'''
 <style id="stockboard-v2-responsive-mobile-view">
   /* {MARKER} */
-  html.stockboard-mobile, html.stockboard-mobile body {{ width:100%; min-width:0 !important; max-width:100%; overflow-x:hidden !important; }}
-  html.stockboard-mobile .window {{ width:100%; min-width:0 !important; max-width:100%; overflow-x:hidden; }}
-  html.stockboard-mobile #topbar {{ width:100%; min-width:0; padding:3px 4px; gap:3px; box-sizing:border-box; }}
+  html.stockboard-mobile {{ width:100%; min-width:100%; overflow-x:auto !important; }}
+  html.stockboard-mobile body {{ width:max-content; min-width:100%; max-width:none; overflow-x:visible !important; }}
+  html.stockboard-mobile .window {{ width:max-content; min-width:100%; max-width:none; overflow:visible; }}
+  html.stockboard-mobile #topbar {{ position:sticky; left:0; width:100vw; min-width:0; padding:3px 4px; gap:3px; box-sizing:border-box; }}
   html.stockboard-mobile #topbar .metric-row {{ gap:3px 4px; }}
   html.stockboard-mobile #topbar .title,
-  html.stockboard-mobile #ui-zoom-toggle,
-  html.stockboard-mobile #column-minimize-toggle,
   html.stockboard-mobile #row-position-toggle,
   html.stockboard-mobile #copy-status,
   html.stockboard-mobile #counts,
@@ -317,38 +405,103 @@ def install() -> None:
   html.stockboard-mobile #topbar [id*="strategyboard" i],
   html.stockboard-mobile #topbar [class*="strategyboard" i] {{ display:none !important; }}
   html.stockboard-mobile #topbar .metric-row:has(#counts),
-  html.stockboard-mobile #topbar .metric-row:has(#lag-metrics) {{ display:none !important; }}
+  html.stockboard-mobile #topbar .metric-row:has(#lag-metrics),
+  html.stockboard-mobile #topbar .metric-row.stockboard-mobile-empty-row {{ display:none !important; }}
   html.stockboard-mobile #clock,
   html.stockboard-mobile #status,
   html.stockboard-mobile #stockboard-view-toggle,
-  html.stockboard-mobile #candidate-model-selector {{ font-size:11px; }}
+  html.stockboard-mobile #ui-zoom-toggle,
+  html.stockboard-mobile #column-minimize-toggle,
+  html.stockboard-mobile #candidate-model-selector {{ font-size:12px; }}
   html.stockboard-mobile #momentum-alert-strip {{ order:3; height:21px; padding:1px 4px; gap:4px; }}
   html.stockboard-mobile .momentum-alert-item:nth-of-type(n+3) {{ display:none; }}
-  html.stockboard-mobile .context-panel.market-overview-v2 {{ display:block; width:100%; min-width:0; padding:0; overflow:hidden; }}
-  html.stockboard-mobile .v2-us-grid,
-  html.stockboard-mobile .v2-market-grid {{ width:max-content !important; min-width:0 !important; max-width:none !important; table-layout:auto !important; }}
-  html.stockboard-mobile .v2-us-grid td,
+
+  html.stockboard-mobile .context-panel.market-overview-v2 {{
+    display:block;
+    width:max-content;
+    min-width:100vw;
+    max-width:none;
+    padding:0;
+    overflow:visible;
+  }}
+  html.stockboard-mobile .v2-us-grid {{
+    display:block;
+    width:100vw !important;
+    min-width:100vw !important;
+    max-width:100vw !important;
+    table-layout:auto !important;
+  }}
+  html.stockboard-mobile .v2-us-grid tbody,
+  html.stockboard-mobile .v2-us-grid tr {{
+    display:flex;
+    flex-wrap:wrap;
+    width:100%;
+  }}
+  html.stockboard-mobile .v2-us-grid td {{
+    flex:0 0 auto;
+    padding:2px 6px;
+    font-size:12px;
+    white-space:nowrap;
+    overflow:visible;
+    text-overflow:clip;
+  }}
+  html.stockboard-mobile .v2-market-graphic-row {{
+    display:flex;
+    flex-direction:column;
+    width:max-content;
+    min-width:0;
+    overflow:visible;
+  }}
+  html.stockboard-mobile .v2-market-distribution {{
+    display:flex;
+    flex-wrap:nowrap;
+    width:max-content;
+    min-width:max-content;
+  }}
+  html.stockboard-mobile .v2-market-grid {{
+    width:max-content !important;
+    min-width:max-content !important;
+    max-width:none !important;
+    table-layout:auto !important;
+  }}
   html.stockboard-mobile .v2-market-grid th,
-  html.stockboard-mobile .v2-market-grid td {{ padding:1px 3px; font-size:10px; }}
-  html.stockboard-mobile .v2-market-graphic-row {{ display:flex; flex-direction:column; width:100%; min-width:0; overflow:hidden; }}
-  html.stockboard-mobile .v2-market-distribution {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); width:100%; min-width:0; padding:2px 0; }}
-  html.stockboard-mobile .v2-market-dist-item,
-  html.stockboard-mobile .v2-market-dist-item:nth-child(3),
-  html.stockboard-mobile .v2-market-dist-item:nth-child(4) {{ width:100%; min-width:0; margin:0; }}
-  html.stockboard-mobile .v2-subject-flow-chart {{ width:92%; max-width:150px; height:52px; flex-basis:auto; }}
-  html.stockboard-mobile .v2-donut-chart {{ width:52px; height:52px; flex:0 0 52px; }}
-  html.stockboard-mobile .v2-donut-chart::after {{ inset:17px; }}
-  html.stockboard-mobile table.board {{ width:100vw !important; min-width:100vw !important; max-width:100vw !important; table-layout:fixed; }}
+  html.stockboard-mobile .v2-market-grid td {{
+    padding:1px 3px;
+    font-size:12px;
+  }}
+
+  html.stockboard-mobile table.board {{
+    width:var(--board-width) !important;
+    min-width:var(--board-width) !important;
+    max-width:none !important;
+    table-layout:fixed;
+  }}
   html.stockboard-mobile .board th,
-  html.stockboard-mobile .board td {{ height:22px; padding:1px 2px; font-size:9.5px; text-overflow:ellipsis; }}
-  html.stockboard-mobile .board th {{ font-size:9px; }}
-  html.stockboard-mobile .board .column-resizer {{ display:none !important; }}
-  html.stockboard-mobile .board td.stock-name-copy {{ padding-left:3px; text-decoration:none; }}
+  html.stockboard-mobile .board td {{
+    height:20px;
+    padding:2px 4px;
+    font-size:12px;
+    text-overflow:ellipsis;
+  }}
+  html.stockboard-mobile .board th {{ font-size:12px; }}
+  html.stockboard-mobile .board .column-resizer {{ display:block !important; }}
+  html.stockboard-mobile .board td.stock-name-copy {{ text-decoration:underline dotted rgba(31,41,55,.35); }}
   html.stockboard-mobile .grade,
-  html.stockboard-mobile .momentum-grade-stack {{ min-width:27px; }}
-  html.stockboard-mobile .momentum-grade-badge {{ min-width:27px; padding:0 2px; font-size:9px; }}
-  html.stockboard-mobile .section {{ width:100%; min-width:0; padding:2px 4px; box-sizing:border-box; font-size:11px; }}
-  html.stockboard-mobile #sbv2-horizontal-scroll-spacer {{ display:none !important; width:0 !important; }}
+  html.stockboard-mobile .momentum-grade-stack {{ min-width:32px; }}
+  html.stockboard-mobile .momentum-grade-badge {{ min-width:31px; padding:0 3px; font-size:10px; }}
+  html.stockboard-mobile .section {{
+    width:100vw;
+    min-width:0;
+    padding:3px 6px;
+    box-sizing:border-box;
+    font-size:12px;
+  }}
+  html.stockboard-mobile #sbv2-horizontal-scroll-spacer {{
+    display:block !important;
+    width:var(--board-width) !important;
+    min-width:var(--board-width) !important;
+    height:1px !important;
+  }}
 </style>
 '''
         if "</head>" not in patched:
