@@ -77,7 +77,7 @@ assert "horizontalCandleOhlc" in patched
 assert "--wick-left:" in patched
 assert "--wick-width:" in patched
 assert "STOCKBOARD_V2_RESPONSIVE_MOBILE_VIEW_20260717" in patched
-assert "STOCKBOARD_V2_MOMENTUM_BADGE_UI_V1" in patched
+assert "STOCKBOARD_V2_MOMENTUM_GRADE_ALERTS_20260717" in patched
 '''
     completed = subprocess.run(
         [sys.executable, "-c", script],
