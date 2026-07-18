@@ -221,6 +221,9 @@ def install(base) -> None:
     from realtime_v2.html_mobile_top_status_patch import (
         install as install_mobile_top_status_html,
     )
+    from realtime_v2.html_horizontal_daily_candle_patch import (
+        install as install_horizontal_daily_candle_html,
+    )
 
     install_metric_restore(base)
     install_rest_live_metrics(base)
@@ -277,6 +280,7 @@ def install(base) -> None:
     install_momentum_badge_html()
     install_mobile_view_html()
     install_mobile_top_status_html()
+    install_horizontal_daily_candle_html()
 
     # Remove a stale outer fail-open report after the complete chain succeeds.
     _clear_optional_patch_error(base, "tr_singleflight_patch_error.txt")
