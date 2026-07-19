@@ -14,6 +14,9 @@ def install() -> None:
 
     from realtime_v2 import worker64_guarded as guarded
     from realtime_v2 import worker_board_trading_date_guard as board_guard
+    from realtime_v2.worker_portable_rebuild_status_patch import (
+        install as install_portable_rebuild_status,
+    )
 
     # Production accepts only the exact-row v2 parser. The guard module is shared
     # with tests, so set the production contract before installing State wrappers.
@@ -24,10 +27,10 @@ def install() -> None:
     guard_base = getattr(guarded, "base", None)
     if guard_base is not None:
         board_guard.install(guard_base)
+        install_portable_rebuild_status()
 
     if getattr(guarded, "_market_supply_hold_patch_installed", False):
         return
-
     original_context = getattr(guarded, "_runtime_context_payload", None)
     if not callable(original_context):
         raise AttributeError(

@@ -67,12 +67,14 @@ jobs:
             realtime_v2\context_snapshot_writer_singleflight.py `
             realtime_v2\context_snapshot_writer_portable.py `
             realtime_v2\context_snapshot_writer_portable_v2.py `
+            realtime_v2\context_snapshot_retry_patch.py `
             realtime_v2\execution_strength_alias_patch.py `
             realtime_v2\worker_execution_strength_diagnostics_patch.py `
             realtime_v2\momentum_badge_engine.py `
             realtime_v2\worker_momentum_badge_policy_patch.py `
             realtime_v2\worker_board_trading_date_guard.py `
             realtime_v2\worker_portable_cache_sync_patch.py `
+            realtime_v2\worker_portable_rebuild_status_patch.py `
             realtime_v2\worker_market_metric_session_manager.py `
             realtime_v2\worker_market_supply_hold_patch.py `
             realtime_v2\worker_market_supply_hold_runtime_fix.py `
@@ -95,6 +97,7 @@ jobs:
             realtime_v2\html_momentum_badge_patch.py `
             realtime_v2\html_mobile_view_patch.py `
             realtime_v2\html_mobile_top_status_patch.py `
+            realtime_v2\html_portable_rebuild_status_patch.py `
             realtime_v2\html_horizontal_daily_candle_patch.py `
             realtime_v2\html_large_trade_quality_patch.py `
             realtime_v2\html_opening_render_guard_patch.py
@@ -118,6 +121,7 @@ jobs:
             tests\test_context_market_supply_trading_date.py `
             tests\test_context_snapshot_writer_portable.py `
             tests\test_context_snapshot_writer_portable_v2.py `
+            tests\test_context_snapshot_retry_patch.py `
             tests\test_context_single_owner_launcher.py `
             tests\test_execution_strength_source_separation.py `
             tests\test_worker_execution_strength_diagnostics.py `
@@ -125,6 +129,7 @@ jobs:
             tests\test_worker_momentum_badge_policy.py `
             tests\test_worker_board_trading_date_guard.py `
             tests\test_worker_portable_cache_sync.py `
+            tests\test_worker_portable_rebuild_status.py `
             tests\test_worker_market_metric_session_manager.py `
             tests\test_worker_market_supply_hold.py `
             tests\test_worker_market_supply_hold_runtime_fix.py `
@@ -140,6 +145,7 @@ jobs:
             tests\test_html_momentum_full_chain.py `
             tests\test_html_mobile_view.py `
             tests\test_html_mobile_top_status.py `
+            tests\test_html_portable_rebuild_status.py `
             tests\test_html_horizontal_daily_candle.py `
             tests\test_worker_metric_session_alignment.py `
             tests\test_worker_rest_live_metrics_aftermarket.py `

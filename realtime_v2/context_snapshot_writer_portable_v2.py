@@ -3,12 +3,13 @@ from __future__ import annotations
 """Exact completed-day field policy for portable StockBoard snapshots.
 
 The underlying portable writer keeps the proven request, candidate validation, and
-single-flight lifecycle. This entrypoint changes only completed-day field
-selection:
+single-flight lifecycle. This entrypoint changes completed-day field selection and
+installs the resumable retry policy:
 
 - price/OHLC close use historical close fields, never ``cur_prc``;
 - change rate uses the exact row's official ``flu_rt`` when present;
-- historical-close calculation is retained as a diagnostic and fallback.
+- historical-close calculation is retained as a diagnostic and fallback;
+- partial candidates survive transient failures and retry on the existing loop.
 
 No QAx, realtime FID, WebSocket, worker thread, or additional periodic request is
 introduced.
@@ -145,6 +146,8 @@ def _install() -> None:
         status["context_entrypoint"] = (
             "realtime_v2.context_snapshot_writer_portable_v2"
         )
+        status.setdefault("context_process_ready", True)
+        status.setdefault("context_board_ready", False)
         return status
 
     portable._historical_change_rate = selected_change_rate
@@ -152,6 +155,10 @@ def _install() -> None:
     portable.build_portable_snapshot = build_portable_snapshot
     portable._inject_context_status = inject_context_status
     portable.sf._inject_context_status = inject_context_status
+
+    from realtime_v2.context_snapshot_retry_patch import install as install_retry
+
+    install_retry(portable, PORTABLE_PARSER_VERSION)
     portable._portable_exact_fields_v2_installed = True
 
 

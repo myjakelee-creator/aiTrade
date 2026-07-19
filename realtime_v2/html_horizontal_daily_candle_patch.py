@@ -51,10 +51,15 @@ _NEW_FUNCTIONS = r"""function horizontalCandleOhlc(r){
 def install() -> None:
     """Install a readable horizontal OHLC candle without changing data collection.
 
-    The existing OHLC payload and realtime close remain the only inputs. This patch
-    changes browser geometry only: low/high caps, a thicker open-close body, a visible
-    doji minimum, and safe range expansion when the realtime close exceeds stale high/low.
+    The portable rebuild status patch is installed first so its empty-board message
+    survives the final horizontal-candle transformation.
     """
+
+    from realtime_v2.html_portable_rebuild_status_patch import (
+        install as install_portable_rebuild_status,
+    )
+
+    install_portable_rebuild_status()
 
     from realtime_v2 import worker64_guarded_large as large
 
