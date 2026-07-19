@@ -22,6 +22,7 @@ class _FakeHolder:
 
 def test_runtime_fix_wraps_actual_guarded_context_owner(monkeypatch):
     guarded = ModuleType("realtime_v2.worker64_guarded")
+    guarded.base = SimpleNamespace()
     guarded._runtime_context_payload = lambda: {"market_supply": {"invalid": True}}
 
     monkeypatch.setitem(sys.modules, "realtime_v2.worker64_guarded", guarded)
@@ -78,6 +79,7 @@ large = importlib.import_module("realtime_v2.worker64_guarded_large")
 
 assert production is not None
 assert getattr(guarded, "_market_supply_hold_patch_installed", False) is True
+assert getattr(guarded.base.State, "_stockboard_portable_board_guard_installed", False) is True
 payload = guarded._runtime_context_payload()
 assert "market_supply_status" in payload
 html = Path("docs/stockboard_v2.html").read_text(encoding="utf-8-sig")
