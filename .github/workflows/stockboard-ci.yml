@@ -71,6 +71,7 @@ jobs:
             realtime_v2\momentum_badge_engine.py `
             realtime_v2\worker_momentum_badge_policy_patch.py `
             realtime_v2\worker_board_trading_date_guard.py `
+            realtime_v2\worker_portable_cache_sync_patch.py `
             realtime_v2\worker_market_metric_session_manager.py `
             realtime_v2\worker_market_supply_hold_patch.py `
             realtime_v2\worker_market_supply_hold_runtime_fix.py `
@@ -118,6 +119,7 @@ jobs:
             tests\test_momentum_badge_engine.py `
             tests\test_worker_momentum_badge_policy.py `
             tests\test_worker_board_trading_date_guard.py `
+            tests\test_worker_portable_cache_sync.py `
             tests\test_worker_market_metric_session_manager.py `
             tests\test_worker_market_supply_hold.py `
             tests\test_worker_market_supply_hold_runtime_fix.py `

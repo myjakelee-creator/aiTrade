@@ -10,8 +10,9 @@ from typing import Any
 from realtime_v2.common import RUNTIME_DIR, normalize_code, now_text, to_number
 from realtime_v2.market_session import last_completed_trading_date, market_session_now
 
-PATCH_VERSION = "portable_board_trading_date_guard_v1"
-PORTABLE_POLICY_VERSION = "portable_closed_board_snapshot_v1"
+PATCH_VERSION = "portable_board_trading_date_guard_v2"
+PORTABLE_POLICY_VERSION = "portable_closed_board_snapshot_v2"
+PORTABLE_PARSER_VERSION = "exact_daily_row_fields_v1"
 SNAPSHOT_PATH = RUNTIME_DIR / "ohlc_snapshot.json"
 ACTIVE_PHASES = {
     "premarket",
@@ -59,8 +60,8 @@ def _positive(value: Any) -> float | None:
 
 
 class PortableBoardGuard:
-    def __init__(self, snapshot_path: Path = SNAPSHOT_PATH) -> None:
-        self.snapshot_path = Path(snapshot_path)
+    def __init__(self, snapshot_path: Path | None = None) -> None:
+        self.snapshot_path = Path(snapshot_path or SNAPSHOT_PATH)
         self._last_check = 0.0
         self._mtime: float | None = None
         self._payload: dict[str, Any] | None = None
@@ -84,6 +85,14 @@ class PortableBoardGuard:
         self._payload = _read_json(self.snapshot_path)
         return self._payload
 
+    def _next_generation(self, state, signature: tuple[Any, ...]) -> int:
+        current = int(state.status.get("board_portable_generation") or 0)
+        if signature != self._applied_signature:
+            current += 1
+            state.status["board_portable_generation"] = current
+            state.status["board_portable_generation_at"] = now_text()
+        return current
+
     def _status(
         self,
         state,
@@ -92,6 +101,7 @@ class PortableBoardGuard:
         phase: str,
         basis: str,
         payload: dict[str, Any] | None,
+        generation: int | None = None,
         exact_count: int = 0,
         missing_count: int = 0,
     ) -> None:
@@ -109,12 +119,20 @@ class PortableBoardGuard:
                 "board_market_scope": payload.get("market_scope"),
                 "board_portable_verified": bool(payload.get("verified")),
                 "board_portable_coverage": payload.get("coverage"),
+                "board_portable_policy_version": payload.get(
+                    "portable_policy_version"
+                ),
+                "board_portable_parser_version": payload.get(
+                    "portable_parser_version"
+                ),
                 "board_exact_row_count": exact_count,
                 "board_missing_row_count": missing_count,
                 "board_snapshot_path": str(self.snapshot_path),
                 "board_snapshot_updated_at": payload.get("ts"),
             }
         )
+        if generation is not None:
+            state.status["board_portable_generation"] = generation
 
     def apply(self, state, now: datetime | None = None) -> bool:
         target_date, phase, active = board_target_context(now)
@@ -127,6 +145,7 @@ class PortableBoardGuard:
                 phase=phase,
                 basis="live_session_passthrough",
                 payload=None,
+                generation=int(state.status.get("board_portable_generation") or 0),
             )
             return True
 
@@ -136,10 +155,16 @@ class PortableBoardGuard:
             if isinstance(payload, dict)
             else None
         )
+        parser_version = (
+            payload.get("portable_parser_version")
+            if isinstance(payload, dict)
+            else None
+        )
         board_values = payload.get("board_values") if isinstance(payload, dict) else None
         valid = bool(
             isinstance(payload, dict)
             and payload.get("portable_policy_version") == PORTABLE_POLICY_VERSION
+            and parser_version == PORTABLE_PARSER_VERSION
             and payload.get("verified") is True
             and source_date
             and source_date == target_date
@@ -150,11 +175,15 @@ class PortableBoardGuard:
             phase,
             self._mtime,
             source_date,
+            payload.get("portable_policy_version") if isinstance(payload, dict) else None,
+            parser_version,
             bool(payload.get("verified")) if isinstance(payload, dict) else False,
             len(board_values) if isinstance(board_values, dict) else 0,
         )
         if signature == self._applied_signature and self._applied_result is not None:
             return self._applied_result
+
+        generation = self._next_generation(state, signature)
 
         if not valid:
             self._status(
@@ -163,6 +192,7 @@ class PortableBoardGuard:
                 phase=phase,
                 basis="blocked_waiting_exact_portable_snapshot",
                 payload=payload,
+                generation=generation,
                 exact_count=0,
                 missing_count=len(getattr(state, "seed_rank_by_code", {}) or {}),
             )
@@ -173,7 +203,12 @@ class PortableBoardGuard:
         exact_by_code: dict[str, dict[str, Any]] = {}
         for raw_code, raw_value in board_values.items():
             code = normalize_code(raw_code)
-            if code and isinstance(raw_value, dict):
+            if (
+                code
+                and isinstance(raw_value, dict)
+                and raw_value.get("portable_parser_version")
+                == PORTABLE_PARSER_VERSION
+            ):
                 exact_by_code[code] = raw_value
 
         previous_ranked = sorted(
@@ -217,7 +252,23 @@ class PortableBoardGuard:
                 trade_value = to_number(exact.get("trade_value_eok"))
                 change_rate = to_number(exact.get("change_rate"))
                 ohlc = exact.get("ohlc") if isinstance(exact.get("ohlc"), dict) else None
-                if price is None or trade_value is None or change_rate is None or ohlc is None:
+                exact_date_ok = all(
+                    _date_digits(exact.get(key)) == target_date
+                    for key in (
+                        "source_trading_date",
+                        "price_trading_date",
+                        "change_rate_trading_date",
+                        "trade_value_trading_date",
+                        "ohlc_trading_date",
+                    )
+                )
+                if (
+                    price is None
+                    or trade_value is None
+                    or change_rate is None
+                    or ohlc is None
+                    or not exact_date_ok
+                ):
                     quote["portable_board_missing"] = True
                     missing_count += 1
                     continue
@@ -246,6 +297,8 @@ class PortableBoardGuard:
                         "ohlc_trading_date": target_date,
                         "market_scope": exact.get("market_scope"),
                         "portable_board_quality": exact.get("quality"),
+                        "portable_parser_version": PORTABLE_PARSER_VERSION,
+                        "portable_board_generation": generation,
                         "portable_board_applied_at": now_text(),
                         "price_age_sec": None,
                     }
@@ -265,6 +318,7 @@ class PortableBoardGuard:
             phase=phase,
             basis="portable_exact_close" if result else "blocked_no_exact_rows",
             payload=payload,
+            generation=generation,
             exact_count=exact_count,
             missing_count=missing_count,
         )
@@ -274,19 +328,22 @@ class PortableBoardGuard:
 
 
 def install(base) -> None:
-    """Install cross-PC closed-session row protection.
-
-    No QAx, FID, REST request, WebSocket, worker thread, timer, or SSE cadence is
-    added. The guard only consumes the existing low-priority context snapshot.
-    """
-
+    """Install cross-PC closed-session row protection and cache synchronization."""
     state_class = getattr(base, "State", None)
     if state_class is None or getattr(
         state_class, "_stockboard_portable_board_guard_installed", False
     ):
         return
 
+    original_init = state_class.__init__
     original_rows = state_class.rows
+
+    def state_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self.portable_board_guard = PortableBoardGuard()
+        with self.lock:
+            self.status["board_trading_date_guard_version"] = PATCH_VERSION
+            self.status["board_portable_generation"] = 0
 
     def rows(self, limit: int = 300):
         guard = getattr(self, "portable_board_guard", None)
@@ -297,5 +354,10 @@ def install(base) -> None:
             return []
         return original_rows(self, limit)
 
+    state_class.__init__ = state_init
     state_class.rows = rows
     state_class._stockboard_portable_board_guard_installed = True
+
+    from realtime_v2.worker_portable_cache_sync_patch import prepare_install
+
+    prepare_install(base)

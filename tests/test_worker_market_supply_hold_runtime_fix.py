@@ -68,7 +68,7 @@ def test_market_supply_install_failure_is_fail_open_and_clears_after_recovery(
     assert not error_path.exists()
 
 
-def test_production_entrypoint_keeps_mobile_patch_after_market_hold_install():
+def test_production_entrypoint_keeps_mobile_and_portable_cache_sync_installed():
     script = r'''
 import importlib
 from pathlib import Path
@@ -80,6 +80,8 @@ large = importlib.import_module("realtime_v2.worker64_guarded_large")
 assert production is not None
 assert getattr(guarded, "_market_supply_hold_patch_installed", False) is True
 assert getattr(guarded.base.State, "_stockboard_portable_board_guard_installed", False) is True
+assert getattr(guarded.base.State, "_stockboard_portable_cache_sync_installed", False) is True
+assert getattr(guarded.base.State, "_stockboard_opening_burst_cache_installed", False) is True
 payload = guarded._runtime_context_payload()
 assert "market_supply_status" in payload
 html = Path("docs/stockboard_v2.html").read_text(encoding="utf-8-sig")
