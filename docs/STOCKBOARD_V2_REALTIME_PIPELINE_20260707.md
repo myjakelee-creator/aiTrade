@@ -1,6 +1,6 @@
 # StockBoard v2 실시간 파이프라인
 
-최종 갱신: 2026-07-17 21:05 KST
+최종 갱신: 2026-07-19 14:57 KST
 
 이 문서는 StockBoard v2의 실시간 가격 경로, 분 단위 보조지표, 거래일 유지정책과 실전 검증 상태를 기록하는 단일 기준 문서이다. 과거 v0.3.x 구조와 섞지 않는다.
 
@@ -219,6 +219,20 @@ GAP_POSSIBLE     장중 재시작·재접속 공백 가능
 - `/api/v2/context`의 `market_supply_status`에 표시 기준, 원천 거래일, 마지막 정상시각, 후보 거부 사유를 진단용으로 제공한다.
 - 추가 QAx·FID·Kiwoom REST·WebSocket·Worker thread·브라우저 계산·타이머·SSE payload는 0이다.
 
+### 7.4 PC 이동형 휴장·장마감 보드 복원
+
+- 다른 PC의 `data/runtime` 파일을 복사하거나 클라우드에 자동 업로드하지 않는다.
+- 각 PC는 `realtime_v2.context_snapshot_writer_portable_v2` 한 프로세스만 사용해 직전 완료 거래일의 보드값을 자체 재구성한다.
+- 생산 시작 전 base·singleflight·portable·portable_v2 context writer 변형을 모두 종료하고 portable v2 소유자가 정확히 1개일 때만 준비 완료로 인정한다.
+- `context_owner_status.json`에 프로세스 수, owner PID·모듈, legacy writer 검출 여부를 기록한다.
+- 완료 거래일 가격·OHLC 종가는 `close_pric` 계열만 사용하고 `cur_prc`는 선택값으로 사용하지 않는다.
+- 등락률은 exact 날짜 행의 공식 `flu_rt`를 우선하고, 없을 때만 완료일 종가와 직전 거래일 종가로 재계산한다.
+- 후보는 `ohlc_snapshot_candidate.json`으로 먼저 저장한 뒤 parser version, 거래일, coverage, OHLC 범위를 검증하고 통과한 경우에만 `ohlc_snapshot.json`으로 원자 승격한다.
+- 승인 계약은 `portable_closed_board_snapshot_v2` + `exact_daily_row_fields_v2`이다.
+- portable generation·source trading date·display basis를 opening-burst heavy cache signature에 포함하고, generation이 바뀌면 기존 cache owner가 한 번만 structure-change rebuild한다.
+- 새 generation cache가 준비되기 전에는 구형 seed·stale cache 행을 표시하지 않는다.
+- 추가 QAx·FID·WebSocket·Worker thread·SSE 주기 변경은 0이며, 휴장·장마감 재구성은 기존 저우선순위 context 경로에서 수행한다.
+
 ## 8. 공통 거래일 유지정책
 
 초기화하지 않는 시점:
@@ -246,6 +260,8 @@ WebSocket 재접속
 - 20:00 이후: 신규 수집 중지, 마지막 정상값 고정
 - 주말·공휴일: 신규조회 중지, 직전 완료 거래일 유지
 - 휴장 복원은 값뿐 아니라 승인 원천과 source trading date가 모두 맞을 때만 허용
+- PC 변경 시 다른 PC의 runtime을 복사하지 않고 portable v2 exact snapshot을 해당 PC에서 재구성
+- context writer는 portable v2 단일 소유자만 허용하며 legacy writer가 검출되면 시작 실패
 - 지연개장: 캘린더의 실제 프리마켓·정규장 시작시각 사용
 - 재시작: daily state와 lifecycle snapshot에서 복원
 - 다음 프리마켓: 전일 내부 누적·분 bucket·stage 일괄 초기화
@@ -265,6 +281,7 @@ ka10046                         실제 개장 후 첫 5분 중지
 모바일                          기존 SSE, 행당 8개 셀만 생성
 모바일 성능 배지                기존 렌더 값 문자열 재사용
 국내시장 수급 hold              기존 context 조회에서 작은 딕셔너리 검증
+portable closed-board 복원       휴장·장마감 저우선순위 1회 재구성
 ```
 
 위험 신호:
@@ -385,6 +402,24 @@ worker_q / drop / logdrop            0 / 0 / 0
 - StockBoard CI Run #349 Windows regression 성공
 - Targeted pytest 119 passed / 0 failed
 
+### 10.7 휴장일 PC2 portable v2 복원 1차 실기 통과
+
+2026-07-19 14:57 KST 대표님 PC2 브라우저 확인:
+
+- PC가 바뀌어도 다른 PC의 runtime 복사 없이 직전 완료 거래일 `20260716` 보드를 재구성함
+- 구형 `context_snapshot_writer.py`와 portable v2가 같은 `ohlc_snapshot.json`을 번갈아 덮어쓰던 원인을 제거함
+- 생산 launcher는 `realtime_v2.context_snapshot_writer_portable_v2` 단일 소유자만 시작하며 legacy writer를 시작 전에 모두 종료함
+- 완료 거래일 현재가는 `close_pric`, 등락률은 exact 날짜 행의 공식 `flu_rt`를 사용함
+- 대표 종목 확인값: SK하이닉스 `1,830,000 / -12.10%`, 삼성전자 `253,500 / -9.30%`
+- 거래대금·대금비·일봉·순위·등급·후보가 함께 채워지고, 시작 후 잘못된 seed 값으로 되돌아가던 현상이 대표님 관찰 기준 재발하지 않음
+- 확인 화면에서 `stream 43 ms`, `collector_q 0`, `worker_q 0`, `drop 0`, `logdrop 0`
+- portable exact snapshot과 heavy cache generation 전환이 완료된 뒤 전체 행을 원자적으로 공개함
+- 단일 소유자 launcher 최종 커밋 `3d8b42e280e80afec1797b1bd60136365904769e`
+- StockBoard CI Run #447 Windows regression 성공
+- Targeted pytest 154 passed / 0 failed
+- 판정: **휴장일 PC2 portable exact-close 표시 정확성 1차 통과**
+- 다음 실제 거래일의 프리마켓·정규장·15:30·20:00 전환은 별도 실전 검증으로 유지함
+
 ## 11. 운영 명령
 
 ```powershell
@@ -411,6 +446,23 @@ http://127.0.0.1:8765/
 
 국내시장 수급 진단은 `/api/v2/context`의 `market_supply_status`에서 `display_basis`, `source_trading_date`, `candidate_reject_reason`을 확인한다.
 
+Context writer 단일 소유자 진단:
+
+```powershell
+Get-Content `
+  C:\aiTrade\data\runtime\stockboard_v2\context_owner_status.json `
+  -Raw | ConvertFrom-Json | Format-List
+```
+
+정상 기준:
+
+```text
+ready                         True
+context_writer_process_count  1
+context_writer_owner_module   realtime_v2.context_snapshot_writer_portable_v2
+legacy_context_writer_detected False
+```
+
 ## 12. 남은 실전 검증
 
 1. 다음 거래일 프리마켓 이전부터 실행해 대량체결 `EXACT_LIVE` 확인
@@ -423,7 +475,8 @@ http://127.0.0.1:8765/
 8. 다음 거래일 19:59→20:00 국내시장 수급 last-good 유지와 비정상 초기화 거부 확인
 9. 자정·Worker 재시작·주말·휴장 후 국내시장 수급 복원 확인
 10. 다음 거래일 08:00 이전값 유지와 첫 정상 당일 스냅샷 자동 교체 확인
-11. 15:30·20:00·자정·익일 프리마켓 rollover 확인
+11. 다음 거래일 프리마켓·정규장·15:30·20:00에서 portable board가 live passthrough와 exact-close로 정상 전환되는지 확인
 12. NXT 거래·미거래 종목의 마지막 정상값 유지 확인
+13. 다른 PC에서 재시작해도 context writer가 1개만 유지되고 legacy writer 재등장이 없는지 재확인
 
 실제 다음 개장·장마감 검증 전에는 PR을 Draft로 유지하고 병합하지 않는다.
