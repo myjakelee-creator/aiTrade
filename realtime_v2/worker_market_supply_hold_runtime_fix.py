@@ -18,7 +18,9 @@ def install() -> None:
 
     # Install independently of market-supply context wrapping. If market-supply
     # protection is already present, the cross-PC board-date guard still must exist.
-    install_board_trading_date_guard(guarded.base)
+    guard_base = getattr(guarded, "base", None)
+    if guard_base is not None:
+        install_board_trading_date_guard(guard_base)
 
     if getattr(guarded, "_market_supply_hold_patch_installed", False):
         return
