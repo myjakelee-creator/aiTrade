@@ -3,11 +3,12 @@ from __future__ import annotations
 """Cross-PC, date-explicit StockBoard context writer.
 
 This entrypoint replaces the existing ka10086 OHLC bootstrap with one equivalent
-low-priority pass that also extracts exact target-day board fields.  Every PC can
+low-priority pass that also extracts exact target-day board fields. Every PC can
 therefore rebuild the same closed-session baseline from Kiwoom REST without
 copying another PC's ``data/runtime`` directory.
 """
 
+import json
 import os
 import time
 from pathlib import Path
@@ -20,6 +21,17 @@ from stockboard_previous_trade_value import previous_trade_value_from_daily_row
 
 PORTABLE_POLICY_VERSION = "portable_closed_board_snapshot_v1"
 PORTABLE_MIN_COVERAGE = float(os.getenv("STOCKBOARD_PORTABLE_BOARD_MIN_COVERAGE", "0.70"))
+ACTIVE_PHASES = {
+    "premarket",
+    "opening_call",
+    "regular",
+    "closing_call",
+    "after_wait",
+    "aftermarket",
+}
+
+_last_bootstrap_args: tuple[Path, int, float] | None = None
+_attempted_refresh_keys: set[tuple[str, str]] = set()
 
 
 def _date_digits(value: Any) -> str:
@@ -232,14 +244,30 @@ def build_portable_snapshot(
     }
 
 
+def _snapshot_is_ready(target_date: str) -> bool:
+    try:
+        payload = json.loads(sf.base.OHLC_SNAPSHOT_FILE.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bool(
+        isinstance(payload, dict)
+        and payload.get("portable_policy_version") == PORTABLE_POLICY_VERSION
+        and payload.get("verified") is True
+        and _date_digits(payload.get("source_trading_date") or payload.get("trading_date"))
+        == target_date
+    )
+
+
 def fetch_ohlc_bootstrap(
     codes_file: Path,
     limit: int = 300,
     sleep_sec: float = 0.12,
 ):
+    global _last_bootstrap_args
     target_date, phase = sf.market_supply_target_context()
     path = Path(codes_file)
-    return sf.coordinator.execute(
+    _last_bootstrap_args = (path, int(limit or 300), float(sleep_sec or 0.0))
+    payload = sf.coordinator.execute(
         provider="kiwoom_rest",
         tr_code="ka10086_portable_board_bundle",
         params={
@@ -261,9 +289,12 @@ def fetch_ohlc_bootstrap(
             path, limit, sleep_sec, target_date, phase
         ),
     )
+    _attempted_refresh_keys.add((target_date, phase))
+    return payload
 
 
 _original_inject_context_status = sf._inject_context_status
+_original_run_cycle = sf._run_cycle
 
 
 def _inject_context_status(payload):
@@ -273,9 +304,52 @@ def _inject_context_status(payload):
     return status
 
 
+def _run_cycle(status: dict) -> None:
+    _original_run_cycle(status)
+    target_date, phase = sf.market_supply_target_context()
+    status["portable_board_target_trading_date"] = target_date
+    status["portable_board_market_phase"] = phase
+
+    if phase in ACTIVE_PHASES or _snapshot_is_ready(target_date):
+        status["portable_board_refresh_status"] = (
+            "active_session_initial_only" if phase in ACTIVE_PHASES else "exact_ready"
+        )
+        sf.write_status(status)
+        return
+
+    refresh_key = (target_date, phase)
+    if refresh_key in _attempted_refresh_keys:
+        status["portable_board_refresh_status"] = "attempted_once_not_ready"
+        sf.write_status(status)
+        return
+
+    if _last_bootstrap_args is None:
+        status["portable_board_refresh_status"] = "bootstrap_arguments_unavailable"
+        sf.write_status(status)
+        return
+
+    _attempted_refresh_keys.add(refresh_key)
+    path, limit, sleep_sec = _last_bootstrap_args
+    try:
+        payload = fetch_ohlc_bootstrap(path, limit, sleep_sec)
+        sf._atomic_write(sf.base.OHLC_SNAPSHOT_FILE, payload)
+        status["portable_board_refresh_status"] = (
+            "exact_ready" if _snapshot_is_ready(target_date) else "completed_below_coverage"
+        )
+        status["portable_board_refresh_target_trading_date"] = target_date
+        status["portable_board_refresh_count"] = payload.get("board_value_count")
+        status["portable_board_refresh_coverage"] = payload.get("coverage")
+        status.pop("portable_board_refresh_error", None)
+    except Exception as error:
+        status["portable_board_refresh_status"] = "failed_once"
+        status["portable_board_refresh_error"] = str(error)
+    sf.write_status(status)
+
+
 sf.fetch_ohlc_bootstrap = fetch_ohlc_bootstrap
 sf.base.fetch_ohlc_bootstrap = fetch_ohlc_bootstrap
 sf._inject_context_status = _inject_context_status
+sf._run_cycle = _run_cycle
 
 
 if __name__ == "__main__":
