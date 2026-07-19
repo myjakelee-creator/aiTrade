@@ -6,7 +6,7 @@ $PidFile = Join-Path $RuntimeDir "context_snapshot_writer.pid"
 $StatusFile = Join-Path $RuntimeDir "context_snapshot_status.json"
 $ExpectedOwner = "tr_singleflight"
 $ExpectedRuntime = "singleflight_explicit_loop_v3"
-$ModuleName = "realtime_v2.context_snapshot_writer_singleflight"
+$ModuleName = "realtime_v2.context_snapshot_writer_portable"
 
 Set-Location -LiteralPath $ProjectRoot
 
@@ -54,7 +54,7 @@ function Get-ContextWriterRows {
                     if ($name -notmatch '^(?i)python(w)?\.exe$' -or -not $commandLine) {
                         return $false
                     }
-                    return $commandLine -match '(?i)realtime_v2[\\.]context_snapshot_writer(_base|_singleflight)?(\.py)?'
+                    return $commandLine -match '(?i)realtime_v2[\\.]context_snapshot_writer(_base|_singleflight|_portable)?(\.py)?'
                 } |
                 Select-Object ProcessId, Name, CommandLine
         )
