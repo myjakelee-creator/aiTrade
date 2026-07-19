@@ -79,6 +79,25 @@ def test_mobile_momentum_is_full_width_and_speed_badges_follow_selector(monkeypa
     assert "max-width:100% !important;" in rendered
 
 
+def test_mobile_topbar_scrolls_vertically_and_keeps_horizontal_anchor(monkeypatch):
+    rendered = _render_chain(monkeypatch)
+
+    mobile_override = rendered.split(
+        "html.stockboard-mobile #topbar.topbar {", 1
+    )[1].split("}", 1)[0]
+    assert "top:auto !important;" in mobile_override
+    assert "inset-block-start:auto !important;" in mobile_override
+    assert "position:static" not in mobile_override
+    assert "position:fixed" not in mobile_override
+
+    assert (
+        "html.stockboard-mobile #topbar { position:sticky; left:0; width:100vw;"
+        in rendered
+    )
+    assert "#topbar.topbar {" in rendered
+    assert "top: 0 !important;" in rendered
+
+
 def test_mobile_speed_badges_reuse_existing_values_and_wrap(monkeypatch):
     rendered = _render_chain(monkeypatch)
 

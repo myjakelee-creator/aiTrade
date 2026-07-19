@@ -132,6 +132,10 @@ def install() -> None:
 <style id="stockboard-v2-mobile-top-status">
   /* {MARKER} */
   .stockboard-mobile-performance-badge {{ display:none; }}
+  html.stockboard-mobile #topbar.topbar {{
+    top:auto !important;
+    inset-block-start:auto !important;
+  }}
   html.stockboard-mobile #momentum-alert-strip {{
     order:-20 !important;
     flex:0 0 100% !important;
