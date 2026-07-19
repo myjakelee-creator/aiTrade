@@ -1,6 +1,6 @@
 # StockBoard v2 실시간 파이프라인
 
-최종 갱신: 2026-07-19 14:57 KST
+최종 갱신: 2026-07-19 20:53 KST
 
 이 문서는 StockBoard v2의 실시간 가격 경로, 분 단위 보조지표, 거래일 유지정책과 실전 검증 상태를 기록하는 단일 기준 문서이다. 과거 v0.3.x 구조와 섞지 않는다.
 
@@ -201,6 +201,8 @@ GAP_POSSIBLE     장중 재시작·재접속 공백 가능
 - 모바일 표는 실제 열폭 합계로 렌더링하고 문서 가로 overflow를 허용해 브라우저 하단 가로 스크롤로 이동한다.
 - `realtime_v2/html_mobile_top_status_patch.py`는 모멘텀 스트립을 모바일 최상단의 독립된 전체폭 행으로 유지한다.
 - `recv/s`, `stream ms`, `render ms`는 선발기준 바로 뒤에 원래 `badge` 글꼴·여백의 개별 배지로 배치한다. 우측 공간이 부족하면 기존 topbar `flex-wrap`으로 다음 줄에 표시한다.
+- 모바일 상단은 세로 스크롤에서 종목표와 함께 위로 이동한다. `top` 세로 고정만 해제하고 `position: sticky; left: 0`은 유지해 하단 가로 스크롤 사용 시 왼쪽 정렬을 보존한다.
+- 데스크톱 상단의 기존 `top: 0` sticky 동작은 변경하지 않는다.
 - 성능 배지는 기존 `computeRates`, payload lag, render 측정값을 그대로 재사용하며 추가 타이머·API·SSE·Worker 계산이 없다.
 - 기존 fast-price DOM 패치는 모바일에서 현재가 셀을 건너뛰고 모바일 `등락률` 셀 인덱스만 갱신하도록 분기한다.
 - 신규 QAx·FID·Kiwoom REST·WebSocket·Worker thread·SSE payload는 0이며, 모바일에서는 행당 DOM 셀이 8개로 유지된다.
@@ -419,6 +421,21 @@ worker_q / drop / logdrop            0 / 0 / 0
 - Targeted pytest 154 passed / 0 failed
 - 판정: **휴장일 PC2 portable exact-close 표시 정확성 1차 통과**
 - 다음 실제 거래일의 프리마켓·정규장·15:30·20:00 전환은 별도 실전 검증으로 유지함
+
+### 10.8 모바일 상단 세로 스크롤 실기 통과
+
+2026-07-19 20:53 KST 대표님 모바일 보기 확인:
+
+- 우측 세로 스크롤바를 내리면 모멘텀 신호, StockBoard·ThemeBoard·시계·버튼, 선발기준, `recv/s`·`stream`·`render`, 미국·국내시장 정보가 종목표와 함께 위로 이동함
+- 모바일 topbar의 `top`과 `inset-block-start`만 `auto !important`로 해제함
+- `position: sticky; left: 0`은 유지해 하단 가로 스크롤 사용 시 모바일 상단의 왼쪽 정렬이 유지됨
+- 데스크톱 상단의 기존 `top: 0` sticky 동작은 변경하지 않음
+- 모바일 8열, 모멘텀 전체폭, 속도 배지 값 갱신·줄바꿈, ThemeBoard, 열폭 조절, AHK·HTS 연동 영향 없음
+- 추가 API·SSE·타이머·Worker 계산 0
+- 구현 커밋 `996b30a57e0539a5db385bf42db85e6217522a86`
+- StockBoard CI Run #455 Windows regression 성공
+- Targeted pytest 155 passed / 0 failed
+- 판정: **모바일 상단 세로 스크롤 동작 통과**
 
 ## 11. 운영 명령
 
