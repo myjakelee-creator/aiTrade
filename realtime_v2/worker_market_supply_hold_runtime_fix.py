@@ -9,9 +9,16 @@ PATCH_VERSION = "market_supply_hold_runtime_fix_v1"
 
 
 def install() -> None:
-    """Attach market-supply hold to the actual /api/v2/context owner module."""
+    """Attach runtime context protections to their actual owner modules."""
 
     from realtime_v2 import worker64_guarded as guarded
+    from realtime_v2.worker_board_trading_date_guard import (
+        install as install_board_trading_date_guard,
+    )
+
+    # Install independently of market-supply context wrapping. If market-supply
+    # protection is already present, the cross-PC board-date guard still must exist.
+    install_board_trading_date_guard(guarded.base)
 
     if getattr(guarded, "_market_supply_hold_patch_installed", False):
         return
