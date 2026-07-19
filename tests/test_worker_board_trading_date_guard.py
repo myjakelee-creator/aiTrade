@@ -108,14 +108,12 @@ def test_closed_board_uses_one_atomic_exact_date_snapshot(monkeypatch, tmp_path:
     assert first["ohlc_trading_date"] == "20260717"
     assert first["row_source"] == "portable_exact_close"
 
-    # Previous ranks are based on the actual previous-day trade values, not on
-    # the Sunday seed universe.  000002=15억 outranks 000001=10억.
     assert state.prev_rank_by_code == {"000002": 1, "000001": 2}
     assert state.status["board_display_basis"] == "portable_exact_close"
     assert state.status["board_exact_row_count"] == 2
     assert state.status["board_snapshot_path"] == str(snapshot)
 
-    # Same file/date is O(1): the 193-row overlay is not repeated per SSE call.
+    # Same file/date is O(1): the multi-row overlay is not repeated per SSE call.
     applied_at = first["portable_board_applied_at"]
     first["price"] = 121
     assert guard.apply(state) is True
@@ -157,7 +155,10 @@ def test_active_session_keeps_verified_realtime_path(monkeypatch, tmp_path: Path
 def test_install_wraps_rows_without_network_or_new_loop(monkeypatch, tmp_path: Path):
     snapshot = tmp_path / "ohlc_snapshot.json"
     snapshot.write_text(json.dumps(_portable_payload()), encoding="utf-8")
-    monkeypatch.setattr(guard_module, "SNAPSHOT_PATH", snapshot)
+    guard_class = guard_module.PortableBoardGuard
+    monkeypatch.setattr(
+        guard_module, "PortableBoardGuard", lambda: guard_class(snapshot)
+    )
     monkeypatch.setattr(
         guard_module,
         "board_target_context",
