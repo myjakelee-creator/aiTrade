@@ -64,6 +64,8 @@ class PortableBoardGuard:
         self._last_check = 0.0
         self._mtime: float | None = None
         self._payload: dict[str, Any] | None = None
+        self._applied_signature: tuple[Any, ...] | None = None
+        self._applied_result: bool | None = None
 
     def _load(self, force: bool = False) -> dict[str, Any] | None:
         now_mono = time.monotonic()
@@ -82,8 +84,8 @@ class PortableBoardGuard:
         self._payload = _read_json(self.snapshot_path)
         return self._payload
 
-    @staticmethod
     def _status(
+        self,
         state,
         *,
         target_date: str,
@@ -109,7 +111,7 @@ class PortableBoardGuard:
                 "board_portable_coverage": payload.get("coverage"),
                 "board_exact_row_count": exact_count,
                 "board_missing_row_count": missing_count,
-                "board_snapshot_path": str(SNAPSHOT_PATH),
+                "board_snapshot_path": str(self.snapshot_path),
                 "board_snapshot_updated_at": payload.get("ts"),
             }
         )
@@ -117,6 +119,8 @@ class PortableBoardGuard:
     def apply(self, state, now: datetime | None = None) -> bool:
         target_date, phase, active = board_target_context(now)
         if active:
+            self._applied_signature = None
+            self._applied_result = True
             self._status(
                 state,
                 target_date=target_date,
@@ -141,6 +145,17 @@ class PortableBoardGuard:
             and source_date == target_date
             and isinstance(board_values, dict)
         )
+        signature = (
+            target_date,
+            phase,
+            self._mtime,
+            source_date,
+            bool(payload.get("verified")) if isinstance(payload, dict) else False,
+            len(board_values) if isinstance(board_values, dict) else 0,
+        )
+        if signature == self._applied_signature and self._applied_result is not None:
+            return self._applied_result
+
         if not valid:
             self._status(
                 state,
@@ -151,6 +166,8 @@ class PortableBoardGuard:
                 exact_count=0,
                 missing_count=len(getattr(state, "seed_rank_by_code", {}) or {}),
             )
+            self._applied_signature = signature
+            self._applied_result = False
             return False
 
         exact_by_code: dict[str, dict[str, Any]] = {}
@@ -160,16 +177,15 @@ class PortableBoardGuard:
                 exact_by_code[code] = raw_value
 
         previous_ranked = sorted(
-            (
-                (code, _positive(value.get("prev_trade_value_eok")))
-                for code, value in exact_by_code.items()
-            ),
-            key=lambda item: (-(item[1] or 0.0), item[0]),
+            [
+                (code, value)
+                for code, raw in exact_by_code.items()
+                if (value := _positive(raw.get("prev_trade_value_eok"))) is not None
+            ],
+            key=lambda item: (-item[1], item[0]),
         )
         previous_rank_by_code = {
-            code: rank
-            for rank, (code, value) in enumerate(previous_ranked, start=1)
-            if value is not None
+            code: rank for rank, (code, _value) in enumerate(previous_ranked, start=1)
         }
 
         exact_count = 0
@@ -206,6 +222,7 @@ class PortableBoardGuard:
                     missing_count += 1
                     continue
 
+                previous_value = _positive(exact.get("prev_trade_value_eok"))
                 quote.update(
                     {
                         "price": price,
@@ -217,7 +234,7 @@ class PortableBoardGuard:
                         "day_high": ohlc.get("high"),
                         "day_low": ohlc.get("low"),
                         "day_close": ohlc.get("close"),
-                        "prev_trade_value_eok": exact.get("prev_trade_value_eok"),
+                        "prev_trade_value_eok": previous_value,
                         "prev_trade_value_date": exact.get("prev_trade_value_date"),
                         "prev_rank": previous_rank_by_code.get(code),
                         "source_code": "portable_exact_close",
@@ -235,30 +252,32 @@ class PortableBoardGuard:
                 )
                 quote.pop("received_at", None)
                 quote.pop("portable_board_missing", None)
-                state.prev_trade_value_by_code[code] = float(
-                    exact.get("prev_trade_value_eok") or 0.0
-                )
+                if previous_value is not None:
+                    state.prev_trade_value_by_code[code] = previous_value
                 if previous_rank_by_code.get(code):
                     state.prev_rank_by_code[code] = previous_rank_by_code[code]
                 exact_count += 1
 
+        result = exact_count > 0
         self._status(
             state,
             target_date=target_date,
             phase=phase,
-            basis="portable_exact_close",
+            basis="portable_exact_close" if result else "blocked_no_exact_rows",
             payload=payload,
             exact_count=exact_count,
             missing_count=missing_count,
         )
-        return exact_count > 0
+        self._applied_signature = signature
+        self._applied_result = result
+        return result
 
 
 def install(base) -> None:
     """Install cross-PC closed-session row protection.
 
     No QAx, FID, REST request, WebSocket, worker thread, timer, or SSE cadence is
-    added.  The guard only consumes the existing low-priority context snapshot.
+    added. The guard only consumes the existing low-priority context snapshot.
     """
 
     state_class = getattr(base, "State", None)
