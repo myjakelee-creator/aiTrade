@@ -4,9 +4,13 @@ $ProjectRoot = "C:\aiTrade"
 $RuntimeDir = Join-Path $ProjectRoot "data\runtime\stockboard_v2"
 $PidFile = Join-Path $RuntimeDir "context_snapshot_writer.pid"
 $StatusFile = Join-Path $RuntimeDir "context_snapshot_status.json"
+$OwnerStatusFile = Join-Path $RuntimeDir "context_owner_status.json"
 $ExpectedOwner = "tr_singleflight"
 $ExpectedRuntime = "singleflight_explicit_loop_v3"
 $ModuleName = "realtime_v2.context_snapshot_writer_portable_v2"
+$ExpectedEntrypoint = "realtime_v2.context_snapshot_writer_portable_v2"
+$ExpectedParser = "exact_daily_row_fields_v2"
+$ContextWriterPattern = '(?i)realtime_v2[\\.]context_snapshot_writer(?:_(?:base|singleflight|portable(?:_v2)?))?(?:\.py)?'
 
 Set-Location -LiteralPath $ProjectRoot
 
@@ -54,7 +58,7 @@ function Get-ContextWriterRows {
                     if ($name -notmatch '^(?i)python(w)?\.exe$' -or -not $commandLine) {
                         return $false
                     }
-                    return $commandLine -match '(?i)realtime_v2[\\.]context_snapshot_writer(_base|_singleflight|_portable|_portable_v2)?(\.py)?'
+                    return $commandLine -match $ContextWriterPattern
                 } |
                 Select-Object ProcessId, Name, CommandLine
         )
@@ -74,6 +78,35 @@ function Stop-ContextWriters {
     Start-Sleep -Milliseconds 500
 }
 
+function Write-OwnerStatus(
+    [System.Collections.IEnumerable]$Rows,
+    [int]$OwnerPid,
+    [bool]$Ready,
+    [string]$Reason
+) {
+    $rowsArray = @($Rows)
+    $legacyRows = @(
+        $rowsArray | Where-Object {
+            ([string]$_.CommandLine) -notmatch [regex]::Escape($ModuleName)
+        }
+    )
+    $payload = [ordered]@{
+        schema_version = 1
+        source = "stockboard_context_single_owner_launcher"
+        ts = (Get-Date).ToString("o")
+        ready = $Ready
+        reason = $Reason
+        context_writer_process_count = $rowsArray.Count
+        context_writer_owner_pid = $OwnerPid
+        context_writer_owner_module = $ModuleName
+        legacy_context_writer_detected = ($legacyRows.Count -gt 0)
+        process_ids = @($rowsArray | ForEach-Object { [int]$_.ProcessId })
+        command_lines = @($rowsArray | ForEach-Object { [string]$_.CommandLine })
+    }
+    $payload | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $OwnerStatusFile -Encoding UTF8
+    return $payload
+}
+
 function Show-LogTail([string]$Path, [string]$Label) {
     Write-Host "---- $Label ----" -ForegroundColor Yellow
     Get-Content -LiteralPath $Path -Tail 120 -ErrorAction SilentlyContinue
@@ -83,6 +116,7 @@ New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
 Stop-ContextWriters
 Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $StatusFile -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $OwnerStatusFile -Force -ErrorAction SilentlyContinue
 
 $python64 = Resolve-Python64
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
@@ -106,10 +140,12 @@ Write-Host "CONTEXT_SINGLEFLIGHT_PID=$($process.Id)"
 Write-Host "CONTEXT_SINGLEFLIGHT_STDOUT=$stdout"
 Write-Host "CONTEXT_SINGLEFLIGHT_STDERR=$stderr"
 
-$deadline = (Get-Date).AddSeconds(20)
+$deadline = (Get-Date).AddSeconds(30)
 while ((Get-Date) -lt $deadline) {
     $alive = $null -ne (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)
     if (-not $alive) {
+        $rows = @(Get-ContextWriterRows)
+        [void](Write-OwnerStatus $rows $process.Id $false "owner_exited_before_readiness")
         Show-LogTail $stdout "context stdout"
         Show-LogTail $stderr "context stderr"
         throw "Context single-flight writer exited before readiness."
@@ -120,13 +156,34 @@ while ((Get-Date) -lt $deadline) {
             $status = Get-Content -LiteralPath $StatusFile -Raw | ConvertFrom-Json
             $owner = [string]$status.context_owner
             $runtime = [string]$status.context_runtime_version
+            $entrypoint = [string]$status.context_entrypoint
+            $parser = [string]$status.portable_board_parser_version
             $statusPid = [int]$status.context_process_pid
+            $rows = @(Get-ContextWriterRows)
+            $ownerRows = @($rows | Where-Object { [int]$_.ProcessId -eq [int]$process.Id })
+            $legacyRows = @(
+                $rows | Where-Object {
+                    ([string]$_.CommandLine) -notmatch [regex]::Escape($ModuleName)
+                }
+            )
+            $singleOwner = (
+                $rows.Count -eq 1 -and
+                $ownerRows.Count -eq 1 -and
+                $legacyRows.Count -eq 0
+            )
             if (
                 $owner -eq $ExpectedOwner -and
                 $runtime -eq $ExpectedRuntime -and
-                $statusPid -eq [int]$process.Id
+                $entrypoint -eq $ExpectedEntrypoint -and
+                $parser -eq $ExpectedParser -and
+                $statusPid -eq [int]$process.Id -and
+                $singleOwner
             ) {
+                $ownerStatus = Write-OwnerStatus $rows $process.Id $true "ready"
                 Write-Host "CONTEXT_SINGLEFLIGHT_READY=True pid=$statusPid owner=$owner runtime=$runtime"
+                Write-Host "CONTEXT_WRITER_PROCESS_COUNT=$($ownerStatus.context_writer_process_count)"
+                Write-Host "CONTEXT_WRITER_OWNER_MODULE=$($ownerStatus.context_writer_owner_module)"
+                Write-Host "LEGACY_CONTEXT_WRITER_DETECTED=$($ownerStatus.legacy_context_writer_detected)"
                 exit 0
             }
         } catch { }
@@ -134,6 +191,12 @@ while ((Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 250
 }
 
+$rows = @(Get-ContextWriterRows)
+[void](Write-OwnerStatus $rows $process.Id $false "readiness_timeout_or_multiple_owners")
+Write-Host "CONTEXT_WRITER_PROCESS_COUNT=$($rows.Count)" -ForegroundColor Yellow
+foreach ($row in $rows) {
+    Write-Host "CONTEXT_WRITER PID=$($row.ProcessId) COMMAND=$($row.CommandLine)" -ForegroundColor Yellow
+}
 Show-LogTail $stdout "context stdout"
 Show-LogTail $stderr "context stderr"
-throw "Context single-flight readiness was not confirmed within 20 seconds."
+throw "Context portable-v2 single-owner readiness was not confirmed within 30 seconds."

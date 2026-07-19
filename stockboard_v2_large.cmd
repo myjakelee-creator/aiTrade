@@ -52,7 +52,6 @@ if "%ACTION%"=="" (
 set "SAFE=%~dp0scripts\stockboard_v2_large_safe.ps1"
 set "PREFLIGHT=%~dp0scripts\stockboard_v2_openapi_preflight.ps1"
 set "PY64_DEPS=%~dp0scripts\stockboard_v2_python64_dependencies.ps1"
-set "CONTEXT_SINGLEFLIGHT=%~dp0scripts\start_context_singleflight.ps1"
 set "LARGE_TRADE_SIDECAR=%~dp0scripts\stockboard_large_trade_sidecar.ps1"
 set "EXECUTION_DOCTOR=%~dp0scripts\stockboard_execution_strength_doctor.ps1"
 
@@ -89,16 +88,10 @@ rem The package is installed only when missing and verified before the worker st
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PY64_DEPS%"
 if errorlevel 1 goto failed
 
-rem The older safe launcher still invokes the historical context path. Defer that
-rem no-op launch so only the verified module owner below performs Context TR work.
-set "STOCKBOARD_CONTEXT_DEFER_TO_VERIFIED_LAUNCHER=1"
+rem The safe launcher owns the single verified portable-v2 context writer.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SAFE%" -Action "%START_ACTION%"
 set "SAFE_RC=%ERRORLEVEL%"
-set "STOCKBOARD_CONTEXT_DEFER_TO_VERIFIED_LAUNCHER="
 if not "%SAFE_RC%"=="0" goto failed_with_safe_rc
-
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%CONTEXT_SINGLEFLIGHT%"
-if errorlevel 1 goto failed
 
 echo LARGE_TRADE_SIDECAR_PRODUCTION=disabled_due_to_price_feed_conflict
 set "RC=0"
@@ -123,7 +116,6 @@ set "RC=%ERRORLEVEL%"
 if "%RC%"=="0" set "RC=1"
 
 :finish
-set "STOCKBOARD_CONTEXT_DEFER_TO_VERIFIED_LAUNCHER="
 if not "%RC%"=="0" (
   echo.
   echo StockBoard v2 safe launcher finished with an error.

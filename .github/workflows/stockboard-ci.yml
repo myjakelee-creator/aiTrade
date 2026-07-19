@@ -99,14 +99,16 @@ jobs:
             realtime_v2\html_large_trade_quality_patch.py `
             realtime_v2\html_opening_render_guard_patch.py
 
-      - name: Check doctor and context PowerShell syntax
+      - name: Check doctor and launcher PowerShell syntax
         shell: pwsh
         run: |
           $doctor = Get-Content -LiteralPath .\scripts\stockboard_execution_strength_doctor.ps1 -Raw
           [void][scriptblock]::Create($doctor)
           $context = Get-Content -LiteralPath .\scripts\start_context_singleflight.ps1 -Raw
           [void][scriptblock]::Create($context)
-          Write-Host "doctor_and_portable_context_syntax_verified"
+          $safe = Get-Content -LiteralPath .\scripts\stockboard_v2_large_safe.ps1 -Raw
+          [void][scriptblock]::Create($safe)
+          Write-Host "doctor_context_and_single_owner_launcher_syntax_verified"
 
       - name: Run StockBoard targeted tests
         shell: pwsh
@@ -116,6 +118,7 @@ jobs:
             tests\test_context_market_supply_trading_date.py `
             tests\test_context_snapshot_writer_portable.py `
             tests\test_context_snapshot_writer_portable_v2.py `
+            tests\test_context_single_owner_launcher.py `
             tests\test_execution_strength_source_separation.py `
             tests\test_worker_execution_strength_diagnostics.py `
             tests\test_momentum_badge_engine.py `
