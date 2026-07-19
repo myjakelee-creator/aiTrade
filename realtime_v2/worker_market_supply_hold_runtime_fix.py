@@ -6,21 +6,24 @@ from typing import Any
 from realtime_v2.worker_market_supply_hold_patch import MarketSupplyHold
 
 PATCH_VERSION = "market_supply_hold_runtime_fix_v1"
+PORTABLE_PARSER_VERSION = "exact_daily_row_fields_v2"
 
 
 def install() -> None:
     """Attach runtime context protections to their actual owner modules."""
 
     from realtime_v2 import worker64_guarded as guarded
-    from realtime_v2.worker_board_trading_date_guard import (
-        install as install_board_trading_date_guard,
-    )
+    from realtime_v2 import worker_board_trading_date_guard as board_guard
+
+    # Production accepts only the exact-row v2 parser. The guard module is shared
+    # with tests, so set the production contract before installing State wrappers.
+    board_guard.PORTABLE_PARSER_VERSION = PORTABLE_PARSER_VERSION
 
     # Install independently of market-supply context wrapping. If market-supply
     # protection is already present, the cross-PC board-date guard still must exist.
     guard_base = getattr(guarded, "base", None)
     if guard_base is not None:
-        install_board_trading_date_guard(guard_base)
+        board_guard.install(guard_base)
 
     if getattr(guarded, "_market_supply_hold_patch_installed", False):
         return

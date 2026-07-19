@@ -34,7 +34,9 @@ def test_runtime_fix_wraps_actual_guarded_context_owner(monkeypatch):
     payload = guarded._runtime_context_payload()
     assert payload["market_supply"]["kospi"]["market_index"] == 1
     assert payload["market_supply_status"]["display_basis"] == "after_close_hold"
-    assert payload["market_supply_status"]["context_owner"] == "realtime_v2.worker64_guarded"
+    assert payload["market_supply_status"]["context_owner"] == (
+        "realtime_v2.worker64_guarded"
+    )
     assert guarded._market_supply_hold_patch_installed is True
 
 
@@ -56,7 +58,9 @@ def test_market_supply_install_failure_is_fail_open_and_clears_after_recovery(
 
     error_path = tmp_path / "market_supply_hold_patch_error.txt"
     assert error_path.is_file()
-    assert "synthetic market hold failure" in error_path.read_text(encoding="utf-8")
+    assert "synthetic market hold failure" in error_path.read_text(
+        encoding="utf-8"
+    )
 
     recovered = ModuleType("realtime_v2.worker_market_supply_hold_runtime_fix")
     recovered.install = lambda: None
@@ -68,7 +72,7 @@ def test_market_supply_install_failure_is_fail_open_and_clears_after_recovery(
     assert not error_path.exists()
 
 
-def test_production_entrypoint_keeps_mobile_and_portable_cache_sync_installed():
+def test_production_entrypoint_keeps_mobile_and_generation_cache_sync_installed():
     script = r'''
 import importlib
 from pathlib import Path
@@ -76,12 +80,16 @@ from pathlib import Path
 production = importlib.import_module("realtime_v2.worker64_guarded_large_bidask")
 guarded = importlib.import_module("realtime_v2.worker64_guarded")
 large = importlib.import_module("realtime_v2.worker64_guarded_large")
+board_guard = importlib.import_module("realtime_v2.worker_board_trading_date_guard")
+opening = importlib.import_module("realtime_v2.worker_opening_burst_cache_patch")
 
 assert production is not None
 assert getattr(guarded, "_market_supply_hold_patch_installed", False) is True
 assert getattr(guarded.base.State, "_stockboard_portable_board_guard_installed", False) is True
 assert getattr(guarded.base.State, "_stockboard_portable_cache_sync_installed", False) is True
 assert getattr(guarded.base.State, "_stockboard_opening_burst_cache_installed", False) is True
+assert board_guard.PORTABLE_PARSER_VERSION == "exact_daily_row_fields_v2"
+assert getattr(opening, "_portable_generation_signature_installed", False) is True
 payload = guarded._runtime_context_payload()
 assert "market_supply_status" in payload
 html = Path("docs/stockboard_v2.html").read_text(encoding="utf-8-sig")
@@ -97,5 +105,7 @@ print("production_patch_chain_ok")
         capture_output=True,
         check=False,
     )
-    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+    assert result.returncode == 0, (
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
     assert "production_patch_chain_ok" in result.stdout
