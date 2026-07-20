@@ -6,6 +6,7 @@ on:
       - main
       - hot-priority-integrated-20260630
       - fix/restore-stable-collector-20260713
+      - fix/restore-live-metrics-rest-20260715
   push:
     branches:
       - main
