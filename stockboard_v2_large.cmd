@@ -51,8 +51,9 @@ if "%ACTION%"=="" (
 :run
 set "SAFE=%~dp0scripts\stockboard_v2_large_safe.ps1"
 set "PREFLIGHT=%~dp0scripts\stockboard_v2_openapi_preflight.ps1"
-set "CONTEXT_SINGLEFLIGHT=%~dp0scripts\start_context_singleflight.ps1"
+set "PY64_DEPS=%~dp0scripts\stockboard_v2_python64_dependencies.ps1"
 set "LARGE_TRADE_SIDECAR=%~dp0scripts\stockboard_large_trade_sidecar.ps1"
+set "EXECUTION_DOCTOR=%~dp0scripts\stockboard_execution_strength_doctor.ps1"
 
 if /I "%ACTION%"=="start" (
   set "START_ACTION=start"
@@ -82,16 +83,15 @@ if errorlevel 1 goto failed
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PREFLIGHT%"
 if errorlevel 1 goto failed
 
-rem The older safe launcher still invokes the historical context path. Defer that
-rem no-op launch so only the verified module owner below performs Context TR work.
-set "STOCKBOARD_CONTEXT_DEFER_TO_VERIFIED_LAUNCHER=1"
+rem Ensure the 64-bit worker can open the Kiwoom REST WebSocket used by FID228.
+rem The package is installed only when missing and verified before the worker starts.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PY64_DEPS%"
+if errorlevel 1 goto failed
+
+rem The safe launcher owns the single verified portable-v2 context writer.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SAFE%" -Action "%START_ACTION%"
 set "SAFE_RC=%ERRORLEVEL%"
-set "STOCKBOARD_CONTEXT_DEFER_TO_VERIFIED_LAUNCHER="
 if not "%SAFE_RC%"=="0" goto failed_with_safe_rc
-
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%CONTEXT_SINGLEFLIGHT%"
-if errorlevel 1 goto failed
 
 echo LARGE_TRADE_SIDECAR_PRODUCTION=disabled_due_to_price_feed_conflict
 set "RC=0"
@@ -107,6 +107,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SAFE%" -Action "%ACTIO
 set "RC=%ERRORLEVEL%"
 if /I "%ACTION%"=="status" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%LARGE_TRADE_SIDECAR%" -Action status
 if /I "%ACTION%"=="doctor" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%LARGE_TRADE_SIDECAR%" -Action status
+if /I "%ACTION%"=="doctor" if "%RC%"=="0" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%EXECUTION_DOCTOR%"
+if /I "%ACTION%"=="doctor" if errorlevel 1 set "RC=1"
 goto finish
 
 :failed
@@ -114,7 +116,6 @@ set "RC=%ERRORLEVEL%"
 if "%RC%"=="0" set "RC=1"
 
 :finish
-set "STOCKBOARD_CONTEXT_DEFER_TO_VERIFIED_LAUNCHER="
 if not "%RC%"=="0" (
   echo.
   echo StockBoard v2 safe launcher finished with an error.

@@ -1,24 +1,83 @@
 from __future__ import annotations
 
-from realtime_v2.common import trading_date_text
+import traceback
+from pathlib import Path
+
 from realtime_v2.tr_singleflight import get_shared_tr_coordinator
 
 
-def install(base) -> None:
-    """Route program net through shared single-flight and restore cached metrics.
+def _runtime_dir(base) -> Path:
+    try:
+        return Path(base.RUNTIME_DIR)
+    except Exception:
+        return Path(__file__).resolve().parents[1] / "data" / "runtime" / "stockboard_v2"
 
-    The large-trade sidecar is intentionally not installed in production. A second
-    Kiwoom QAx realtime registration stopped the verified price feed, so that lane
-    remains isolated experiment code only.
+
+def _write_optional_patch_error(base, filename: str, error: Exception) -> None:
+    try:
+        runtime = _runtime_dir(base)
+        runtime.mkdir(parents=True, exist_ok=True)
+        (runtime / filename).write_text(
+            f"{type(error).__name__}: {error}\n\n{traceback.format_exc()}",
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _clear_optional_patch_error(base, filename: str) -> None:
+    try:
+        (_runtime_dir(base) / filename).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _install_market_supply_hold_fail_open(base) -> bool:
+    """Keep optional context protection from blocking the remaining UI patches."""
+
+    try:
+        from realtime_v2.worker_market_supply_hold_runtime_fix import (
+            install as install_market_supply_hold,
+        )
+
+        install_market_supply_hold()
+        _clear_optional_patch_error(base, "market_supply_hold_patch_error.txt")
+        return True
+    except Exception as error:
+        _write_optional_patch_error(base, "market_supply_hold_patch_error.txt", error)
+        return False
+
+
+def install(base) -> None:
+    """Route all auxiliary metrics through one calendar-driven low-load owner.
+
+    The production price collector remains the only QAx owner. Five-minute strength uses
+    one REST thread and one single-flight budget. One 64-bit WebSocket connection carries
+    Top100 trade events plus a rotating 20-symbol orderbook group. The market-session
+    manager owns trading-date rollover, holidays, delayed openings, close completion and
+    restart recovery; approved UI fields publish on minute boundaries.
     """
 
     updater_class = getattr(base, "ProgramNetUpdater", None)
     if updater_class is None or getattr(updater_class, "_stockboard_tr_singleflight_installed", False):
         return
 
+    def patched_load_existing_snapshots(self) -> None:
+        with self.state.lock:
+            self.state.status["program_snapshot_bootstrap"] = "calendar_daily_state_only"
+
     def patched_fetch_once(self) -> None:
+        from realtime_v2.worker_market_metric_session_manager import (
+            market_metric_phase,
+            metric_target_trading_date,
+        )
+
         coordinator = get_shared_tr_coordinator()
-        trade_date = trading_date_text()
+        trade_date = metric_target_trading_date()
+        phase = market_metric_phase()
+        if not trade_date:
+            self.state.set_program_net_error("program target trading date unresolved")
+            return
 
         def physical_fetch():
             from kiwoom_data_provider import fetch_program_net, issue_access_token
@@ -30,9 +89,9 @@ def install(base) -> None:
             result = coordinator.execute(
                 provider="kiwoom_rest",
                 tr_code="ka90004_program_net",
-                params={"scope": "stockboard_universe"},
+                params={"scope": "stockboard_universe", "target_date": trade_date},
                 trading_date=trade_date,
-                market_session="regular_or_latest",
+                market_session=phase,
                 ttl_sec=max(15.0, float(self.interval_sec) * 0.8),
                 wait_timeout_sec=max(30.0, float(self.interval_sec)),
                 fetcher=physical_fetch,
@@ -47,14 +106,181 @@ def install(base) -> None:
                 )
             with self.state.lock:
                 self.state.status["tr_singleflight"] = coordinator.status()
+                self.state.status["program_request_target_trading_date"] = trade_date
+                self.state.status["program_request_market_phase"] = phase
         except Exception as error:
             self.state.set_program_net_error(str(error))
             with self.state.lock:
                 self.state.status["tr_singleflight"] = coordinator.status()
 
+    def patched_program_run(self) -> None:
+        self._load_existing_snapshots()
+        if not self.stop_event.is_set():
+            self._fetch_once()
+        while not self.stop_event.wait(self.interval_sec):
+            self._fetch_once()
+
+    updater_class._load_existing_snapshots = patched_load_existing_snapshots
     updater_class._fetch_once = patched_fetch_once
+    updater_class.run = patched_program_run
     updater_class._stockboard_tr_singleflight_installed = True
 
     from realtime_v2.worker_metric_restore_patch import install as install_metric_restore
+    from realtime_v2.worker_rest_live_metrics_patch import (
+        _read_config as read_live_metric_config,
+        install as install_rest_live_metrics,
+    )
+    from realtime_v2.worker_rest_live_metrics_aftermarket_patch import (
+        install as install_rest_live_metrics_aftermarket,
+    )
+    from realtime_v2.worker_rest_metrics_before_market_patch import (
+        install as install_before_market_backfill,
+    )
+    from realtime_v2.worker_rest_live_metric_metadata_patch import (
+        install as install_rest_live_metric_metadata,
+    )
+    from realtime_v2.worker_rest_live_metrics_stage2_fix_patch import (
+        install as install_rest_live_metrics_stage2_fix,
+    )
+    from realtime_v2.worker_large_trade_stage4_patch import (
+        install as install_large_trade_stage4,
+    )
+    from realtime_v2.worker_strength5_only_patch import install as install_strength5_only
+    from realtime_v2 import worker_realtime_strength_ws_patch as realtime_strength_module
+    from realtime_v2.worker_realtime_strength_ws_patch import (
+        install as install_realtime_strength_ws,
+    )
+    from realtime_v2.worker_realtime_strength_ws_coalesce_patch import (
+        install as install_realtime_strength_ws_coalesce,
+    )
+    from realtime_v2.worker_realtime_strength_ws_top20_patch import (
+        install as install_realtime_strength_ws_top20,
+    )
+    from realtime_v2.worker_metric_provenance_patch import (
+        install as install_metric_provenance,
+    )
+    from realtime_v2.worker_market_metric_session_manager import (
+        install as install_market_metric_session_manager,
+        market_metric_phase,
+    )
+    from realtime_v2.worker_metric_state_overlay_patch import (
+        install as install_metric_state_overlay,
+    )
+    from realtime_v2.worker_six_metric_lifecycle_runtime_opt import (
+        install as install_six_metric_runtime_opt,
+    )
+    from realtime_v2.worker_six_metric_lifecycle_patch import (
+        install as install_six_metric_lifecycle,
+    )
+    from realtime_v2.worker_six_metric_output_guard import (
+        install as install_six_metric_output_guard,
+    )
+    from realtime_v2.worker_five_metric_display_policy import (
+        install as install_five_metric_display_policy,
+    )
+    from realtime_v2.worker_aux_metric_runtime_policy import (
+        install as install_aux_metric_runtime_policy,
+    )
+    from realtime_v2.worker_approved_minute_pipeline import (
+        install as install_approved_minute_pipeline,
+    )
+    from realtime_v2.worker_approved_minute_pipeline_runtime_fix import (
+        install as install_approved_minute_runtime_fix,
+    )
+    from realtime_v2.worker_approved_minute_pipeline_safety import (
+        install as install_approved_minute_safety,
+    )
+    from realtime_v2.worker_approved_minute_rollover_guard import (
+        install as install_approved_minute_rollover_guard,
+    )
+    from realtime_v2.worker_execution_strength_diagnostics_patch import (
+        install as install_execution_strength_diagnostics,
+    )
+    from realtime_v2.worker_momentum_badge_policy_patch import (
+        install as install_momentum_badge_policy,
+    )
+    from realtime_v2.html_null_metric_patch import install as install_html_null_metric
+    from realtime_v2.html_execution_strength_label_patch import (
+        install as install_execution_strength_label,
+    )
+    from realtime_v2.html_approved_minute_metrics_patch import (
+        install as install_approved_minute_metrics_html,
+    )
+    from realtime_v2.html_large_trade_quality_patch import (
+        install as install_large_trade_quality_html,
+    )
+    from realtime_v2.html_opening_render_guard_patch import (
+        install as install_opening_render_guard,
+    )
+    from realtime_v2.html_momentum_badge_patch import (
+        install as install_momentum_badge_html,
+    )
+    from realtime_v2.html_mobile_view_patch import (
+        install as install_mobile_view_html,
+    )
+    from realtime_v2.html_mobile_top_status_patch import (
+        install as install_mobile_top_status_html,
+    )
+    from realtime_v2.html_horizontal_daily_candle_patch import (
+        install as install_horizontal_daily_candle_html,
+    )
 
     install_metric_restore(base)
+    install_rest_live_metrics(base)
+    install_rest_live_metrics_aftermarket()
+    install_before_market_backfill()
+    install_rest_live_metric_metadata(base)
+    install_rest_live_metrics_stage2_fix(base)
+    install_large_trade_stage4(base)
+    install_strength5_only()
+    install_realtime_strength_ws(base)
+    install_realtime_strength_ws_coalesce(base)
+    realtime_strength_module._read_config = read_live_metric_config
+
+    def execution_ws_phase(config):
+        phase = market_metric_phase(config=config)
+        if phase in {
+            "premarket",
+            "opening_call",
+            "opening_burst",
+            "regular",
+            "closing_call",
+            "after_wait",
+            "aftermarket",
+        }:
+            return phase
+        return "outside"
+
+    realtime_strength_module._session_phase = execution_ws_phase
+    install_realtime_strength_ws_top20(base)
+    install_metric_provenance(base)
+    install_market_metric_session_manager(base)
+    install_metric_state_overlay(base)
+    install_six_metric_runtime_opt()
+    install_six_metric_lifecycle(base)
+    install_six_metric_output_guard(base)
+    install_five_metric_display_policy(base)
+    install_aux_metric_runtime_policy(base)
+    install_approved_minute_pipeline(base)
+    install_approved_minute_runtime_fix(base)
+    install_approved_minute_safety(base)
+    install_approved_minute_rollover_guard(base)
+    install_execution_strength_diagnostics(base)
+    install_momentum_badge_policy(base)
+
+    # Market-supply hold is optional context protection. It must never block the
+    # remaining HTML/mobile patches if its own installation fails.
+    _install_market_supply_hold_fail_open(base)
+
+    install_html_null_metric()
+    install_execution_strength_label()
+    install_approved_minute_metrics_html()
+    install_large_trade_quality_html()
+    install_opening_render_guard()
+    install_momentum_badge_html()
+    install_mobile_view_html()
+    install_mobile_top_status_html()
+    install_horizontal_daily_candle_html()
+
+    # Remove a stale outer fail-open report after the complete chain succeeds.
+    _clear_optional_patch_error(base, "tr_singleflight_patch_error.txt")

@@ -12,12 +12,15 @@ $Python32 = "C:\Users\myjay\AppData\Local\Programs\Python\Python310-32\python.ex
 $WorkerPidFile = Join-Path $RuntimeDir "worker64.pid"
 $CollectorPidFile = Join-Path $RuntimeDir "collector32.pid"
 $ContextPidFile = Join-Path $RuntimeDir "context_snapshot_writer.pid"
+$ContextOwnerStatusFile = Join-Path $RuntimeDir "context_owner_status.json"
+$ContextLauncher = Join-Path $ProjectRoot "scripts\start_context_singleflight.ps1"
 $WorkerUrl = "http://127.0.0.1:8765/api/v2/health"
 $SnapshotUrl = "http://127.0.0.1:8765/api/v2/snapshot?limit=1"
 $BoardUrl = "http://127.0.0.1:8765/"
 $OldLauncher = Join-Path $ProjectRoot "stockboard_v2_live.cmd"
 $UniverseFile = Join-Path $RuntimeDir "universe.json"
 $DoctorReport = Join-Path $RuntimeDir "large_doctor_report.txt"
+$ContextWriterPattern = '(?i)realtime_v2[\\.]context_snapshot_writer(?:_(?:base|singleflight|portable(?:_v2)?))?(?:\.py)?'
 
 Set-Location -LiteralPath $ProjectRoot
 
@@ -115,6 +118,25 @@ function Stop-Port([int]$Port) {
     }
 }
 
+function Get-ContextWriterRows {
+    try {
+        return @(
+            Get-CimInstance Win32_Process -ErrorAction Stop |
+                Where-Object {
+                    $name = [string]$_.Name
+                    $commandLine = [string]$_.CommandLine
+                    if ($name -notmatch '^(?i)python(w)?\.exe$' -or -not $commandLine) {
+                        return $false
+                    }
+                    return $commandLine -match $ContextWriterPattern
+                } |
+                Select-Object ProcessId, Name, CommandLine
+        )
+    } catch {
+        return @()
+    }
+}
+
 function Stop-KnownV2Processes {
     $patterns = @(
         "realtime_v2\collector32_large_bidask.py",
@@ -125,7 +147,6 @@ function Stop-KnownV2Processes {
         "realtime_v2\worker64_guarded_large_hotfix.py",
         "realtime_v2\worker64_guarded.py",
         "realtime_v2\worker64.py",
-        "realtime_v2\context_snapshot_writer.py",
         "scripts\stockboard_kiwoom_link_v1.ahk"
     )
     try {
@@ -144,12 +165,16 @@ function Stop-KnownV2Processes {
     } catch {
         $rows = @()
     }
+    $rows += @(Get-ContextWriterRows)
+    $seen = @{}
     foreach ($row in $rows) {
         $pidNumber = [int]$row.ProcessId
-        if ($pidNumber -gt 0 -and $pidNumber -ne $PID) {
-            Write-Host "Stopping v2 process PID=$pidNumber NAME=$($row.Name)"
-            Stop-Process -Id $pidNumber -Force -ErrorAction SilentlyContinue
+        if ($pidNumber -le 0 -or $pidNumber -eq $PID -or $seen.ContainsKey($pidNumber)) {
+            continue
         }
+        $seen[$pidNumber] = $true
+        Write-Host "Stopping v2 process PID=$pidNumber NAME=$($row.Name)"
+        Stop-Process -Id $pidNumber -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -192,6 +217,7 @@ function Stop-V2 {
     Remove-Item -LiteralPath $WorkerPidFile -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $CollectorPidFile -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $ContextPidFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $ContextOwnerStatusFile -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 700
     Report-OpstarterState "after_stop_no_force_kill"
 }
@@ -304,6 +330,17 @@ function Build-Universe([string]$Python64) {
     throw "build_universe failed with exit code $exitCode; live build and validated cached fallback are both unavailable"
 }
 
+function Start-VerifiedContextWriter {
+    if (-not (Test-Path -LiteralPath $ContextLauncher)) {
+        throw "Verified context launcher not found: $ContextLauncher"
+    }
+    Write-Step "Starting verified portable v2 context writer"
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ContextLauncher
+    if ($LASTEXITCODE -ne 0) {
+        throw "Verified portable v2 context writer failed with exit code $LASTEXITCODE"
+    }
+}
+
 function Start-V2([bool]$FastOpen) {
     Ensure-RuntimeDir
     $python64 = Resolve-Python64
@@ -315,24 +352,13 @@ function Start-V2([bool]$FastOpen) {
     Write-Host "PYTHON32_BITS=$(Get-PythonBits $Python32)"
     Build-Universe $python64
 
+    Start-VerifiedContextWriter
+
     $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
     $workerOut = Join-Path $RuntimeDir "worker64_large_$stamp.out.log"
     $workerErr = Join-Path $RuntimeDir "worker64_large_$stamp.err.log"
     $collectorOut = Join-Path $RuntimeDir "collector32_large_$stamp.out.log"
     $collectorErr = Join-Path $RuntimeDir "collector32_large_$stamp.err.log"
-    $contextOut = Join-Path $RuntimeDir "context_snapshot_$stamp.out.log"
-    $contextErr = Join-Path $RuntimeDir "context_snapshot_$stamp.err.log"
-
-    Write-Step "Starting low-priority context snapshot writer"
-    $context = Start-Process `
-        -FilePath $python64 `
-        -ArgumentList @("realtime_v2\context_snapshot_writer.py", "--interval-sec", "30", "--ohlc-bootstrap") `
-        -WorkingDirectory $ProjectRoot `
-        -WindowStyle Hidden `
-        -RedirectStandardOutput $contextOut `
-        -RedirectStandardError $contextErr `
-        -PassThru
-    Set-Content -LiteralPath $ContextPidFile -Value $context.Id -Encoding ASCII
 
     Write-Step "Starting 64-bit worker"
     $worker = Start-Process `
@@ -414,10 +440,21 @@ function Start-V2([bool]$FastOpen) {
     Write-Host "Open $BoardUrl"
 }
 
+function Get-ContextOwnerStatus {
+    if (-not (Test-Path -LiteralPath $ContextOwnerStatusFile)) { return $null }
+    try {
+        return Get-Content -LiteralPath $ContextOwnerStatusFile -Raw | ConvertFrom-Json
+    } catch {
+        return $null
+    }
+}
+
 function Show-Status {
     Ensure-RuntimeDir
     $state = Get-CollectorLoginState
     $queue = $state.Collector.sender_stats.pending_total_count
+    $contextRows = @(Get-ContextWriterRows)
+    $contextOwner = Get-ContextOwnerStatus
     [pscustomobject]@{
         CollectorPid = $state.CollectorPid
         CollectorAlive = $state.CollectorAlive
@@ -431,6 +468,10 @@ function Show-Status {
         WorkerTrades = $state.WorkerTrades
         WorkerLastEventAt = $state.WorkerLastEventAt
         Queue = $queue
+        ContextWriterCount = $contextRows.Count
+        ContextWriterOwnerPid = $contextOwner.context_writer_owner_pid
+        ContextWriterOwnerModule = $contextOwner.context_writer_owner_module
+        LegacyContextWriterDetected = $contextOwner.legacy_context_writer_detected
         LastError = $state.LastError
     } | Format-List
     Report-OpstarterState "status_only_no_force_kill"
@@ -456,6 +497,15 @@ function Invoke-Doctor {
         "RealDataLastAt", "WorkerTrades", "WorkerLastEventAt", "LastError"
     )) {
         Add-Line "$name=$($state.$name)"
+    }
+    $contextRows = @(Get-ContextWriterRows)
+    $contextOwner = Get-ContextOwnerStatus
+    Add-Line "ContextWriterCount=$($contextRows.Count)"
+    Add-Line "ContextWriterOwnerPid=$($contextOwner.context_writer_owner_pid)"
+    Add-Line "ContextWriterOwnerModule=$($contextOwner.context_writer_owner_module)"
+    Add-Line "LegacyContextWriterDetected=$($contextOwner.legacy_context_writer_detected)"
+    foreach ($row in $contextRows) {
+        Add-Line "ContextWriter PID=$($row.ProcessId) COMMAND=$($row.CommandLine)"
     }
     foreach ($pattern in @("worker64_large_*.err.log", "collector32_large_*.out.log", "collector32_large_*.err.log")) {
         $file = Get-ChildItem -Path $RuntimeDir -Filter $pattern -ErrorAction SilentlyContinue |

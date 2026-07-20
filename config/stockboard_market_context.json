@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "market_supply_hold": {
+    "enabled": true,
+    "candidate_paths": [
+      "data/runtime/stockboard_v2/market_supply.json",
+      "data/runtime/market_supply.json"
+    ],
+    "required_markets": [
+      "kospi",
+      "kosdaq"
+    ],
+    "persist_filename": "market_supply_last_good_{trading_date}.json",
+    "allow_previous_until_current_valid": true,
+    "replace_only_with_valid_current_day": true
+  }
+}

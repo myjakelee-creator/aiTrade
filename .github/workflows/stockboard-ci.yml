@@ -1,0 +1,171 @@
+name: StockBoard CI
+
+on:
+  pull_request:
+    branches:
+      - main
+      - hot-priority-integrated-20260630
+      - fix/restore-stable-collector-20260713
+  push:
+    branches:
+      - main
+      - hot-priority-integrated-20260630
+      - "fix/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stockboard-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-regression:
+    name: Windows Python regression
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          architecture: "x64"
+
+      - name: Show Python environment
+        shell: pwsh
+        run: |
+          python --version
+          python -c "import struct; print('python_bits=', struct.calcsize('P') * 8)"
+
+      - name: Install CI dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest websockets websocket-client
+
+      - name: Verify Windows PowerShell dependency auto-recovery
+        shell: pwsh
+        run: |
+          $python64 = (Get-Command python).Source
+          python -m pip uninstall -y websockets
+          $env:STOCKBOARD_PYTHON64 = $python64
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\stockboard_v2_python64_dependencies.ps1
+          if ($LASTEXITCODE -ne 0) {
+            throw "dependency bootstrap failed with exit code $LASTEXITCODE"
+          }
+          python -c "from websockets.sync.client import connect; print('dependency_bootstrap_verified')"
+
+      - name: Check Python syntax
+        shell: pwsh
+        run: |
+          python -m py_compile `
+            realtime_v2\context_snapshot_writer_singleflight.py `
+            realtime_v2\context_snapshot_writer_portable.py `
+            realtime_v2\context_snapshot_writer_portable_v2.py `
+            realtime_v2\context_snapshot_retry_patch.py `
+            realtime_v2\execution_strength_alias_patch.py `
+            realtime_v2\worker_execution_strength_diagnostics_patch.py `
+            realtime_v2\momentum_badge_engine.py `
+            realtime_v2\worker_momentum_badge_policy_patch.py `
+            realtime_v2\worker_momentum_accuracy_patch.py `
+            realtime_v2\worker_momentum_accuracy_stage_bridge.py `
+            realtime_v2\worker_board_trading_date_guard.py `
+            realtime_v2\worker_portable_cache_sync_patch.py `
+            realtime_v2\worker_portable_rebuild_status_patch.py `
+            realtime_v2\worker_market_metric_session_manager.py `
+            realtime_v2\worker_market_supply_hold_patch.py `
+            realtime_v2\worker_market_supply_hold_runtime_fix.py `
+            realtime_v2\worker_metric_state_overlay_patch.py `
+            realtime_v2\worker_five_metric_display_policy.py `
+            realtime_v2\worker_aux_metric_runtime_policy.py `
+            realtime_v2\worker_approved_minute_pipeline.py `
+            realtime_v2\worker_approved_minute_pipeline_runtime_fix.py `
+            realtime_v2\worker_approved_minute_pipeline_safety.py `
+            realtime_v2\worker_approved_minute_rollover_guard.py `
+            realtime_v2\worker_minute_value_hold_patch.py `
+            realtime_v2\worker_momentum_1m_patch.py `
+            realtime_v2\worker_tr_singleflight_patch.py `
+            realtime_v2\worker_metric_provenance_patch.py `
+            realtime_v2\worker_realtime_strength_ws_top20_patch.py `
+            realtime_v2\worker_strength5_only_patch.py `
+            realtime_v2\worker_six_metric_lifecycle_patch.py `
+            realtime_v2\worker_six_metric_output_guard.py `
+            realtime_v2\html_approved_minute_metrics_patch.py `
+            realtime_v2\html_momentum_badge_patch.py `
+            realtime_v2\html_mobile_view_patch.py `
+            realtime_v2\html_mobile_top_status_patch.py `
+            realtime_v2\html_portable_rebuild_status_patch.py `
+            realtime_v2\html_horizontal_daily_candle_patch.py `
+            realtime_v2\html_large_trade_quality_patch.py `
+            realtime_v2\html_opening_render_guard_patch.py
+
+      - name: Check doctor and launcher PowerShell syntax
+        shell: pwsh
+        run: |
+          $doctor = Get-Content -LiteralPath .\scripts\stockboard_execution_strength_doctor.ps1 -Raw
+          [void][scriptblock]::Create($doctor)
+          $context = Get-Content -LiteralPath .\scripts\start_context_singleflight.ps1 -Raw
+          [void][scriptblock]::Create($context)
+          $safe = Get-Content -LiteralPath .\scripts\stockboard_v2_large_safe.ps1 -Raw
+          [void][scriptblock]::Create($safe)
+          Write-Host "doctor_context_and_single_owner_launcher_syntax_verified"
+
+      - name: Run StockBoard targeted tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force test-results | Out-Null
+          python -m pytest -q `
+            tests\test_context_market_supply_trading_date.py `
+            tests\test_context_snapshot_writer_portable.py `
+            tests\test_context_snapshot_writer_portable_v2.py `
+            tests\test_context_snapshot_retry_patch.py `
+            tests\test_context_single_owner_launcher.py `
+            tests\test_execution_strength_source_separation.py `
+            tests\test_worker_execution_strength_diagnostics.py `
+            tests\test_momentum_badge_engine.py `
+            tests\test_worker_momentum_badge_policy.py `
+            tests\test_worker_momentum_accuracy_patch.py `
+            tests\test_worker_board_trading_date_guard.py `
+            tests\test_worker_portable_cache_sync.py `
+            tests\test_worker_portable_rebuild_status.py `
+            tests\test_worker_market_metric_session_manager.py `
+            tests\test_worker_market_supply_hold.py `
+            tests\test_worker_market_supply_hold_runtime_fix.py `
+            tests\test_worker_metric_state_overlay.py `
+            tests\test_worker_five_metric_display_policy.py `
+            tests\test_worker_aux_metric_runtime_policy.py `
+            tests\test_worker_approved_minute_pipeline.py `
+            tests\test_worker_minute_value_hold_zero_cleanup.py `
+            tests\test_worker_approved_minute_pipeline_safety.py `
+            tests\test_worker_approved_minute_rollover_guard.py `
+            tests\test_worker_momentum_1m.py `
+            tests\test_momentum_rollover_integration.py `
+            tests\test_html_momentum_full_chain.py `
+            tests\test_html_mobile_view.py `
+            tests\test_html_mobile_top_status.py `
+            tests\test_html_portable_rebuild_status.py `
+            tests\test_html_horizontal_daily_candle.py `
+            tests\test_worker_metric_session_alignment.py `
+            tests\test_worker_rest_live_metrics_aftermarket.py `
+            tests\test_worker_six_metric_lifecycle.py `
+            tests\test_worker_six_metric_runtime_guards.py `
+            tests\test_worker_large_trade_stage4.py `
+            tests\test_html_metric_display_patches.py `
+            tests\test_worker_realtime_strength_ws.py `
+            tests\test_worker_rest_live_metrics_patch.py `
+            tests\test_tr_singleflight.py `
+            --junitxml=test-results\pytest.xml
+
+      - name: Upload pytest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stockboard-pytest-results
+          path: test-results
+          retention-days: 14
+          if-no-files-found: warn

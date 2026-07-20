@@ -20,12 +20,13 @@ SetBatchLines, -1
 ; - Never focus HTS/Edit6.
 ; - Never send keys to the foreground window.
 ; - Write the code only to one verified Edit6 HWND.
+; - If multiple Edit6 controls exist, select only a unique highest-scoring visible HTS main window.
 ; - Enter is posted only to that Edit6 HWND.
 ; - After a verified HTS linkage, replace the StockBoard command in Clipboard with the plain 6-digit code.
 ; - Suppress the bridge's own Clipboard write so the raw-code fallback cannot send the same code twice.
 ; - After HTS linkage, reactivate the previous browser/page window so ArrowUp/Down keeps working.
 ; - Clipboard can be busy while Chrome/Windows owns it; retry briefly and skip the tick instead of crashing.
-; - Do not compare launcher PID with the elevated AHK PID.  RunAs can report a different PID.
+; - Do not compare launcher PID with the elevated AHK PID. RunAs can report a different PID.
 ; - Exit voluntarily only when an explicit stop flag exists.
 
 TargetControl := "Edit6"
@@ -73,8 +74,6 @@ WatchClipboardCommand:
     if (!ParseStockCommand(current, commandId, code, parseMode))
         return
 
-    ; A successful bridge operation writes the plain code back to Clipboard.
-    ; Do not treat that bridge-owned write as a new raw-code command.
     if (parseMode = "raw_code"
         && code = LastBridgeClipboardCode
         && A_TickCount <= SuppressBridgeClipboardUntil)
@@ -91,7 +90,6 @@ WatchClipboardCommand:
 
         clipboardNote := "clipboard unchanged"
         if (StoreSentCodeInClipboard) {
-            ; Set suppression before writing so a timer interruption cannot resend it.
             LastBridgeClipboardCode := code
             SuppressBridgeClipboardUntil := A_TickCount + 2000
             if (SafeWriteClipboard(code)) {
@@ -173,8 +171,6 @@ ParseStockCommand(rawText, ByRef commandId, ByRef code, ByRef parseMode) {
 SendCodeToKiwoom(code, ByRef usedSpec, ByRef message) {
     global SendEnterAfterSet
 
-    ; StockBoard/Chrome should be the active window at click or Arrow navigation time.
-    ; Keep that hwnd and restore it after the HTS control-only operation.
     WinGet, previousHwnd, ID, A
 
     target := FindSingleTargetControl(usedSpec, message)
@@ -231,11 +227,9 @@ PostEnterToEdit(controlHwnd) {
     if (!controlHwnd)
         return false
 
-    ; VK_RETURN=0x0D.  Post only to the verified Edit6 HWND.
-    ; Do not activate HTS and do not move browser focus.
-    PostMessage, 0x100, 0x0D, 0x001C0001,, ahk_id %controlHwnd%  ; WM_KEYDOWN
+    PostMessage, 0x100, 0x0D, 0x001C0001,, ahk_id %controlHwnd%
     Sleep, 20
-    PostMessage, 0x101, 0x0D, 0xC01C0001,, ahk_id %controlHwnd%  ; WM_KEYUP
+    PostMessage, 0x101, 0x0D, 0xC01C0001,, ahk_id %controlHwnd%
     return true
 }
 
@@ -251,14 +245,12 @@ RestorePreviousWindow(previousHwnd) {
         WinActivate, ahk_id %previousHwnd%
         WinWaitActive, ahk_id %previousHwnd%,, 0.35
 
-        ; Chrome/Edge renderer focus is required for page-level ArrowUp/ArrowDown.
         ControlGet, chromeRenderer, Hwnd,, Chrome_RenderWidgetHostHWND1, ahk_id %previousHwnd%
         if (chromeRenderer) {
             ControlFocus,, ahk_id %chromeRenderer%
             continue
         }
 
-        ; Harmless fallback for embedded browser controls.
         ControlGet, ieRenderer, Hwnd,, Internet Explorer_Server1, ahk_id %previousHwnd%
         if (ieRenderer) {
             ControlFocus,, ahk_id %ieRenderer%
@@ -277,14 +269,15 @@ FindSingleTargetControl(ByRef usedSpec, ByRef message) {
         if (tried != "")
             tried .= ", "
         tried .= hwnd
-
         if (!hwnd)
             continue
 
         ControlGet, controlHwnd, Hwnd,, %TargetControl%, ahk_id %hwnd%
-        if (controlHwnd) {
-            matches.Push({window: hwnd, control: controlHwnd})
-        }
+        if (!controlHwnd)
+            continue
+
+        score := ScoreTargetControl(hwnd, controlHwnd, detail)
+        matches.Push({window: hwnd, control: controlHwnd, score: score, detail: detail})
     }
 
     if (matches.Length() = 0) {
@@ -293,20 +286,75 @@ FindSingleTargetControl(ByRef usedSpec, ByRef message) {
         return 0
     }
 
-    if (matches.Length() > 1) {
+    bestScore := -999999
+    bestIndex := 0
+    bestCount := 0
+    summaries := ""
+    for index, item in matches {
+        if (summaries != "")
+            summaries .= " | "
+        summaries .= item.window . ":" . item.score . ":" . item.detail
+        if (item.score > bestScore) {
+            bestScore := item.score
+            bestIndex := index
+            bestCount := 1
+        } else if (item.score = bestScore) {
+            bestCount += 1
+        }
+    }
+
+    if (bestIndex = 0 || bestCount != 1) {
         usedSpec := ""
-        message := "Target Edit6 ambiguous: " . matches.Length() . " controls. No keys sent."
+        message := "Target Edit6 ambiguous after scoring. No keys sent. candidates=" . summaries
         return 0
     }
 
-    usedSpec := "hwnd " . matches[1].window . " / " . TargetControl . " " . matches[1].control
-    return matches[1]
+    selected := matches[bestIndex]
+    usedSpec := "hwnd " . selected.window . " / " . TargetControl . " " . selected.control . " / score " . selected.score
+    message := "selected unique highest score / " . selected.detail
+    return selected
+}
+
+ScoreTargetControl(windowHwnd, controlHwnd, ByRef detail) {
+    score := 0
+    WinGetClass, className, ahk_id %windowHwnd%
+    WinGet, processName, ProcessName, ahk_id %windowHwnd%
+    WinGetTitle, titleText, ahk_id %windowHwnd%
+    WinGet, minMax, MinMax, ahk_id %windowHwnd%
+    WinGetPos, winX, winY, winW, winH, ahk_id %windowHwnd%
+    ControlGet, isVisible, Visible,,, ahk_id %controlHwnd%
+    ControlGet, isEnabled, Enabled,,, ahk_id %controlHwnd%
+
+    if (className = "_NKHeroMainClass")
+        score += 1200
+    else if (className = "NHeroMainClass")
+        score += 1100
+
+    if (processName = "nkre.exe")
+        score += 600
+    if InStr(titleText, Chr(0xC601) . Chr(0xC6C5) . Chr(0xBB38))
+        score += 350
+    if (isVisible)
+        score += 180
+    if (isEnabled)
+        score += 120
+    if (minMax != -1)
+        score += 60
+
+    areaScore := Floor((winW * winH) / 20000)
+    if (areaScore > 250)
+        areaScore := 250
+    if (areaScore > 0)
+        score += areaScore
+
+    detail := "class=" . className . ",exe=" . processName . ",title=" . titleText . ",visible=" . isVisible . ",enabled=" . isEnabled . ",minmax=" . minMax . ",size=" . winW . "x" . winH
+    return score
 }
 
 CandidateHtsWindows() {
     heroTitle := Chr(0xC601) . Chr(0xC6C5) . Chr(0xBB38)
     heroTitle4 := heroTitle . "4"
-    specs := ["ahk_class _NKHeroMainClass", "ahk_class NHeroMainClass", heroTitle4, heroTitle]
+    specs := ["ahk_class _NKHeroMainClass", "ahk_class NHeroMainClass", "ahk_exe nkre.exe", heroTitle4, heroTitle]
     result := []
     seen := {}
 

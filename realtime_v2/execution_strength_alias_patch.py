@@ -3,60 +3,103 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from realtime_v2.common import now_text, to_number
+PATCH_VERSION = "execution_strength_source_separation_v1"
+TRUSTED_EXECUTION_SOURCES = frozenset(
+    {
+        "kiwoom_rest_ws_0b_fid228",
+        "kiwoom_rest_ws_0b_fid228_close_hold",
+    }
+)
+EXECUTION_FIELDS = (
+    "execution_strength",
+    "last_valid_execution_strength",
+    "ui_execution_strength",
+    "execution_strength_received_at",
+    "execution_strength_updated_at",
+    "ui_execution_strength_observed_at",
+    "execution_strength_source_time",
+    "execution_strength_exchange",
+    "execution_strength_market_phase",
+    "execution_strength_trade_price",
+    "execution_strength_source",
+    "execution_strength_status",
+    "execution_source_trading_date",
+    "ui_execution_source_trading_date",
+    "_session_hold_execution_date",
+)
 
 
-def _positive(value: Any) -> float | None:
-    number = to_number(value)
-    if number is None or float(number) <= 0:
-        return None
-    return round(float(number), 4)
+def execution_source_trusted(values: dict[str, Any] | None) -> bool:
+    if not isinstance(values, dict):
+        return False
+    source = str(values.get("execution_strength_source") or "").strip().lower()
+    return source in TRUSTED_EXECUTION_SOURCES
+
+
+def sanitize_execution_values(values: dict[str, Any] | None) -> dict[str, Any]:
+    """Remove legacy opt10046 aliases while preserving independent 5-minute strength."""
+
+    result = deepcopy(values) if isinstance(values, dict) else {}
+    if execution_source_trusted(result):
+        return result
+    for key in EXECUTION_FIELDS:
+        result.pop(key, None)
+    return result
+
+
+def _install_rollover_source_guard() -> None:
+    import realtime_v2.worker_approved_minute_rollover_guard as rollover
+
+    original = getattr(rollover, "_approved_ui_fallback", None)
+    if not callable(original) or getattr(
+        original,
+        "_stockboard_execution_source_guard_installed",
+        False,
+    ):
+        return
+
+    def trusted_fallback(source: dict[str, Any]) -> dict[str, Any]:
+        return original(sanitize_execution_values(source))
+
+    trusted_fallback._stockboard_execution_source_guard_installed = True
+    rollover._approved_ui_fallback = trusted_fallback
 
 
 def install(base) -> None:
-    """Expose opt10046's current strength through the standard execution key."""
+    """Disable the legacy opt10046 execution alias and guard holiday restoration.
 
-    state_class = base.State
-    if getattr(state_class, "_stockboard_execution_strength_alias_installed", False):
+    Five-minute strength remains in its own strength_5m lane. Only values carrying the
+    approved realtime 0B/FID228 source may enter the execution-strength lane. This adds
+    no collector, QAx FID, REST request, WebSocket connection, thread or browser work.
+    """
+
+    state_class = getattr(base, "State", None)
+    if state_class is None or getattr(
+        state_class,
+        "_stockboard_execution_strength_source_separation_installed",
+        False,
+    ):
         return
 
-    original_apply = state_class._apply_close_metrics
+    _install_rollover_source_guard()
+    original_init = state_class.__init__
 
-    def apply_close_metrics(self, event: dict[str, Any]) -> None:
-        values = base.merged_event_values(event)
-        instant = _positive(
-            values.get("execution_strength")
-            or values.get("realtime_strength_snapshot")
-        )
-        if instant is None:
-            return original_apply(self, event)
+    def state_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        status = getattr(self, "status", None)
+        lock = getattr(self, "lock", None)
+        values = {
+            "execution_strength_alias_installed": False,
+            "execution_strength_alias_policy": "disabled_opt10046_alias",
+            "execution_strength_source_guard_installed": True,
+            "execution_strength_source_guard_version": PATCH_VERSION,
+            "execution_strength_trusted_sources": sorted(TRUSTED_EXECUTION_SOURCES),
+        }
+        if isinstance(status, dict) and lock is not None:
+            with lock:
+                status.update(values)
+        elif isinstance(status, dict):
+            status.update(values)
 
-        snapshot_at = (
-            values.get("execution_strength_updated_at")
-            or values.get("strength_completed_at")
-            or values.get("strength_snapshot_at")
-            or event.get("ts")
-            or now_text()
-        )
-        next_event = dict(event)
-        next_values = deepcopy(
-            event.get("values") if isinstance(event.get("values"), dict) else {}
-        )
-        next_values.update(
-            {
-                "execution_strength": instant,
-                "last_valid_execution_strength": instant,
-                "execution_strength_updated_at": snapshot_at,
-                "last_valid_strength_at": snapshot_at,
-                "execution_strength_source": (
-                    values.get("execution_strength_source")
-                    or values.get("strength_source")
-                    or "opt10046"
-                ),
-            }
-        )
-        next_event["values"] = next_values
-        return original_apply(self, next_event)
-
-    state_class._apply_close_metrics = apply_close_metrics
-    state_class._stockboard_execution_strength_alias_installed = True
+    state_class.__init__ = state_init
+    state_class._stockboard_execution_strength_source_separation_installed = True

@@ -1,0 +1,267 @@
+{
+  "schema_version": 11,
+  "enabled": true,
+  "rollout_stage": 4,
+  "mode": "kiwoom_rest_lowload_v1",
+  "query_suffix": "_AL",
+  "query_suffix_by_session": {
+    "before_market": "_AL",
+    "premarket": "_AL",
+    "opening_call": "_AL",
+    "opening_burst": "_AL",
+    "regular": "_AL",
+    "closing_call": "_AL",
+    "after_wait": "_AL",
+    "aftermarket": "_AL",
+    "closed": "_AL"
+  },
+  "max_top_codes": 100,
+  "global_min_request_gap_sec": 3.0,
+  "health_stable_sec": 10,
+  "price_stall_guard_sec": 30,
+  "selected_refresh_sec": 5,
+  "loop_sleep_sec": 0.5,
+  "error_backoff_sec": 30,
+  "regular_session": {
+    "start": "09:00",
+    "end": "15:30"
+  },
+  "aftermarket_session": {
+    "start": "15:30",
+    "end": "20:00"
+  },
+  "before_market_session": {
+    "start": "00:00",
+    "end": "08:00"
+  },
+  "opening_window": {
+    "start": "09:00",
+    "end": "09:10"
+  },
+  "approved_minute_pipeline": {
+    "ui_publish_sec": 60,
+    "strength_publish_batch_per_minute": 20,
+    "strength_open_delay_minutes": 5,
+    "hold_until_next_premarket": true,
+    "minute_trade_value_source": "qax_fid14_delta"
+  },
+  "session_manager": {
+    "enabled": true,
+    "scope_max_codes": 100,
+    "opening_burst_minutes": 10,
+    "phase_policies": {
+      "before_market": {
+        "active": true,
+        "scope": 100,
+        "missing_only": true,
+        "require_trade_fresh": false,
+        "min_request_gap_sec": 3.0,
+        "intervals": {
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
+          "strength": {"s1": 21600, "top20": 21600, "top100": 21600},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
+        }
+      },
+      "premarket": {
+        "active": true,
+        "scope": 100,
+        "missing_only": false,
+        "require_trade_fresh": false,
+        "min_request_gap_sec": 3.0,
+        "intervals": {
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
+          "strength": {"s1": 0, "top20": 0, "top100": 0},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
+        }
+      },
+      "opening_call": {
+        "active": true,
+        "scope": 100,
+        "missing_only": false,
+        "require_trade_fresh": false,
+        "min_request_gap_sec": 3.0,
+        "intervals": {
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
+          "strength": {"s1": 0, "top20": 0, "top100": 0},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
+        }
+      },
+      "opening_burst": {
+        "active": true,
+        "scope": 100,
+        "missing_only": false,
+        "require_trade_fresh": true,
+        "min_request_gap_sec": 3.0,
+        "intervals": {
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
+          "strength": {"s1": 300, "top20": 300, "top100": 300},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
+        }
+      },
+      "regular": {
+        "active": true,
+        "scope": 100,
+        "missing_only": false,
+        "require_trade_fresh": true,
+        "min_request_gap_sec": 3.0,
+        "intervals": {
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
+          "strength": {"s1": 300, "top20": 300, "top100": 300},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
+        }
+      },
+      "closing_call": {
+        "active": true,
+        "scope": 100,
+        "missing_only": false,
+        "require_trade_fresh": true,
+        "min_request_gap_sec": 3.0,
+        "intervals": {
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
+          "strength": {"s1": 300, "top20": 300, "top100": 300},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
+        }
+      },
+      "after_wait": {
+        "active": true,
+        "scope": 100,
+        "missing_only": false,
+        "require_trade_fresh": false,
+        "min_request_gap_sec": 3.0,
+        "intervals": {
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
+          "strength": {"s1": 300, "top20": 300, "top100": 300},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
+        }
+      },
+      "aftermarket": {
+        "active": true,
+        "scope": 100,
+        "missing_only": false,
+        "require_trade_fresh": false,
+        "min_request_gap_sec": 3.0,
+        "intervals": {
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
+          "strength": {"s1": 300, "top20": 300, "top100": 300},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
+        }
+      },
+      "closed": {
+        "active": true,
+        "scope": 100,
+        "missing_only": true,
+        "require_trade_fresh": false,
+        "min_request_gap_sec": 3.0,
+        "intervals": {
+          "bidask": {"s1": 0, "top20": 0, "top100": 0},
+          "strength": {"s1": 21600, "top20": 21600, "top100": 21600},
+          "large_trade": {"s1": 0, "top20": 0, "top100": 0}
+        }
+      },
+      "weekend": {"active": false, "scope": 0},
+      "holiday": {"active": false, "scope": 0},
+      "outside": {"active": false, "scope": 0}
+    }
+  },
+  "realtime_strength_ws": {
+    "stage": 2,
+    "enabled": true,
+    "scope": "top100",
+    "max_symbols": 100,
+    "url": "wss://api.kiwoom.com:10000/api/dostk/websocket",
+    "type": "0B",
+    "strength_field": "228",
+    "signed_trade_qty_field": "15",
+    "cumulative_volume_field": "13",
+    "time_field": "20",
+    "exchange_field": "9081",
+    "group_no": "41",
+    "apply_interval_ms": 1000,
+    "ui_publish_sec": 60,
+    "stale_after_sec": 120,
+    "selection_refresh_sec": 60,
+    "reconnect_backoff_sec": 10,
+    "connect_timeout_sec": 10,
+    "receive_timeout_sec": 1
+  },
+  "realtime_orderbook_ws": {
+    "enabled": true,
+    "type": "0D",
+    "group_no": "42",
+    "rotation_symbols": 20,
+    "rotation_sec": 12,
+    "ui_publish_sec": 60,
+    "total_ask_field": "121",
+    "total_bid_field": "125",
+    "best_ask_field": "27",
+    "best_bid_field": "28",
+    "no_event_disable_after_sec": 180,
+    "fallback_policy": "disable_without_rest_fallback"
+  },
+  "six_metric_lifecycle": {
+    "enabled": true,
+    "groups": [
+      "amount_ratio",
+      "orderbook",
+      "execution",
+      "strength5",
+      "program",
+      "large_trade"
+    ],
+    "snapshot_file": "six_metric_lifecycle.json",
+    "save_interval_sec": 5,
+    "closed_display_until": "next_premarket",
+    "active_session_policy": "current_trading_date_only",
+    "closed_session_policy": "last_completed_trading_date_only",
+    "unknown_date_policy": "hide",
+    "missing_numeric_policy": "dash_not_zero",
+    "snapshot_metric_retention_policy": "hold_current_trading_date_until_successful_refresh"
+  },
+  "metrics": {
+    "bidask": {
+      "stage": 1,
+      "enabled": false,
+      "api_id": "ka10004",
+      "path": "/api/dostk/mrkcond",
+      "usage": "closed_diagnostic_only"
+    },
+    "strength": {
+      "stage": 3,
+      "purpose": "5분·20분·60분 강도 전용; 100종목 300초 순환",
+      "strength_5m_apply_stage": 3,
+      "api_id": "ka10046",
+      "path": "/api/dostk/mrkcond"
+    },
+    "large_trade": {
+      "stage": 4,
+      "enabled": false,
+      "api_id": "ka10055",
+      "path": "/api/dostk/stkinfo",
+      "threshold_krw": 50000000,
+      "first_page_only": false,
+      "baseline_first_response": false,
+      "usage": "gap_reconciliation_only"
+    }
+  },
+  "performance_contract": {
+    "price_collector_changes": 0,
+    "new_qax_processes": 0,
+    "new_realtime_fids": 0,
+    "browser_calculation": false,
+    "single_background_thread": true,
+    "single_request_inflight": true,
+    "display_scope_max_codes": 100,
+    "realtime_aux_ws_connections": 1,
+    "realtime_strength_ws_symbols": 100,
+    "realtime_orderbook_active_symbols": 20,
+    "realtime_orderbook_rotation_sec": 12,
+    "realtime_aux_ui_publish_sec": 60,
+    "strength_rest_requests_per_minute": 20,
+    "strength_ui_publish_batch_per_minute": 20,
+    "snapshot_metric_retention_until_successful_refresh": true,
+    "minute_trade_value_extra_network_requests": 0,
+    "minute_trade_value_extra_qax_fids": 0,
+    "opening_heavy_render_interval_ms": 1000,
+    "opening_rest_scope_max_codes_before_minute_5": 0
+  }
+}

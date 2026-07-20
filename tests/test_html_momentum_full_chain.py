@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from types import SimpleNamespace
+
+import realtime_v2
+from realtime_v2.html_approved_minute_metrics_patch import install as install_minute_html
+from realtime_v2.html_large_trade_quality_patch import install as install_large_quality_html
+from realtime_v2.html_momentum_badge_patch import install as install_momentum_html
+from realtime_v2.html_opening_render_guard_patch import install as install_opening_guard_html
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_actual_stockboard_html_accepts_complete_momentum_patch_chain(monkeypatch):
+    fake_large = SimpleNamespace(_ui_safety_patch=lambda html: html)
+    monkeypatch.setattr(realtime_v2, "worker64_guarded_large", fake_large, raising=False)
+
+    install_minute_html()
+    install_large_quality_html()
+    install_opening_guard_html()
+    install_momentum_html()
+
+    source = (ROOT / "docs" / "stockboard_v2.html").read_text(encoding="utf-8-sig")
+    rendered = fake_large._ui_safety_patch(source)
+
+    assert "STOCKBOARD_V2_APPROVED_MINUTE_METRICS_20260716" in rendered
+    assert "STOCKBOARD_V2_MOMENTUM_GRADE_ALERTS_20260717" in rendered
+    assert "STOCKBOARD_V2_LARGE_TRADE_QUALITY_20260716" in rendered
+    assert "STOCKBOARD_V2_REALTIME_CANDLE_CLOSE_20260716" in rendered
+    assert "label:'모멘텀'" not in rendered
+    assert "momentumGradeHtml(r)" in rendered
+    assert "momentum-alert-strip" in rendered
+    assert "stockboardMomentumAlternate" in rendered
+    assert "close=numeric(r.price??r.trade_price??o?.current??o?.close??r.close)" in rendered
+
+    tooltip_tags = re.findall(r'<[^>]+\s+title="[^"]*"[^>]*>', rendered)
+    assert tooltip_tags
+    non_candle_tooltips = [
+        tag for tag in tooltip_tags if 'class="mini-candle' not in tag
+    ]
+    assert non_candle_tooltips == [], non_candle_tooltips
+    assert "uiZoomToggle.title" not in rendered
+    assert "rowPositionToggle.title" not in rendered
+    assert "el.title=" not in rendered

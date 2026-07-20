@@ -1,0 +1,51 @@
+{
+  "schema_version": 4,
+  "auto_mobile_max_width_px": 760,
+  "mobile_columns": [
+    "rank",
+    "rank_change",
+    "grade",
+    "stock_name",
+    "change_rate",
+    "amount_ratio",
+    "execution_strength",
+    "program_net"
+  ],
+  "mobile_column_default_width_px": {
+    "rank": 46,
+    "rank_change": 52,
+    "grade": 50,
+    "stock_name": 132,
+    "change_rate": 68,
+    "amount_ratio": 62,
+    "execution_strength": 70,
+    "program_net": 68
+  },
+  "mobile_market": {
+    "momentum_alert_page_size": 1,
+    "wrap_us_market": true,
+    "show_all_domestic_columns": true,
+    "market_graph_layout": "1x4"
+  },
+  "mobile_behavior": {
+    "disable_hts_clipboard_link": false,
+    "hide_strategyboard_entry": true,
+    "preserve_themeboard": true,
+    "reload_on_mode_change": true
+  },
+  "mobile_controls": {
+    "preserve_ui_zoom": true,
+    "preserve_column_minimize": true,
+    "enable_column_resize": true,
+    "enable_document_horizontal_scroll": true
+  },
+  "mobile_performance": {
+    "enabled": true,
+    "throughput_metric": "recv_s",
+    "show_stream_ms": true,
+    "show_render_ms": true,
+    "position": "after_candidate_selector",
+    "display_mode": "separate_badges",
+    "wrap": true
+  }
+}
