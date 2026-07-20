@@ -75,6 +75,8 @@ jobs:
             realtime_v2\worker_momentum_accuracy_patch.py `
             realtime_v2\worker_momentum_accuracy_stage_bridge.py `
             realtime_v2\worker_board_trading_date_guard.py `
+            realtime_v2\worker_board_display_continuity_patch.py `
+            realtime_v2\worker_board_display_continuity_safety.py `
             realtime_v2\worker_portable_cache_sync_patch.py `
             realtime_v2\worker_portable_rebuild_status_patch.py `
             realtime_v2\worker_market_metric_session_manager.py `
