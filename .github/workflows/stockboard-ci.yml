@@ -134,6 +134,7 @@ jobs:
             tests\test_worker_momentum_badge_policy.py `
             tests\test_worker_momentum_accuracy_patch.py `
             tests\test_worker_board_trading_date_guard.py `
+            tests\test_worker_board_display_continuity_safety.py `
             tests\test_worker_portable_cache_sync.py `
             tests\test_worker_portable_rebuild_status.py `
             tests\test_worker_market_metric_session_manager.py `
