@@ -23,10 +23,13 @@ def _record_optional_error(base, filename: str, error: Exception) -> None:
 
 
 def install() -> None:
-    """Attach runtime context and momentum accuracy protections to production owners."""
+    """Attach runtime context, board continuity, and momentum protections."""
 
     from realtime_v2 import worker64_guarded as guarded
     from realtime_v2 import worker_board_trading_date_guard as board_guard
+    from realtime_v2.worker_board_display_continuity_patch import (
+        install as install_board_display_continuity,
+    )
     from realtime_v2.worker_portable_rebuild_status_patch import (
         install as install_portable_rebuild_status,
     )
@@ -36,6 +39,7 @@ def install() -> None:
     guard_base = getattr(guarded, "base", None)
     if guard_base is not None:
         board_guard.install(guard_base)
+        install_board_display_continuity(guard_base)
         install_portable_rebuild_status()
         try:
             from realtime_v2.worker_momentum_accuracy_stage_bridge import (
