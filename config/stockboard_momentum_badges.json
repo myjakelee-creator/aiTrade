@@ -5,16 +5,24 @@
   "exit_hold_minutes": 2,
   "fade_minutes": 1,
   "reference_order": ["open", "vwap"],
+  "accuracy": {
+    "require_current_trading_date_open": true,
+    "require_consecutive_cross_candles": true,
+    "require_verified_monotonic_vwap": true,
+    "display_active_only": true,
+    "alert_scope": "current_top100"
+  },
   "display": {
     "replace_grade_badge": true,
     "dual_badge_mode": "alternate",
-    "alternate_interval_ms": 1200
+    "alternate_interval_ms": 1200,
+    "active_only": true
   },
   "top_alert": {
     "enabled": true,
     "page_size": 4,
     "rotate_interval_ms": 1800,
-    "max_items": 300
+    "max_items": 100
   },
   "rules": [
     {

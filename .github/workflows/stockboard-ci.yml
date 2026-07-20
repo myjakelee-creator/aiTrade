@@ -72,6 +72,8 @@ jobs:
             realtime_v2\worker_execution_strength_diagnostics_patch.py `
             realtime_v2\momentum_badge_engine.py `
             realtime_v2\worker_momentum_badge_policy_patch.py `
+            realtime_v2\worker_momentum_accuracy_patch.py `
+            realtime_v2\worker_momentum_accuracy_stage_bridge.py `
             realtime_v2\worker_board_trading_date_guard.py `
             realtime_v2\worker_portable_cache_sync_patch.py `
             realtime_v2\worker_portable_rebuild_status_patch.py `
@@ -127,6 +129,7 @@ jobs:
             tests\test_worker_execution_strength_diagnostics.py `
             tests\test_momentum_badge_engine.py `
             tests\test_worker_momentum_badge_policy.py `
+            tests\test_worker_momentum_accuracy_patch.py `
             tests\test_worker_board_trading_date_guard.py `
             tests\test_worker_portable_cache_sync.py `
             tests\test_worker_portable_rebuild_status.py `

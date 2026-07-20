@@ -72,7 +72,7 @@ def test_market_supply_install_failure_is_fail_open_and_clears_after_recovery(
     assert not error_path.exists()
 
 
-def test_production_entrypoint_keeps_mobile_and_generation_cache_sync_installed():
+def test_production_entrypoint_keeps_mobile_generation_cache_and_momentum_accuracy_installed():
     script = r'''
 import importlib
 from pathlib import Path
@@ -82,12 +82,18 @@ guarded = importlib.import_module("realtime_v2.worker64_guarded")
 large = importlib.import_module("realtime_v2.worker64_guarded_large")
 board_guard = importlib.import_module("realtime_v2.worker_board_trading_date_guard")
 opening = importlib.import_module("realtime_v2.worker_opening_burst_cache_patch")
+accuracy = importlib.import_module("realtime_v2.worker_momentum_accuracy_patch")
+bridge = importlib.import_module("realtime_v2.worker_momentum_accuracy_stage_bridge")
 
 assert production is not None
 assert getattr(guarded, "_market_supply_hold_patch_installed", False) is True
 assert getattr(guarded.base.State, "_stockboard_portable_board_guard_installed", False) is True
 assert getattr(guarded.base.State, "_stockboard_portable_cache_sync_installed", False) is True
 assert getattr(guarded.base.State, "_stockboard_opening_burst_cache_installed", False) is True
+assert getattr(guarded.base.State, "_stockboard_momentum_accuracy_installed", False) is True
+assert getattr(guarded.base.State, "_stockboard_momentum_accuracy_stage_bridge_installed", False) is True
+assert getattr(guarded.base.State, "_stockboard_momentum_accuracy_stage_owner", None) == bridge.PATCH_VERSION
+assert accuracy.PATCH_VERSION == "momentum_accuracy_guard_v1"
 assert board_guard.PORTABLE_PARSER_VERSION == "exact_daily_row_fields_v2"
 assert getattr(opening, "_portable_generation_signature_installed", False) is True
 payload = guarded._runtime_context_payload()
