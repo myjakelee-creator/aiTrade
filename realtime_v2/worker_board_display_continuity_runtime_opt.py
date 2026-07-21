@@ -5,7 +5,7 @@ from __future__ import annotations
 The display-continuity guard needs the previous verified exact-close payload during
 premarket/regular trading, but that payload is immutable for the whole trading day.
 Resolve it once per previous trading date, keep it in memory, and reuse it for every
-snapshot request.  No QAx, FID, REST, WebSocket, thread, timer, or SSE cadence is
+snapshot request. No QAx, FID, REST, WebSocket, thread, timer, or SSE cadence is
 added or changed.
 """
 
@@ -15,8 +15,16 @@ from typing import Any
 
 from realtime_v2.market_session import last_completed_trading_date
 
-PATCH_VERSION = "board_display_continuity_active_cache_v1"
-PAYLOAD_RETRY_SEC = 5.0
+PATCH_VERSION = "board_display_continuity_active_cache_v2"
+PREMARKET_PAYLOAD_RETRY_SEC = 5.0
+REGULAR_PAYLOAD_RETRY_SEC = 300.0
+
+
+def _retry_sec_for_phase(phase: str) -> float:
+    value = str(phase or "").strip().lower()
+    if value in {"premarket", "opening_call", "before_market"}:
+        return PREMARKET_PAYLOAD_RETRY_SEC
+    return REGULAR_PAYLOAD_RETRY_SEC
 
 
 def _ensure_active_cache(guard) -> None:
@@ -28,17 +36,26 @@ def _ensure_active_cache(guard) -> None:
     guard._display_active_fingerprint = ""
     guard._display_active_generation = 0
     guard._display_active_next_retry_mono = 0.0
+    guard._display_active_retry_sec = PREMARKET_PAYLOAD_RETRY_SEC
     guard._display_active_lookup_count = 0
     guard._display_active_file_read_count = 0
     guard._display_active_hit_count = 0
     guard._display_active_last_lookup_ms = None
 
 
-def _active_payload(continuity, guard_module, guard, previous_date: str):
+def _active_payload(
+    continuity,
+    guard_module,
+    guard,
+    previous_date: str,
+    *,
+    retry_sec: float = PREMARKET_PAYLOAD_RETRY_SEC,
+):
     """Return one verified previous-close payload without repeated file I/O."""
 
     _ensure_active_cache(guard)
     previous_date = continuity._date_digits(previous_date)
+    guard._display_active_retry_sec = max(1.0, float(retry_sec))
     cached = getattr(guard, "_display_active_payload", None)
     if (
         previous_date
@@ -66,7 +83,9 @@ def _active_payload(continuity, guard_module, guard, previous_date: str):
     guard._display_active_lookup_count += 1
     candidates: list[Any] = [getattr(guard, "_display_last_good_payload", None)]
 
-    # Disk candidates are read only on a cache miss, normally once per trading day.
+    # Disk candidates are read only on a cache miss. Premarket retries quickly so a
+    # newly completed portable snapshot can appear; regular trading retries rarely
+    # because the board is already current-day LIVE and no close payload is required.
     for path in (
         getattr(guard, "_display_last_good_path", None),
         getattr(guard, "_display_candidate_path", None),
@@ -103,7 +122,7 @@ def _active_payload(continuity, guard_module, guard, previous_date: str):
     if not isinstance(payload, dict):
         guard._display_active_payload_date = previous_date
         guard._display_active_payload = None
-        guard._display_active_next_retry_mono = now_mono + PAYLOAD_RETRY_SEC
+        guard._display_active_next_retry_mono = now_mono + guard._display_active_retry_sec
         return None, "", int(getattr(guard, "_display_active_generation", 0) or 0), "miss"
 
     fingerprint, generation = continuity._remember_verified(
@@ -133,6 +152,10 @@ def _publish_runtime_status(state, guard, cache_status: str, apply_ms: float) ->
                     guard, "_display_active_payload_date", None
                 )
                 or None,
+                "board_display_active_payload_retry_sec": float(
+                    getattr(guard, "_display_active_retry_sec", PREMARKET_PAYLOAD_RETRY_SEC)
+                    or PREMARKET_PAYLOAD_RETRY_SEC
+                ),
                 "board_display_active_payload_lookup_count": int(
                     getattr(guard, "_display_active_lookup_count", 0) or 0
                 ),
@@ -180,6 +203,7 @@ def install(base) -> None:
             guard_module,
             self,
             previous_date,
+            retry_sec=_retry_sec_for_phase(phase),
         )
         if not isinstance(payload, dict):
             self._status(
