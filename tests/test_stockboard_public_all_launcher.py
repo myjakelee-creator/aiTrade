@@ -34,18 +34,32 @@ class StockBoardPublicAllLauncherTests(unittest.TestCase):
         self.assertLess(private, public)
         self.assertIn("127\\.0\\.0\\.1:8767", text)
         self.assertIn("ALL_PUBLIC_READY=True", text)
+        self.assertIn("Start-Process $url", text)
 
-    def test_worker_is_not_restarted_when_already_healthy(self):
+    def test_private_start_is_async_visible_and_reports_progress(self):
         script = ALL_PS1_PATH.read_text(encoding="ascii")
+        self.assertIn("Get-PrivateReadiness", script)
+        self.assertIn("Test-PrivateReady", script)
         self.assertIn("PRIVATE_WORKER_ALREADY_RUNNING=True", script)
-        self.assertIn('Invoke-Cmd $PrivateLauncher @("start-fast")', script)
-        self.assertIn("Wait-Health $PrivateHealthUrl 240", script)
+        self.assertIn("PRIVATE_START_WAIT", script)
+        self.assertIn("Check Alt+Tab for the Kiwoom login window", script)
+        self.assertIn("Start-Process", script)
+        self.assertIn("-FilePath $env:ComSpec", script)
+        self.assertIn("-NoNewWindow", script)
+        self.assertIn("-PassThru", script)
+        self.assertIn("PRIVATE_LAUNCH_PROCESS_PID", script)
+        self.assertIn("PRIVATE_LAUNCH_EXIT_CODE", script)
+        self.assertIn("stockboard_v2_large.cmd start-fast", script)
+        self.assertIn("LoginState -eq \"connected\"", script)
+        self.assertIn("RealRegSucceeded", script)
+        self.assertIn("RegisteredCount -gt 0", script)
+        self.assertNotIn("function Invoke-Cmd", script)
 
     def test_publish_is_noninteractive_and_checks_current_cleanup_contract(self):
         script = ALL_PS1_PATH.read_text(encoding="ascii")
         self.assertIn('$env:STOCKBOARD_PUBLIC_CONFIRM = "PUBLIC"', script)
         self.assertIn(
-            'stockboard_public_chrome_cleanup_v3_20260722',
+            "stockboard_public_chrome_cleanup_v3_20260722",
             script,
         )
         self.assertIn("PUBLIC_GATEWAY_READY=True", script)
@@ -58,8 +72,7 @@ class StockBoardPublicAllLauncherTests(unittest.TestCase):
     def test_powershell_51_variable_before_colon_is_delimited(self):
         script = ALL_PS1_PATH.read_text(encoding="ascii")
         self.assertNotIn("$code:", script)
-        self.assertIn("${code}:", script)
-        self.assertIn("stockboard_public_all_v2_20260722", script)
+        self.assertIn("stockboard_public_all_v3_20260722", script)
 
     def test_public_launcher_opens_canonical_root_url(self):
         script = PUBLIC_PS1_PATH.read_text(encoding="ascii")
