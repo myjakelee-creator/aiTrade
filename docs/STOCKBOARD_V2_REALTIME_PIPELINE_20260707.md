@@ -1,6 +1,6 @@
 # StockBoard v2 실시간 파이프라인
 
-최종 갱신: 2026-07-21 KST
+최종 갱신: 2026-07-21 17:28 KST
 
 이 문서는 StockBoard v2의 실시간 가격 경로, 분 단위 보조지표, 거래일 유지정책과 실전 검증 상태를 기록하는 단일 기준 문서이다. 과거 v0.3.x 구조와 섞지 않는다.
 
@@ -219,17 +219,48 @@ GAP_POSSIBLE     장중 재시작·재접속 공백 가능
 - 초기 구현은 SSE snapshot 요청마다 전일 snapshot 파일 읽기, 187행 fingerprint 계산, 전체 payload deepcopy를 반복해 가격 추종 지연을 유발할 수 있었다.
 - `worker_board_display_continuity_runtime_opt.py`는 직전 완료 거래일 payload를 최초 1회만 검증·메모리 적재한다.
 - 이후 활성장 snapshot은 파일 읽기·fingerprint·payload deepcopy 없이 메모리 payload를 재사용한다.
+- 프리마켓 exact 후보 재조회는 5초, 정규장·애프터마켓 재조회는 300초 간격이다.
 - 전일 hold overlay는 기존처럼 최대 2초당 1회만 수행한다.
-- 진단 상태는 `board_display_active_payload_cache_status`, `board_display_active_payload_file_read_count`, `board_display_active_apply_ms`로 확인한다.
+- 진단 상태는 `board_display_active_payload_cache_status`, `board_display_active_payload_file_read_count`, `board_display_active_payload_retry_sec`, `board_display_active_apply_ms`로 확인한다.
 - 추가 QAx·FID·REST·WebSocket·thread·timer·SSE cadence는 0이다.
 
-수동 데이터 일치 진단:
+### 7.6 `_AL` 가격 순서 보정과 진단 의미
+
+SOR 통합 `_AL` 스트림에서는 거래소별 이벤트가 교차 도착해 FID20과 누적거래대금이 직전 승인값보다 작게 보일 수 있다. 과거에는 이런 이벤트 전체를 폐기해 현재가·등락률 추종이 느려졌다.
+
+현재 동작:
 
 ```text
-stockboard_v2_large.cmd data-doctor
+_AL에서 FID20 역행
+→ 현재가·등락률은 도착순 최신값 적용
+→ FID20·누적거래량·누적거래대금은 직전 단조 증가값 유지
+→ 이벤트 전체 폐기하지 않음
+
+_AL이 아닌 원천에서 FID20 역행
+→ 기존처럼 이벤트 전체 차단
 ```
 
-이 명령은 네트워크 수집을 추가하지 않고 현재 snapshot만 읽어 가격·등락률·거래대금·대금비·잔량비·체결강도·5분강도·프로그램·대량체결의 값, 원천 거래일, freshness와 내부 계산 일치를 CSV/JSON으로 저장한다.
+`trade_field_regression_suppressed_count`는 버린 이벤트 수가 아니라 가격을 살리고 역행 필드만 보류한 횟수다. 실제 장애 판단은 `dropped_trade_count`, collector/worker queue, snapshot/SSE 지연으로 한다.
+
+`price_age_sec`는 전송 지연이 아니라 종목별 마지막 승인 체결 이후 경과시간이다. 따라서 3초 초과 종목을 흐리게 표시하지 않으며 진단도 다음처럼 분리한다.
+
+```text
+Live             당일 실시간 원천 전체
+LiveRecent       최근 3초 내 체결
+NoRecentTrade    당일 실시간이지만 최근 3초 내 체결 없음
+PipelineState    snapshot·queue·drop·collector 연결 기반 HEALTHY/CHECK
+```
+
+수동 진단:
+
+```powershell
+.\stockboard_v2_large.cmd data-doctor
+.\stockboard_v2_large.cmd price-doctor
+```
+
+- `data-doctor`: 현재 snapshot만 읽어 가격·등락률·거래대금·대금비·잔량비·체결강도·5분강도·프로그램의 값·원천·거래일·내부 계산을 CSV/JSON으로 저장한다.
+- `price-doctor`: 사용자가 명시적으로 실행한 순간에만 ka10032를 1회 조회해 StockBoard 현재가·등락률·거래대금을 같은 시점에 비교한다.
+- 두 명령 모두 평상시 background load를 추가하지 않는다.
 
 ## 8. 공통 거래일 유지정책
 
@@ -280,21 +311,24 @@ ka10046                         실제 개장 후 첫 5분 중지
 잔량비                           20종목 순환
 모멘텀                          완료 1분봉에서만 규칙 평가
 모바일                          기존 SSE, 행당 8개 셀만 생성
-표시 연속성 active payload      최초 1회 파일 검증 후 메모리 재사용
+표시 연속성 active payload      프리마켓 5초 / 활성장 300초 재조회, SSE는 메모리 사용
 ```
 
 위험 신호:
 
 ```text
+PipelineState=CHECK
+snapshot age 4초 초과 지속
 collector_q 지속 증가
 worker_q 지속 증가
 drop / logdrop 증가
 stream latency 지속 상승
-stale / top20 lag 증가
 render 70ms 초과 지속
-active payload file_read_count 지속 증가
+active payload file_read_count가 300초 정책보다 빠르게 증가
 active apply ms 지속 상승
 ```
+
+`LastTradeAgeSec`·`NoRecentTrade` 증가는 종목별 무체결을 뜻하며 파이프라인 장애 신호로 사용하지 않는다.
 
 가격 경로가 최우선이며, 문제 발생 시 잔량비 → 5분강도 순으로 중지·지연한다.
 
@@ -313,6 +347,8 @@ active apply ms 지속 상승
 
 ### 10.2 2026-07-21 표시 연속성 실기
 
+프리마켓 전환 첫 실기:
+
 - `board_display_continuity_mode=live_with_previous_close_hold`
 - current trading date `20260721`
 - hold source trading date `20260720`
@@ -321,7 +357,53 @@ active apply ms 지속 상승
 - seed suppressed 52종목
 - 날짜 변경 후 빈 화면 방지 통과
 - 전일 exact 유지 후 당일 종목별 전환 통과
-- 활성장 파일 I/O 제거 보정은 PC 재시작 후 stream·가격 추종 실기 확인 필요
+
+활성장·애프터마켓 장시간 실기:
+
+```text
+PipelineState             HEALTHY
+RowsInspected             30
+Live                      30
+LiveRecent                3
+NoRecentTrade             27
+Unknown                   0
+RatioMismatch             0
+BidAskOK / Wrong          25 / 0
+ExecutionOK / Wrong       30 / 0
+Strength5OK / Wrong       30 / 0
+ProgramOK / Wrong         30 / 0
+CollectorPending          8
+WorkerQueue               0
+WorkerDrop                0
+RealtimeStrengthEvents    3208
+RestMetricsRequests       106
+RestMetricsSuccess        106
+RestMetricsErrors         0
+ActivePayloadRetrySec     300
+ActivePayloadFileReads    4
+```
+
+`price-doctor` 동시 비교:
+
+```text
+ka10032 fetch             276.3ms
+비교 종목                  30
+REST 발견                  30
+가격 완전 일치             22
+최대 가격 차이             2,000원
+최대 등락률 차이           0.13%p
+최대 거래대금 차이율       0.0588%
+```
+
+불일치 방향이 한쪽으로 치우치지 않았고 비교 전후 snapshot 시차가 약 0.9초였으므로 지속적인 가격 지연이 아니라 갱신 순간 차이로 판정한다. 가격 collector와 fast patch는 동결한다.
+
+`TradeFieldSuppressed=10637`은 `_AL` 교차 수신에서 가격을 보존한 횟수이며 같은 시점 `WorkerDrop=0`, queue 정상, `PipelineState=HEALTHY`를 확인했다.
+
+### 10.3 남은 최종 검증
+
+- 자정 이후부터 다음 실제 프리마켓 전까지 2026-07-21 마지막 정상 보드 유지
+- 다음 실제 프리마켓 08:00에서 전일 exact를 지우지 않고 당일 체결 종목부터 순차 LIVE 전환
+- 위 두 시점 통과 후 PR Draft 해제·병합
 
 ## 11. 운영 명령
 
@@ -332,6 +414,7 @@ git switch fix/stockboard-display-continuity-20260721
 git pull --ff-only
 .\stockboard_v2_large.cmd restart-fast
 .\stockboard_v2_large.cmd data-doctor
+.\stockboard_v2_large.cmd price-doctor
 ```
 
-실제 PC 날짜·프리마켓·정규장·재시작 검증 전까지 PR은 Draft로 유지한다.
+정규장·애프터마켓 가격과 보조지표 검증은 완료했다. 자정과 다음 실제 프리마켓 전환 검증 전까지 PR은 Draft로 유지한다.
