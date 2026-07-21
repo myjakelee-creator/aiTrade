@@ -10,15 +10,19 @@ runs `stockboard_v2_large.cmd price-doctor`.
 import argparse
 import csv
 import json
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from kiwoom_data_provider import fetch_trade_value_top100, issue_access_token
 
-ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_DIR = ROOT / "data" / "runtime" / "stockboard_v2"
 DEFAULT_SNAPSHOT_URL = "http://127.0.0.1:8765/api/v2/snapshot?limit=300"
 
