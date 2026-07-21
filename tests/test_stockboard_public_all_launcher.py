@@ -55,6 +55,12 @@ class StockBoardPublicAllLauncherTests(unittest.TestCase):
         self.assertTrue(raw)
         self.assertTrue(all(byte < 128 for byte in raw))
 
+    def test_powershell_51_variable_before_colon_is_delimited(self):
+        script = ALL_PS1_PATH.read_text(encoding="ascii")
+        self.assertNotIn("$code:", script)
+        self.assertIn("${code}:", script)
+        self.assertIn("stockboard_public_all_v2_20260722", script)
+
     def test_public_launcher_opens_canonical_root_url(self):
         script = PUBLIC_PS1_PATH.read_text(encoding="ascii")
         self.assertIn("Start-Process $url | Out-Null", script)
