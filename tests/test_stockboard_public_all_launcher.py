@@ -55,6 +55,13 @@ class StockBoardPublicAllLauncherTests(unittest.TestCase):
         self.assertIn("RegisteredCount -gt 0", script)
         self.assertNotIn("function Invoke-Cmd", script)
 
+    def test_progress_formatting_is_powershell_command_safe(self):
+        script = ALL_PS1_PATH.read_text(encoding="ascii")
+        self.assertIn('$message = (', script)
+        self.assertIn(') -f @(', script)
+        self.assertIn('Write-Host $message', script)
+        self.assertNotIn('Write-Host (\n        "PRIVATE_START_WAIT', script)
+
     def test_publish_is_noninteractive_and_checks_current_cleanup_contract(self):
         script = ALL_PS1_PATH.read_text(encoding="ascii")
         self.assertIn('$env:STOCKBOARD_PUBLIC_CONFIRM = "PUBLIC"', script)
@@ -72,7 +79,7 @@ class StockBoardPublicAllLauncherTests(unittest.TestCase):
     def test_powershell_51_variable_before_colon_is_delimited(self):
         script = ALL_PS1_PATH.read_text(encoding="ascii")
         self.assertNotIn("$code:", script)
-        self.assertIn("stockboard_public_all_v3_20260722", script)
+        self.assertIn("stockboard_public_all_v4_20260722", script)
 
     def test_public_launcher_opens_canonical_root_url(self):
         script = PUBLIC_PS1_PATH.read_text(encoding="ascii")
