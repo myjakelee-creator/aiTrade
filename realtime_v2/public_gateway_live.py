@@ -18,6 +18,7 @@ from realtime_v2 import public_gateway_core as core
 
 GATEWAY_VERSION = "stockboard_public_live_ui_v1_20260721"
 CURRENT_UI_MARKER = "STOCKBOARD_PUBLIC_LIVE_UI_V1_20260721"
+PUBLIC_CHROME_CLEANUP_VERSION = "stockboard_public_chrome_cleanup_v1_20260722"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8767
 DEFAULT_UPSTREAM = "http://127.0.0.1:8765"
@@ -65,7 +66,23 @@ label:has(#candidate-model-selector),
 #throughput,
 #collector-metrics,
 #worker-metrics,
-#lag-metrics { display:none!important; }
+#lag-metrics,
+#copy-status,
+#latency,
+#render-metrics,
+#metric-mode-status,
+#topbar .small { display:none!important; }
+
+#topbar.topbar {
+  height:auto!important;
+  min-height:0!important;
+  max-height:none!important;
+  overflow-y:visible!important;
+  scrollbar-gutter:auto!important;
+}
+
+#topbar .metric-row:empty { display:none!important; }
+
 .public-readonly-badge {
   color:#7c2d12;
   border-color:#fdba74;
@@ -87,8 +104,34 @@ PUBLIC_UI_SCRIPT = """
     badge.textContent='공개 읽기 전용 · 현재 UI';
     status.insertAdjacentElement('afterend',badge);
   }
-  const copy=document.getElementById('copy-status');
-  if(copy) copy.textContent='행 클릭 시 종목코드 복사 · 서버 제어 기능 없음';
+
+  function cleanPublicTopbar(){
+    const topbar=document.getElementById('topbar');
+    if(!topbar) return;
+    ['copy-status','latency','render-metrics','metric-mode-status'].forEach(id=>{
+      const node=document.getElementById(id);
+      if(node) node.remove();
+    });
+    topbar.querySelectorAll('.small').forEach(node=>node.remove());
+    topbar.querySelectorAll('.metric-row').forEach(row=>{
+      const visible=Array.from(row.children).some(child=>{
+        if(!child.isConnected) return false;
+        return getComputedStyle(child).display!=='none';
+      });
+      if(!visible) row.remove();
+    });
+    topbar.style.height='auto';
+    topbar.style.minHeight='0';
+    topbar.style.maxHeight='none';
+    topbar.style.overflowY='visible';
+    topbar.style.scrollbarGutter='auto';
+  }
+
+  cleanPublicTopbar();
+  requestAnimationFrame(cleanPublicTopbar);
+  setTimeout(cleanPublicTopbar,100);
+  setTimeout(cleanPublicTopbar,500);
+
   if(typeof window.sendHtsCommand==='function'){
     window.sendHtsCommand=function(code){
       const text=String(code||'').trim();
@@ -103,7 +146,13 @@ PUBLIC_UI_SCRIPT = """
 """.strip()
 
 
-def _fetch_bytes(url: str, *, accept: str, timeout: float = 5.0, limit: int = MAX_HTML_BYTES) -> tuple[bytes, str]:
+def _fetch_bytes(
+    url: str,
+    *,
+    accept: str,
+    timeout: float = 5.0,
+    limit: int = MAX_HTML_BYTES,
+) -> tuple[bytes, str]:
     request = Request(
         url,
         headers={
@@ -138,10 +187,15 @@ def fetch_current_public_html(upstream: str) -> bytes:
     if missing:
         raise RuntimeError("Current private UI markers missing: " + ", ".join(missing))
 
-    html = html.replace("<title>StockBoard v2 Realtime</title>", "<title>StockBoard v2 Public</title>", 1)
+    html = html.replace(
+        "<title>StockBoard v2 Realtime</title>",
+        "<title>StockBoard v2 Public</title>",
+        1,
+    )
     marker = (
         f"<!-- {CURRENT_UI_MARKER} -->\n"
-        f'<meta name="stockboard-public-gateway-version" content="{GATEWAY_VERSION}">' 
+        f'<meta name="stockboard-public-gateway-version" content="{GATEWAY_VERSION}">\n'
+        f'<meta name="stockboard-public-chrome-cleanup" content="{PUBLIC_CHROME_CLEANUP_VERSION}">'
     )
     if "</head>" in html:
         html = html.replace("</head>", f"{PUBLIC_UI_STYLE}\n{marker}\n</head>", 1)
@@ -162,6 +216,7 @@ class LivePublicDataCache(core.PublicDataCache):
                 "gateway_version": GATEWAY_VERSION,
                 "ui_source": "live_private_worker_html_per_request",
                 "ui_contract": CURRENT_UI_MARKER,
+                "public_chrome_cleanup": PUBLIC_CHROME_CLEANUP_VERSION,
                 "gateway_port": DEFAULT_PORT,
             }
         )
@@ -181,6 +236,10 @@ class LivePublicGatewayHandler(core.PublicGatewayHandler):
         super()._headers()
         self.send_header("X-StockBoard-Public-Version", GATEWAY_VERSION)
         self.send_header("X-StockBoard-Public-UI", "live-private-worker-html")
+        self.send_header(
+            "X-StockBoard-Public-Chrome-Cleanup",
+            PUBLIC_CHROME_CLEANUP_VERSION,
+        )
 
     def _get(self, head: bool):
         path = urlparse(self.path).path
@@ -223,24 +282,45 @@ def _float_env(name: str, default: float, minimum: float, maximum: float) -> flo
 def main() -> int:
     parser = argparse.ArgumentParser(description="StockBoard v2 current-UI public gateway")
     parser.add_argument("--host", default=os.getenv("STOCKBOARD_PUBLIC_HOST", DEFAULT_HOST))
-    parser.add_argument("--port", type=int, default=_int_env("STOCKBOARD_PUBLIC_PORT", DEFAULT_PORT, 1, 65535))
-    parser.add_argument("--upstream", default=os.getenv("STOCKBOARD_PUBLIC_UPSTREAM", DEFAULT_UPSTREAM))
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=_int_env("STOCKBOARD_PUBLIC_PORT", DEFAULT_PORT, 1, 65535),
+    )
+    parser.add_argument(
+        "--upstream",
+        default=os.getenv("STOCKBOARD_PUBLIC_UPSTREAM", DEFAULT_UPSTREAM),
+    )
     parser.add_argument(
         "--snapshot-interval-sec",
         type=float,
-        default=_float_env("STOCKBOARD_PUBLIC_SNAPSHOT_INTERVAL_SEC", 1.0, 0.2, 5.0),
+        default=_float_env(
+            "STOCKBOARD_PUBLIC_SNAPSHOT_INTERVAL_SEC",
+            1.0,
+            0.2,
+            5.0,
+        ),
     )
     parser.add_argument(
         "--context-interval-sec",
         type=float,
-        default=_float_env("STOCKBOARD_PUBLIC_CONTEXT_INTERVAL_SEC", 15.0, 5.0, 120.0),
+        default=_float_env(
+            "STOCKBOARD_PUBLIC_CONTEXT_INTERVAL_SEC",
+            15.0,
+            5.0,
+            120.0,
+        ),
     )
     args = parser.parse_args()
 
     if args.host not in {"127.0.0.1", "localhost", "::1"}:
         raise SystemExit("Public gateway must bind to loopback.")
     parsed = urlparse(args.upstream)
-    if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+    if parsed.scheme != "http" or parsed.hostname not in {
+        "127.0.0.1",
+        "localhost",
+        "::1",
+    }:
         raise SystemExit("Public gateway upstream must be a loopback HTTP URL.")
 
     fetch_current_public_html(args.upstream)
@@ -256,15 +336,36 @@ def main() -> int:
         LivePublicGatewayHandler,
         cache=cache,
         public_html=b"",
-        per_client_rate=_int_env("STOCKBOARD_PUBLIC_REQUESTS_PER_MINUTE", 240, 30, 5000),
-        global_rate=_int_env("STOCKBOARD_PUBLIC_GLOBAL_REQUESTS_PER_MINUTE", 2400, 100, 50000),
-        max_concurrent_requests=_int_env("STOCKBOARD_PUBLIC_MAX_CONCURRENT_REQUESTS", 64, 4, 512),
-        max_stream_clients=_int_env("STOCKBOARD_PUBLIC_MAX_STREAM_CLIENTS", 20, 1, 200),
+        per_client_rate=_int_env(
+            "STOCKBOARD_PUBLIC_REQUESTS_PER_MINUTE",
+            240,
+            30,
+            5000,
+        ),
+        global_rate=_int_env(
+            "STOCKBOARD_PUBLIC_GLOBAL_REQUESTS_PER_MINUTE",
+            2400,
+            100,
+            50000,
+        ),
+        max_concurrent_requests=_int_env(
+            "STOCKBOARD_PUBLIC_MAX_CONCURRENT_REQUESTS",
+            64,
+            4,
+            512,
+        ),
+        max_stream_clients=_int_env(
+            "STOCKBOARD_PUBLIC_MAX_STREAM_CLIENTS",
+            20,
+            1,
+            200,
+        ),
         live_upstream=args.upstream,
     )
     print(
         f"StockBoard public live UI gateway http://{args.host}:{args.port}/ "
-        f"upstream={args.upstream} version={GATEWAY_VERSION}",
+        f"upstream={args.upstream} version={GATEWAY_VERSION} "
+        f"cleanup={PUBLIC_CHROME_CLEANUP_VERSION}",
         flush=True,
     )
     try:
