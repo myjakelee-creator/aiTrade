@@ -19,6 +19,7 @@ from realtime_v2 import public_gateway_core as core
 GATEWAY_VERSION = "stockboard_public_live_ui_v1_20260721"
 CURRENT_UI_MARKER = "STOCKBOARD_PUBLIC_LIVE_UI_V1_20260721"
 PUBLIC_CHROME_CLEANUP_VERSION = "stockboard_public_chrome_cleanup_v1_20260722"
+PUBLIC_ROOT_CONTRACT_VERSION = "stockboard_public_root_no_query_v1_20260722"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8767
 DEFAULT_UPSTREAM = "http://127.0.0.1:8765"
@@ -95,6 +96,10 @@ label:has(#candidate-model-selector),
 PUBLIC_UI_SCRIPT = """
 <script id="stockboard-public-live-ui-script">
 (function(){
+  if(window.location.pathname==='/' && window.location.search){
+    window.history.replaceState(null,'','/');
+  }
+
   const title=document.querySelector('.title');
   if(title) title.textContent='StockBoard v2 Public';
   const status=document.getElementById('status');
@@ -135,7 +140,7 @@ PUBLIC_UI_SCRIPT = """
   if(typeof window.sendHtsCommand==='function'){
     window.sendHtsCommand=function(code){
       const text=String(code||'').trim();
-      if(!/^\\d{6}$/.test(text)) return;
+      if(!/^\d{6}$/.test(text)) return;
       if(typeof writeClipboardText==='function'){
         writeClipboardText(text).catch(()=>{});
       }
@@ -195,7 +200,8 @@ def fetch_current_public_html(upstream: str) -> bytes:
     marker = (
         f"<!-- {CURRENT_UI_MARKER} -->\n"
         f'<meta name="stockboard-public-gateway-version" content="{GATEWAY_VERSION}">\n'
-        f'<meta name="stockboard-public-chrome-cleanup" content="{PUBLIC_CHROME_CLEANUP_VERSION}">'
+        f'<meta name="stockboard-public-chrome-cleanup" content="{PUBLIC_CHROME_CLEANUP_VERSION}">\n'
+        f'<meta name="stockboard-public-root-contract" content="{PUBLIC_ROOT_CONTRACT_VERSION}">'
     )
     if "</head>" in html:
         html = html.replace("</head>", f"{PUBLIC_UI_STYLE}\n{marker}\n</head>", 1)
@@ -217,6 +223,8 @@ class LivePublicDataCache(core.PublicDataCache):
                 "ui_source": "live_private_worker_html_per_request",
                 "ui_contract": CURRENT_UI_MARKER,
                 "public_chrome_cleanup": PUBLIC_CHROME_CLEANUP_VERSION,
+                "public_root_contract": PUBLIC_ROOT_CONTRACT_VERSION,
+                "public_root_path": "/",
                 "gateway_port": DEFAULT_PORT,
             }
         )
@@ -234,11 +242,19 @@ class LivePublicGatewayHandler(core.PublicGatewayHandler):
 
     def _headers(self):
         super()._headers()
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        self.send_header("Surrogate-Control", "no-store")
         self.send_header("X-StockBoard-Public-Version", GATEWAY_VERSION)
         self.send_header("X-StockBoard-Public-UI", "live-private-worker-html")
+        self.send_header("X-StockBoard-Public-Root", "/")
         self.send_header(
             "X-StockBoard-Public-Chrome-Cleanup",
             PUBLIC_CHROME_CLEANUP_VERSION,
+        )
+        self.send_header(
+            "X-StockBoard-Public-Root-Contract",
+            PUBLIC_ROOT_CONTRACT_VERSION,
         )
 
     def _get(self, head: bool):
@@ -365,7 +381,8 @@ def main() -> int:
     print(
         f"StockBoard public live UI gateway http://{args.host}:{args.port}/ "
         f"upstream={args.upstream} version={GATEWAY_VERSION} "
-        f"cleanup={PUBLIC_CHROME_CLEANUP_VERSION}",
+        f"cleanup={PUBLIC_CHROME_CLEANUP_VERSION} "
+        f"root={PUBLIC_ROOT_CONTRACT_VERSION}",
         flush=True,
     )
     try:
