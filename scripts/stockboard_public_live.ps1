@@ -34,7 +34,8 @@ function Ensure-RuntimeDir {
 function Get-PythonBits([string]$Path) {
     if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return 0 }
     try {
-        return [int]([string](& $Path -c "import struct; print(struct.calcsize('P') * 8)" 2>$null)).Trim()
+        $value = & $Path -c "import struct; print(struct.calcsize('P') * 8)" 2>$null
+        return [int]([string]$value).Trim()
     } catch {
         return 0
     }
