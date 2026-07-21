@@ -16,11 +16,11 @@ goto elevate
 echo.
 echo StockBoard v2 Public Read-Only Gateway
 echo.
-echo   1 Start/restart current UI public gateway only
+echo   1 Start/restart fresh current UI gateway on port 8767
 echo   2 Show status
-echo   3 Publish current UI to the internet with Tailscale Funnel
+echo   3 Publish fresh current UI with Tailscale Funnel
 echo   4 Unpublish and restore private Tailscale Serve
-echo   5 Stop public gateway (unpublishes first when active)
+echo   5 Stop public gateway
 echo   0 Exit
 echo.
 set /p "CHOICE=Select: "
@@ -42,7 +42,7 @@ if errorlevel 1 (
   exit /b 0
 )
 
-set "SCRIPT=%~dp0scripts\stockboard_public_gateway_current_ui.ps1"
+set "SCRIPT=%~dp0scripts\stockboard_public_live.ps1"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Action "%ACTION%"
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" (
