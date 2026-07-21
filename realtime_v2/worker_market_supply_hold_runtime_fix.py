@@ -39,6 +39,9 @@ def install() -> None:
     from realtime_v2.worker_portable_rebuild_status_patch import (
         install as install_portable_rebuild_status,
     )
+    from realtime_v2.worker_trade_field_regression_guard import (
+        install as install_trade_field_regression_guard,
+    )
 
     board_guard.PORTABLE_PARSER_VERSION = PORTABLE_PARSER_VERSION
 
@@ -48,6 +51,7 @@ def install() -> None:
         install_board_display_continuity(guard_base)
         install_board_display_continuity_safety(guard_base)
         install_board_display_continuity_runtime_opt(guard_base)
+        install_trade_field_regression_guard(guard_base)
         install_portable_rebuild_status()
         # Source-contract patching mutates the final State/ProgramNetUpdater classes.
         # Skip synthetic test bases that do not expose the production class contract.
