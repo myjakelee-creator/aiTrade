@@ -39,7 +39,7 @@ if "%ACTION%"=="" (
 echo.
 echo PUBLIC_LAUNCHER_VERSION=stockboard_public_live_v2_20260722
 echo PUBLIC_ACTION=%ACTION%
-set "SCRIPT=%~dp0scripts\stockboard_public_live.ps1"
+set "SCRIPT=%~dp0scripts\stockboard_public_live_v2.ps1"
 echo PUBLIC_SCRIPT=%SCRIPT%
 if not exist "%SCRIPT%" (
   echo PUBLIC_ERROR=Script not found: %SCRIPT%
