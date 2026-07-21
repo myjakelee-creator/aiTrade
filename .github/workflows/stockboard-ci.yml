@@ -78,6 +78,7 @@ jobs:
             realtime_v2\worker_board_trading_date_guard.py `
             realtime_v2\worker_board_display_continuity_patch.py `
             realtime_v2\worker_board_display_continuity_safety.py `
+            realtime_v2\worker_board_display_continuity_runtime_opt.py `
             realtime_v2\worker_portable_cache_sync_patch.py `
             realtime_v2\worker_portable_rebuild_status_patch.py `
             realtime_v2\worker_market_metric_session_manager.py `
@@ -116,7 +117,9 @@ jobs:
           [void][scriptblock]::Create($context)
           $safe = Get-Content -LiteralPath .\scripts\stockboard_v2_large_safe.ps1 -Raw
           [void][scriptblock]::Create($safe)
-          Write-Host "doctor_context_and_single_owner_launcher_syntax_verified"
+          $consistency = Get-Content -LiteralPath .\scripts\stockboard_v2_data_consistency.ps1 -Raw
+          [void][scriptblock]::Create($consistency)
+          Write-Host "doctor_context_single_owner_launcher_and_consistency_syntax_verified"
 
       - name: Run StockBoard targeted tests
         shell: pwsh
@@ -135,6 +138,7 @@ jobs:
             tests\test_worker_momentum_accuracy_patch.py `
             tests\test_worker_board_trading_date_guard.py `
             tests\test_worker_board_display_continuity_safety.py `
+            tests\test_worker_board_display_continuity_runtime_opt.py `
             tests\test_worker_portable_cache_sync.py `
             tests\test_worker_portable_rebuild_status.py `
             tests\test_worker_market_metric_session_manager.py `
