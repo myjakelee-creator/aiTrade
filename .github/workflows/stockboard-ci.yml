@@ -79,6 +79,7 @@ jobs:
             realtime_v2\worker_board_display_continuity_patch.py `
             realtime_v2\worker_board_display_continuity_safety.py `
             realtime_v2\worker_board_display_continuity_runtime_opt.py `
+            realtime_v2\worker_aux_metric_source_contract_patch.py `
             realtime_v2\worker_portable_cache_sync_patch.py `
             realtime_v2\worker_portable_rebuild_status_patch.py `
             realtime_v2\worker_market_metric_session_manager.py `
@@ -143,6 +144,7 @@ jobs:
             tests\test_worker_board_trading_date_guard.py `
             tests\test_worker_board_display_continuity_safety.py `
             tests\test_worker_board_display_continuity_runtime_opt.py `
+            tests\test_worker_aux_metric_source_contract.py `
             tests\test_worker_portable_cache_sync.py `
             tests\test_worker_portable_rebuild_status.py `
             tests\test_worker_market_metric_session_manager.py `
