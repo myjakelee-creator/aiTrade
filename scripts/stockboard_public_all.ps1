@@ -15,7 +15,7 @@ $PublicHealthUrl = "http://127.0.0.1:8767/api/v2/health"
 $ExpectedCleanup = "stockboard_public_chrome_cleanup_v3_20260722"
 $RuntimeDir = Join-Path $ProjectRoot "data\runtime\stockboard_v2"
 $LastErrorFile = Join-Path $RuntimeDir "stockboard_public_all_last_error.txt"
-$LauncherVersion = "stockboard_public_all_v3_20260722"
+$LauncherVersion = "stockboard_public_all_v4_20260722"
 
 Set-Location -LiteralPath $ProjectRoot
 New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
@@ -132,18 +132,27 @@ function Get-PrivateReadiness {
     if ($provider) {
         $registered = [int]($provider.realreg_code_count)
     }
-    if ($registered -le 0 -and $collector -and [bool]$provider.realreg_succeeded) {
+    if ($registered -le 0 -and $collector -and $provider -and [bool]$provider.realreg_succeeded) {
         $registered = [int]($collector.registered_count)
+    }
+
+    $loginState = "unavailable"
+    $lastError = ""
+    $realReg = $false
+    if ($provider) {
+        $loginState = [string]$provider.login_state
+        $lastError = [string]$provider.last_error
+        $realReg = [bool]$provider.realreg_succeeded
     }
 
     return [pscustomobject]@{
         HealthOk = [bool]($health -and $health.ok)
         CollectorAlive = [bool]($collector -and $collector.alive)
         ProviderStarted = [bool]($collector -and $collector.provider_started)
-        LoginState = [string]($provider.login_state)
-        RealRegSucceeded = [bool]($provider.realreg_succeeded)
+        LoginState = $loginState
+        RealRegSucceeded = $realReg
         RegisteredCount = $registered
-        LastError = [string]($provider.last_error)
+        LastError = $lastError
     }
 }
 
@@ -160,7 +169,7 @@ function Test-PrivateReady($State) {
 }
 
 function Write-PrivateStartProgress($State, [int]$ElapsedSec) {
-    Write-Host (
+    $message = (
         "PRIVATE_START_WAIT elapsed={0}s health={1} collector_alive={2} " +
         "login={3} realreg={4} registered={5}"
     ) -f @(
@@ -171,6 +180,7 @@ function Write-PrivateStartProgress($State, [int]$ElapsedSec) {
         [bool]$State.RealRegSucceeded,
         [int]$State.RegisteredCount
     )
+    Write-Host $message
     if (-not (Test-PrivateReady $State)) {
         Write-Host "Check Alt+Tab for the Kiwoom login window and complete login." -ForegroundColor Yellow
     }
