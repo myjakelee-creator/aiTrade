@@ -108,7 +108,6 @@ $result = foreach ($row in $rows) {
     $receivedDate = Get-DateDigits $receivedAt
 
     $priceDate = Get-DateDigits (Get-FirstValue $row @("price_trading_date", "source_trading_date"))
-    $rateDate = Get-DateDigits (Get-FirstValue $row @("change_rate_trading_date", "source_trading_date"))
     $tradeValueDate = Get-DateDigits (Get-FirstValue $row @("trade_value_trading_date", "source_trading_date"))
     $rowSource = [string](Get-FirstValue $row @("row_source", "source_code"))
     $sourceCode = [string](Get-FirstValue $row @("source_code", "registered_code"))
@@ -144,7 +143,7 @@ $result = foreach ($row in $rows) {
     $bidAskSource = Get-FirstValue $row @("orderbook_source")
     $bidAskDate = Get-DateDigits (Get-FirstValue $row @("orderbook_source_trading_date"))
     $bidAskAge = Get-AgeSec (Get-FirstValue $row @("orderbook_received_at", "ui_orderbook_observed_at"))
-    $bidAskContract = Get-ContractState $bidAsk $bidAskSource '0C|qax_realtime_orderbook|realtime_orderbook' '0D|time.?after' 'OK_0C' 'WRONG_0D'
+    $bidAskContract = Get-ContractState $bidAsk $bidAskSource '0D|qax_realtime_orderbook|realtime_orderbook' '0C_rotating' 'OK_0D' 'WRONG_0C'
 
     $execution = Get-FirstValue $row @("execution_strength")
     $executionSource = Get-FirstValue $row @("execution_strength_source", "execution_source")
@@ -152,21 +151,19 @@ $result = foreach ($row in $rows) {
     $executionAge = Get-AgeSec (Get-FirstValue $row @(
         "execution_strength_received_at", "execution_strength_updated_at", "ui_execution_strength_observed_at"
     ))
-    $executionContract = Get-ContractState $execution $executionSource '0A.*fid228|fid228.*0A' '0B.*fid228|fid228.*0B|ka10046' 'OK_0A_FID228' 'WRONG_0B'
+    $executionContract = Get-ContractState $execution $executionSource '0B.*fid228|fid228.*0B' '0A.*fid228|fid228.*0A|ka10046' 'OK_0B_FID228' 'WRONG_0A'
 
     $strength5 = Get-FirstValue $row @("strength_5m", "strength5", "five_min_strength", "strength_5min")
     $strength5Source = Get-FirstValue $row @("strength_source")
     $strength5Date = Get-DateDigits (Get-FirstValue $row @("strength_source_trading_date"))
     $strength5Age = Get-AgeSec (Get-FirstValue $row @("strength_snapshot_at", "ui_strength_observed_at"))
-    $strength5Contract = Get-ContractState $strength5 $strength5Source 'ka10045|opt10045' 'ka10046|opt10046' 'OK_KA10045' 'WRONG_KA10046'
+    $strength5Contract = Get-ContractState $strength5 $strength5Source 'ka10046|opt10046' 'ka10045|opt10045' 'OK_KA10046' 'WRONG_KA10045'
 
     $program = Get-FirstValue $row @("program_net")
     $programSource = Get-FirstValue $row @("program_net_source")
     $programDate = Get-DateDigits (Get-FirstValue $row @("program_source_trading_date"))
     $programAge = Get-AgeSec (Get-FirstValue $row @("program_net_updated_at"))
-    $programContract = Get-ContractState $program $programSource 'ka90003|program_ws_0u' 'ka90004' 'OK_KA90003' 'WRONG_KA90004'
-
-    $largeTrade = Get-FirstValue $row @("large_trade_net_count")
+    $programContract = Get-ContractState $program $programSource 'ka90004|program_ws_0u' 'ka90003' 'OK_KA90004' 'WRONG_KA90003'
 
     [pscustomobject]@{
         Rank = Get-FirstValue $row @("rank", "candidate_rank")
@@ -205,10 +202,6 @@ $result = foreach ($row in $rows) {
         ProgramSource = $programSource
         ProgramDate = $programDate
         ProgramAgeSec = if ($null -eq $programAge) { $null } else { [math]::Round($programAge, 1) }
-        LargeTrade = $largeTrade
-        LargeTradeDate = Get-DateDigits (Get-FirstValue $row @("large_trade_source_trading_date"))
-        LargeTradeSource = Get-FirstValue $row @("large_trade_source")
-        LargeTradeQuality = Get-FirstValue $row @("large_trade_quality")
     }
 }
 
@@ -225,29 +218,40 @@ $summary = [pscustomobject]@{
     LiveStale = @($result | Where-Object PriceState -eq "LIVE_STALE").Count
     Unknown = @($result | Where-Object PriceState -eq "UNKNOWN").Count
     RatioMismatch = @($result | Where-Object { $null -ne $_.RatioDelta -and $_.RatioDelta -gt 0.01 }).Count
-    BidAskOK = @($result | Where-Object BidAskContract -eq "OK_0C").Count
+    BidAskOK = @($result | Where-Object BidAskContract -eq "OK_0D").Count
     BidAskWrong = @($result | Where-Object BidAskContract -match '^WRONG').Count
-    ExecutionOK = @($result | Where-Object ExecutionContract -eq "OK_0A_FID228").Count
+    ExecutionOK = @($result | Where-Object ExecutionContract -eq "OK_0B_FID228").Count
     ExecutionWrong = @($result | Where-Object ExecutionContract -match '^WRONG').Count
-    Strength5OK = @($result | Where-Object Strength5Contract -eq "OK_KA10045").Count
+    Strength5OK = @($result | Where-Object Strength5Contract -eq "OK_KA10046").Count
     Strength5Wrong = @($result | Where-Object Strength5Contract -match '^WRONG').Count
-    ProgramOK = @($result | Where-Object ProgramContract -eq "OK_KA90003").Count
+    ProgramOK = @($result | Where-Object ProgramContract -eq "OK_KA90004").Count
     ProgramWrong = @($result | Where-Object ProgramContract -match '^WRONG').Count
     CollectorPending = $sender.pending_total_count
     CollectorSentPerSec = $sender.sent_per_sec
     CollectorCoalesced = $sender.coalesced_trade_overwrite_count
     WorkerEventCount = $status.event_count
     WorkerTradeCount = $status.trade_count
-    WorkerLogQueue = $status.event_log_queue_size
     WorkerDrop = $status.dropped_trade_count
-    WorkerLogDrop = $status.event_log_dropped_count
+    WorkerDropReasons = $status.dropped_trade_reason_counts
+    TradeFieldGuardVersion = $status.trade_field_regression_guard_version
+    TradeFieldSuppressed = $status.trade_field_regression_suppressed_count
+    TradeFieldSuppressReasons = $status.trade_field_regression_suppressed_reason_counts
     SourceContractVersion = $status.aux_metric_source_contract_version
     ExecutionRealtimeType = $status.execution_realtime_type
     OrderbookRealtimeType = $status.orderbook_realtime_type
     StrengthApiId = $status.strength_tr_api_id
     ProgramApiId = $status.program_tr_api_id
+    RealtimeStrengthStatus = $status.realtime_strength_ws_status
+    RealtimeStrengthEvents = $status.realtime_strength_ws_event_count
+    RealtimeStrengthError = $status.realtime_strength_ws_last_error
+    RestMetricsStatus = $status.rest_live_metrics_status
+    RestMetricsRequests = $status.rest_live_metrics_request_count
+    RestMetricsSuccess = $status.rest_live_metrics_success_count
+    RestMetricsErrors = $status.rest_live_metrics_error_count
+    RestMetricsLastError = $status.rest_live_metrics_last_error
     ProgramLastError = $status.program_net_last_error
     ActivePayloadCache = $status.board_display_active_payload_cache_status
+    ActivePayloadRetrySec = $status.board_display_active_payload_retry_sec
     ActivePayloadFileReads = $status.board_display_active_payload_file_read_count
     ActivePayloadLookupMs = $status.board_display_active_payload_last_lookup_ms
     ActiveApplyMs = $status.board_display_active_apply_ms
