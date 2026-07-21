@@ -5,6 +5,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -15,6 +16,9 @@ from realtime_v2.public_gateway_live import (
     CURRENT_UI_MARKER,
     GATEWAY_VERSION,
     PUBLIC_CHROME_CLEANUP_VERSION,
+    PUBLIC_ROOT_CONTRACT_VERSION,
+    LivePublicGatewayHandler,
+    LivePublicGatewayServer,
     fetch_current_public_html,
 )
 
@@ -48,37 +52,79 @@ class _UpstreamHandler(BaseHTTPRequestHandler):
         self.send_error(404)
 
 
+class _UpstreamFixture:
+    def __init__(self):
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), _UpstreamHandler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+
+
 class PublicGatewayLiveUiTests(unittest.TestCase):
     def test_fetches_exact_current_ui_and_adds_public_boundary(self):
-        server = ThreadingHTTPServer(("127.0.0.1", 0), _UpstreamHandler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
+        upstream = _UpstreamFixture()
         try:
-            url = f"http://127.0.0.1:{server.server_address[1]}"
-            html = fetch_current_public_html(url).decode("utf-8")
+            html = fetch_current_public_html(upstream.url).decode("utf-8")
             self.assertIn("1분대금", html)
             self.assertIn("5분강도", html)
             self.assertIn(CURRENT_UI_MARKER, html)
             self.assertIn(GATEWAY_VERSION, html)
             self.assertIn(PUBLIC_CHROME_CLEANUP_VERSION, html)
+            self.assertIn(PUBLIC_ROOT_CONTRACT_VERSION, html)
             self.assertIn("공개 읽기 전용 · 현재 UI", html)
+            self.assertIn("window.history.replaceState(null,'','/')", html)
             self.assertNotIn("StockBoard v2 Realtime</title>", html)
         finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=2)
+            upstream.close()
 
-    def test_public_diagnostic_chrome_is_hidden_and_topbar_height_is_released(self):
-        server = ThreadingHTTPServer(("127.0.0.1", 0), _UpstreamHandler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
+    def test_exact_root_path_serves_current_ui_without_query_string(self):
+        upstream = _UpstreamFixture()
+        gateway = LivePublicGatewayServer(
+            ("127.0.0.1", 0),
+            LivePublicGatewayHandler,
+            cache=object(),
+            public_html=b"",
+            per_client_rate=1000,
+            global_rate=10000,
+            max_concurrent_requests=16,
+            max_stream_clients=4,
+            live_upstream=upstream.url,
+        )
+        thread = threading.Thread(target=gateway.serve_forever, daemon=True)
         thread.start()
         try:
-            url = f"http://127.0.0.1:{server.server_address[1]}"
-            html = fetch_current_public_html(url).decode("utf-8")
+            root_url = f"http://127.0.0.1:{gateway.server_address[1]}/"
+            with urlopen(root_url, timeout=3) as response:
+                html = response.read().decode("utf-8")
+                headers = response.headers
+            self.assertIn(PUBLIC_ROOT_CONTRACT_VERSION, html)
+            self.assertIn("1분대금", html)
+            self.assertIn("5분강도", html)
+            self.assertIn("no-store", headers.get("Cache-Control", ""))
+            self.assertEqual(headers.get("Pragma"), "no-cache")
+            self.assertEqual(headers.get("Expires"), "0")
+            self.assertEqual(headers.get("X-StockBoard-Public-Root"), "/")
+            self.assertEqual(
+                headers.get("X-StockBoard-Public-Root-Contract"),
+                PUBLIC_ROOT_CONTRACT_VERSION,
+            )
         finally:
-            server.shutdown()
-            server.server_close()
+            gateway.shutdown()
+            gateway.server_close()
             thread.join(timeout=2)
+            upstream.close()
+
+    def test_public_diagnostic_chrome_is_hidden_and_topbar_height_is_released(self):
+        upstream = _UpstreamFixture()
+        try:
+            html = fetch_current_public_html(upstream.url).decode("utf-8")
+        finally:
+            upstream.close()
 
         for selector in (
             "#copy-status",
