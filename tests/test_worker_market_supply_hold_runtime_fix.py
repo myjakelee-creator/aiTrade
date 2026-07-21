@@ -102,7 +102,7 @@ assert getattr(board_guard.PortableBoardGuard, "_stockboard_display_continuity_i
 assert getattr(board_guard.PortableBoardGuard, "_stockboard_display_continuity_runtime_opt_installed", False) is True
 assert continuity.PATCH_VERSION == "board_display_continuity_v1"
 assert continuity_safety.PATCH_VERSION == "board_display_continuity_rlock_v3"
-assert continuity_runtime_opt.PATCH_VERSION == "board_display_continuity_active_cache_v1"
+assert continuity_runtime_opt.PATCH_VERSION == "board_display_continuity_active_cache_v2"
 assert getattr(continuity, "_display_continuity_rlock_installed", False) is True
 assert getattr(guarded.base.State, "_stockboard_momentum_accuracy_installed", False) is True
 assert getattr(guarded.base.State, "_stockboard_momentum_accuracy_stage_bridge_installed", False) is True
