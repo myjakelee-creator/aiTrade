@@ -4,10 +4,10 @@ from __future__ import annotations
 
 `price_age_sec` is the age of the stock's last accepted trade, not transport lag.
 The board previously dimmed every row after three seconds without a trade and called
-that state `stale`.  During aftermarket or for low-turnover stocks this is expected
+that state `stale`. During aftermarket or for low-turnover stocks this is expected
 and does not indicate a collector/worker/SSE problem.
 
-This patch changes display semantics only.  It adds no request, worker calculation,
+This patch changes display semantics only. It adds no request, worker calculation,
 thread, timer, WebSocket, FID, or SSE cadence.
 """
 
@@ -57,18 +57,24 @@ def install() -> None:
             return patched
 
         row_class_count = patched.count(_DESKTOP_OR_MOBILE_ROW_CLASS)
+        has_top20 = _OLD_TOP20 in patched
+        has_lag_text = _OLD_LAG_TEXT in patched
+
+        # Unit fixtures for unrelated HTML transforms intentionally omit the board
+        # rows and status diagnostics. Leave those isolated fragments untouched.
+        if row_class_count == 0 and not has_top20 and not has_lag_text:
+            return patched
+
         if row_class_count < 1:
             raise RuntimeError("last-trade row-class anchor not found")
-        patched = patched.replace(_DESKTOP_OR_MOBILE_ROW_CLASS, _ROW_CLASS_REPLACEMENT)
-
-        if _OLD_TOP20 not in patched:
+        if not has_top20:
             raise RuntimeError("top20 last-trade diagnostic anchor not found")
-        patched = patched.replace(_OLD_TOP20, _NEW_TOP20, 1)
-
-        if _OLD_LAG_TEXT not in patched:
+        if not has_lag_text:
             raise RuntimeError("top20 last-trade label anchor not found")
-        patched = patched.replace(_OLD_LAG_TEXT, _NEW_LAG_TEXT, 1)
 
+        patched = patched.replace(_DESKTOP_OR_MOBILE_ROW_CLASS, _ROW_CLASS_REPLACEMENT)
+        patched = patched.replace(_OLD_TOP20, _NEW_TOP20, 1)
+        patched = patched.replace(_OLD_LAG_TEXT, _NEW_LAG_TEXT, 1)
         return patched.replace("<script>", f"<script>\n  /* {MARKER} */", 1)
 
     large._ui_safety_patch = patched_ui_safety_patch
