@@ -23,7 +23,7 @@ def _record_optional_error(base, filename: str, error: Exception) -> None:
 
 
 def install() -> None:
-    """Attach runtime context, board continuity, and momentum protections."""
+    """Attach runtime context, board continuity, and source-contract protections."""
 
     from realtime_v2 import worker64_guarded as guarded
     from realtime_v2 import worker_board_trading_date_guard as board_guard
@@ -49,6 +49,24 @@ def install() -> None:
         install_board_display_continuity_safety(guard_base)
         install_board_display_continuity_runtime_opt(guard_base)
         install_portable_rebuild_status()
+        try:
+            from realtime_v2.worker_aux_metric_source_contract_patch import (
+                install as install_aux_metric_source_contract,
+            )
+
+            install_aux_metric_source_contract(guard_base)
+            try:
+                (Path(guard_base.RUNTIME_DIR) / "aux_metric_source_contract_error.txt").unlink(
+                    missing_ok=True
+                )
+            except Exception:
+                pass
+        except Exception as error:
+            _record_optional_error(
+                guard_base,
+                "aux_metric_source_contract_error.txt",
+                error,
+            )
         try:
             from realtime_v2.worker_momentum_accuracy_stage_bridge import (
                 install as install_momentum_accuracy_stage,
