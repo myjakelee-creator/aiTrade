@@ -40,10 +40,14 @@ class _UpstreamHandler(BaseHTTPRequestHandler):
                 "<span id='throughput'>recv/s 1</span>"
                 "<span id='collector-metrics'>collector_q 0</span>"
                 "<span id='worker-metrics'>worker_q 0</span>"
-                "<span id='lag-metrics'>lag 0</span></div>"
+                "<span id='lag-metrics'>top20 lag 0</span></div>"
                 "<div class='metric-row'><span id='render-metrics'>render 0.6 ms</span>"
                 "<span id='metric-mode-status'>metric help</span>"
-                "<span class='small'>color help</span></div></div>"
+                "<span class='small'>color help</span></div>"
+                "<div class='metric-row mobile-restored-metrics'>"
+                "<span class='badge'>recv/s 0.0</span>"
+                "<span class='badge'>stream 21 ms</span>"
+                "<span class='badge'>render 0.5 ms</span></div></div>"
                 "<div>1분대금</div><div>5분강도</div>"
                 "<script>const trade_value_1m_eok=1;const strength_5m=2;"
                 "new EventSource('/api/v2/stream')</script></body></html>"
@@ -124,12 +128,17 @@ class PublicGatewayLiveUiTests(unittest.TestCase):
             thread.join(timeout=2)
             upstream.close()
 
-    def test_public_diagnostic_chrome_is_removed_and_observed_on_mobile(self):
+    def test_public_diagnostic_chrome_is_removed_after_mobile_restore_patch(self):
         upstream = _UpstreamFixture()
         try:
             html = fetch_current_public_html(upstream.url).decode("utf-8")
         finally:
             upstream.close()
+
+        self.assertEqual(
+            PUBLIC_CHROME_CLEANUP_VERSION,
+            "stockboard_public_chrome_cleanup_v3_20260722",
+        )
 
         for selector in (
             "#copy-status",
@@ -158,13 +167,18 @@ class PublicGatewayLiveUiTests(unittest.TestCase):
         ):
             self.assertIn(f"'{element_id}'", html)
 
-        self.assertIn("height:auto!important", html)
-        self.assertIn("min-height:0!important", html)
-        self.assertIn("max-height:none!important", html)
-        self.assertIn("PUBLIC_REMOVE_IDS", html)
-        self.assertIn("new MutationObserver(schedulePublicTopbarCleanup)", html)
-        self.assertIn("observer.observe(topbar,{childList:true,subtree:true})", html)
+        self.assertIn("PUBLIC_DIAGNOSTIC_TEXT_PATTERNS", html)
+        self.assertIn("/^recv\\/s", html)
+        self.assertIn("/^(?:stream|poll)", html)
+        self.assertIn("/^render", html)
+        self.assertIn("isPublicDiagnosticNode", html)
+        self.assertIn("characterData:true", html)
+        self.assertIn("attributes:true", html)
+        self.assertIn("attributeFilter:['style','class','hidden']", html)
+        self.assertIn("setInterval(cleanPublicTopbar,2000)", html)
         self.assertIn("orientationchange", html)
+        self.assertIn("pageshow", html)
+        self.assertIn("visibility:hidden!important", html)
         self.assertIn("if(!visible) row.remove()", html)
         self.assertNotIn("label:has(#candidate-model-selector)", html)
 
