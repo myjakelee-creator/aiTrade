@@ -1,6 +1,6 @@
 # StockBoard v2 실시간 파이프라인
 
-최종 갱신: 2026-07-22 00:25 KST
+최종 갱신: 2026-07-22 00:40 KST
 
 이 문서는 StockBoard v2의 실시간 가격 경로, 분 단위 보조지표, 거래일 유지정책과 실전 검증 상태를 기록하는 단일 기준 문서이다. 과거 v0.3.x 구조와 섞지 않는다.
 
@@ -291,6 +291,9 @@ Tailscale Funnel                HTTPS public edge
 - 공개 화면에서는 HTS 연동과 서버 제어를 제거하고 종목코드 복사만 허용한다.
 - Gateway는 `127.0.0.1:8767`에만 바인딩하며 공유기 포트포워딩과 `0.0.0.0` 바인딩은 금지한다.
 - Windows PowerShell 5.1의 UTF-8 파싱 문제를 피하기 위해 운영 런처 `scripts/stockboard_public_live_v2.ps1`은 ASCII-only 계약을 유지한다.
+- 2026-07-22 00:40 KST부터 공개 화면에서 종목코드 복사 안내, stream/sort, render, 셀 토글 안내, 색상 기준 문구를 숨긴다.
+- 위 공개 전용 요소를 제거한 뒤 topbar의 고정 112px 높이를 해제하고 빈 metric-row를 제거해 남는 여백도 없앤다.
+- 이 상단 정리는 `stockboard_public_chrome_cleanup_v1_20260722` 계약이며 비공개 8765 UI에는 적용하지 않는다.
 
 ## 8. 공통 거래일 유지정책
 
@@ -452,7 +455,15 @@ PUBLIC_WEB                    https://gram-jlee.tail04774a.ts.net
 - 당시 `PUBLIC_GATEWAY_ROWS=0`은 원본 8765도 표시 종목이 0인 장마감 상태였으므로 Gateway 데이터 손실이 아니다.
 - 생산 Worker·QAx collector·WebSocket·REST cadence·SSE cadence 변경은 0이다.
 
-### 10.4 남은 최종 검증
+### 10.4 2026-07-22 00:40 KST 공개 상단 정리 구현
+
+- `copy-status`, `latency`, `render-metrics`, `metric-mode-status`, topbar 설명 문구를 공개 화면에서만 숨기도록 반영했다.
+- 공개 topbar의 고정 높이를 해제하고 표시 가능한 자식이 없는 metric-row를 제거하도록 반영했다.
+- 공개 읽기 전용 배지, 현재 UI 열, 시장수급, 미국시장, S1·집중 후보·Pool은 유지한다.
+- 생산 8765 HTML과 수집·계산·SSE 경로 변경은 0이다.
+- 코드·회귀 테스트 반영 완료, 8767 재시작 후 브라우저 실기 확인은 운영자 확인 대기다.
+
+### 10.5 남은 최종 검증
 
 - 자정 이후부터 다음 실제 프리마켓 전까지 2026-07-21 마지막 정상 보드 유지
 - 다음 실제 프리마켓 08:00에서 전일 exact를 지우지 않고 당일 체결 종목부터 순차 LIVE 전환
@@ -497,4 +508,4 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -Action unpublish
 ```
 
-2026-07-22 00:25 KST 기준으로 현재 UI 동기화·읽기 전용 경계·Tailscale Funnel 공개·모바일 외부 접속까지 통과했다. 정규장·애프터마켓 가격과 보조지표 검증은 완료했고, 표시 연속성의 다음 실제 프리마켓 전환 검증은 별도 유지한다.
+2026-07-22 00:40 KST 기준으로 현재 UI 동기화·읽기 전용 경계·Tailscale Funnel 공개·모바일 외부 접속은 통과했고 공개 상단 진단·설명 제거 코드를 추가했다. 정규장·애프터마켓 가격과 보조지표 검증은 완료했으며, 공개 상단 정리와 표시 연속성의 다음 실제 프리마켓 전환 검증은 별도 유지한다.
