@@ -3,10 +3,11 @@ from __future__ import annotations
 """Protect latest price/rate without accepting regressed cumulative fields.
 
 The production QAx collector samples FID14 while price/FID20 arrive on every trade.
-For SOR (`_AL`) a sampled cumulative value can temporarily move backwards even when
-that trade event carries a newer price.  The previous guard rejected the whole event,
-which also discarded price and change-rate updates.  This patch strips only the
-regressed cumulative field and lets the existing guarded price path handle the event.
+For SOR (`_AL`) source streams, FID20 and cumulative values can interleave across
+venues. The previous guard rejected the whole event, which discarded the newest
+price and change-rate observed by the QAx callback. This patch keeps arrival-order
+price/rate while holding monotonic time and cumulative fields at their last good
+values.
 
 No collector, FID, thread, timer, request, or browser cadence is changed.
 """
@@ -16,7 +17,7 @@ from typing import Any
 
 from realtime_v2.common import normalize_code, normalized_trade_value_eok, to_int, to_number
 
-PATCH_VERSION = "trade_field_regression_guard_v1"
+PATCH_VERSION = "trade_field_regression_guard_v2"
 
 
 def _event_values(base, event: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -25,24 +26,37 @@ def _event_values(base, event: dict[str, Any]) -> tuple[dict[str, Any], dict[str
     return values if isinstance(values, dict) else {}, raw if isinstance(raw, dict) else {}
 
 
-def _strip_event_fields(event: dict[str, Any], *, trade_value: bool, volume: bool) -> dict[str, Any]:
-    result = deepcopy(event)
+def _event_containers(event: dict[str, Any]) -> list[dict[str, Any]]:
     containers: list[dict[str, Any]] = []
     for key in ("kwargs", "values"):
-        value = result.get(key)
+        value = event.get(key)
         if isinstance(value, dict):
             containers.append(value)
             raw = value.get("raw")
             if isinstance(raw, dict):
                 containers.append(raw)
+    return containers
 
-    for container in containers:
+
+def _filtered_event(
+    event: dict[str, Any],
+    *,
+    trade_value: bool,
+    volume: bool,
+    replacement_trade_time: str | None = None,
+) -> dict[str, Any]:
+    result = deepcopy(event)
+    for container in _event_containers(result):
         if trade_value:
             for key in ("trade_value_eok", "cumulative_value", "cumulative_value_raw"):
                 container.pop(key, None)
         if volume:
             for key in ("cumulative_volume", "cumulative_volume_raw"):
                 container.pop(key, None)
+        if replacement_trade_time:
+            for key in ("trade_time", "fid20_trade_time", "trade_time_raw"):
+                if key in container or key == "trade_time":
+                    container[key] = replacement_trade_time
     return result
 
 
@@ -51,6 +65,15 @@ def _increment_reason(status: dict[str, Any], key: str, reason: str) -> None:
     counts = dict(counts) if isinstance(counts, dict) else {}
     counts[reason] = int(counts.get(reason) or 0) + 1
     status[key] = counts
+
+
+def _source_code(event: dict[str, Any], values: dict[str, Any]) -> str:
+    return str(
+        values.get("source_code")
+        or values.get("registered_code")
+        or event.get("received_code")
+        or ""
+    ).strip()
 
 
 def install(base) -> None:
@@ -118,8 +141,9 @@ def install(base) -> None:
         except (TypeError, ValueError):
             older_time = False
 
-        # Keep the existing whole-event rejection for genuinely older FID20 events.
-        if older_time:
+        source_code = _source_code(event, values)
+        sor_interleaved_time = older_time and source_code.upper().endswith("_AL")
+        if older_time and not sor_interleaved_time:
             return original_apply(self, event)
 
         incoming_value = (
@@ -148,19 +172,30 @@ def install(base) -> None:
             and int(incoming_volume) < int(previous_volume)
         )
 
-        if not value_regressed and not volume_regressed:
+        if not sor_interleaved_time and not value_regressed and not volume_regressed:
             return original_apply(self, event)
 
-        filtered = _strip_event_fields(
+        replacement_time = None
+        if sor_interleaved_time and previous_time is not None:
+            replacement_time = str(quote.get("trade_time") or f"{int(previous_time):06d}")
+
+        filtered = _filtered_event(
             event,
-            trade_value=value_regressed,
-            volume=volume_regressed,
+            trade_value=value_regressed or sor_interleaved_time,
+            volume=volume_regressed or sor_interleaved_time,
+            replacement_trade_time=replacement_time,
         )
         with self.lock:
             self.status["trade_field_regression_guard_version"] = PATCH_VERSION
             self.status["trade_field_regression_suppressed_count"] = int(
                 self.status.get("trade_field_regression_suppressed_count") or 0
             ) + 1
+            if sor_interleaved_time:
+                _increment_reason(
+                    self.status,
+                    "trade_field_regression_suppressed_reason_counts",
+                    "sor_fid20_interleaved_price_preserved",
+                )
             if value_regressed:
                 _increment_reason(
                     self.status,
@@ -176,7 +211,8 @@ def install(base) -> None:
             self.status["last_trade_field_regression_suppressed"] = {
                 "stock_code": code,
                 "trade_time": str(incoming_time_raw or ""),
-                "source_code": values.get("source_code") or values.get("registered_code"),
+                "held_trade_time": replacement_time,
+                "source_code": source_code,
                 "incoming_trade_value_eok": incoming_value,
                 "previous_trade_value_eok": previous_value,
                 "incoming_cumulative_volume": incoming_volume,
