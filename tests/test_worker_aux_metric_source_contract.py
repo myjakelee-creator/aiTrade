@@ -111,6 +111,7 @@ production = importlib.import_module("realtime_v2.worker64_guarded_large_bidask"
 guarded = importlib.import_module("realtime_v2.worker64_guarded")
 ws = importlib.import_module("realtime_v2.worker_realtime_strength_ws_patch")
 approved = importlib.import_module("realtime_v2.worker_approved_minute_pipeline")
+contract = importlib.import_module("realtime_v2.worker_aux_metric_source_contract_patch")
 assert production is not None
 assert getattr(guarded.base, "_stockboard_aux_metric_source_contract_installed", False) is True
 assert getattr(guarded.base, "_stockboard_aux_metric_source_contract_version", None) == "aux_metric_source_contract_v3"
@@ -121,11 +122,10 @@ assert approved.EXECUTION_SOURCE == "kiwoom_rest_ws_0B_fid228"
 assert approved.ORDERBOOK_SOURCE == "kiwoom_rest_ws_0D_rotating"
 assert approved.LARGE_SOURCE == "kiwoom_rest_ws_0B_fid15"
 assert ws.RealtimeStrengthWebSocket.run.__name__ == "integrated_run"
-state = guarded.base.State()
-assert state.status["execution_realtime_type"] == "0B"
-assert state.status["orderbook_realtime_type"] == "0D"
-assert state.status["strength_tr_api_id"] == "ka10046"
-assert state.status["program_tr_api_id"] == "ka90004"
+assert contract.EXECUTION_REAL_TYPE == "0B"
+assert contract.ORDERBOOK_REAL_TYPE == "0D"
+assert contract.STRENGTH_TREND_API_ID == "ka10046"
+assert contract.PROGRAM_API_ID == "ka90004"
 print("aux_metric_source_contract_ok")
 '''
     )
