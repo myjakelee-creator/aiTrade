@@ -19,7 +19,7 @@ $PrivateBaseUrl = "http://127.0.0.1:8765"
 $PrivateHealthUrl = "$PrivateBaseUrl/api/v2/health"
 $ExpectedVersion = "stockboard_public_live_ui_v1_20260721"
 $ExpectedContract = "STOCKBOARD_PUBLIC_LIVE_UI_V1_20260721"
-$LauncherVersion = "stockboard_public_live_launcher_v2_20260722"
+$LauncherVersion = "stockboard_public_live_launcher_ascii_v3_20260722"
 
 Set-Location -LiteralPath $ProjectRoot
 New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
@@ -68,33 +68,26 @@ function Resolve-Python64 {
     foreach ($candidate in @($candidates | Where-Object { $_ } | Select-Object -Unique)) {
         if ((Get-PythonBits $candidate) -eq 64) { return [string]$candidate }
     }
-    throw "64-bit Python was not found. Set STOCKBOARD_PYTHON64 to the correct python.exe."
+    throw "64-bit Python was not found. Set STOCKBOARD_PYTHON64 to python.exe."
 }
 
 function Get-ListenerPids([int]$Port) {
-    try {
-        return @(
-            Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop |
-                Select-Object -ExpandProperty OwningProcess -Unique
+    $result = @()
+    foreach ($line in @(netstat -ano -p tcp 2>$null)) {
+        $match = [regex]::Match(
+            [string]$line,
+            '^\s*TCP\s+(\S+):(\d+)\s+\S+\s+LISTENING\s+(\d+)\s*$'
         )
-    } catch {
-        $result = @()
-        foreach ($line in @(netstat -ano -p tcp 2>$null)) {
-            $match = [regex]::Match(
-                [string]$line,
-                '^\s*TCP\s+(\S+):(\d+)\s+\S+\s+LISTENING\s+(\d+)\s*$'
-            )
-            if (-not $match.Success) { continue }
-            $portNumber = 0
-            $processId = 0
-            if (-not [int]::TryParse($match.Groups[2].Value, [ref]$portNumber)) { continue }
-            if (-not [int]::TryParse($match.Groups[3].Value, [ref]$processId)) { continue }
-            if ($portNumber -eq $Port -and $result -notcontains $processId) {
-                $result += $processId
-            }
+        if (-not $match.Success) { continue }
+        $portNumber = 0
+        $processId = 0
+        if (-not [int]::TryParse($match.Groups[2].Value, [ref]$portNumber)) { continue }
+        if (-not [int]::TryParse($match.Groups[3].Value, [ref]$processId)) { continue }
+        if ($portNumber -eq $Port -and $result -notcontains $processId) {
+            $result += $processId
         }
-        return @($result)
     }
+    return @($result)
 }
 
 function Get-ProcessCommandLine([int]$ProcessId) {
@@ -121,7 +114,7 @@ function Test-PidAlive([int]$ProcessId) {
 }
 
 function Stop-LiveGateway {
-    Write-Step "Stopping only the fresh public gateway on port 8767"
+    Write-Step "Stopping public gateway on port 8767"
     $recordedPid = Read-GatewayPid
     $listenerPids = @(Get-ListenerPids $GatewayPort)
     $allPids = @($listenerPids + @($recordedPid) | Where-Object { $_ -gt 0 } | Select-Object -Unique)
@@ -134,7 +127,7 @@ function Stop-LiveGateway {
             throw "Port $GatewayPort is owned by an unconfirmed process. PID=$pidNumber COMMAND=$commandLine"
         }
         if ($confirmed -or $pidNumber -eq $recordedPid) {
-            Write-Host "Stopping fresh gateway PID=$pidNumber"
+            Write-Host "Stopping gateway PID=$pidNumber"
             Stop-Process -Id $pidNumber -Force -ErrorAction Stop
         }
     }
@@ -148,11 +141,20 @@ function Stop-LiveGateway {
         }
         Start-Sleep -Milliseconds 250
     } while ((Get-Date) -lt $deadline)
-    throw "Port $GatewayPort did not close after stopping the fresh gateway."
+    throw "Port $GatewayPort did not close."
 }
 
 function Get-Json([string]$Url, [int]$TimeoutSec = 5) {
     return Invoke-RestMethod -Uri $Url -TimeoutSec $TimeoutSec -Headers @{ Accept = "application/json" }
+}
+
+function Get-Html([string]$Url) {
+    $response = Invoke-WebRequest `
+        -Uri $Url `
+        -UseBasicParsing `
+        -TimeoutSec 10 `
+        -Headers @{ "Cache-Control" = "no-cache"; Pragma = "no-cache" }
+    return [string]$response.Content
 }
 
 function Test-PrivateWorker {
@@ -168,13 +170,13 @@ function Assert-PrivateCurrentUi {
     if (-not (Test-PrivateWorker)) {
         throw "Private StockBoard is not healthy at $PrivateHealthUrl."
     }
-    $response = Invoke-WebRequest `
-        -Uri "$PrivateBaseUrl/?public_preflight=$LauncherVersion" `
-        -UseBasicParsing `
-        -TimeoutSec 10 `
-        -Headers @{ "Cache-Control" = "no-cache"; Pragma = "no-cache" }
-    $html = [string]$response.Content
-    foreach ($marker in @("StockBoard v2", "/api/v2/stream", "1분대금", "5분강도")) {
+    $html = Get-Html "$PrivateBaseUrl/?public_preflight=$LauncherVersion"
+    foreach ($marker in @(
+        "StockBoard v2",
+        "/api/v2/stream",
+        "trade_value_1m_eok",
+        "strength_5m"
+    )) {
         if (-not $html.Contains($marker)) {
             throw "Private current UI marker is missing: $marker"
         }
@@ -192,7 +194,7 @@ function Wait-GatewayReady([int]$ProcessId, [string]$Stdout, [string]$Stderr) {
             Get-Content -LiteralPath $Stdout -Tail 100 -ErrorAction SilentlyContinue
             Write-Host "---- gateway stderr ----" -ForegroundColor Yellow
             Get-Content -LiteralPath $Stderr -Tail 100 -ErrorAction SilentlyContinue
-            throw "Fresh gateway process exited before port $GatewayPort became ready."
+            throw "Gateway process exited before port $GatewayPort became ready."
         }
         try {
             $health = Get-Json $GatewayHealthUrl 5
@@ -213,19 +215,19 @@ function Wait-GatewayReady([int]$ProcessId, [string]$Stdout, [string]$Stderr) {
     Get-Content -LiteralPath $Stdout -Tail 100 -ErrorAction SilentlyContinue
     Write-Host "---- gateway stderr ----" -ForegroundColor Yellow
     Get-Content -LiteralPath $Stderr -Tail 100 -ErrorAction SilentlyContinue
-    throw "Fresh gateway did not become healthy at $GatewayHealthUrl."
+    throw "Gateway did not become healthy at $GatewayHealthUrl."
 }
 
 function Assert-PublicCurrentUi {
-    $response = Invoke-WebRequest `
-        -Uri "$GatewayBaseUrl/?v=$ExpectedVersion" `
-        -UseBasicParsing `
-        -TimeoutSec 10 `
-        -Headers @{ "Cache-Control" = "no-cache"; Pragma = "no-cache" }
-    $html = [string]$response.Content
-    foreach ($marker in @($ExpectedContract, "1분대금", "5분강도", "공개 읽기 전용 · 현재 UI")) {
+    $html = Get-Html "$GatewayBaseUrl/?v=$ExpectedVersion"
+    foreach ($marker in @(
+        $ExpectedContract,
+        "trade_value_1m_eok",
+        "strength_5m",
+        "stockboard-public-live-ui-script"
+    )) {
         if (-not $html.Contains($marker)) {
-            throw "Fresh public UI marker is missing: $marker"
+            throw "Public current UI marker is missing: $marker"
         }
     }
     $snapshot = Get-Json $GatewaySnapshotUrl 5
@@ -259,7 +261,7 @@ function Start-LiveGateway {
     $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
     $stdout = Join-Path $RuntimeDir "public_gateway_live_$stamp.out.log"
     $stderr = Join-Path $RuntimeDir "public_gateway_live_$stamp.err.log"
-    Write-Step "Starting fresh current UI gateway"
+    Write-Step "Starting public current UI gateway"
     Write-Host "PUBLIC_GATEWAY_STDOUT=$stdout"
     Write-Host "PUBLIC_GATEWAY_STDERR=$stderr"
 
@@ -330,7 +332,7 @@ function Publish-LiveGateway {
     $confirmation = [string]$env:STOCKBOARD_PUBLIC_CONFIRM
     if ($confirmation -cne "PUBLIC") {
         Write-Host ""
-        Write-Host "Only the read-only current UI gateway on 127.0.0.1:$GatewayPort will be public." -ForegroundColor Yellow
+        Write-Host "Only the read-only gateway on 127.0.0.1:$GatewayPort will be public." -ForegroundColor Yellow
         $confirmation = Read-Host "Type PUBLIC to continue"
     }
     if ($confirmation -cne "PUBLIC") {
