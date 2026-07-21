@@ -117,3 +117,10 @@ def test_active_payload_cache_is_invalidated_only_when_previous_date_changes(tmp
     assert next_status == "miss"
     assert guard._display_active_payload_date == "20260721"
     assert guard._display_active_lookup_count == 2
+
+
+def test_regular_session_uses_long_retry_but_premarket_stays_fast():
+    assert runtime_opt._retry_sec_for_phase("premarket") == 5.0
+    assert runtime_opt._retry_sec_for_phase("opening_call") == 5.0
+    assert runtime_opt._retry_sec_for_phase("regular") == 300.0
+    assert runtime_opt._retry_sec_for_phase("opening_burst") == 300.0
