@@ -120,7 +120,9 @@ jobs:
           $consistency = Get-Content -LiteralPath .\scripts\stockboard_v2_data_consistency.ps1 -Raw
           [void][scriptblock]::Create($consistency)
           cmd.exe /d /c "call stockboard_v2_large.cmd __syntax_probe__ >nul 2>&1"
-          if ($LASTEXITCODE -eq 255) { throw "batch parser failed" }
+          $batchRc = $LASTEXITCODE
+          if ($batchRc -eq 255) { throw "batch parser failed" }
+          $global:LASTEXITCODE = 0
           Write-Host "doctor_context_single_owner_launcher_consistency_and_batch_syntax_verified"
 
       - name: Run StockBoard targeted tests
