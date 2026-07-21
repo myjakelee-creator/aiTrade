@@ -83,6 +83,7 @@ large = importlib.import_module("realtime_v2.worker64_guarded_large")
 board_guard = importlib.import_module("realtime_v2.worker_board_trading_date_guard")
 continuity = importlib.import_module("realtime_v2.worker_board_display_continuity_patch")
 continuity_safety = importlib.import_module("realtime_v2.worker_board_display_continuity_safety")
+continuity_runtime_opt = importlib.import_module("realtime_v2.worker_board_display_continuity_runtime_opt")
 opening = importlib.import_module("realtime_v2.worker_opening_burst_cache_patch")
 accuracy = importlib.import_module("realtime_v2.worker_momentum_accuracy_patch")
 bridge = importlib.import_module("realtime_v2.worker_momentum_accuracy_stage_bridge")
@@ -96,9 +97,12 @@ assert getattr(guarded.base.State, "_stockboard_display_live_tracking_installed"
 assert getattr(guarded.base.State, "_stockboard_display_cache_fallback_installed", False) is True
 assert getattr(guarded.base.State, "_stockboard_display_continuity_rlock_installed", False) is True
 assert getattr(guarded.base.State, "_stockboard_display_verified_cache_guard_installed", False) is True
+assert getattr(guarded.base.State, "_stockboard_display_continuity_runtime_opt_installed", False) is True
 assert getattr(board_guard.PortableBoardGuard, "_stockboard_display_continuity_installed", False) is True
+assert getattr(board_guard.PortableBoardGuard, "_stockboard_display_continuity_runtime_opt_installed", False) is True
 assert continuity.PATCH_VERSION == "board_display_continuity_v1"
 assert continuity_safety.PATCH_VERSION == "board_display_continuity_rlock_v3"
+assert continuity_runtime_opt.PATCH_VERSION == "board_display_continuity_active_cache_v1"
 assert getattr(continuity, "_display_continuity_rlock_installed", False) is True
 assert getattr(guarded.base.State, "_stockboard_momentum_accuracy_installed", False) is True
 assert getattr(guarded.base.State, "_stockboard_momentum_accuracy_stage_bridge_installed", False) is True
