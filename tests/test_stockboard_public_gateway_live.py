@@ -14,6 +14,7 @@ from realtime_v2 import public_gateway_core as core
 from realtime_v2.public_gateway_live import (
     CURRENT_UI_MARKER,
     GATEWAY_VERSION,
+    PUBLIC_CHROME_CLEANUP_VERSION,
     fetch_current_public_html,
 )
 
@@ -25,9 +26,18 @@ class _UpstreamHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/?"):
             body = (
-                "<!doctype html><html><head><title>StockBoard v2 Realtime</title></head>"
-                "<body><div>1분대금</div><div>5분강도</div>"
-                "<script>new EventSource('/api/v2/stream')</script></body></html>"
+                "<!doctype html><html><head><title>StockBoard v2 Realtime</title>"
+                "<style>#topbar.topbar{height:112px;min-height:112px;max-height:112px}</style>"
+                "</head><body><div id='topbar' class='topbar'>"
+                "<div class='metric-row'><span class='title'>StockBoard v2 Realtime</span>"
+                "<span id='status'>connected</span><span id='copy-status'>copy help</span></div>"
+                "<div class='metric-row'><span id='latency'>stream 12 ms</span></div>"
+                "<div class='metric-row'><span id='render-metrics'>render 0.6 ms</span>"
+                "<span id='metric-mode-status'>metric help</span>"
+                "<span class='small'>color help</span></div></div>"
+                "<div>1분대금</div><div>5분강도</div>"
+                "<script>const trade_value_1m_eok=1;const strength_5m=2;"
+                "new EventSource('/api/v2/stream')</script></body></html>"
             ).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -50,12 +60,40 @@ class PublicGatewayLiveUiTests(unittest.TestCase):
             self.assertIn("5분강도", html)
             self.assertIn(CURRENT_UI_MARKER, html)
             self.assertIn(GATEWAY_VERSION, html)
+            self.assertIn(PUBLIC_CHROME_CLEANUP_VERSION, html)
             self.assertIn("공개 읽기 전용 · 현재 UI", html)
             self.assertNotIn("StockBoard v2 Realtime</title>", html)
         finally:
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+    def test_public_diagnostic_chrome_is_hidden_and_topbar_height_is_released(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _UpstreamHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{server.server_address[1]}"
+            html = fetch_current_public_html(url).decode("utf-8")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        for selector in (
+            "#copy-status",
+            "#latency",
+            "#render-metrics",
+            "#metric-mode-status",
+            "#topbar .small",
+        ):
+            self.assertIn(selector, html)
+        self.assertIn("height:auto!important", html)
+        self.assertIn("min-height:0!important", html)
+        self.assertIn("max-height:none!important", html)
+        self.assertIn("cleanPublicTopbar", html)
+        self.assertIn("node.remove()", html)
+        self.assertIn("if(!visible) row.remove()", html)
 
     def test_current_public_fields_survive_allowlist(self):
         payload = core.sanitize_snapshot(
