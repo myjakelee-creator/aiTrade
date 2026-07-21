@@ -359,7 +359,7 @@ function Publish-LiveGateway {
     Write-Host "PUBLIC_URL=$url" -ForegroundColor Green
     Write-Host "PUBLIC_TARGET=$GatewayBaseUrl"
     Write-Host "PUBLIC_GATEWAY_VERSION=$ExpectedVersion"
-    Start-Process "$url/?v=$ExpectedVersion" | Out-Null
+    Start-Process $url | Out-Null
 }
 
 function Unpublish-LiveGateway {
