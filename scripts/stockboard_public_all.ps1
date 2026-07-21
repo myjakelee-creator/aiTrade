@@ -10,11 +10,12 @@ $ProjectRoot = "C:\aiTrade"
 $PrivateLauncher = Join-Path $ProjectRoot "stockboard_v2_large.cmd"
 $PublicLauncher = Join-Path $ProjectRoot "scripts\stockboard_public_live_v2.ps1"
 $PrivateHealthUrl = "http://127.0.0.1:8765/api/v2/health"
+$PrivateSnapshotUrl = "http://127.0.0.1:8765/api/v2/snapshot?limit=1"
 $PublicHealthUrl = "http://127.0.0.1:8767/api/v2/health"
 $ExpectedCleanup = "stockboard_public_chrome_cleanup_v3_20260722"
 $RuntimeDir = Join-Path $ProjectRoot "data\runtime\stockboard_v2"
 $LastErrorFile = Join-Path $RuntimeDir "stockboard_public_all_last_error.txt"
-$LauncherVersion = "stockboard_public_all_v2_20260722"
+$LauncherVersion = "stockboard_public_all_v3_20260722"
 
 Set-Location -LiteralPath $ProjectRoot
 New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
@@ -71,17 +72,6 @@ function Wait-Health(
     throw "Health check did not become ready: $Url"
 }
 
-function Invoke-Cmd([string]$Path, [string[]]$Arguments) {
-    if (-not (Test-Path -LiteralPath $Path)) {
-        throw "Launcher was not found: $Path"
-    }
-    & $Path @Arguments
-    $code = $LASTEXITCODE
-    if ($code -ne 0) {
-        throw "Launcher failed with exit code ${code}: $Path $($Arguments -join ' ')"
-    }
-}
-
 function Get-TailscaleStatus([string]$Exe) {
     try {
         $raw = (& $Exe status --json 2>$null | Out-String)
@@ -128,22 +118,125 @@ function Get-PublicUrl([string]$Exe) {
     return "https://$dns"
 }
 
-function Start-PrivateWorker {
-    Write-Step "Checking private StockBoard on port 8765"
+function Get-PrivateReadiness {
     $health = Get-Health $PrivateHealthUrl
-    if ($health -and [bool]$health.ok) {
-        Write-Host "PRIVATE_WORKER_ALREADY_RUNNING=True" -ForegroundColor Green
-        return $health
+    $snapshot = Get-Health $PrivateSnapshotUrl
+    $collector = $null
+    $provider = $null
+    if ($snapshot -and $snapshot.status -and $snapshot.status.collector_status) {
+        $collector = $snapshot.status.collector_status
+        $provider = $collector.status
     }
 
-    Write-Host "Starting StockBoard v2. Complete Kiwoom login if the login window appears." -ForegroundColor Yellow
-    Invoke-Cmd $PrivateLauncher @("start-fast")
-    $health = Wait-Health $PrivateHealthUrl 240 {
-        param($value)
-        return [bool]$value.ok
+    $registered = 0
+    if ($provider) {
+        $registered = [int]($provider.realreg_code_count)
     }
-    Write-Host "PRIVATE_WORKER_READY=True" -ForegroundColor Green
-    return $health
+    if ($registered -le 0 -and $collector -and [bool]$provider.realreg_succeeded) {
+        $registered = [int]($collector.registered_count)
+    }
+
+    return [pscustomobject]@{
+        HealthOk = [bool]($health -and $health.ok)
+        CollectorAlive = [bool]($collector -and $collector.alive)
+        ProviderStarted = [bool]($collector -and $collector.provider_started)
+        LoginState = [string]($provider.login_state)
+        RealRegSucceeded = [bool]($provider.realreg_succeeded)
+        RegisteredCount = $registered
+        LastError = [string]($provider.last_error)
+    }
+}
+
+function Test-PrivateReady($State) {
+    return (
+        $State -and
+        [bool]$State.HealthOk -and
+        [bool]$State.CollectorAlive -and
+        [bool]$State.ProviderStarted -and
+        [string]$State.LoginState -eq "connected" -and
+        [bool]$State.RealRegSucceeded -and
+        [int]$State.RegisteredCount -gt 0
+    )
+}
+
+function Write-PrivateStartProgress($State, [int]$ElapsedSec) {
+    Write-Host (
+        "PRIVATE_START_WAIT elapsed={0}s health={1} collector_alive={2} " +
+        "login={3} realreg={4} registered={5}"
+    ) -f @(
+        $ElapsedSec,
+        [bool]$State.HealthOk,
+        [bool]$State.CollectorAlive,
+        [string]$State.LoginState,
+        [bool]$State.RealRegSucceeded,
+        [int]$State.RegisteredCount
+    )
+    if (-not (Test-PrivateReady $State)) {
+        Write-Host "Check Alt+Tab for the Kiwoom login window and complete login." -ForegroundColor Yellow
+    }
+}
+
+function Start-PrivateWorker {
+    Write-Step "Checking private StockBoard on port 8765"
+    $readiness = Get-PrivateReadiness
+    if (Test-PrivateReady $readiness) {
+        Write-Host "PRIVATE_WORKER_ALREADY_RUNNING=True" -ForegroundColor Green
+        return $readiness
+    }
+
+    if (-not (Test-Path -LiteralPath $PrivateLauncher)) {
+        throw "Private launcher was not found: $PrivateLauncher"
+    }
+
+    Write-Host "Starting StockBoard v2 in this console." -ForegroundColor Yellow
+    Write-Host "Complete Kiwoom login if the login window appears."
+    Write-Host "Progress will be printed every 5 seconds."
+
+    $command = "call C:\aiTrade\stockboard_v2_large.cmd start-fast"
+    $process = Start-Process `
+        -FilePath $env:ComSpec `
+        -ArgumentList @("/d", "/c", $command) `
+        -WorkingDirectory $ProjectRoot `
+        -NoNewWindow `
+        -PassThru
+    Write-Host "PRIVATE_LAUNCH_PROCESS_PID=$($process.Id)"
+
+    $startedAt = Get-Date
+    $nextReportAt = $startedAt
+    $timeoutSec = 360
+    while (-not $process.HasExited) {
+        Start-Sleep -Milliseconds 500
+        $process.Refresh()
+        $now = Get-Date
+        if ($now -ge $nextReportAt) {
+            $elapsed = [int](($now - $startedAt).TotalSeconds)
+            Write-PrivateStartProgress (Get-PrivateReadiness) $elapsed
+            $nextReportAt = $now.AddSeconds(5)
+        }
+        if (($now - $startedAt).TotalSeconds -ge $timeoutSec) {
+            throw "Private launcher is still running after ${timeoutSec}s. It was left running for diagnosis."
+        }
+    }
+
+    $exitCode = [int]$process.ExitCode
+    Write-Host "PRIVATE_LAUNCH_EXIT_CODE=$exitCode"
+    if ($exitCode -ne 0) {
+        throw "Private StockBoard launcher failed with exit code $exitCode."
+    }
+
+    $deadline = (Get-Date).AddSeconds(30)
+    do {
+        $readiness = Get-PrivateReadiness
+        if (Test-PrivateReady $readiness) {
+            Write-Host "PRIVATE_WORKER_READY=True" -ForegroundColor Green
+            Write-Host "PRIVATE_REGISTERED_COUNT=$($readiness.RegisteredCount)"
+            return $readiness
+        }
+        Start-Sleep -Seconds 1
+    } while ((Get-Date) -lt $deadline)
+
+    Write-PrivateStartProgress $readiness ([int](((Get-Date) - $startedAt).TotalSeconds))
+    throw "Private launcher exited but OpenAPI connected + SetRealReg readiness was not confirmed."
 }
 
 function Publish-PublicGateway {
@@ -203,13 +296,19 @@ function Start-All {
     Write-Host "PUBLIC_URL=$url" -ForegroundColor Green
     Write-Host ""
     Write-Host "The public StockBoard is ready."
+    Start-Process $url | Out-Null
 }
 
 function Show-AllStatus {
     Write-Step "StockBoard public all-in-one status"
-    $private = Get-Health $PrivateHealthUrl
+    $private = Get-PrivateReadiness
     $public = Get-Health $PublicHealthUrl
-    Write-Host "PRIVATE_WORKER_OK=$([bool]($private -and $private.ok))"
+    Write-Host "PRIVATE_WORKER_OK=$(Test-PrivateReady $private)"
+    Write-Host "PRIVATE_HEALTH_OK=$($private.HealthOk)"
+    Write-Host "PRIVATE_COLLECTOR_ALIVE=$($private.CollectorAlive)"
+    Write-Host "PRIVATE_LOGIN_STATE=$($private.LoginState)"
+    Write-Host "PRIVATE_REALREG=$($private.RealRegSucceeded)"
+    Write-Host "PRIVATE_REGISTERED_COUNT=$($private.RegisteredCount)"
     Write-Host "PUBLIC_GATEWAY_OK=$([bool]($public -and $public.ok))"
     if ($public) {
         Write-Host "PUBLIC_READ_ONLY=$([bool]$public.read_only)"
@@ -248,7 +347,7 @@ function Stop-All {
     }
 
     if (Test-Path -LiteralPath $PrivateLauncher) {
-        & $PrivateLauncher stop
+        & $env:ComSpec /d /c "call C:\aiTrade\stockboard_v2_large.cmd stop"
         if ($LASTEXITCODE -ne 0) {
             throw "Private StockBoard stop failed with exit code $LASTEXITCODE."
         }
