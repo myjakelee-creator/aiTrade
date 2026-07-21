@@ -35,9 +35,9 @@ def install() -> None:
             "const amountRatioText=fmtRatio(r.amount_ratio);"
             "const minuteValue=numeric(r.trade_value_1m_eok),minutePrev=numeric(r.trade_value_prev_1m_eok),minutePct=numeric(r.trade_value_1m_ratio_pct);"
             "const minutePctText=minutePct===null?'-':minutePct>=999?'NEW':`${Math.round(minutePct)}%`;"
-            "const minuteText=minuteValue===null?'-':`${minuteValue.toFixed(1)} ${minutePctText}`;"
+            "const minuteText=minuteValue===null?'-':`${minuteValue.toFixed(1)} (${minutePctText})`;"
             "const minuteClass=minutePct===null?'zero':minutePct>=100?'plus':'minus';"
-            "const minuteTitle=`최근 완료 1분 ${minuteValue===null?'-':minuteValue.toFixed(1)}억\\n직전 1분 ${minutePrev===null?'-':minutePrev.toFixed(1)}억\\n비율 ${minutePctText}\\n상태 ${r.trade_value_1m_quality||'-'}`;",
+            "const minuteTitle=`최근 완료 1분 ${minuteValue===null?'-':minuteValue.toFixed(1)}억\n직전 1분 ${minutePrev===null?'-':minutePrev.toFixed(1)}억\n비율 ${minutePctText}\n상태 ${r.trade_value_1m_quality||'-'}`;",
             1,
         )
         patched = patched.replace(
