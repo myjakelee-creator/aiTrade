@@ -16,6 +16,15 @@ _NEW_CSS = """    .mini-candle { position:relative; height:14px; width:76px; mar
     .mini-candle.flat .body { background:#6b7280; border-left:1px solid #374151; border-right:1px solid #374151; }
 """
 
+_OLD_RATIO_FORMATTER = (
+    "function fmtRatio(v){const n=Number(v);return Number.isFinite(n)&&n>0?"
+    "(n>=10?'10x+':`${n.toFixed(n>=3?1:2)}x`):'-';}"
+)
+_NEW_RATIO_FORMATTER = (
+    "function fmtRatio(v){const n=Number(v);return Number.isFinite(n)&&n>0?"
+    "`${Math.round(n*100)}%`:'-';}"
+)
+
 _NEW_FUNCTIONS = r"""function horizontalCandleOhlc(r){
     const source=r.ohlc||r.realtime_ohlc||r.display_ohlc||null;
     const open=numeric(source?.open??r.open??r.open_price??r.day_open);
@@ -49,12 +58,11 @@ _NEW_FUNCTIONS = r"""function horizontalCandleOhlc(r){
 
 
 def install() -> None:
-    """Install a readable horizontal OHLC candle without changing data collection.
+    """Install candle rendering and display-only amount-ratio formatting.
 
-    The portable rebuild status patch is installed first so its empty-board message
-    survives the final horizontal-candle transformation.  The last-trade age semantics
-    patch is installed after this transformation so both desktop and mobile rows use
-    the final display chain.
+    The amount-ratio value, sorting, color threshold, worker calculation, and every
+    data collection path remain unchanged. Only `fmtRatio` changes from an `x`
+    multiple to the uncapped rounded percentage, for example 15.69 -> 1569%.
     """
 
     from realtime_v2.html_portable_rebuild_status_patch import (
@@ -75,6 +83,13 @@ def install() -> None:
             if _OLD_CSS not in patched:
                 raise RuntimeError("horizontal daily candle CSS anchor not found")
             patched = patched.replace(_OLD_CSS, _NEW_CSS, 1)
+
+            if _OLD_RATIO_FORMATTER in patched:
+                patched = patched.replace(
+                    _OLD_RATIO_FORMATTER,
+                    _NEW_RATIO_FORMATTER,
+                    1,
+                )
 
             start = patched.find("function candleHtml(r){")
             end = patched.find("function rowTitle(r){", start)
