@@ -1,6 +1,6 @@
 # StockBoard v2 실시간 파이프라인
 
-최종 갱신: 2026-07-21 19:47 KST
+최종 갱신: 2026-07-22 00:25 KST
 
 이 문서는 StockBoard v2의 실시간 가격 경로, 분 단위 보조지표, 거래일 유지정책과 실전 검증 상태를 기록하는 단일 기준 문서이다. 과거 v0.3.x 구조와 섞지 않는다.
 
@@ -275,6 +275,23 @@ PipelineState    snapshot·queue·drop·collector 연결 기반 HEALTHY/CHECK
 - `price-doctor`: 사용자가 명시적으로 실행한 순간에만 ka10032를 1회 조회해 StockBoard 현재가·등락률·거래대금을 같은 시점에 비교한다.
 - 두 명령 모두 평상시 background load를 추가하지 않는다.
 
+### 7.7 비공개·공개 웹 서비스 경계
+
+```text
+StockBoard v2 canonical worker  127.0.0.1:8765  private / unchanged
+Public read-only gateway        127.0.0.1:8767  loopback only
+Tailscale Funnel                HTTPS public edge
+```
+
+- 기존 생산 Worker와 가격 경로는 `127.0.0.1:8765`에 그대로 유지한다.
+- 공개 Gateway는 요청마다 8765가 실제로 제공하는 현재 UI를 가져오므로 과거 정적 HTML을 사용하지 않는다.
+- 공개 snapshot/context는 명시적 allowlist 필드만 전달한다.
+- PID·파일 경로·수집기 내부 상태·원천 raw 데이터·오류 상세는 외부에 전달하지 않는다.
+- POST·PUT·PATCH·DELETE와 서버 제어 API는 차단한다.
+- 공개 화면에서는 HTS 연동과 서버 제어를 제거하고 종목코드 복사만 허용한다.
+- Gateway는 `127.0.0.1:8767`에만 바인딩하며 공유기 포트포워딩과 `0.0.0.0` 바인딩은 금지한다.
+- Windows PowerShell 5.1의 UTF-8 파싱 문제를 피하기 위해 운영 런처 `scripts/stockboard_public_live_v2.ps1`은 ASCII-only 계약을 유지한다.
+
 ## 8. 공통 거래일 유지정책
 
 초기화하지 않는 시점:
@@ -412,13 +429,38 @@ REST 발견                  30
 
 `TradeFieldSuppressed=10637`은 `_AL` 교차 수신에서 가격을 보존한 횟수이며 같은 시점 `WorkerDrop=0`, queue 정상, `PipelineState=HEALTHY`를 확인했다.
 
-### 10.3 남은 최종 검증
+### 10.3 2026-07-22 00:25 KST 공개 웹 서비스 실기
+
+검증 결과:
+
+```text
+PRIVATE_WORKER                 http://127.0.0.1:8765
+PUBLIC_GATEWAY                http://127.0.0.1:8767
+PUBLIC_GATEWAY_VERSION        stockboard_public_live_ui_v1_20260721
+PUBLIC_UI_SOURCE              live_private_worker_html_per_request
+PUBLIC_UI_LIVE_SYNC           True
+PUBLIC_UI_HAS_1MIN_VALUE      True
+PUBLIC_UI_HAS_5MIN_STRENGTH   True
+PUBLIC_WEB                    https://gram-jlee.tail04774a.ts.net
+```
+
+- 8765 실제 UI와 8767 공개 읽기 전용 UI의 열 제목·레이아웃 일치를 화면으로 확인했다.
+- `1분대금`, `5분강도`, 시장수급, 미국시장 표시가 현재 UI와 동일하게 제공됐다.
+- 공개 화면의 `공개 읽기 전용 · 현재 UI` 표시와 HTS/서버 제어 제거를 확인했다.
+- Tailscale Funnel을 tailnet 관리 화면에서 승인한 뒤 일반 인터넷 공개에 성공했다.
+- 모바일에서 Tailscale 비연결 상태로 공개 HTTPS 주소 접속을 확인했다.
+- 당시 `PUBLIC_GATEWAY_ROWS=0`은 원본 8765도 표시 종목이 0인 장마감 상태였으므로 Gateway 데이터 손실이 아니다.
+- 생산 Worker·QAx collector·WebSocket·REST cadence·SSE cadence 변경은 0이다.
+
+### 10.4 남은 최종 검증
 
 - 자정 이후부터 다음 실제 프리마켓 전까지 2026-07-21 마지막 정상 보드 유지
 - 다음 실제 프리마켓 08:00에서 전일 exact를 지우지 않고 당일 체결 종목부터 순차 LIVE 전환
 - 위 두 시점 통과 후 PR Draft 해제·병합
 
 ## 11. 운영 명령
+
+생산 StockBoard:
 
 ```powershell
 cd C:\aiTrade
@@ -430,4 +472,29 @@ git pull --ff-only
 .\stockboard_v2_large.cmd price-doctor
 ```
 
-정규장·애프터마켓 가격과 보조지표 검증은 완료했다. 자정과 다음 실제 프리마켓 전환 검증 전까지 PR은 Draft로 유지한다.
+공개 Gateway 로컬 재시작:
+
+```powershell
+cd C:\aiTrade
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\stockboard_public_live_v2.ps1 `
+  -Action restart
+```
+
+인터넷 공개:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\stockboard_public_live_v2.ps1 `
+  -Action publish
+```
+
+공개 중지 후 비공개 Tailscale Serve 복원:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\stockboard_public_live_v2.ps1 `
+  -Action unpublish
+```
+
+2026-07-22 00:25 KST 기준으로 현재 UI 동기화·읽기 전용 경계·Tailscale Funnel 공개·모바일 외부 접속까지 통과했다. 정규장·애프터마켓 가격과 보조지표 검증은 완료했고, 표시 연속성의 다음 실제 프리마켓 전환 검증은 별도 유지한다.
