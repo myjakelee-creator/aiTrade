@@ -14,7 +14,7 @@ $PublicHealthUrl = "http://127.0.0.1:8767/api/v2/health"
 $ExpectedCleanup = "stockboard_public_chrome_cleanup_v3_20260722"
 $RuntimeDir = Join-Path $ProjectRoot "data\runtime\stockboard_v2"
 $LastErrorFile = Join-Path $RuntimeDir "stockboard_public_all_last_error.txt"
-$LauncherVersion = "stockboard_public_all_v1_20260722"
+$LauncherVersion = "stockboard_public_all_v2_20260722"
 
 Set-Location -LiteralPath $ProjectRoot
 New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
@@ -78,7 +78,7 @@ function Invoke-Cmd([string]$Path, [string[]]$Arguments) {
     & $Path @Arguments
     $code = $LASTEXITCODE
     if ($code -ne 0) {
-        throw "Launcher failed with exit code $code: $Path $($Arguments -join ' ')"
+        throw "Launcher failed with exit code ${code}: $Path $($Arguments -join ' ')"
     }
 }
 
