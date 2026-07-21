@@ -18,7 +18,7 @@ from realtime_v2 import public_gateway_core as core
 
 GATEWAY_VERSION = "stockboard_public_live_ui_v1_20260721"
 CURRENT_UI_MARKER = "STOCKBOARD_PUBLIC_LIVE_UI_V1_20260721"
-PUBLIC_CHROME_CLEANUP_VERSION = "stockboard_public_chrome_cleanup_v1_20260722"
+PUBLIC_CHROME_CLEANUP_VERSION = "stockboard_public_chrome_cleanup_v2_20260722"
 PUBLIC_ROOT_CONTRACT_VERSION = "stockboard_public_root_no_query_v1_20260722"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8767
@@ -62,7 +62,6 @@ PUBLIC_UI_STYLE = """
 #topbar .board-shell-new-window,
 #row-position-toggle,
 #candidate-model-selector,
-label:has(#candidate-model-selector),
 #counts,
 #throughput,
 #collector-metrics,
@@ -100,31 +99,59 @@ PUBLIC_UI_SCRIPT = """
     window.history.replaceState(null,'','/');
   }
 
-  const title=document.querySelector('.title');
-  if(title) title.textContent='StockBoard v2 Public';
-  const status=document.getElementById('status');
-  if(status && !document.querySelector('.public-readonly-badge')){
-    const badge=document.createElement('span');
-    badge.className='badge public-readonly-badge';
-    badge.textContent='공개 읽기 전용 · 현재 UI';
-    status.insertAdjacentElement('afterend',badge);
+  const PUBLIC_REMOVE_IDS=[
+    'copy-status',
+    'counts',
+    'latency',
+    'throughput',
+    'collector-metrics',
+    'worker-metrics',
+    'lag-metrics',
+    'render-metrics',
+    'metric-mode-status'
+  ];
+
+  function ensurePublicReadonlyBadge(){
+    const status=document.getElementById('status');
+    if(status && !document.querySelector('.public-readonly-badge')){
+      const badge=document.createElement('span');
+      badge.className='badge public-readonly-badge';
+      badge.textContent='공개 읽기 전용 · 현재 UI';
+      status.insertAdjacentElement('afterend',badge);
+    }
   }
 
   function cleanPublicTopbar(){
     const topbar=document.getElementById('topbar');
     if(!topbar) return;
-    ['copy-status','latency','render-metrics','metric-mode-status'].forEach(id=>{
-      const node=document.getElementById(id);
-      if(node) node.remove();
+
+    const title=topbar.querySelector('.title');
+    if(title) title.textContent='StockBoard v2 Public';
+
+    ensurePublicReadonlyBadge();
+
+    PUBLIC_REMOVE_IDS.forEach(id=>{
+      topbar.querySelectorAll(`[id="${id}"]`).forEach(node=>node.remove());
     });
+
     topbar.querySelectorAll('.small').forEach(node=>node.remove());
+
+    const candidateSelector=topbar.querySelector('#candidate-model-selector');
+    if(candidateSelector){
+      const label=candidateSelector.closest('label');
+      if(label) label.remove();
+      else candidateSelector.remove();
+    }
+
     topbar.querySelectorAll('.metric-row').forEach(row=>{
       const visible=Array.from(row.children).some(child=>{
         if(!child.isConnected) return false;
-        return getComputedStyle(child).display!=='none';
+        const style=getComputedStyle(child);
+        return !child.hidden && style.display!=='none' && style.visibility!=='hidden';
       });
       if(!visible) row.remove();
     });
+
     topbar.style.height='auto';
     topbar.style.minHeight='0';
     topbar.style.maxHeight='none';
@@ -132,15 +159,38 @@ PUBLIC_UI_SCRIPT = """
     topbar.style.scrollbarGutter='auto';
   }
 
+  let cleanupScheduled=false;
+  function schedulePublicTopbarCleanup(){
+    if(cleanupScheduled) return;
+    cleanupScheduled=true;
+    requestAnimationFrame(()=>{
+      cleanupScheduled=false;
+      cleanPublicTopbar();
+    });
+  }
+
   cleanPublicTopbar();
   requestAnimationFrame(cleanPublicTopbar);
   setTimeout(cleanPublicTopbar,100);
   setTimeout(cleanPublicTopbar,500);
 
+  const topbar=document.getElementById('topbar');
+  if(topbar && typeof MutationObserver==='function'){
+    const observer=new MutationObserver(schedulePublicTopbarCleanup);
+    observer.observe(topbar,{childList:true,subtree:true});
+    window.__stockboardPublicTopbarObserver=observer;
+  }
+
+  window.addEventListener('resize',schedulePublicTopbarCleanup,{passive:true});
+  window.addEventListener('orientationchange',schedulePublicTopbarCleanup,{passive:true});
+  document.addEventListener('visibilitychange',()=>{
+    if(!document.hidden) schedulePublicTopbarCleanup();
+  });
+
   if(typeof window.sendHtsCommand==='function'){
     window.sendHtsCommand=function(code){
       const text=String(code||'').trim();
-      if(!/^\d{6}$/.test(text)) return;
+      if(!/^\\d{6}$/.test(text)) return;
       if(typeof writeClipboardText==='function'){
         writeClipboardText(text).catch(()=>{});
       }
