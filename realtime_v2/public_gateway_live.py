@@ -18,7 +18,7 @@ from realtime_v2 import public_gateway_core as core
 
 GATEWAY_VERSION = "stockboard_public_live_ui_v1_20260721"
 CURRENT_UI_MARKER = "STOCKBOARD_PUBLIC_LIVE_UI_V1_20260721"
-PUBLIC_CHROME_CLEANUP_VERSION = "stockboard_public_chrome_cleanup_v2_20260722"
+PUBLIC_CHROME_CLEANUP_VERSION = "stockboard_public_chrome_cleanup_v3_20260722"
 PUBLIC_ROOT_CONTRACT_VERSION = "stockboard_public_root_no_query_v1_20260722"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8767
@@ -73,6 +73,30 @@ PUBLIC_UI_STYLE = """
 #metric-mode-status,
 #topbar .small { display:none!important; }
 
+html body #topbar #counts,
+html body #topbar #throughput,
+html body #topbar #collector-metrics,
+html body #topbar #worker-metrics,
+html body #topbar #lag-metrics,
+html body #topbar #copy-status,
+html body #topbar #latency,
+html body #topbar #render-metrics,
+html body #topbar #metric-mode-status {
+  display:none!important;
+  visibility:hidden!important;
+  opacity:0!important;
+  width:0!important;
+  min-width:0!important;
+  max-width:0!important;
+  height:0!important;
+  min-height:0!important;
+  max-height:0!important;
+  padding:0!important;
+  margin:0!important;
+  border:0!important;
+  overflow:hidden!important;
+}
+
 #topbar.topbar {
   height:auto!important;
   min-height:0!important;
@@ -111,6 +135,24 @@ PUBLIC_UI_SCRIPT = """
     'metric-mode-status'
   ];
 
+  const PUBLIC_DIAGNOSTIC_TEXT_PATTERNS=[
+    /^recv\/s(?:\s|$)/i,
+    /^(?:stream|poll)\s+\d+(?:\.\d+)?\s*ms(?:\s|\u00b7|$)/i,
+    /^render\s+\d+(?:\.\d+)?\s*ms(?:\s|\u00b7|$)/i,
+    /^collector_q(?:\s|$)/i,
+    /^worker_q(?:\s|$)/i,
+    /^top20\s+lag(?:\s|$)/i
+  ];
+
+  function normalizedText(node){
+    return String(node && node.textContent || '').replace(/\s+/g,' ').trim();
+  }
+
+  function isPublicDiagnosticNode(node){
+    const text=normalizedText(node);
+    return !!text && PUBLIC_DIAGNOSTIC_TEXT_PATTERNS.some(pattern=>pattern.test(text));
+  }
+
   function ensurePublicReadonlyBadge(){
     const status=document.getElementById('status');
     if(status && !document.querySelector('.public-readonly-badge')){
@@ -121,12 +163,20 @@ PUBLIC_UI_SCRIPT = """
     }
   }
 
+  function setStyleValue(node,key,value){
+    if(node && node.style && node.style[key]!==value){
+      node.style[key]=value;
+    }
+  }
+
   function cleanPublicTopbar(){
     const topbar=document.getElementById('topbar');
     if(!topbar) return;
 
     const title=topbar.querySelector('.title');
-    if(title) title.textContent='StockBoard v2 Public';
+    if(title && title.textContent!=='StockBoard v2 Public'){
+      title.textContent='StockBoard v2 Public';
+    }
 
     ensurePublicReadonlyBadge();
 
@@ -135,6 +185,11 @@ PUBLIC_UI_SCRIPT = """
     });
 
     topbar.querySelectorAll('.small').forEach(node=>node.remove());
+
+    topbar.querySelectorAll('.badge,span,button,label').forEach(node=>{
+      if(!node.isConnected || node.classList.contains('public-readonly-badge')) return;
+      if(isPublicDiagnosticNode(node)) node.remove();
+    });
 
     const candidateSelector=topbar.querySelector('#candidate-model-selector');
     if(candidateSelector){
@@ -152,11 +207,11 @@ PUBLIC_UI_SCRIPT = """
       if(!visible) row.remove();
     });
 
-    topbar.style.height='auto';
-    topbar.style.minHeight='0';
-    topbar.style.maxHeight='none';
-    topbar.style.overflowY='visible';
-    topbar.style.scrollbarGutter='auto';
+    setStyleValue(topbar,'height','auto');
+    setStyleValue(topbar,'minHeight','0px');
+    setStyleValue(topbar,'maxHeight','none');
+    setStyleValue(topbar,'overflowY','visible');
+    setStyleValue(topbar,'scrollbarGutter','auto');
   }
 
   let cleanupScheduled=false;
@@ -171,18 +226,37 @@ PUBLIC_UI_SCRIPT = """
 
   cleanPublicTopbar();
   requestAnimationFrame(cleanPublicTopbar);
-  setTimeout(cleanPublicTopbar,100);
-  setTimeout(cleanPublicTopbar,500);
+  [100,300,500,1000,2000,5000].forEach(delay=>setTimeout(cleanPublicTopbar,delay));
 
   const topbar=document.getElementById('topbar');
   if(topbar && typeof MutationObserver==='function'){
-    const observer=new MutationObserver(schedulePublicTopbarCleanup);
-    observer.observe(topbar,{childList:true,subtree:true});
+    const observer=new MutationObserver(mutations=>{
+      const relevant=mutations.some(mutation=>{
+        if(mutation.type==='childList') return true;
+        const node=mutation.target && mutation.target.nodeType===3
+          ? mutation.target.parentElement
+          : mutation.target;
+        if(!node) return false;
+        const owner=node.closest ? node.closest('[id]') : null;
+        const id=String((owner && owner.id) || node.id || '');
+        return PUBLIC_REMOVE_IDS.includes(id) || isPublicDiagnosticNode(node);
+      });
+      if(relevant) schedulePublicTopbarCleanup();
+    });
+    observer.observe(topbar,{
+      childList:true,
+      subtree:true,
+      characterData:true,
+      attributes:true,
+      attributeFilter:['style','class','hidden']
+    });
     window.__stockboardPublicTopbarObserver=observer;
   }
 
+  window.__stockboardPublicTopbarCleanupTimer=setInterval(cleanPublicTopbar,2000);
   window.addEventListener('resize',schedulePublicTopbarCleanup,{passive:true});
   window.addEventListener('orientationchange',schedulePublicTopbarCleanup,{passive:true});
+  window.addEventListener('pageshow',schedulePublicTopbarCleanup,{passive:true});
   document.addEventListener('visibilitychange',()=>{
     if(!document.hidden) schedulePublicTopbarCleanup();
   });
@@ -190,7 +264,7 @@ PUBLIC_UI_SCRIPT = """
   if(typeof window.sendHtsCommand==='function'){
     window.sendHtsCommand=function(code){
       const text=String(code||'').trim();
-      if(!/^\\d{6}$/.test(text)) return;
+      if(!/^\d{6}$/.test(text)) return;
       if(typeof writeClipboardText==='function'){
         writeClipboardText(text).catch(()=>{});
       }
