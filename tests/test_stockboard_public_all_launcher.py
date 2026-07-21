@@ -50,10 +50,21 @@ class StockBoardPublicAllLauncherTests(unittest.TestCase):
         self.assertIn("PRIVATE_LAUNCH_PROCESS_PID", script)
         self.assertIn("PRIVATE_LAUNCH_EXIT_CODE", script)
         self.assertIn("stockboard_v2_large.cmd start-fast", script)
-        self.assertIn("LoginState -eq \"connected\"", script)
+        self.assertIn('LoginState -eq "connected"', script)
         self.assertIn("RealRegSucceeded", script)
         self.assertIn("RegisteredCount -gt 0", script)
         self.assertNotIn("function Invoke-Cmd", script)
+
+    def test_private_readiness_uses_collector_pid_file(self):
+        script = ALL_PS1_PATH.read_text(encoding="ascii")
+        self.assertIn('CollectorPidFile = Join-Path $RuntimeDir "collector32.pid"', script)
+        self.assertIn("function Read-Pid", script)
+        self.assertIn("function Test-PidAlive", script)
+        self.assertIn("$collectorPid = Read-Pid $CollectorPidFile", script)
+        self.assertIn("$collectorAlive = Test-PidAlive $collectorPid", script)
+        self.assertIn("CollectorPid = $collectorPid", script)
+        self.assertIn("PRIVATE_COLLECTOR_PID", script)
+        self.assertIn("stockboard_public_all_v5_20260722", script)
 
     def test_progress_formatting_is_powershell_command_safe(self):
         script = ALL_PS1_PATH.read_text(encoding="ascii")
@@ -79,7 +90,7 @@ class StockBoardPublicAllLauncherTests(unittest.TestCase):
     def test_powershell_51_variable_before_colon_is_delimited(self):
         script = ALL_PS1_PATH.read_text(encoding="ascii")
         self.assertNotIn("$code:", script)
-        self.assertIn("stockboard_public_all_v4_20260722", script)
+        self.assertIn("stockboard_public_all_v5_20260722", script)
 
     def test_public_launcher_opens_canonical_root_url(self):
         script = PUBLIC_PS1_PATH.read_text(encoding="ascii")
