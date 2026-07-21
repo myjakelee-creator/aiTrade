@@ -33,6 +33,9 @@ def install() -> None:
     from realtime_v2.worker_board_display_continuity_safety import (
         install as install_board_display_continuity_safety,
     )
+    from realtime_v2.worker_board_display_continuity_runtime_opt import (
+        install as install_board_display_continuity_runtime_opt,
+    )
     from realtime_v2.worker_portable_rebuild_status_patch import (
         install as install_portable_rebuild_status,
     )
@@ -44,6 +47,7 @@ def install() -> None:
         board_guard.install(guard_base)
         install_board_display_continuity(guard_base)
         install_board_display_continuity_safety(guard_base)
+        install_board_display_continuity_runtime_opt(guard_base)
         install_portable_rebuild_status()
         try:
             from realtime_v2.worker_momentum_accuracy_stage_bridge import (
