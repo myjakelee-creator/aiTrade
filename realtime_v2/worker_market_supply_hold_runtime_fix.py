@@ -49,24 +49,29 @@ def install() -> None:
         install_board_display_continuity_safety(guard_base)
         install_board_display_continuity_runtime_opt(guard_base)
         install_portable_rebuild_status()
-        try:
-            from realtime_v2.worker_aux_metric_source_contract_patch import (
-                install as install_aux_metric_source_contract,
-            )
-
-            install_aux_metric_source_contract(guard_base)
+        # Source-contract patching mutates the final State/ProgramNetUpdater classes.
+        # Skip synthetic test bases that do not expose the production class contract.
+        if getattr(guard_base, "State", None) is not None and getattr(
+            guard_base, "ProgramNetUpdater", None
+        ) is not None:
             try:
-                (Path(guard_base.RUNTIME_DIR) / "aux_metric_source_contract_error.txt").unlink(
-                    missing_ok=True
+                from realtime_v2.worker_aux_metric_source_contract_patch import (
+                    install as install_aux_metric_source_contract,
                 )
-            except Exception:
-                pass
-        except Exception as error:
-            _record_optional_error(
-                guard_base,
-                "aux_metric_source_contract_error.txt",
-                error,
-            )
+
+                install_aux_metric_source_contract(guard_base)
+                try:
+                    (Path(guard_base.RUNTIME_DIR) / "aux_metric_source_contract_error.txt").unlink(
+                        missing_ok=True
+                    )
+                except Exception:
+                    pass
+            except Exception as error:
+                _record_optional_error(
+                    guard_base,
+                    "aux_metric_source_contract_error.txt",
+                    error,
+                )
         try:
             from realtime_v2.worker_momentum_accuracy_stage_bridge import (
                 install as install_momentum_accuracy_stage,
