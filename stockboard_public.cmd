@@ -16,7 +16,7 @@ goto elevate
 echo.
 echo StockBoard v2 Public Read-Only Gateway
 echo.
-echo   1 Start local public gateway only
+echo   1 Start/restart local public gateway only
 echo   2 Show status
 echo   3 Publish to the internet with Tailscale Funnel
 echo   4 Unpublish and restore private Tailscale Serve
@@ -24,7 +24,7 @@ echo   5 Stop public gateway (unpublishes first when active)
 echo   0 Exit
 echo.
 set /p "CHOICE=Select: "
-if "%CHOICE%"=="1" set "ACTION=start"
+if "%CHOICE%"=="1" set "ACTION=restart"
 if "%CHOICE%"=="2" set "ACTION=status"
 if "%CHOICE%"=="3" set "ACTION=publish"
 if "%CHOICE%"=="4" set "ACTION=unpublish"
