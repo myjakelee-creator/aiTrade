@@ -12,10 +12,7 @@ $ProjectRoot = "C:\aiTrade"
 $RuntimeDir = Join-Path $ProjectRoot "data\runtime\stockboard_v2"
 
 function Get-FirstValue {
-    param(
-        [object]$Object,
-        [string[]]$Names
-    )
+    param([object]$Object, [string[]]$Names)
     if ($null -eq $Object) { return $null }
     foreach ($name in $Names) {
         $property = $Object.PSObject.Properties[$name]
@@ -36,9 +33,7 @@ function Get-Number {
         [System.Globalization.NumberStyles]::Float,
         [System.Globalization.CultureInfo]::InvariantCulture,
         [ref]$number
-    )) {
-        return $number
-    }
+    )) { return $number }
     return $null
 }
 
@@ -59,11 +54,20 @@ function Get-AgeSec {
     return $null
 }
 
-function Format-OptionalNumber {
-    param([object]$Value, [int]$Digits = 2)
-    $number = Get-Number $Value
-    if ($null -eq $number) { return "-" }
-    return $number.ToString("N$Digits")
+function Get-ContractState {
+    param(
+        [object]$Value,
+        [object]$Source,
+        [string]$GoodPattern,
+        [string]$BadPattern,
+        [string]$GoodLabel,
+        [string]$BadLabel
+    )
+    if ($null -eq $Value -or [string]$Value -eq "") { return "MISSING" }
+    $sourceText = [string]$Source
+    if ($sourceText -match $GoodPattern) { return $GoodLabel }
+    if ($sourceText -match $BadPattern) { return $BadLabel }
+    return "UNKNOWN_SOURCE"
 }
 
 $payload = Invoke-RestMethod -Uri $SnapshotUrl -TimeoutSec 10
@@ -86,48 +90,40 @@ if ($requestedCodes.Count -gt 0) {
 }
 
 $currentDate = Get-DateDigits (Get-FirstValue $status @(
-    "board_display_current_trading_date",
-    "board_expected_trading_date"
+    "board_display_current_trading_date", "board_expected_trading_date"
 ))
 if (-not $currentDate) { $currentDate = Get-DateDigits $payload.trading_date }
 $holdDate = Get-DateDigits (Get-FirstValue $status @(
-    "board_display_hold_source_trading_date",
-    "board_source_trading_date"
+    "board_display_hold_source_trading_date", "board_source_trading_date"
 ))
 
 $result = foreach ($row in $rows) {
     $price = Get-Number (Get-FirstValue $row @("price", "trade_price"))
     $rate = Get-Number (Get-FirstValue $row @("change_rate", "realtime_change_rate"))
+    $receivedAt = Get-FirstValue $row @(
+        "price_received_at", "trade_received_at", "received_at", "last_trade_event_received_at"
+    )
     $priceAge = Get-Number (Get-FirstValue $row @("price_age_sec"))
-    if ($null -eq $priceAge) {
-        $priceAge = Get-AgeSec (Get-FirstValue $row @(
-            "price_received_at",
-            "trade_received_at",
-            "received_at"
-        ))
-    }
+    if ($null -eq $priceAge) { $priceAge = Get-AgeSec $receivedAt }
+    $receivedDate = Get-DateDigits $receivedAt
 
-    $priceDate = Get-DateDigits (Get-FirstValue $row @(
-        "price_trading_date",
-        "source_trading_date"
-    ))
-    $rateDate = Get-DateDigits (Get-FirstValue $row @(
-        "change_rate_trading_date",
-        "source_trading_date"
-    ))
-    $tradeValueDate = Get-DateDigits (Get-FirstValue $row @(
-        "trade_value_trading_date",
-        "source_trading_date"
-    ))
-
+    $priceDate = Get-DateDigits (Get-FirstValue $row @("price_trading_date", "source_trading_date"))
+    $rateDate = Get-DateDigits (Get-FirstValue $row @("change_rate_trading_date", "source_trading_date"))
+    $tradeValueDate = Get-DateDigits (Get-FirstValue $row @("trade_value_trading_date", "source_trading_date"))
     $rowSource = [string](Get-FirstValue $row @("row_source", "source_code"))
+    $sourceCode = [string](Get-FirstValue $row @("source_code", "registered_code"))
+    $looksRealtime = $rowSource -match 'realtime' -or $sourceCode -match '^\d{6}(_AL|_NX)?$'
+
     $priceState = "UNKNOWN"
-    if ($priceDate -eq $currentDate -and $null -ne $priceAge -and $priceAge -le 3) {
+    $isCurrentRealtime = $looksRealtime -and (
+        $priceDate -eq $currentDate -or $receivedDate -eq $currentDate -or (-not $priceDate -and $currentDate)
+    )
+    if ($isCurrentRealtime -and $null -ne $priceAge -and $priceAge -le 3) {
         $priceState = "LIVE"
-    } elseif ($holdDate -and $priceDate -eq $holdDate -and $rowSource -match "portable_exact_close") {
-        $priceState = "HOLD"
-    } elseif ($priceDate -eq $currentDate) {
+    } elseif ($isCurrentRealtime) {
         $priceState = "LIVE_STALE"
+    } elseif ($holdDate -and $priceDate -eq $holdDate -and $rowSource -match 'portable_exact_close') {
+        $priceState = "HOLD"
     }
 
     $tradeValue = Get-Number (Get-FirstValue $row @("trade_value_eok"))
@@ -141,20 +137,35 @@ $result = foreach ($row in $rows) {
     }
 
     $minuteValue = Get-FirstValue $row @(
-        "minute_value_eok",
-        "trade_value_1m_eok",
-        "one_minute_trade_value_eok",
-        "completed_1m_trade_value_eok"
+        "trade_value_1m_eok", "minute_value_eok", "one_minute_trade_value_eok", "completed_1m_trade_value_eok"
     )
+
     $bidAsk = Get-FirstValue $row @("bid_ask_ratio")
+    $bidAskSource = Get-FirstValue $row @("orderbook_source")
+    $bidAskDate = Get-DateDigits (Get-FirstValue $row @("orderbook_source_trading_date"))
+    $bidAskAge = Get-AgeSec (Get-FirstValue $row @("orderbook_received_at", "ui_orderbook_observed_at"))
+    $bidAskContract = Get-ContractState $bidAsk $bidAskSource '0C|qax_realtime_orderbook|realtime_orderbook' '0D|time.?after' 'OK_0C' 'WRONG_0D'
+
     $execution = Get-FirstValue $row @("execution_strength")
-    $strength5 = Get-FirstValue $row @(
-        "strength_5m",
-        "strength5",
-        "five_min_strength",
-        "strength_5min"
-    )
+    $executionSource = Get-FirstValue $row @("execution_strength_source", "execution_source")
+    $executionDate = Get-DateDigits (Get-FirstValue $row @("execution_source_trading_date"))
+    $executionAge = Get-AgeSec (Get-FirstValue $row @(
+        "execution_strength_received_at", "execution_strength_updated_at", "ui_execution_strength_observed_at"
+    ))
+    $executionContract = Get-ContractState $execution $executionSource '0A.*fid228|fid228.*0A' '0B.*fid228|fid228.*0B|ka10046' 'OK_0A_FID228' 'WRONG_0B'
+
+    $strength5 = Get-FirstValue $row @("strength_5m", "strength5", "five_min_strength", "strength_5min")
+    $strength5Source = Get-FirstValue $row @("strength_source")
+    $strength5Date = Get-DateDigits (Get-FirstValue $row @("strength_source_trading_date"))
+    $strength5Age = Get-AgeSec (Get-FirstValue $row @("strength_snapshot_at", "ui_strength_observed_at"))
+    $strength5Contract = Get-ContractState $strength5 $strength5Source 'ka10045|opt10045' 'ka10046|opt10046' 'OK_KA10045' 'WRONG_KA10046'
+
     $program = Get-FirstValue $row @("program_net")
+    $programSource = Get-FirstValue $row @("program_net_source")
+    $programDate = Get-DateDigits (Get-FirstValue $row @("program_source_trading_date"))
+    $programAge = Get-AgeSec (Get-FirstValue $row @("program_net_updated_at"))
+    $programContract = Get-ContractState $program $programSource 'ka90003|program_ws_0u' 'ka90004' 'OK_KA90003' 'WRONG_KA90004'
+
     $largeTrade = Get-FirstValue $row @("large_trade_net_count")
 
     [pscustomobject]@{
@@ -166,9 +177,8 @@ $result = foreach ($row in $rows) {
         PriceState = $priceState
         PriceAgeSec = if ($null -eq $priceAge) { $null } else { [math]::Round($priceAge, 2) }
         PriceDate = $priceDate
-        RateDate = $rateDate
-        Source = $rowSource
-        SourceCode = Get-FirstValue $row @("source_code", "registered_code")
+        ReceivedDate = $receivedDate
+        SourceCode = $sourceCode
         TradeValueEok = $tradeValue
         TradeValueDate = $tradeValueDate
         PrevValueEok = $previousValue
@@ -176,18 +186,28 @@ $result = foreach ($row in $rows) {
         RatioDelta = if ($null -eq $ratioDelta) { $null } else { [math]::Round($ratioDelta, 4) }
         MinuteValueEok = $minuteValue
         BidAsk = $bidAsk
-        BidAskDate = Get-DateDigits (Get-FirstValue $row @("orderbook_source_trading_date"))
+        BidAskContract = $bidAskContract
+        BidAskSource = $bidAskSource
+        BidAskDate = $bidAskDate
+        BidAskAgeSec = if ($null -eq $bidAskAge) { $null } else { [math]::Round($bidAskAge, 1) }
         Execution = $execution
-        ExecutionDate = Get-DateDigits (Get-FirstValue $row @("execution_source_trading_date"))
-        ExecutionSource = Get-FirstValue $row @("execution_strength_source", "execution_source")
+        ExecutionContract = $executionContract
+        ExecutionSource = $executionSource
+        ExecutionDate = $executionDate
+        ExecutionAgeSec = if ($null -eq $executionAge) { $null } else { [math]::Round($executionAge, 1) }
         Strength5 = $strength5
-        Strength5Date = Get-DateDigits (Get-FirstValue $row @("strength_source_trading_date"))
-        Strength5Source = Get-FirstValue $row @("strength_source")
+        Strength5Contract = $strength5Contract
+        Strength5Source = $strength5Source
+        Strength5Date = $strength5Date
+        Strength5AgeSec = if ($null -eq $strength5Age) { $null } else { [math]::Round($strength5Age, 1) }
         ProgramEok = $program
-        ProgramDate = Get-DateDigits (Get-FirstValue $row @("program_source_trading_date"))
-        ProgramSource = Get-FirstValue $row @("program_net_source")
+        ProgramContract = $programContract
+        ProgramSource = $programSource
+        ProgramDate = $programDate
+        ProgramAgeSec = if ($null -eq $programAge) { $null } else { [math]::Round($programAge, 1) }
         LargeTrade = $largeTrade
         LargeTradeDate = Get-DateDigits (Get-FirstValue $row @("large_trade_source_trading_date"))
+        LargeTradeSource = Get-FirstValue $row @("large_trade_source")
         LargeTradeQuality = Get-FirstValue $row @("large_trade_quality")
     }
 }
@@ -205,17 +225,28 @@ $summary = [pscustomobject]@{
     LiveStale = @($result | Where-Object PriceState -eq "LIVE_STALE").Count
     Unknown = @($result | Where-Object PriceState -eq "UNKNOWN").Count
     RatioMismatch = @($result | Where-Object { $null -ne $_.RatioDelta -and $_.RatioDelta -gt 0.01 }).Count
-    BidAskPresent = @($result | Where-Object { $null -ne $_.BidAsk }).Count
-    ExecutionPresent = @($result | Where-Object { $null -ne $_.Execution }).Count
-    Strength5Present = @($result | Where-Object { $null -ne $_.Strength5 }).Count
-    ProgramPresent = @($result | Where-Object { $null -ne $_.ProgramEok }).Count
+    BidAskOK = @($result | Where-Object BidAskContract -eq "OK_0C").Count
+    BidAskWrong = @($result | Where-Object BidAskContract -match '^WRONG').Count
+    ExecutionOK = @($result | Where-Object ExecutionContract -eq "OK_0A_FID228").Count
+    ExecutionWrong = @($result | Where-Object ExecutionContract -match '^WRONG').Count
+    Strength5OK = @($result | Where-Object Strength5Contract -eq "OK_KA10045").Count
+    Strength5Wrong = @($result | Where-Object Strength5Contract -match '^WRONG').Count
+    ProgramOK = @($result | Where-Object ProgramContract -eq "OK_KA90003").Count
+    ProgramWrong = @($result | Where-Object ProgramContract -match '^WRONG').Count
     CollectorPending = $sender.pending_total_count
     CollectorSentPerSec = $sender.sent_per_sec
     CollectorCoalesced = $sender.coalesced_trade_overwrite_count
     WorkerEventCount = $status.event_count
     WorkerTradeCount = $status.trade_count
     WorkerLogQueue = $status.event_log_queue_size
+    WorkerDrop = $status.dropped_trade_count
     WorkerLogDrop = $status.event_log_dropped_count
+    SourceContractVersion = $status.aux_metric_source_contract_version
+    ExecutionRealtimeType = $status.execution_realtime_type
+    OrderbookRealtimeType = $status.orderbook_realtime_type
+    StrengthApiId = $status.strength_tr_api_id
+    ProgramApiId = $status.program_tr_api_id
+    ProgramLastError = $status.program_net_last_error
     ActivePayloadCache = $status.board_display_active_payload_cache_status
     ActivePayloadFileReads = $status.board_display_active_payload_file_read_count
     ActivePayloadLookupMs = $status.board_display_active_payload_last_lookup_ms
@@ -230,8 +261,10 @@ $summary | Format-List
 Write-Host ""
 Write-Host "=== Row-level source / freshness / consistency ===" -ForegroundColor Cyan
 $result |
-    Select-Object Rank, Code, Name, Price, RatePct, PriceState, PriceAgeSec, PriceDate, SourceCode,
-        TradeValueEok, AmountRatio, RatioDelta, BidAsk, Execution, Strength5, ProgramEok, LargeTrade |
+    Select-Object Rank, Code, Name, Price, RatePct, PriceState, PriceAgeSec,
+        TradeValueEok, AmountRatio, RatioDelta,
+        BidAsk, BidAskContract, Execution, ExecutionContract,
+        Strength5, Strength5Contract, ProgramEok, ProgramContract |
     Format-Table -AutoSize
 
 if (-not (Test-Path -LiteralPath $RuntimeDir)) {
