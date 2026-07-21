@@ -1,6 +1,6 @@
 # StockBoard v2 실시간 파이프라인
 
-최종 갱신: 2026-07-22 00:55 KST
+최종 갱신: 2026-07-22 02:29 KST
 
 이 문서는 StockBoard v2의 실시간 가격 경로, 분 단위 보조지표, 거래일 유지정책과 실전 검증 상태를 기록하는 단일 기준 문서이다. 과거 v0.3.x 구조와 섞지 않는다.
 
@@ -290,14 +290,32 @@ Tailscale Funnel                HTTPS public edge
 - POST·PUT·PATCH·DELETE와 서버 제어 API는 차단한다.
 - 공개 화면에서는 HTS 연동과 서버 제어를 제거하고 종목코드 복사만 허용한다.
 - Gateway는 `127.0.0.1:8767`에만 바인딩하며 공유기 포트포워딩과 `0.0.0.0` 바인딩은 금지한다.
-- Windows PowerShell 5.1의 UTF-8 파싱 문제를 피하기 위해 운영 런처 `scripts/stockboard_public_live_v2.ps1`은 ASCII-only 계약을 유지한다.
-- 2026-07-22 00:40 KST부터 공개 화면에서 종목코드 복사 안내, stream/sort, render, 셀 토글 안내, 색상 기준 문구를 숨긴다.
-- 위 공개 전용 요소를 제거한 뒤 topbar의 고정 112px 높이를 해제하고 빈 metric-row를 제거해 남는 여백도 없앤다.
-- 이 상단 정리는 `stockboard_public_chrome_cleanup_v1_20260722` 계약이며 비공개 8765 UI에는 적용하지 않는다.
-- 2026-07-22 00:55 KST부터 정식 공개 주소는 쿼리 없는 `https://gram-jlee.tail04774a.ts.net` 루트로 고정한다.
+- Windows PowerShell 5.1 호환을 위해 공개 운영 PowerShell은 ASCII-only 계약을 유지한다.
+- 정식 공개 주소는 쿼리 없는 `https://gram-jlee.tail04774a.ts.net` 루트다.
 - 루트 요청은 매번 현재 8765 UI를 가져오며 `no-store`, `no-cache`, `Expires: 0` 응답 계약을 적용한다.
 - 과거 쿼리 주소로 접속해도 브라우저 주소창은 자동으로 루트 URL로 정리한다.
-- 이 루트 계약은 `stockboard_public_root_no_query_v1_20260722`이다.
+- 루트 계약은 `stockboard_public_root_no_query_v1_20260722`이다.
+- 공개 상단의 복사 안내·진단·속도·렌더·셀 토글·색상 설명은 공개 화면에서만 제거한다.
+- 원본 모바일 보기에서 의도적으로 복원되는 `recv/s`, `stream|poll ... ms`, `render ... ms`도 공개 화면에서는 ID와 문구 양쪽으로 제거한다.
+- 모바일 전환·화면 회전·페이지 복귀·동적 DOM 변경 뒤에도 다시 나타나지 않도록 감시한다.
+- 공개 최종 상단 정리 계약은 `stockboard_public_chrome_cleanup_v3_20260722`이며 비공개 8765에는 적용하지 않는다.
+
+### 7.8 재부팅 후 공개 단일 런처
+
+```text
+C:\aiTrade\stockboard_public.cmd
+  1 Start everything and publish
+  2 Show all status
+  3 Stop everything and disable public access
+```
+
+- 전체 시작 순서는 Tailscale 확인 → 8765 생산 StockBoard → OpenAPI connected/SetRealReg 확인 → 8767 공개 Gateway → Funnel이다.
+- 생산 8765가 이미 정상일 때는 재시작하지 않고 공개 단계만 이어간다.
+- `collector32.pid`의 실제 Windows 프로세스 생존과 `login=connected`, `realreg=True`, 등록종목 수를 함께 판정한다.
+- PowerShell 5.1의 `$code:` 파싱 오류는 `${code}:`로 수정했다.
+- 하위 생산 런처는 별도 프로세스로 실행하고 로그인 대기 중 5초마다 진행상태를 표시한다.
+- 공개 전용 긴급 복구는 메뉴 `5 Publish public gateway only`를 사용한다.
+- 전체 시작 계약 버전은 `stockboard_public_all_v5_20260722`이다.
 
 ## 8. 공통 거래일 유지정책
 
@@ -459,46 +477,81 @@ PUBLIC_WEB                    https://gram-jlee.tail04774a.ts.net
 - 당시 `PUBLIC_GATEWAY_ROWS=0`은 원본 8765도 표시 종목이 0인 장마감 상태였으므로 Gateway 데이터 손실이 아니다.
 - 생산 Worker·QAx collector·WebSocket·REST cadence·SSE cadence 변경은 0이다.
 
-### 10.4 2026-07-22 00:40 KST 공개 상단 정리 구현
+### 10.4 2026-07-22 02:29 KST 공개 UI 최종 실기
 
-- `copy-status`, `latency`, `render-metrics`, `metric-mode-status`, topbar 설명 문구를 공개 화면에서만 숨기도록 반영했다.
-- 공개 topbar의 고정 높이를 해제하고 표시 가능한 자식이 없는 metric-row를 제거하도록 반영했다.
-- 공개 읽기 전용 배지, 현재 UI 열, 시장수급, 미국시장, S1·집중 후보·Pool은 유지한다.
-- 생산 8765 HTML과 수집·계산·SSE 경로 변경은 0이다.
-- 코드·회귀 테스트 반영 완료, 8767 재시작 후 브라우저 실기 확인은 운영자 확인 대기다.
+- 정식 루트 주소 `https://gram-jlee.tail04774a.ts.net`의 PC·모바일 접속을 확인했다.
+- 쿼리 문자열 없이 루트 주소만 입력해 현재 공개 UI가 정상 표시됐다.
+- 데스크톱과 모바일 공개 화면에서 진단·속도·렌더·설명 문구가 제거됐다.
+- 원본 8765 모바일 보기의 `recv/s`, `stream`, `render`는 유지하면서 공개 8767에서만 제거되는 것을 화면으로 확인했다.
+- 공개 모바일 전환 후에도 `공개 읽기 전용 · 현재 UI`, 시장수급, 미국시장, S1·집중 후보·Pool이 유지됐다.
+- 공개 정리 계약 `stockboard_public_chrome_cleanup_v3_20260722` 적용을 확인했다.
+- 생산 8765 HTML·수집·계산·SSE 경로 변경은 0이다.
 
-### 10.5 2026-07-22 00:55 KST 공개 루트 URL 계약
+### 10.5 2026-07-22 02:29 KST 재부팅 운영 런처 확인
 
-- 정식 공개 주소를 `https://gram-jlee.tail04774a.ts.net`로 고정했다.
-- `/` 경로를 쿼리 없이 직접 요청하는 회귀 테스트를 추가했다.
-- 루트 응답의 캐시 방지 헤더와 현재 UI 마커를 검사한다.
-- 기존 `?v=...` 주소로 접속해도 주소창을 `/`로 정리한다.
-- 코드·회귀 테스트 반영 완료, 8767 재시작 후 공개 루트 실기 확인은 운영자 확인 대기다.
+확인·수정 이력:
+
+```text
+PowerShell 5.1 $code: 파싱 실패
+→ ${code}:로 수정
+
+생산 런처 동기 대기로 진행상태가 보이지 않음
+→ 별도 프로세스 실행 + 5초 상태 출력
+
+collector.alive 필드 부재를 False로 오판
+→ collector32.pid 실제 프로세스 생존으로 판정
+```
+
+- 8765 생산 StockBoard의 OpenAPI `connected`, `realreg=True`, 등록 100종목을 확인했다.
+- 오류 후 메뉴 `5 Publish public gateway only`로 8767·Funnel을 연결해 공개 UI 정상 접속을 확인했다.
+- 최신 통합 런처는 `stockboard_public_all_v5_20260722`이다.
+- 다음 실제 PC 재부팅에서 메뉴 `1 Start everything and publish`의 처음부터 끝까지 한 번 더 확인한다.
 
 ### 10.6 남은 최종 검증
 
-- 자정 이후부터 다음 실제 프리마켓 전까지 2026-07-21 마지막 정상 보드 유지
 - 다음 실제 프리마켓 08:00에서 전일 exact를 지우지 않고 당일 체결 종목부터 순차 LIVE 전환
-- 위 두 시점 통과 후 PR Draft 해제·병합
+- 다음 PC 재부팅 후 단일 런처 메뉴 1번 전체 시작·공개 완료 확인
+- 위 확인 후 PR 병합
 
 ## 11. 운영 명령
 
-생산 StockBoard:
+### 11.1 재부팅 후 권장 단일 실행
 
 ```powershell
 cd C:\aiTrade
-git fetch origin
-git switch fix/stockboard-display-continuity-20260721
+git switch feature/stockboard-public-gateway-20260721
 git pull --ff-only
-.\stockboard_v2_large.cmd restart-fast
+.\stockboard_public.cmd
+```
+
+메뉴:
+
+```text
+1  Start everything and publish - 재부팅 후 권장
+2  Show all status
+3  Stop everything and disable public access
+5  Publish public gateway only - 8765가 이미 정상일 때 공개만 복구
+```
+
+정상 공개 주소:
+
+```text
+https://gram-jlee.tail04774a.ts.net
+```
+
+### 11.2 생산 StockBoard 진단
+
+```powershell
+.\stockboard_v2_large.cmd status
 .\stockboard_v2_large.cmd data-doctor
 .\stockboard_v2_large.cmd price-doctor
 ```
 
+### 11.3 공개 Gateway 직접 운영
+
 공개 Gateway 로컬 재시작:
 
 ```powershell
-cd C:\aiTrade
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\stockboard_public_live_v2.ps1 `
   -Action restart
@@ -520,4 +573,4 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -Action unpublish
 ```
 
-2026-07-22 00:55 KST 기준으로 현재 UI 동기화·읽기 전용 경계·Tailscale Funnel 공개·모바일 외부 접속은 통과했고 공개 상단 정리와 쿼리 없는 루트 URL 계약을 추가했다. 정규장·애프터마켓 가격과 보조지표 검증은 완료했으며, 공개 루트 실기와 표시 연속성의 다음 실제 프리마켓 전환 검증은 별도 유지한다.
+2026-07-22 02:29 KST 기준으로 현재 UI 동기화, 읽기 전용 경계, Tailscale Funnel 공개, 쿼리 없는 루트 주소, PC·모바일 외부 접속, 공개 모바일 속도·진단 제거는 실기 통과했다. 8765 생산 경로는 변경하지 않았으며, 공개 복구는 정상 확인됐다. 다음 실제 프리마켓 전환과 다음 PC 재부팅의 통합 런처 메뉴 1번 전체 경로만 최종 확인 대상으로 유지한다.
