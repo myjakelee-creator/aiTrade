@@ -29,9 +29,7 @@ def test_corrected_runtime_config_uses_official_realtime_and_tr_contracts():
             "metrics": {"strength": {"api_id": "ka10046"}},
         }
     )
-
     config = reader()
-
     assert config["realtime_strength_ws"]["type"] == "0A"
     assert config["realtime_orderbook_ws"]["type"] == "0C"
     assert config["metrics"]["strength"]["api_id"] == "ka10045"
@@ -104,16 +102,44 @@ print("strength_tr_contract_ok")
     assert "strength_tr_contract_ok" in output
 
 
-def test_production_entrypoint_installs_aux_metric_source_contract():
+def test_program_request_header_is_corrected_from_ka90004_to_ka90003():
+    output = _run(
+        r'''
+from types import SimpleNamespace
+from realtime_v2 import worker_aux_metric_source_contract_patch as contract
+import kiwoom_data_provider as provider
+captured={}
+def fake_post(path, payload, headers=None, return_headers=False):
+    captured.update(headers or {})
+    return {"ok": True}
+provider._post_json=fake_post
+class Updater: pass
+contract._install_program_contract(SimpleNamespace(ProgramNetUpdater=Updater))
+provider._post_json("/api/dostk/stkinfo", {}, {"api-id":"ka90004"})
+assert captured["api-id"] == "ka90003"
+print("program_api_contract_ok")
+'''
+    )
+    assert "program_api_contract_ok" in output
+
+
+def test_production_entrypoint_installs_contract_without_replacing_integrated_ws_loop():
     output = _run(
         r'''
 import importlib
 production = importlib.import_module("realtime_v2.worker64_guarded_large_bidask")
 guarded = importlib.import_module("realtime_v2.worker64_guarded")
 ws = importlib.import_module("realtime_v2.worker_realtime_strength_ws_patch")
+approved = importlib.import_module("realtime_v2.worker_approved_minute_pipeline")
 assert production is not None
 assert getattr(guarded.base, "_stockboard_aux_metric_source_contract_installed", False) is True
 assert ws.WS_SOURCE == "kiwoom_rest_ws_0A_fid228"
+assert approved.TRADE_TYPE == "0A"
+assert approved.ORDERBOOK_TYPE_DEFAULT == "0C"
+assert approved.EXECUTION_SOURCE == "kiwoom_rest_ws_0A_fid228"
+assert approved.ORDERBOOK_SOURCE == "kiwoom_rest_ws_0C_rotating"
+assert approved.LARGE_SOURCE == "kiwoom_rest_ws_0A_fid15"
+assert ws.RealtimeStrengthWebSocket.run.__name__ == "integrated_run"
 assert getattr(ws.RealtimeStrengthWebSocket, "_stockboard_execution_source_contract_installed", False) is True
 print("aux_metric_source_contract_ok")
 '''
