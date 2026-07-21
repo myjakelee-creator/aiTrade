@@ -32,6 +32,7 @@ echo   4 Status
 echo   5 Start fast-open
 echo   6 Restart fast-open
 echo   7 Doctor
+echo   8 Data consistency doctor
 echo   0 Exit
 echo.
 set /p "CHOICE=Select: "
@@ -42,6 +43,7 @@ if "%CHOICE%"=="4" set "ACTION=status"
 if "%CHOICE%"=="5" set "ACTION=start-fast"
 if "%CHOICE%"=="6" set "ACTION=restart-fast"
 if "%CHOICE%"=="7" set "ACTION=doctor"
+if "%CHOICE%"=="8" set "ACTION=data-doctor"
 if "%CHOICE%"=="0" exit /b 0
 if "%ACTION%"=="" (
   echo Invalid selection.
@@ -54,6 +56,7 @@ set "PREFLIGHT=%~dp0scripts\stockboard_v2_openapi_preflight.ps1"
 set "PY64_DEPS=%~dp0scripts\stockboard_v2_python64_dependencies.ps1"
 set "LARGE_TRADE_SIDECAR=%~dp0scripts\stockboard_large_trade_sidecar.ps1"
 set "EXECUTION_DOCTOR=%~dp0scripts\stockboard_execution_strength_doctor.ps1"
+set "DATA_CONSISTENCY=%~dp0scripts\stockboard_v2_data_consistency.ps1"
 
 if /I "%ACTION%"=="start" (
   set "START_ACTION=start"
@@ -70,6 +73,11 @@ if /I "%ACTION%"=="start-fast" (
 if /I "%ACTION%"=="restart-fast" (
   set "START_ACTION=start-fast"
   goto prepare_start
+)
+if /I "%ACTION%"=="data-doctor" (
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%DATA_CONSISTENCY%"
+  set "RC=%ERRORLEVEL%"
+  goto finish
 )
 
 goto direct_action
