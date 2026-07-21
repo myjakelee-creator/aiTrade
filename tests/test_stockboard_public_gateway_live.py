@@ -35,7 +35,12 @@ class _UpstreamHandler(BaseHTTPRequestHandler):
                 "</head><body><div id='topbar' class='topbar'>"
                 "<div class='metric-row'><span class='title'>StockBoard v2 Realtime</span>"
                 "<span id='status'>connected</span><span id='copy-status'>copy help</span></div>"
-                "<div class='metric-row'><span id='latency'>stream 12 ms</span></div>"
+                "<div class='metric-row'><span id='counts'>rows</span>"
+                "<span id='latency'>stream 12 ms</span>"
+                "<span id='throughput'>recv/s 1</span>"
+                "<span id='collector-metrics'>collector_q 0</span>"
+                "<span id='worker-metrics'>worker_q 0</span>"
+                "<span id='lag-metrics'>lag 0</span></div>"
                 "<div class='metric-row'><span id='render-metrics'>render 0.6 ms</span>"
                 "<span id='metric-mode-status'>metric help</span>"
                 "<span class='small'>color help</span></div></div>"
@@ -119,7 +124,7 @@ class PublicGatewayLiveUiTests(unittest.TestCase):
             thread.join(timeout=2)
             upstream.close()
 
-    def test_public_diagnostic_chrome_is_hidden_and_topbar_height_is_released(self):
+    def test_public_diagnostic_chrome_is_removed_and_observed_on_mobile(self):
         upstream = _UpstreamFixture()
         try:
             html = fetch_current_public_html(upstream.url).decode("utf-8")
@@ -128,18 +133,40 @@ class PublicGatewayLiveUiTests(unittest.TestCase):
 
         for selector in (
             "#copy-status",
+            "#counts",
             "#latency",
+            "#throughput",
+            "#collector-metrics",
+            "#worker-metrics",
+            "#lag-metrics",
             "#render-metrics",
             "#metric-mode-status",
             "#topbar .small",
         ):
             self.assertIn(selector, html)
+
+        for element_id in (
+            "copy-status",
+            "counts",
+            "latency",
+            "throughput",
+            "collector-metrics",
+            "worker-metrics",
+            "lag-metrics",
+            "render-metrics",
+            "metric-mode-status",
+        ):
+            self.assertIn(f"'{element_id}'", html)
+
         self.assertIn("height:auto!important", html)
         self.assertIn("min-height:0!important", html)
         self.assertIn("max-height:none!important", html)
-        self.assertIn("cleanPublicTopbar", html)
-        self.assertIn("node.remove()", html)
+        self.assertIn("PUBLIC_REMOVE_IDS", html)
+        self.assertIn("new MutationObserver(schedulePublicTopbarCleanup)", html)
+        self.assertIn("observer.observe(topbar,{childList:true,subtree:true})", html)
+        self.assertIn("orientationchange", html)
         self.assertIn("if(!visible) row.remove()", html)
+        self.assertNotIn("label:has(#candidate-model-selector)", html)
 
     def test_current_public_fields_survive_allowlist(self):
         payload = core.sanitize_snapshot(
