@@ -42,7 +42,7 @@ if errorlevel 1 (
   exit /b 0
 )
 
-set "SCRIPT=%~dp0scripts\stockboard_public_gateway.ps1"
+set "SCRIPT=%~dp0scripts\stockboard_public_gateway_entry.ps1"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Action "%ACTION%"
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" (
