@@ -118,9 +118,11 @@ $result = foreach ($row in $rows) {
         $priceDate -eq $currentDate -or $receivedDate -eq $currentDate -or (-not $priceDate -and $currentDate)
     )
     if ($isCurrentRealtime -and $null -ne $priceAge -and $priceAge -le 3) {
-        $priceState = "LIVE"
+        $priceState = "LIVE_RECENT"
+    } elseif ($isCurrentRealtime -and $null -ne $priceAge) {
+        $priceState = "LIVE_NO_RECENT_TRADE"
     } elseif ($isCurrentRealtime) {
-        $priceState = "LIVE_STALE"
+        $priceState = "LIVE_UNKNOWN_AGE"
     } elseif ($holdDate -and $priceDate -eq $holdDate -and $rowSource -match 'portable_exact_close') {
         $priceState = "HOLD"
     }
@@ -172,6 +174,7 @@ $result = foreach ($row in $rows) {
         Price = $price
         RatePct = $rate
         PriceState = $priceState
+        LastTradeAgeSec = if ($null -eq $priceAge) { $null } else { [math]::Round($priceAge, 2) }
         PriceAgeSec = if ($null -eq $priceAge) { $null } else { [math]::Round($priceAge, 2) }
         PriceDate = $priceDate
         ReceivedDate = $receivedDate
@@ -206,16 +209,31 @@ $result = foreach ($row in $rows) {
 }
 
 $snapshotAge = Get-AgeSec $payload.ts
+$collectorPending = Get-Number $sender.pending_total_count
+$workerQueue = Get-Number $status.event_log_queue_size
+$workerDrop = Get-Number $status.dropped_trade_count
+$pipelineIssues = @()
+if ($null -eq $snapshotAge -or $snapshotAge -gt 4) { $pipelineIssues += "snapshot_age" }
+if ($null -ne $collectorPending -and $collectorPending -gt 100) { $pipelineIssues += "collector_queue" }
+if ($null -ne $workerQueue -and $workerQueue -gt 100) { $pipelineIssues += "worker_queue" }
+if ($null -ne $workerDrop -and $workerDrop -gt 0) { $pipelineIssues += "worker_drop" }
+if ($null -ne $sender.connected -and -not [bool]$sender.connected) { $pipelineIssues += "collector_disconnected" }
+$pipelineState = if ($pipelineIssues.Count -eq 0) { "HEALTHY" } else { "CHECK" }
+
 $summary = [pscustomobject]@{
     Time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     SnapshotAgeMs = if ($null -eq $snapshotAge) { $null } else { [math]::Round($snapshotAge * 1000, 0) }
+    PipelineState = $pipelineState
+    PipelineIssues = ($pipelineIssues -join ",")
     CurrentTradingDate = $currentDate
     HoldSourceDate = $holdDate
     ContinuityMode = $status.board_display_continuity_mode
     RowsInspected = @($result).Count
-    Live = @($result | Where-Object PriceState -eq "LIVE").Count
+    Live = @($result | Where-Object PriceState -match '^LIVE_').Count
+    LiveRecent = @($result | Where-Object PriceState -eq "LIVE_RECENT").Count
+    NoRecentTrade = @($result | Where-Object PriceState -eq "LIVE_NO_RECENT_TRADE").Count
+    LiveUnknownAge = @($result | Where-Object PriceState -eq "LIVE_UNKNOWN_AGE").Count
     Hold = @($result | Where-Object PriceState -eq "HOLD").Count
-    LiveStale = @($result | Where-Object PriceState -eq "LIVE_STALE").Count
     Unknown = @($result | Where-Object PriceState -eq "UNKNOWN").Count
     RatioMismatch = @($result | Where-Object { $null -ne $_.RatioDelta -and $_.RatioDelta -gt 0.01 }).Count
     BidAskOK = @($result | Where-Object BidAskContract -eq "OK_0D").Count
@@ -231,6 +249,7 @@ $summary = [pscustomobject]@{
     CollectorCoalesced = $sender.coalesced_trade_overwrite_count
     WorkerEventCount = $status.event_count
     WorkerTradeCount = $status.trade_count
+    WorkerQueue = $status.event_log_queue_size
     WorkerDrop = $status.dropped_trade_count
     WorkerDropReasons = $status.dropped_trade_reason_counts
     TradeFieldGuardVersion = $status.trade_field_regression_guard_version
@@ -265,7 +284,7 @@ $summary | Format-List
 Write-Host ""
 Write-Host "=== Row-level source / freshness / consistency ===" -ForegroundColor Cyan
 $result |
-    Select-Object Rank, Code, Name, Price, RatePct, PriceState, PriceAgeSec,
+    Select-Object Rank, Code, Name, Price, RatePct, PriceState, LastTradeAgeSec,
         TradeValueEok, AmountRatio, RatioDelta,
         BidAsk, BidAskContract, Execution, ExecutionContract,
         Strength5, Strength5Contract, ProgramEok, ProgramContract |
