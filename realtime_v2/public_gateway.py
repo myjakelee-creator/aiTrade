@@ -1,9 +1,9 @@
 """Runtime adapter that exposes the exact current StockBoard UI through the public gateway.
 
-The canonical worker still owns the HTML patch chain. This adapter fetches the already
-patched loopback HTML from port 8765, then applies the public read-only injection from
-``public_gateway_core``. It also extends the explicit row allowlist for fields used by
-the current production columns.
+The canonical worker owns the complete HTML patch chain. This adapter fetches that
+already-patched loopback HTML from port 8765, applies only the public read-only
+boundary, and publishes an explicit version contract so stale gateway processes can
+be detected and replaced before Funnel is enabled.
 """
 from __future__ import annotations
 
@@ -20,6 +20,8 @@ if str(ROOT) not in sys.path:
 from realtime_v2 import public_gateway_core as base
 from realtime_v2.public_gateway_core import *  # noqa: E402,F401,F403
 
+GATEWAY_VERSION = "stockboard_public_current_ui_v2_20260721"
+CURRENT_UI_MARKER = "STOCKBOARD_PUBLIC_CURRENT_UI_V2_20260721"
 MAX_HTML_BYTES = 8 * 1024 * 1024
 
 EXTRA_ROW_FIELDS = tuple(
@@ -64,6 +66,66 @@ if _PUBLIC_SHELL_STYLE not in base.HTML_INJECTION:
         1,
     )
 
+_ORIGINAL_BUILD_PUBLIC_HTML = base.build_public_html
+_ORIGINAL_HEALTH = base.PublicDataCache.health
+_ORIGINAL_SANITIZE_SNAPSHOT = base.sanitize_snapshot
+_ORIGINAL_HEADERS = base.PublicGatewayHandler._headers
+
+
+def build_current_public_html(private_html: str) -> str:
+    """Apply the public boundary to the exact HTML currently served by port 8765."""
+
+    html = _ORIGINAL_BUILD_PUBLIC_HTML(private_html)
+    if CURRENT_UI_MARKER not in html:
+        marker = (
+            f'<!-- {CURRENT_UI_MARKER} -->\n'
+            f'<meta name="stockboard-public-gateway-version" content="{GATEWAY_VERSION}">'
+        )
+        if "</head>" in html:
+            html = html.replace("</head>", f"{marker}\n</head>", 1)
+        else:
+            html = f"{marker}\n{html}"
+    html = html.replace("공개 읽기 전용", "공개 읽기 전용 · 현재 UI", 1)
+    return html
+
+
+def current_health(self):
+    value = dict(_ORIGINAL_HEALTH(self))
+    value.update(
+        {
+            "gateway_version": GATEWAY_VERSION,
+            "ui_source": "live_private_worker_html",
+            "ui_contract": CURRENT_UI_MARKER,
+        }
+    )
+    return value
+
+
+def current_sanitize_snapshot(raw):
+    value = _ORIGINAL_SANITIZE_SNAPSHOT(raw)
+    value["gateway_version"] = GATEWAY_VERSION
+    value["ui_contract"] = CURRENT_UI_MARKER
+    status = value.get("status")
+    if isinstance(status, dict):
+        status["public_gateway_version"] = GATEWAY_VERSION
+    return value
+
+
+def current_headers(self):
+    _ORIGINAL_HEADERS(self)
+    self.send_header("X-StockBoard-Public-Version", GATEWAY_VERSION)
+    self.send_header("X-StockBoard-Public-UI", "current-worker-html")
+
+
+base.build_public_html = build_current_public_html
+base.PublicDataCache.health = current_health
+base.sanitize_snapshot = current_sanitize_snapshot
+base.PublicGatewayHandler._headers = current_headers
+
+# Re-export the patched callables for tests and direct imports.
+build_public_html = build_current_public_html
+sanitize_snapshot = current_sanitize_snapshot
+
 
 def _argument_value(name: str, default: str) -> str:
     prefix = f"{name}="
@@ -98,7 +160,7 @@ def load_current_public_html(_unused_path) -> bytes:
         f"{upstream}/",
         headers={
             "Accept": "text/html",
-            "User-Agent": "StockBoardPublicGateway/1.1",
+            "User-Agent": "StockBoardPublicGateway/1.2",
         },
     )
     with urlopen(request, timeout=5.0) as response:
@@ -116,8 +178,13 @@ def load_current_public_html(_unused_path) -> bytes:
         )
 
     html = body.decode("utf-8-sig")
-    if "StockBoard v2" not in html or "/api/v2/stream" not in html:
-        raise RuntimeError("Private StockBoard UI contract markers were not found.")
+    required = ("StockBoard v2", "/api/v2/stream", "1분대금", "5분강도")
+    missing = [marker for marker in required if marker not in html]
+    if missing:
+        raise RuntimeError(
+            "Private StockBoard current UI contract markers were not found: "
+            + ", ".join(missing)
+        )
     return base.build_public_html(html).encode("utf-8")
 
 
