@@ -14,8 +14,9 @@ $PrivateSnapshotUrl = "http://127.0.0.1:8765/api/v2/snapshot?limit=1"
 $PublicHealthUrl = "http://127.0.0.1:8767/api/v2/health"
 $ExpectedCleanup = "stockboard_public_chrome_cleanup_v3_20260722"
 $RuntimeDir = Join-Path $ProjectRoot "data\runtime\stockboard_v2"
+$CollectorPidFile = Join-Path $RuntimeDir "collector32.pid"
 $LastErrorFile = Join-Path $RuntimeDir "stockboard_public_all_last_error.txt"
-$LauncherVersion = "stockboard_public_all_v4_20260722"
+$LauncherVersion = "stockboard_public_all_v5_20260722"
 
 Set-Location -LiteralPath $ProjectRoot
 New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
@@ -70,6 +71,19 @@ function Wait-Health(
         Start-Sleep -Milliseconds 500
     } while ((Get-Date) -lt $deadline)
     throw "Health check did not become ready: $Url"
+}
+
+function Read-Pid([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return 0 }
+    $raw = Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue | Select-Object -First 1
+    $number = 0
+    if ([int]::TryParse([string]$raw, [ref]$number)) { return $number }
+    return 0
+}
+
+function Test-PidAlive([int]$ProcessId) {
+    if ($ProcessId -le 0) { return $false }
+    return $null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
 }
 
 function Get-TailscaleStatus([string]$Exe) {
@@ -128,6 +142,16 @@ function Get-PrivateReadiness {
         $provider = $collector.status
     }
 
+    $collectorPid = Read-Pid $CollectorPidFile
+    $collectorAlive = Test-PidAlive $collectorPid
+    if (
+        -not $collectorAlive -and
+        $collector -and
+        $collector.PSObject.Properties.Name -contains "alive"
+    ) {
+        $collectorAlive = [bool]$collector.alive
+    }
+
     $registered = 0
     if ($provider) {
         $registered = [int]($provider.realreg_code_count)
@@ -147,7 +171,8 @@ function Get-PrivateReadiness {
 
     return [pscustomobject]@{
         HealthOk = [bool]($health -and $health.ok)
-        CollectorAlive = [bool]($collector -and $collector.alive)
+        CollectorPid = $collectorPid
+        CollectorAlive = $collectorAlive
         ProviderStarted = [bool]($collector -and $collector.provider_started)
         LoginState = $loginState
         RealRegSucceeded = $realReg
@@ -170,11 +195,12 @@ function Test-PrivateReady($State) {
 
 function Write-PrivateStartProgress($State, [int]$ElapsedSec) {
     $message = (
-        "PRIVATE_START_WAIT elapsed={0}s health={1} collector_alive={2} " +
-        "login={3} realreg={4} registered={5}"
+        "PRIVATE_START_WAIT elapsed={0}s health={1} collector_pid={2} " +
+        "collector_alive={3} login={4} realreg={5} registered={6}"
     ) -f @(
         $ElapsedSec,
         [bool]$State.HealthOk,
+        [int]$State.CollectorPid,
         [bool]$State.CollectorAlive,
         [string]$State.LoginState,
         [bool]$State.RealRegSucceeded,
@@ -191,6 +217,8 @@ function Start-PrivateWorker {
     $readiness = Get-PrivateReadiness
     if (Test-PrivateReady $readiness) {
         Write-Host "PRIVATE_WORKER_ALREADY_RUNNING=True" -ForegroundColor Green
+        Write-Host "PRIVATE_COLLECTOR_PID=$($readiness.CollectorPid)"
+        Write-Host "PRIVATE_REGISTERED_COUNT=$($readiness.RegisteredCount)"
         return $readiness
     }
 
@@ -239,6 +267,7 @@ function Start-PrivateWorker {
         $readiness = Get-PrivateReadiness
         if (Test-PrivateReady $readiness) {
             Write-Host "PRIVATE_WORKER_READY=True" -ForegroundColor Green
+            Write-Host "PRIVATE_COLLECTOR_PID=$($readiness.CollectorPid)"
             Write-Host "PRIVATE_REGISTERED_COUNT=$($readiness.RegisteredCount)"
             return $readiness
         }
@@ -315,6 +344,7 @@ function Show-AllStatus {
     $public = Get-Health $PublicHealthUrl
     Write-Host "PRIVATE_WORKER_OK=$(Test-PrivateReady $private)"
     Write-Host "PRIVATE_HEALTH_OK=$($private.HealthOk)"
+    Write-Host "PRIVATE_COLLECTOR_PID=$($private.CollectorPid)"
     Write-Host "PRIVATE_COLLECTOR_ALIVE=$($private.CollectorAlive)"
     Write-Host "PRIVATE_LOGIN_STATE=$($private.LoginState)"
     Write-Host "PRIVATE_REALREG=$($private.RealRegSucceeded)"
