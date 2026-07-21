@@ -10,7 +10,7 @@ if "%ACTION%"=="" (
   goto menu
 )
 if "%PAUSE_AT_END%"=="" set "PAUSE_AT_END=0"
-goto elevate
+goto run
 
 :menu
 echo.
@@ -35,22 +35,34 @@ if "%ACTION%"=="" (
   goto menu
 )
 
-:elevate
-powershell.exe -NoProfile -Command "$p=New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent()); if($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){exit 0}else{exit 1}"
-if errorlevel 1 (
-  powershell.exe -NoProfile -Command "Start-Process -FilePath '%~f0' -ArgumentList '%ACTION%','%PAUSE_AT_END%' -Verb RunAs"
-  exit /b 0
+:run
+echo.
+echo PUBLIC_LAUNCHER_VERSION=stockboard_public_live_v2_20260722
+echo PUBLIC_ACTION=%ACTION%
+set "SCRIPT=%~dp0scripts\stockboard_public_live.ps1"
+echo PUBLIC_SCRIPT=%SCRIPT%
+if not exist "%SCRIPT%" (
+  echo PUBLIC_ERROR=Script not found: %SCRIPT%
+  set "RC=1"
+  goto finish
 )
 
-set "SCRIPT=%~dp0scripts\stockboard_public_live.ps1"
+rem Keep execution in this console so PowerShell errors cannot disappear in a
+rem separately elevated window. Local gateway actions do not require elevation;
+rem Tailscale reports a visible permission error if the installation requires it.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Action "%ACTION%"
 set "RC=%ERRORLEVEL%"
+
+:finish
 if not "%RC%"=="0" (
   echo.
-  echo StockBoard public gateway command finished with an error.
+  echo StockBoard public gateway command finished with an error. RC=%RC%
+  echo The detailed error above is intentionally kept visible.
+  pause
+  exit /b %RC%
 )
 if "%PAUSE_AT_END%"=="1" (
   echo.
   pause
 )
-exit /b %RC%
+exit /b 0
