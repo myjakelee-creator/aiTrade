@@ -60,8 +60,11 @@ class State:
         self.lock = threading.RLock()
         self.status = {
             "trade_count": 0,
-            "board_display_current_trading_date": "20260722",
+            # Simulate one stale status field left by the previous display cycle.
+            # The current market date still matches the collector receive date.
+            "board_display_current_trading_date": "20260721",
             "market_trading_date": "20260722",
+            "board_expected_trading_date": "20260722",
         }
         self.quotes = {
             "000660": {
