@@ -64,13 +64,13 @@ def test_backtrace_classifies_collector_output_gap(tmp_path):
     assert result["last_event_age_at_target_sec"] == 168.0
 
 
-def test_backtrace_infers_worker_or_guard_gap_when_recent_event_matches_kiwoom(tmp_path):
+def test_backtrace_infers_worker_or_guard_gap_when_signed_event_matches_kiwoom(tmp_path):
     target = backtrace._timestamp("2026-07-22T14:57:18+09:00")
     assert target is not None
     event_path = tmp_path / "events_20260722.jsonl"
     event_path.write_text(
         json.dumps(
-            _trade_event("2026-07-22T14:57:17.700+09:00", "005930", 264000, 1.93),
+            _trade_event("2026-07-22T14:57:17.700+09:00", "005930", -264000, 1.93),
             ensure_ascii=False,
         )
         + "\n",
@@ -125,6 +125,7 @@ def test_history_backtrace_is_file_only_and_launcher_does_not_restart():
     assert "events_" in source
     assert "price_compare_" in source
     assert "guard_decision_directly_logged" in source
+    assert "_normalized_price" in source
     for forbidden in (
         "urlopen",
         "QAxWidget",
