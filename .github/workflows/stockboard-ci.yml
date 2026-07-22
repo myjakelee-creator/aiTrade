@@ -72,6 +72,8 @@ jobs:
             scripts\stockboard_v2_price_compare.py `
             scripts\stockboard_v2_price_trace.py `
             scripts\stockboard_v2_collector_trace.py `
+            scripts\stockboard_v2_collector_trace_policy_fix.py `
+            scripts\stockboard_v2_price_history_backtrace.py `
             realtime_v2\context_snapshot_writer_singleflight.py `
             realtime_v2\context_snapshot_writer_portable.py `
             realtime_v2\context_snapshot_writer_portable_v2.py `
@@ -135,13 +137,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "price doctor import/help failed" }
           python .\scripts\stockboard_v2_price_trace.py --help | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "price trace import/help failed" }
-          python .\scripts\stockboard_v2_collector_trace.py --help | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw "collector trace import/help failed" }
+          python .\scripts\stockboard_v2_collector_trace_policy_fix.py --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "collector trace policy import/help failed" }
+          python .\scripts\stockboard_v2_price_history_backtrace.py --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "price history backtrace import/help failed" }
           cmd.exe /d /c "call stockboard_v2_large.cmd __syntax_probe__ >nul 2>&1"
           $batchRc = $LASTEXITCODE
           if ($batchRc -eq 255) { throw "batch parser failed" }
           $global:LASTEXITCODE = 0
-          Write-Host "doctor_context_single_owner_launcher_consistency_price_and_collector_trace_verified"
+          Write-Host "doctor_context_launcher_price_collector_history_trace_verified"
 
       - name: Run StockBoard targeted tests
         shell: pwsh
@@ -152,6 +156,8 @@ jobs:
             tests\test_stockboard_v2_price_compare.py `
             tests\test_stockboard_v2_price_trace.py `
             tests\test_stockboard_v2_collector_trace.py `
+            tests\test_stockboard_v2_collector_trace_policy_fix.py `
+            tests\test_stockboard_v2_price_history_backtrace.py `
             tests\test_html_last_trade_age_semantics.py `
             tests\test_context_market_supply_trading_date.py `
             tests\test_context_snapshot_writer_portable.py `
