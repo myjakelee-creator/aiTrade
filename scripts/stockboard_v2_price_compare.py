@@ -27,6 +27,7 @@ RUNTIME_DIR = ROOT / "data" / "runtime" / "stockboard_v2"
 DEFAULT_SNAPSHOT_URL = "http://127.0.0.1:8765/api/v2/snapshot?limit=300"
 DEFAULT_RANK_GATE_LIMIT = 20
 DEFAULT_TRADE_VALUE_TOLERANCE_PCT = 0.5
+RANK_BASIS = "kiwoom_ka10032_filtered_to_stockboard_eligible_codes"
 
 
 def _number(value: Any) -> float | None:
@@ -94,6 +95,36 @@ def _selected_codes(rows: list[dict[str, Any]], codes_text: str, limit: int) -> 
     return result
 
 
+def _eligible_rest_ranks(
+    rest_rows: list[dict[str, Any]], eligible_codes: set[str]
+) -> tuple[dict[str, int], dict[str, float | None]]:
+    """Re-rank ka10032 after applying the same StockBoard eligible-code universe.
+
+    Kiwoom's displayed market rank includes ETFs/ETNs and other codes intentionally
+    excluded from StockBoard. The production StockBoard rank is compressed after that
+    filter, so validation must compare like with like while retaining the raw market
+    rank for reference.
+    """
+
+    eligible_rank_by_code: dict[str, int] = {}
+    market_rank_by_code: dict[str, float | None] = {}
+    next_rank = 0
+    for fallback_rank, row in enumerate(rest_rows, start=1):
+        if not isinstance(row, dict):
+            continue
+        code = _code(row.get("stock_code"))
+        if not code:
+            continue
+        market_rank_by_code[code] = _number(
+            row.get("original_rank") or row.get("rank") or fallback_rank
+        )
+        if code not in eligible_codes:
+            continue
+        next_rank += 1
+        eligible_rank_by_code[code] = next_rank
+    return eligible_rank_by_code, market_rank_by_code
+
+
 def _gate_result(
     compared: list[dict[str, Any]],
     *,
@@ -127,6 +158,7 @@ def _gate_result(
     return (
         "PASS" if passed else "REVIEW",
         {
+            "rank_basis": RANK_BASIS,
             "rank_gate_limit": rank_gate_limit,
             "rank_gate_expected_count": expected,
             "rank_gate_rest_found_count": found_count,
@@ -140,7 +172,9 @@ def _gate_result(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Compare StockBoard rank, trade value and price with Kiwoom ka10032"
+        description=(
+            "Compare StockBoard eligible rank, trade value and price with Kiwoom ka10032"
+        )
     )
     parser.add_argument("--limit", type=int, default=30)
     parser.add_argument("--codes", default="")
@@ -175,14 +209,19 @@ def main() -> int:
     local_rows = [row for row in after.get("rows", []) if isinstance(row, dict)]
     local_by_code = {_code(row.get("stock_code")): row for row in local_rows}
     rest_by_code = {_code(row.get("stock_code")): row for row in rest_rows}
+    eligible_codes = {code for code in local_by_code if code}
+    eligible_rank_by_code, market_rank_by_code = _eligible_rest_ranks(
+        rest_rows, eligible_codes
+    )
 
     compared: list[dict[str, Any]] = []
     for code in codes:
         local = local_by_code.get(code, {})
         rest = rest_by_code.get(code, {})
         local_rank = _number(local.get("rank"))
-        rest_rank = _number(rest.get("original_rank") or rest.get("rank"))
-        rank_delta = _delta(local_rank, rest_rank)
+        rest_eligible_rank = _number(eligible_rank_by_code.get(code))
+        rest_market_rank = market_rank_by_code.get(code)
+        rank_delta = _delta(local_rank, rest_eligible_rank)
         local_price = _number(local.get("price") or local.get("trade_price"))
         rest_price = _number(rest.get("price"))
         local_rate = _number(local.get("change_rate"))
@@ -196,9 +235,13 @@ def main() -> int:
         compared.append(
             {
                 "stock_code": code,
-                "stock_name": local.get("stock_name") or rest.get("stock_name") or code,
+                "stock_name": local.get("stock_name")
+                or rest.get("stock_name")
+                or code,
                 "local_rank": local_rank,
-                "rest_rank": rest_rank,
+                "rest_rank": rest_eligible_rank,
+                "rest_eligible_rank": rest_eligible_rank,
+                "rest_market_rank": rest_market_rank,
                 "rank_delta": rank_delta,
                 "rank_exact": rank_delta == 0 if rank_delta is not None else None,
                 "local_price": local_price,
@@ -216,7 +259,8 @@ def main() -> int:
                 "local_received_at": local.get("received_at")
                 or local.get("price_received_at")
                 or local.get("trade_received_at"),
-                "local_source_code": local.get("source_code") or local.get("registered_code"),
+                "local_source_code": local.get("source_code")
+                or local.get("registered_code"),
                 "rest_found": bool(rest),
             }
         )
@@ -224,8 +268,12 @@ def main() -> int:
     found = [row for row in compared if row["rest_found"]]
     rank_comparable = [row for row in found if row["rank_delta"] is not None]
     price_comparable = [row for row in found if row["price_delta"] is not None]
-    rate_comparable = [row for row in found if row["change_rate_delta"] is not None]
-    value_comparable = [row for row in found if row["trade_value_delta_pct"] is not None]
+    rate_comparable = [
+        row for row in found if row["change_rate_delta"] is not None
+    ]
+    value_comparable = [
+        row for row in found if row["trade_value_delta_pct"] is not None
+    ]
     gate, gate_summary = _gate_result(
         compared,
         rank_gate_limit=rank_gate_limit,
@@ -237,10 +285,14 @@ def main() -> int:
         "snapshot_after_ts": after.get("ts"),
         "ka10032_fetch_ms": fetch_ms,
         "ka10032_page_counts": page_counts,
+        "local_eligible_code_count": len(eligible_codes),
+        "ka10032_eligible_code_count": len(eligible_rank_by_code),
         "requested_count": len(codes),
         "rest_found_count": len(found),
         "rank_comparable_count": len(rank_comparable),
-        "rank_exact_count": sum(row["rank_delta"] == 0 for row in rank_comparable),
+        "rank_exact_count": sum(
+            row["rank_delta"] == 0 for row in rank_comparable
+        ),
         "rank_abs_delta_max": max(
             (abs(row["rank_delta"]) for row in rank_comparable), default=None
         ),
@@ -256,30 +308,36 @@ def main() -> int:
         **gate_summary,
         "rank_trade_value_gate": gate,
         "price_comparable_count": len(price_comparable),
-        "price_exact_count": sum(row["price_delta"] == 0 for row in price_comparable),
+        "price_exact_count": sum(
+            row["price_delta"] == 0 for row in price_comparable
+        ),
         "price_abs_delta_max": max(
             (abs(row["price_delta"]) for row in price_comparable), default=None
         ),
         "change_rate_abs_delta_max": max(
-            (abs(row["change_rate_delta"]) for row in rate_comparable), default=None
+            (abs(row["change_rate_delta"]) for row in rate_comparable),
+            default=None,
         ),
         "operator_only_no_background_load": True,
     }
 
-    print("\n=== StockBoard vs Kiwoom ka10032 rank / trade value comparison ===\n")
+    print("\n=== StockBoard vs Kiwoom ka10032 eligible-rank / trade value comparison ===\n")
     for key, value in summary.items():
         print(f"{key:42}: {value}")
 
     print(
-        "\nLRank KRank dRank Code   Name                 LocalValue  KiwoomValue dValue%"
+        "\nLRank KRank MRank dRank Code   Name                 "
+        "LocalValue  KiwoomValue dValue%"
     )
     print(
-        "----- ----- ----- ------ -------------------- ----------- ----------- --------"
+        "----- ----- ----- ----- ------ -------------------- "
+        "----------- ----------- --------"
     )
     for row in compared:
         print(
             f"{_fmt(row['local_rank'], 0):>5} "
-            f"{_fmt(row['rest_rank'], 0):>5} "
+            f"{_fmt(row['rest_eligible_rank'], 0):>5} "
+            f"{_fmt(row['rest_market_rank'], 0):>5} "
             f"{_fmt(row['rank_delta'], 0):>5} "
             f"{row['stock_code']:<6} "
             f"{str(row['stock_name'])[:20]:<20} "
@@ -288,8 +346,14 @@ def main() -> int:
             f"{_fmt(row['trade_value_delta_pct'], 3):>8}"
         )
 
-    print("\nCode   Name                 LocalPrice   RestPrice    Delta   Local%   Rest%   dRate  AgeSec")
-    print("------ -------------------- ------------ ------------ -------- -------- -------- ------ -------")
+    print(
+        "\nCode   Name                 LocalPrice   RestPrice    Delta   "
+        "Local%   Rest%   dRate  AgeSec"
+    )
+    print(
+        "------ -------------------- ------------ ------------ -------- "
+        "-------- -------- ------ -------"
+    )
     for row in compared:
         print(
             f"{row['stock_code']:<6} "
@@ -312,7 +376,11 @@ def main() -> int:
         writer.writeheader()
         writer.writerows(compared)
     json_path.write_text(
-        json.dumps({"summary": summary, "rows": compared}, ensure_ascii=False, indent=2),
+        json.dumps(
+            {"summary": summary, "rows": compared},
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
     print(f"\nCSV_REPORT={csv_path}")
