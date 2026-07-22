@@ -40,6 +40,11 @@ def _number(value: Any) -> float | None:
         return None
 
 
+def _normalized_price(value: Any) -> float | None:
+    number = _number(value)
+    return abs(number) if number is not None else None
+
+
 def _timestamp(value: Any) -> float | None:
     text = str(value or "").strip()
     if not text:
@@ -89,7 +94,7 @@ def _event_sample(event: dict[str, Any]) -> dict[str, Any] | None:
     return {
         "stock_code": code,
         "event_ts": event_ts,
-        "price": _number(
+        "price": _normalized_price(
             raw.get("price_raw")
             or values.get("price")
             or values.get("trade_price")
@@ -105,7 +110,9 @@ def _event_sample(event: dict[str, Any]) -> dict[str, Any] | None:
         or values.get("trade_time"),
         "trade_value_eok": _number(values.get("trade_value_eok")),
         "source_code": values.get("source_code")
+        or values.get("realtime_source_code")
         or values.get("registered_code")
+        or values.get("original_registered_code")
         or event.get("received_code"),
     }
 
@@ -224,8 +231,8 @@ def _matches(
     right_price: Any,
     right_rate: Any,
 ) -> bool:
-    lp = _number(left_price)
-    rp = _number(right_price)
+    lp = _normalized_price(left_price)
+    rp = _normalized_price(right_price)
     lr = _number(left_rate)
     rr = _number(right_rate)
     price_ok = lp is not None and rp is not None and lp == rp
@@ -338,8 +345,8 @@ def _row_result(
             "window_price_rate_change_count", 0
         ),
         "event_price": last_event.get("price") if last_event else None,
-        "local_price": _number(row.get("local_price")),
-        "kiwoom_price": _number(row.get("rest_price")),
+        "local_price": _normalized_price(row.get("local_price")),
+        "kiwoom_price": _normalized_price(row.get("rest_price")),
         "event_change_rate": last_event.get("change_rate") if last_event else None,
         "local_change_rate": _number(row.get("local_change_rate")),
         "kiwoom_change_rate": _number(row.get("rest_change_rate")),
