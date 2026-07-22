@@ -3,8 +3,8 @@ from __future__ import annotations
 """Let a verified new trading-day reset outrank the FID20 midnight wrap.
 
 The previous exact-close quote can hold FID20 near 20:00 while the next premarket
-starts near 08:00.  The numeric time is therefore smaller even though the event is
-from a verified newer trading date.  This wrapper leaves the existing v4 guard in
+starts near 08:00. The numeric time is therefore smaller even though the event is
+from a verified newer trading date. This wrapper leaves the existing v4 guard in
 charge of all field filtering and only prevents that verified day rollover from being
 misclassified as same-day SOR interleaving.
 
@@ -134,12 +134,11 @@ def _install_state_wrapper(base, guard_module) -> None:
                         "to_trade_time_seconds": incoming_time,
                         "to_trading_date": current_date,
                     }
-            self.status["trade_field_regression_guard_version"] = PATCH_VERSION
+                    self.status["trade_field_regression_guard_version"] = PATCH_VERSION
         return result
 
     state_class._apply_trade = apply_trade
     state_class._stockboard_premarket_rollover_priority_installed = True
-    state_class._stockboard_trade_field_regression_guard_version = PATCH_VERSION
 
 
 def install_runtime_wrapper() -> None:
@@ -154,5 +153,4 @@ def install_runtime_wrapper() -> None:
         _install_state_wrapper(base, guard_module)
 
     guard_module.install = install
-    guard_module.PATCH_VERSION = PATCH_VERSION
     guard_module._premarket_rollover_install_wrapped = True
