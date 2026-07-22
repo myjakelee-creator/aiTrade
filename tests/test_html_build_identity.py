@@ -17,9 +17,9 @@ def test_identity_config_has_required_visible_fields():
 
     assert payload == {
         "schema_version": 1,
-        "version": "SBV2-20260722.4",
-        "published_at": "2026-07-22 17:08 KST",
-        "keyword": "SOR-PRICE-PRESERVE",
+        "version": "SBV2-20260723.1",
+        "published_at": "2026-07-23 08:20 KST",
+        "keyword": "PREMARKET-ROLLOVER",
         "baseline_commit": "6e48d6d",
     }
     assert "UNKNOWN" not in json.dumps(payload)
@@ -27,7 +27,7 @@ def test_identity_config_has_required_visible_fields():
 
 def test_dated_version_omits_duplicate_visible_date_and_time():
     assert identity_patch.build_badge_text() == (
-        "VER SBV2-20260722.4 · SOR-PRICE-PRESERVE"
+        "VER SBV2-20260723.1 · PREMARKET-ROLLOVER"
     )
 
 
@@ -35,30 +35,30 @@ def test_undated_version_adds_date_only_not_time():
     text = identity_patch.build_badge_text(
         {
             "version": "SBV2-R4",
-            "published_at": "2026-07-22 17:08 KST",
+            "published_at": "2026-07-23 08:20 KST",
             "keyword": "UNDATED-CHECK",
             "baseline_commit": "abc1234",
         }
     )
-    assert text == "VER SBV2-R4 · 2026-07-22 · UNDATED-CHECK"
-    assert "17:08" not in text
+    assert text == "VER SBV2-R4 · 2026-07-23 · UNDATED-CHECK"
+    assert "08:20" not in text
 
 
 def test_apply_build_identity_is_visible_and_idempotent():
     source = (
         '<!doctype html><html><head><title>StockBoard v2 Realtime</title></head>'
         '<body><div id="topbar"><span class="title">StockBoard v2 Realtime</span>'
-        '</div></body></html>'
+        "</div></body></html>"
     )
     first = identity_patch.apply_build_identity(source)
     second = identity_patch.apply_build_identity(first)
 
     assert first == second
     assert first.count('id="stockboard-build-identity"') == 1
-    assert ">VER SBV2-20260722.4 · SOR-PRICE-PRESERVE</span>" in first
-    assert 'data-ui-version="SBV2-20260722.4"' in first
-    assert 'data-ui-keyword="SOR-PRICE-PRESERVE"' in first
-    assert "published: 2026-07-22 17:08 KST" in first
+    assert ">VER SBV2-20260723.1 · PREMARKET-ROLLOVER</span>" in first
+    assert 'data-ui-version="SBV2-20260723.1"' in first
+    assert 'data-ui-keyword="PREMARKET-ROLLOVER"' in first
+    assert "published: 2026-07-23 08:20 KST" in first
     assert "baseline commit: 6e48d6d" in first
     assert identity_patch.MARKER in first
 
@@ -90,15 +90,15 @@ public = importlib.import_module("realtime_v2.public_gateway")
 html = Path("docs/stockboard_v2.html").read_text(encoding="utf-8-sig")
 private_html = large._ui_safety_patch(html)
 public_html = public.build_public_html(private_html)
-expected = "VER SBV2-20260722.4 · SOR-PRICE-PRESERVE"
+expected = "VER SBV2-20260723.1 · PREMARKET-ROLLOVER"
 
 assert private_html.count('id="stockboard-build-identity"') == 1
 assert public_html.count('id="stockboard-build-identity"') == 1
 assert f">{expected}</span>" in private_html
 assert f">{expected}</span>" in public_html
-assert 'data-ui-version="SBV2-20260722.4"' in private_html
-assert 'data-ui-keyword="SOR-PRICE-PRESERVE"' in public_html
-assert "published: 2026-07-22 17:08 KST" in private_html
+assert 'data-ui-version="SBV2-20260723.1"' in private_html
+assert 'data-ui-keyword="PREMARKET-ROLLOVER"' in public_html
+assert "published: 2026-07-23 08:20 KST" in private_html
 assert "UNKNOWN" not in private_html
 assert "UNKNOWN" not in public_html
 print("private_public_build_identity_ok")
