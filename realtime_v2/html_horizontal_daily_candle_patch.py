@@ -102,14 +102,13 @@ def install() -> None:
 
     install_last_trade_age_semantics()
 
-    from realtime_v2.html_build_identity_patch import (
-        apply_build_identity,
-    )
+    if not getattr(large, "_build_identity_html_installed", False):
+        from realtime_v2.html_build_identity_patch import apply_build_identity
 
-    original_identity_chain = large._ui_safety_patch
+        original_identity_chain = large._ui_safety_patch
 
-    def build_identity_ui_safety_patch(html: str) -> str:
-        return apply_build_identity(original_identity_chain(html))
+        def build_identity_ui_safety_patch(html: str) -> str:
+            return apply_build_identity(original_identity_chain(html))
 
-    large._ui_safety_patch = build_identity_ui_safety_patch
-    large._build_identity_html_installed = True
+        large._ui_safety_patch = build_identity_ui_safety_patch
+        large._build_identity_html_installed = True
