@@ -122,11 +122,13 @@ def _classify(first: dict[str, Any], last: dict[str, Any]) -> str:
     return "NO_QAX_REALDATA_CALLBACK"
 
 
-# The legacy operator tool resolves these names from its module globals at runtime.
-# Replacing them changes only this one-shot process; no production module imports it.
-base._delta = _optional_delta
-base._classify = _classify
+def main() -> int:
+    # The legacy operator tool resolves these names from its module globals at runtime.
+    # Replacing them affects only this one-shot process.
+    base._delta = _optional_delta
+    base._classify = _classify
+    return base.main()
 
 
 if __name__ == "__main__":
-    raise SystemExit(base.main())
+    raise SystemExit(main())
