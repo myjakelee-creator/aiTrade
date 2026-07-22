@@ -8,12 +8,14 @@ on:
       - fix/restore-stable-collector-20260713
       - fix/restore-live-metrics-rest-20260715
       - fix/stockboard-display-continuity-20260721
+      - "stable/**"
   push:
     branches:
       - main
       - hot-priority-integrated-20260630
       - "fix/**"
       - "feature/**"
+      - "hotfix/**"
   workflow_dispatch:
 
 permissions:
@@ -158,6 +160,7 @@ jobs:
             tests\test_worker_board_display_continuity_runtime_opt.py `
             tests\test_worker_aux_metric_source_contract.py `
             tests\test_worker_trade_field_regression_guard.py `
+            tests\test_trade_value_date_rollover_reproduction.py `
             tests\test_worker_portable_cache_sync.py `
             tests\test_worker_portable_rebuild_status.py `
             tests\test_worker_market_metric_session_manager.py `
