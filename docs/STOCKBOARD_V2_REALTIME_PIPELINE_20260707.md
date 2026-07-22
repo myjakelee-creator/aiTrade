@@ -1,6 +1,6 @@
 # StockBoard v2 실시간 파이프라인
 
-최종 갱신: 2026-07-22 16:27 KST
+최종 갱신: 2026-07-22 14:05 KST
 
 이 문서는 StockBoard v2의 실시간 가격 경로, 분 단위 보조지표, 거래일 유지정책과 실전 검증 상태를 기록하는 단일 기준 문서이다. 과거 v0.3.x 구조와 섞지 않는다.
 
@@ -260,17 +260,12 @@ Worker current trading date
 ```powershell
 .\stockboard_v2_large.cmd data-doctor
 .\stockboard_v2_large.cmd price-doctor
-.\stockboard_v2_large.cmd price-trace
-.\stockboard_v2_large.cmd collector-trace
-.\stockboard_v2_large.cmd price-backtrace
 ```
 
 - `data-doctor`: 현재 snapshot만 읽어 값·원천·거래일·내부 계산과 새 거래일 reset 승인 상태를 저장한다.
-- `price-doctor`: 사용자가 실행한 순간에만 ka10032를 1회 조회한다. 키움 전체시장 원순위는 참고용으로 두고 StockBoard 적격종목으로 필터링한 키움 적격순위와 비교한다.
-- `price-trace`: 기존 JSONL event log·SSE·snapshot으로 종목별 Collector 출력 이후 가격 경로를 15초 추적한다.
-- `collector-trace`: 기존 heartbeat 카운터만 15초 읽는다. 선택 상태가 `None`이어도 하위 단계 카운터 증가가 확인되면 활성 경로로 판정한다.
-- `price-backtrace`: 저장된 `price_compare_*.json`과 `events_YYYYMMDD.jsonl`만 읽어 특정 비교시각 직전 Collector 출력 이벤트와 저장된 Worker 행을 대조한다.
-- 모든 진단은 사용자가 실행할 때만 동작하며 평상시 background load를 추가하지 않는다.
+- `price-doctor`: 사용자가 실행한 순간에만 ka10032를 1회 조회한다. 기본 상위 20종목은 순위 완전 일치와 거래대금 차이 0.5% 이내를 PASS 조건으로 한다.
+- 엄격한 상위 30종목 검증은 `py -3 scripts\stockboard_v2_price_compare.py --limit 30 --rank-gate-limit 30 --trade-value-tolerance-pct 0.5`를 사용한다.
+- 평상시 background load는 추가하지 않는다.
 
 ### 7.7 비공개·공개 웹 서비스 경계
 
@@ -393,7 +388,7 @@ active payload file_read_count가 300초 정책보다 빠르게 증가
 active apply ms 지속 상승
 ```
 
-`LastTradeAgeSec`·`NoRecentTrade` 증가는 종목별 무체결을 뜻하며 파이프라인 장애 신호로 사용하지 않는다. 다만 거래대금 상위 다수 종목이 동시에 100초 이상 오래되면 별도 가격 경로 진단을 수행한다.
+`LastTradeAgeSec`·`NoRecentTrade` 증가는 종목별 무체결을 뜻하며 파이프라인 장애 신호로 사용하지 않는다.
 
 가격 경로가 최우선이며, 문제 발생 시 잔량비 → 5분강도 순으로 중지·지연한다.
 
@@ -412,10 +407,57 @@ active apply ms 지속 상승
 
 ### 10.2 2026-07-21 표시 연속성 실기
 
+프리마켓 전환 첫 실기:
+
+- `board_display_continuity_mode=live_with_previous_close_hold`
+- current trading date `20260721`
+- hold source trading date `20260720`
+- current live 128종목
+- previous close hold 10종목
+- seed suppressed 52종목
 - 날짜 변경 후 빈 화면 방지 통과
-- 전일 exact 유지 후 당일 종목별 LIVE 전환 통과
-- 장시간 `PipelineState=HEALTHY`, Worker queue/drop 정상 확인
-- 당시 price-doctor 30종목 중 가격 22종목 일치, 최대 등락률 차이 0.13%p, 거래대금 차이율 0.0588%
+- 전일 exact 유지 후 당일 종목별 전환 통과
+
+활성장·애프터마켓 장시간 실기:
+
+```text
+PipelineState             HEALTHY
+RowsInspected             30
+Live                      30
+LiveRecent                3
+NoRecentTrade             27
+Unknown                   0
+RatioMismatch             0
+BidAskOK / Wrong          25 / 0
+ExecutionOK / Wrong       30 / 0
+Strength5OK / Wrong       30 / 0
+ProgramOK / Wrong         30 / 0
+CollectorPending          8
+WorkerQueue               0
+WorkerDrop                0
+RealtimeStrengthEvents    3208
+RestMetricsRequests       106
+RestMetricsSuccess        106
+RestMetricsErrors         0
+ActivePayloadRetrySec     300
+ActivePayloadFileReads    4
+```
+
+`price-doctor` 동시 비교:
+
+```text
+ka10032 fetch             276.3ms
+비교 종목                  30
+REST 발견                  30
+가격 완전 일치             22
+최대 가격 차이             2,000원
+최대 등락률 차이           0.13%p
+최대 거래대금 차이율       0.0588%
+```
+
+불일치 방향이 한쪽으로 치우치지 않았고 비교 전후 snapshot 시차가 약 0.9초였으므로 지속적인 가격 지연이 아니라 갱신 순간 차이로 판정한다. 가격 collector와 fast patch는 동결한다.
+
+`TradeFieldSuppressed=10637`은 `_AL` 교차 수신에서 가격을 보존한 횟수이며 같은 시점 `WorkerDrop=0`, queue 정상, `PipelineState=HEALTHY`를 확인했다.
 
 ### 10.3 2026-07-22 공개 웹 서비스 실기
 
@@ -425,66 +467,31 @@ active apply ms 지속 상승
 - 공개 화면에서 진단·속도·렌더 문구 제거 통과
 - 생산 Worker·QAx collector·WebSocket·REST·SSE 주기 변경 0
 
-### 10.4 2026-07-22 후보판 거래대금 실기
+### 10.4 2026-07-22 후보판 자동검증
 
 ```text
-PipelineState                         HEALTHY
-WorkerQueue                           0
-WorkerDrop                            0/blank
-TradeFieldGuardVersion                trade_field_regression_guard_v3
-RatioMismatch                         0
-ka10032 found                         30/30
-trade value within 0.5%               30/30
-max trade value delta                 0.3366%
-price exact                           4/30
-max price delta                       8,000원
-max change-rate delta                 1.27%p
-NoRecentTrade                         29/30
+UI_VERSION          SBV2-20260722.3
+KEYWORD             TRADE-VALUE-ROLLOVER
+CANDIDATE_BRANCH    hotfix/SBV2-20260722.2-trade-value-rollover
+CANDIDATE_HEAD      68a89613bd99f7990d10b7827c38321ad1b704d3
+CI_RUN              737 success
 ```
 
-- 거래대금 경로는 통과했다.
-- 기존 순위 `REVIEW`는 키움 전체시장 원순위와 StockBoard 적격 압축순위를 직접 비교한 진단 정의 오류였다.
-- 생산 순위 계산은 변경하지 않고 키움 적격순위를 재계산하는 방식으로 진단기를 수정했다.
-- 가격·등락률은 별도 원인 추적이 필요하다.
+- 새 거래일 늦은 FID14 재현시험 GREEN
+- 같은 날 누적거래대금 감소 차단 GREEN
+- 날짜 불명확 감소 fail-closed GREEN
+- `_AL` FID20 교차수신 보호 GREEN
+- UI 버전명 날짜·시간 중복 제거 GREEN
+- 순위·거래대금 진단 gate 단위시험 GREEN
 
-### 10.5 2026-07-22 가격 경로 추적
+남은 실기:
 
-15:36 `price-trace`:
-
-```text
-정규장 종료 후 15초
-추적 5종목 Collector 출력 이벤트 0
-Worker trade 증가 0
-SSE snapshot 7회
-SSE payload 지연 중앙값 172ms
-```
-
-정규장 종료 후 측정이므로 장중 가격 지연 원인을 확정하는 자료로 사용하지 않는다.
-
-15:59 `collector-trace`:
-
-```text
-QAx realdata callback 증가       439
-주식체결 callback 증가           438
-EventSender 거래 수신 증가       438
-EventSender 전송 증가            391
-Worker 거래 적용 증가            342
-Worker drop 증가                 0
-누적필드 보류 증가               296
-```
-
-- QAx → Provider → EventSender → Worker 경로는 애프터마켓에서 활성 상태였다.
-- `provider_qt_pump_running=None`, `provider_trade_event_applied_count=None`을 `False/0`으로 취급한 기존 `QT_EVENT_PUMP_NOT_RUNNING` 판정은 진단기 오판이다.
-- 명시적 `False`만 장애로 판정하고, 하위 단계 카운터가 증가하면 `PRICE_PATH_ACTIVE_WITH_OPTIONAL_STATUS_UNKNOWN`으로 판정한다.
-- 14:57 가격 차이의 위치는 저장된 `price_compare_20260722_145718.json`과 `events_20260722.jsonl` 역추적으로 확인한다.
-- JSONL에는 원시 Collector 출력 이벤트만 있고 guard 결정 결과는 직접 기록되지 않으므로 `WORKER_OR_GUARD_NOT_APPLIED`는 이벤트와 저장 행을 비교한 추론임을 명시한다.
-
-### 10.6 남은 실기
-
-1. `price-backtrace`로 14:57 종목별 Collector 출력 공백과 Worker 행 불일치를 분리
-2. 다음 실제 정규장과 08:59~09:05에 `collector-trace` 재실행
-3. 다음 실제 프리마켓에서 당일 누적 reset 승인 확인
-4. 위 조건 전까지 Draft 유지·병합 금지
+1. 대표님 PC 후보판 적용 후 `VER SBV2-20260722.3 · TRADE-VALUE-ROLLOVER` 확인
+2. 키움 ka10032 상위 30종목 순위 완전 일치
+3. 상위 30종목 거래대금 차이 각각 0.5% 이내
+4. `PipelineState=HEALTHY`, queue 정상, WorkerDrop 0 확인
+5. 다음 실제 프리마켓에서 당일 누적 reset 승인 확인
+6. 위 조건 전까지 Draft 유지·병합 금지
 
 ## 11. 운영 명령
 
@@ -498,25 +505,18 @@ git pull --ff-only
 .\stockboard_v2_large.cmd restart-fast
 ```
 
-### 11.2 수동 진단
+엄격한 순위·거래대금 검증:
 
 ```powershell
-.\stockboard_v2_large.cmd price-doctor
+py -3 scripts\stockboard_v2_price_compare.py `
+  --limit 30 `
+  --rank-gate-limit 30 `
+  --trade-value-tolerance-pct 0.5
+
 .\stockboard_v2_large.cmd data-doctor
-.\stockboard_v2_large.cmd price-trace
-.\stockboard_v2_large.cmd collector-trace
-.\stockboard_v2_large.cmd price-backtrace
 ```
 
-14:57 보고서를 명시한 역추적:
-
-```powershell
-py -3 scripts\stockboard_v2_price_history_backtrace.py `
-  --compare-json C:\aiTrade\data\runtime\stockboard_v2\price_compare_20260722_145718.json `
-  --event-log C:\aiTrade\data\runtime\stockboard_v2\events_20260722.jsonl
-```
-
-### 11.3 안정판 즉시 복원
+### 11.2 안정판 즉시 복원
 
 ```powershell
 cd C:\aiTrade
@@ -525,4 +525,4 @@ git switch stable/SBV2-20260722.2
 .\stockboard_v2_large.cmd restart-fast
 ```
 
-2026-07-22 16:27 KST 기준으로 거래대금 경로는 통과했지만 가격·등락률 후보판 승격은 보류한다. 14:57 과거 로그 역추적과 다음 실제 정규장·프리마켓 검증 후에만 새 안정판 승격을 판단한다.
+2026-07-22 14:05 KST 기준으로 후보판 자동검증은 통과했지만 실기 승격은 하지 않았다. 키움 상위 30종목의 순위 완전 일치와 거래대금 0.5% 이내, 장중 파이프라인 정상, 다음 프리마켓 reset 확인을 모두 통과해야 새 안정판으로 승격한다.
