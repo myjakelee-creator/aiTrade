@@ -58,12 +58,7 @@ _NEW_FUNCTIONS = r"""function horizontalCandleOhlc(r){
 
 
 def install() -> None:
-    """Install candle rendering and display-only amount-ratio formatting.
-
-    The amount-ratio value, sorting, color threshold, worker calculation, and every
-    data collection path remain unchanged. Only `fmtRatio` changes from an `x`
-    multiple to the uncapped rounded percentage, for example 15.69 -> 1569%.
-    """
+    """Install candle, ratio, age, and immutable build-identity display patches."""
 
     from realtime_v2.html_portable_rebuild_status_patch import (
         install as install_portable_rebuild_status,
@@ -106,3 +101,9 @@ def install() -> None:
     )
 
     install_last_trade_age_semantics()
+
+    from realtime_v2.html_build_identity_patch import (
+        install as install_build_identity,
+    )
+
+    install_build_identity()
