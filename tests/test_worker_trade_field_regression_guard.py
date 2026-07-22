@@ -113,6 +113,85 @@ assert state.status.get("daily_cumulative_reset_accepted_count",0)==0
     )
 
 
+def test_plain_callback_code_recovers_sor_identity_from_original_registered_code():
+    _run(
+        r'''
+import sys, threading
+from types import ModuleType
+fake_guarded=ModuleType("realtime_v2.worker64_guarded")
+fake_guarded._time_seconds=lambda value: int(str(value)) if str(value or "").isdigit() else None
+def original_drop(state, quote, code, reason, event, values, trade_time, lag_sec):
+    state.status["dropped_trade_count"]=int(state.status.get("dropped_trade_count") or 0)+1
+fake_guarded._drop_trade=original_drop
+sys.modules["realtime_v2.worker64_guarded"]=fake_guarded
+from realtime_v2.worker_trade_field_regression_guard import install
+
+def merged(event): return dict(event.get("kwargs") or {})
+class State:
+    def __init__(self):
+        self.lock=threading.RLock()
+        self.status={"trade_count":0,"market_trading_date":"20260722"}
+        self.quotes={
+            "005930":{
+                "stock_code":"005930","row_source":"realtime",
+                "price":263500.0,"change_rate":1.74,
+                "trade_value_eok":100.0,"trade_value_trading_date":"20260722",
+                "cumulative_volume":1000,"cumulative_volume_trading_date":"20260722",
+                "_trade_time_seconds":145600,"trade_time":"145600",
+                "received_at":"2026-07-22T14:54:31+09:00",
+            }
+        }
+    def _apply_trade(self,event):
+        values=merged(event); quote=self.quotes[event["stock_code"]]
+        incoming=fake_guarded._time_seconds(values.get("trade_time"))
+        if incoming is not None and incoming < quote["_trade_time_seconds"]:
+            fake_guarded._drop_trade(self,quote,event["stock_code"],"older_fid20_than_last_accepted",event,values,str(values.get("trade_time") or ""),None); return
+        price=values.get("price")
+        if price not in (None,""): quote["price"]=abs(float(price))
+        rate=values.get("change_rate")
+        if rate not in (None,""): quote["change_rate"]=float(rate)
+        cumulative=values.get("cumulative_value")
+        if cumulative not in (None,""): quote["trade_value_eok"]=float(cumulative)
+        volume=values.get("cumulative_volume")
+        if volume not in (None,""): quote["cumulative_volume"]=int(volume)
+        quote["trade_time"]=values.get("trade_time")
+        quote["received_at"]=event.get("ts")
+        self.status["trade_count"]+=1
+class Base:
+    State=State; merged_event_values=staticmethod(merged)
+install(Base)
+state=State()
+state._apply_trade({
+    "type":"trade",
+    "ts":"2026-07-22T14:57:16+09:00",
+    "stock_code":"005930",
+    "received_code":"005930",
+    "kwargs":{
+        "price":"-264000","change_rate":"1.93","trade_time":"145559",
+        "cumulative_value":"98","cumulative_volume":"900",
+        "source_code":None,"realtime_source_code":None,"registered_code":None,
+        "original_registered_code":"005930_AL",
+    },
+})
+quote=state.quotes["005930"]
+assert quote["price"]==264000.0
+assert quote["change_rate"]==1.93
+assert quote["received_at"]=="2026-07-22T14:57:16+09:00"
+assert quote["trade_time"]=="145600"
+assert quote["trade_value_eok"]==100.0
+assert quote["cumulative_volume"]==1000
+assert state.status.get("dropped_trade_count",0)==0
+assert state.status["trade_field_regression_suppressed_reason_counts"]=={
+    "sor_fid20_interleaved_price_preserved":1,
+    "cumulative_trade_value_decreased":1,
+    "cumulative_volume_decreased":1,
+}
+assert state.status["last_trade_field_regression_suppressed"]["source_code"]=="005930_AL"
+assert state.status["trade_field_regression_guard_version"]=="trade_field_regression_guard_v4"
+'''
+    )
+
+
 def test_undated_previous_value_fails_closed_instead_of_guessing_daily_reset():
     _run(
         r'''
@@ -185,7 +264,7 @@ assert state.status["dropped_trade_reason_counts"]=={"older_fid20_than_last_acce
     )
 
 
-def test_production_entrypoint_installs_trade_field_regression_guard_v3():
+def test_production_entrypoint_installs_trade_field_regression_guard_v4():
     _run(
         r'''
 import importlib
@@ -193,6 +272,6 @@ production=importlib.import_module("realtime_v2.worker64_guarded_large_bidask")
 guarded=importlib.import_module("realtime_v2.worker64_guarded")
 assert production is not None
 assert getattr(guarded.base.State,"_stockboard_trade_field_regression_guard_installed",False) is True
-assert getattr(guarded.base.State,"_stockboard_trade_field_regression_guard_version",None)=="trade_field_regression_guard_v3"
+assert getattr(guarded.base.State,"_stockboard_trade_field_regression_guard_version",None)=="trade_field_regression_guard_v4"
 '''
     )
