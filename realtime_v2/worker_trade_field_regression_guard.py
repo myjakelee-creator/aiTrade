@@ -87,8 +87,9 @@ def _source_code(event: dict[str, Any], values: dict[str, Any]) -> str:
     ).strip()
 
 
-def _active_trading_date(state) -> str:
+def _status_trading_dates(state) -> set[str]:
     status = getattr(state, "status", {})
+    result: set[str] = set()
     if isinstance(status, dict):
         for key in (
             "board_display_current_trading_date",
@@ -97,15 +98,8 @@ def _active_trading_date(state) -> str:
         ):
             date_text = _date_digits(status.get(key))
             if date_text:
-                return date_text
-
-    try:
-        from realtime_v2.worker_board_trading_date_guard import board_target_context
-
-        target_date, _phase, active = board_target_context()
-        return _date_digits(target_date) if active else ""
-    except Exception:
-        return ""
+                result.add(date_text)
+    return result
 
 
 def _event_receive_date(event: dict[str, Any], values: dict[str, Any]) -> str:
@@ -132,9 +126,21 @@ def _event_receive_date(event: dict[str, Any], values: dict[str, Any]) -> str:
 
 
 def _verified_current_date(state, event: dict[str, Any], values: dict[str, Any]) -> str:
-    current_date = _active_trading_date(state)
     event_date = _event_receive_date(event, values)
-    return current_date if current_date and event_date == current_date else ""
+    if not event_date:
+        return ""
+
+    if event_date in _status_trading_dates(state):
+        return event_date
+
+    try:
+        from realtime_v2.worker_board_trading_date_guard import board_target_context
+
+        target_date, _phase, active = board_target_context()
+        target_date = _date_digits(target_date)
+        return event_date if active and target_date == event_date else ""
+    except Exception:
+        return ""
 
 
 def _field_date(quote: dict[str, Any], *keys: str) -> str:
