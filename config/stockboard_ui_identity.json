@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": "SBV2-20260722.4",
-  "published_at": "2026-07-22 17:08 KST",
-  "keyword": "SOR-PRICE-PRESERVE",
+  "version": "SBV2-20260723.1",
+  "published_at": "2026-07-23 08:20 KST",
+  "keyword": "PREMARKET-ROLLOVER",
   "baseline_commit": "6e48d6d"
 }
