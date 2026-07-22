@@ -1,6 +1,6 @@
 # StockBoard v2 실시간 파이프라인
 
-최종 갱신: 2026-07-22 02:29 KST
+최종 갱신: 2026-07-22 14:05 KST
 
 이 문서는 StockBoard v2의 실시간 가격 경로, 분 단위 보조지표, 거래일 유지정책과 실전 검증 상태를 기록하는 단일 기준 문서이다. 과거 v0.3.x 구조와 섞지 않는다.
 
@@ -237,32 +237,23 @@ GAP_POSSIBLE     장중 재시작·재접속 공백 가능
 - 진단 상태는 `board_display_active_payload_cache_status`, `board_display_active_payload_file_read_count`, `board_display_active_payload_retry_sec`, `board_display_active_apply_ms`로 확인한다.
 - 추가 QAx·FID·REST·WebSocket·thread·timer·SSE cadence는 0이다.
 
-### 7.6 `_AL` 가격 순서 보정과 진단 의미
+### 7.6 `_AL` 가격 순서 보정과 새 거래일 누적 초기화
 
-SOR 통합 `_AL` 스트림에서는 거래소별 이벤트가 교차 도착해 FID20과 누적거래대금이 직전 승인값보다 작게 보일 수 있다. 과거에는 이런 이벤트 전체를 폐기해 현재가·등락률 추종이 느려졌다.
+SOR 통합 `_AL` 스트림에서는 거래소별 이벤트가 교차 도착해 FID20과 누적거래대금이 직전 승인값보다 작게 보일 수 있다. 같은 거래일에서는 현재가·등락률만 살리고 역행 누적 필드를 기존처럼 유지한다.
 
-현재 동작:
-
-```text
-_AL에서 FID20 역행
-→ 현재가·등락률은 도착순 최신값 적용
-→ FID20·누적거래량·누적거래대금은 직전 단조 증가값 유지
-→ 이벤트 전체 폐기하지 않음
-
-_AL이 아닌 원천에서 FID20 역행
-→ 기존처럼 이벤트 전체 차단
-```
-
-`trade_field_regression_suppressed_count`는 버린 이벤트 수가 아니라 가격을 살리고 역행 필드만 보류한 횟수다. 실제 장애 판단은 `dropped_trade_count`, collector/worker queue, snapshot/SSE 지연으로 한다.
-
-`price_age_sec`는 전송 지연이 아니라 종목별 마지막 승인 체결 이후 경과시간이다. 따라서 3초 초과 종목을 흐리게 표시하지 않으며 진단도 다음처럼 분리한다.
+새 거래일 초기화는 다음 세 날짜가 모두 명확할 때만 승인한다.
 
 ```text
-Live             당일 실시간 원천 전체
-LiveRecent       최근 3초 내 체결
-NoRecentTrade    당일 실시간이지만 최근 3초 내 체결 없음
-PipelineState    snapshot·queue·drop·collector 연결 기반 HEALTHY/CHECK
+Worker current trading date
+= collector event receive date
+> existing cumulative field trading date
 ```
+
+- QAx 이벤트에는 별도 거래일 필드가 없으므로 이벤트 수신시각 `ts`의 날짜를 사용한다.
+- 기존 거래대금 날짜는 `trade_value_trading_date`, 없으면 검증된 `source_trading_date`를 사용한다.
+- 날짜가 없거나 서로 일치하지 않으면 fail-closed로 기존 누적값을 유지한다.
+- 다음 거래일로 확인된 감소만 당일 FID14·누적거래량으로 교체한다.
+- 승인 상태는 `daily_cumulative_reset_accepted_count`, `trade_field_regression_accepted_reason_counts`, `last_daily_cumulative_reset_accepted`로 확인한다.
 
 수동 진단:
 
@@ -271,9 +262,10 @@ PipelineState    snapshot·queue·drop·collector 연결 기반 HEALTHY/CHECK
 .\stockboard_v2_large.cmd price-doctor
 ```
 
-- `data-doctor`: 현재 snapshot만 읽어 가격·등락률·거래대금·대금비·잔량비·체결강도·5분강도·프로그램의 값·원천·거래일·내부 계산을 CSV/JSON으로 저장한다.
-- `price-doctor`: 사용자가 명시적으로 실행한 순간에만 ka10032를 1회 조회해 StockBoard 현재가·등락률·거래대금을 같은 시점에 비교한다.
-- 두 명령 모두 평상시 background load를 추가하지 않는다.
+- `data-doctor`: 현재 snapshot만 읽어 값·원천·거래일·내부 계산과 새 거래일 reset 승인 상태를 저장한다.
+- `price-doctor`: 사용자가 실행한 순간에만 ka10032를 1회 조회한다. 기본 상위 20종목은 순위 완전 일치와 거래대금 차이 0.5% 이내를 PASS 조건으로 한다.
+- 엄격한 상위 30종목 검증은 `py -3 scripts\stockboard_v2_price_compare.py --limit 30 --rank-gate-limit 30 --trade-value-tolerance-pct 0.5`를 사용한다.
+- 평상시 background load는 추가하지 않는다.
 
 ### 7.7 비공개·공개 웹 서비스 경계
 
@@ -316,6 +308,19 @@ C:\aiTrade\stockboard_public.cmd
 - 하위 생산 런처는 별도 프로세스로 실행하고 로그인 대기 중 5초마다 진행상태를 표시한다.
 - 공개 전용 긴급 복구는 메뉴 `5 Publish public gateway only`를 사용한다.
 - 전체 시작 계약 버전은 `stockboard_public_all_v5_20260722`이다.
+
+### 7.9 UI 버전 식별과 안정판
+
+```text
+안정판   VER SBV2-20260722.2 · PUBLIC-OPS-ID
+후보판   VER SBV2-20260722.3 · TRADE-VALUE-ROLLOVER
+```
+
+- 버전명에 `YYYYMMDD`가 있으면 날짜·시간을 화면에 중복 표시하지 않는다.
+- 버전명에 날짜가 없을 때만 날짜를 별도로 표시한다.
+- 전체 적용시각은 tooltip·설정·문서에서 확인한다.
+- 안정 브랜치 `stable/SBV2-20260722.2`는 불변 기준점으로 유지한다.
+- 후보판 실패 시 전체 커밋 SHA `6e48d6dce34f995770a26aacec30b7e5621e0889`로 복원한다.
 
 ## 8. 공통 거래일 유지정책
 
@@ -454,123 +459,70 @@ REST 발견                  30
 
 `TradeFieldSuppressed=10637`은 `_AL` 교차 수신에서 가격을 보존한 횟수이며 같은 시점 `WorkerDrop=0`, queue 정상, `PipelineState=HEALTHY`를 확인했다.
 
-### 10.3 2026-07-22 00:25 KST 공개 웹 서비스 실기
+### 10.3 2026-07-22 공개 웹 서비스 실기
 
-검증 결과:
+- 비공개 8765와 공개 8767 UI 동기화 통과
+- Tailscale Funnel 루트 주소 PC·모바일 접속 통과
+- 공개 읽기 전용 allowlist와 제어 제거 통과
+- 공개 화면에서 진단·속도·렌더 문구 제거 통과
+- 생산 Worker·QAx collector·WebSocket·REST·SSE 주기 변경 0
 
-```text
-PRIVATE_WORKER                 http://127.0.0.1:8765
-PUBLIC_GATEWAY                http://127.0.0.1:8767
-PUBLIC_GATEWAY_VERSION        stockboard_public_live_ui_v1_20260721
-PUBLIC_UI_SOURCE              live_private_worker_html_per_request
-PUBLIC_UI_LIVE_SYNC           True
-PUBLIC_UI_HAS_1MIN_VALUE      True
-PUBLIC_UI_HAS_5MIN_STRENGTH   True
-PUBLIC_WEB                    https://gram-jlee.tail04774a.ts.net
-```
-
-- 8765 실제 UI와 8767 공개 읽기 전용 UI의 열 제목·레이아웃 일치를 화면으로 확인했다.
-- `1분대금`, `5분강도`, 시장수급, 미국시장 표시가 현재 UI와 동일하게 제공됐다.
-- 공개 화면의 `공개 읽기 전용 · 현재 UI` 표시와 HTS/서버 제어 제거를 확인했다.
-- Tailscale Funnel을 tailnet 관리 화면에서 승인한 뒤 일반 인터넷 공개에 성공했다.
-- 모바일에서 Tailscale 비연결 상태로 공개 HTTPS 주소 접속을 확인했다.
-- 당시 `PUBLIC_GATEWAY_ROWS=0`은 원본 8765도 표시 종목이 0인 장마감 상태였으므로 Gateway 데이터 손실이 아니다.
-- 생산 Worker·QAx collector·WebSocket·REST cadence·SSE cadence 변경은 0이다.
-
-### 10.4 2026-07-22 02:29 KST 공개 UI 최종 실기
-
-- 정식 루트 주소 `https://gram-jlee.tail04774a.ts.net`의 PC·모바일 접속을 확인했다.
-- 쿼리 문자열 없이 루트 주소만 입력해 현재 공개 UI가 정상 표시됐다.
-- 데스크톱과 모바일 공개 화면에서 진단·속도·렌더·설명 문구가 제거됐다.
-- 원본 8765 모바일 보기의 `recv/s`, `stream`, `render`는 유지하면서 공개 8767에서만 제거되는 것을 화면으로 확인했다.
-- 공개 모바일 전환 후에도 `공개 읽기 전용 · 현재 UI`, 시장수급, 미국시장, S1·집중 후보·Pool이 유지됐다.
-- 공개 정리 계약 `stockboard_public_chrome_cleanup_v3_20260722` 적용을 확인했다.
-- 생산 8765 HTML·수집·계산·SSE 경로 변경은 0이다.
-
-### 10.5 2026-07-22 02:29 KST 재부팅 운영 런처 확인
-
-확인·수정 이력:
+### 10.4 2026-07-22 후보판 자동검증
 
 ```text
-PowerShell 5.1 $code: 파싱 실패
-→ ${code}:로 수정
-
-생산 런처 동기 대기로 진행상태가 보이지 않음
-→ 별도 프로세스 실행 + 5초 상태 출력
-
-collector.alive 필드 부재를 False로 오판
-→ collector32.pid 실제 프로세스 생존으로 판정
+UI_VERSION          SBV2-20260722.3
+KEYWORD             TRADE-VALUE-ROLLOVER
+CANDIDATE_BRANCH    hotfix/SBV2-20260722.2-trade-value-rollover
+CANDIDATE_HEAD      68a89613bd99f7990d10b7827c38321ad1b704d3
+CI_RUN              737 success
 ```
 
-- 8765 생산 StockBoard의 OpenAPI `connected`, `realreg=True`, 등록 100종목을 확인했다.
-- 오류 후 메뉴 `5 Publish public gateway only`로 8767·Funnel을 연결해 공개 UI 정상 접속을 확인했다.
-- 최신 통합 런처는 `stockboard_public_all_v5_20260722`이다.
-- 다음 실제 PC 재부팅에서 메뉴 `1 Start everything and publish`의 처음부터 끝까지 한 번 더 확인한다.
+- 새 거래일 늦은 FID14 재현시험 GREEN
+- 같은 날 누적거래대금 감소 차단 GREEN
+- 날짜 불명확 감소 fail-closed GREEN
+- `_AL` FID20 교차수신 보호 GREEN
+- UI 버전명 날짜·시간 중복 제거 GREEN
+- 순위·거래대금 진단 gate 단위시험 GREEN
 
-### 10.6 남은 최종 검증
+남은 실기:
 
-- 다음 실제 프리마켓 08:00에서 전일 exact를 지우지 않고 당일 체결 종목부터 순차 LIVE 전환
-- 다음 PC 재부팅 후 단일 런처 메뉴 1번 전체 시작·공개 완료 확인
-- 위 확인 후 PR 병합
+1. 대표님 PC 후보판 적용 후 `VER SBV2-20260722.3 · TRADE-VALUE-ROLLOVER` 확인
+2. 키움 ka10032 상위 30종목 순위 완전 일치
+3. 상위 30종목 거래대금 차이 각각 0.5% 이내
+4. `PipelineState=HEALTHY`, queue 정상, WorkerDrop 0 확인
+5. 다음 실제 프리마켓에서 당일 누적 reset 승인 확인
+6. 위 조건 전까지 Draft 유지·병합 금지
 
 ## 11. 운영 명령
 
-### 11.1 재부팅 후 권장 단일 실행
+### 11.1 후보판 적용
 
 ```powershell
 cd C:\aiTrade
-git switch feature/stockboard-public-gateway-20260721
+git fetch origin
+git switch hotfix/SBV2-20260722.2-trade-value-rollover
 git pull --ff-only
-.\stockboard_public.cmd
+.\stockboard_v2_large.cmd restart-fast
 ```
 
-메뉴:
-
-```text
-1  Start everything and publish - 재부팅 후 권장
-2  Show all status
-3  Stop everything and disable public access
-5  Publish public gateway only - 8765가 이미 정상일 때 공개만 복구
-```
-
-정상 공개 주소:
-
-```text
-https://gram-jlee.tail04774a.ts.net
-```
-
-### 11.2 생산 StockBoard 진단
+엄격한 순위·거래대금 검증:
 
 ```powershell
-.\stockboard_v2_large.cmd status
+py -3 scripts\stockboard_v2_price_compare.py `
+  --limit 30 `
+  --rank-gate-limit 30 `
+  --trade-value-tolerance-pct 0.5
+
 .\stockboard_v2_large.cmd data-doctor
-.\stockboard_v2_large.cmd price-doctor
 ```
 
-### 11.3 공개 Gateway 직접 운영
-
-공개 Gateway 로컬 재시작:
+### 11.2 안정판 즉시 복원
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File .\scripts\stockboard_public_live_v2.ps1 `
-  -Action restart
+cd C:\aiTrade
+git fetch origin
+git switch stable/SBV2-20260722.2
+.\stockboard_v2_large.cmd restart-fast
 ```
 
-인터넷 공개:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File .\scripts\stockboard_public_live_v2.ps1 `
-  -Action publish
-```
-
-공개 중지 후 비공개 Tailscale Serve 복원:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File .\scripts\stockboard_public_live_v2.ps1 `
-  -Action unpublish
-```
-
-2026-07-22 02:29 KST 기준으로 현재 UI 동기화, 읽기 전용 경계, Tailscale Funnel 공개, 쿼리 없는 루트 주소, PC·모바일 외부 접속, 공개 모바일 속도·진단 제거는 실기 통과했다. 8765 생산 경로는 변경하지 않았으며, 공개 복구는 정상 확인됐다. 다음 실제 프리마켓 전환과 다음 PC 재부팅의 통합 런처 메뉴 1번 전체 경로만 최종 확인 대상으로 유지한다.
+2026-07-22 14:05 KST 기준으로 후보판 자동검증은 통과했지만 실기 승격은 하지 않았다. 키움 상위 30종목의 순위 완전 일치와 거래대금 0.5% 이내, 장중 파이프라인 정상, 다음 프리마켓 reset 확인을 모두 통과해야 새 안정판으로 승격한다.
