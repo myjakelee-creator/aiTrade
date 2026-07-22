@@ -7,6 +7,10 @@ For SOR (`_AL`) source streams, FID20 and cumulative values can interleave acros
 venues. Same-day regressions therefore keep the previous monotonic cumulative fields
 while allowing arrival-order price/rate.
 
+The callback code can be a plain six-digit code even when SetRealReg used `_AL`.
+`original_registered_code` and `realtime_source_code` therefore participate in SOR
+identity recovery before an older FID20 event is classified.
+
 At the next verified trading day, however, cumulative trade value and volume naturally
 restart from a smaller value. This patch accepts that reset only when all of the
 following agree:
@@ -23,7 +27,7 @@ from typing import Any
 
 from realtime_v2.common import normalize_code, normalized_trade_value_eok, to_int, to_number
 
-PATCH_VERSION = "trade_field_regression_guard_v3"
+PATCH_VERSION = "trade_field_regression_guard_v4"
 
 
 def _date_digits(value: Any) -> str:
@@ -81,8 +85,11 @@ def _increment_reason(status: dict[str, Any], key: str, reason: str) -> None:
 def _source_code(event: dict[str, Any], values: dict[str, Any]) -> str:
     return str(
         values.get("source_code")
+        or values.get("realtime_source_code")
         or values.get("registered_code")
+        or values.get("original_registered_code")
         or event.get("received_code")
+        or values.get("received_code")
         or ""
     ).strip()
 
