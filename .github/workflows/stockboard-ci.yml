@@ -7,11 +7,13 @@ on:
       - hot-priority-integrated-20260630
       - fix/restore-stable-collector-20260713
       - fix/restore-live-metrics-rest-20260715
+      - fix/stockboard-display-continuity-20260721
   push:
     branches:
       - main
       - hot-priority-integrated-20260630
       - "fix/**"
+      - "feature/**"
   workflow_dispatch:
 
 permissions:
@@ -109,8 +111,10 @@ jobs:
             realtime_v2\html_portable_rebuild_status_patch.py `
             realtime_v2\html_horizontal_daily_candle_patch.py `
             realtime_v2\html_last_trade_age_semantics_patch.py `
+            realtime_v2\html_build_identity_patch.py `
             realtime_v2\html_large_trade_quality_patch.py `
-            realtime_v2\html_opening_render_guard_patch.py
+            realtime_v2\html_opening_render_guard_patch.py `
+            realtime_v2\public_gateway.py
 
       - name: Check doctor and launcher syntax
         shell: pwsh
@@ -136,6 +140,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force test-results | Out-Null
           python -m pytest -q `
+            tests\test_html_build_identity.py `
             tests\test_stockboard_v2_price_compare.py `
             tests\test_html_last_trade_age_semantics.py `
             tests\test_context_market_supply_trading_date.py `
@@ -181,6 +186,7 @@ jobs:
             tests\test_worker_realtime_strength_ws.py `
             tests\test_worker_rest_live_metrics_patch.py `
             tests\test_tr_singleflight.py `
+            tests\test_stockboard_public_gateway.py `
             --junitxml=test-results\pytest.xml
 
       - name: Upload pytest report
