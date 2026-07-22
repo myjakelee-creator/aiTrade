@@ -22,6 +22,7 @@ def _sample_html() -> str:
 </style></head><body><script>
 function numeric(v){if(v===undefined||v===null||v==='')return null;const n=Number(v);return Number.isFinite(n)?n:null;}
 function fmtNum(v){return String(v);}
+function fmtRatio(v){const n=Number(v);return Number.isFinite(n)&&n>0?(n>=10?'10x+':`${n.toFixed(n>=3?1:2)}x`):'-';}
 function escapeHtml(v){return String(v);}
 function candleTitle(r,o){return `시가 ${o.open}\n고가 ${o.high}\n저가 ${o.low}\n종가 ${o.close}`;}
 function candleHtml(r){const o=pickOhlc(r);if(!o)return'-';const span=Math.max(1,o.high-o.low);const left=v=>Math.max(0,Math.min(100,(v-o.low)/span*100));const s=Math.min(left(o.open),left(o.close)),e=Math.max(left(o.open),left(o.close));const cls=o.close>o.open?'up':o.close<o.open?'down':'flat';return`<div class="mini-candle ${cls}" title="${escapeHtml(candleTitle(r,o))}" style="--body-left:${s.toFixed(2)}%;--body-width:${Math.max(2,e-s).toFixed(2)}%"><span class="wick"></span><span class="body"></span></div>`;}
@@ -47,6 +48,18 @@ def test_horizontal_candle_uses_caps_thick_body_and_existing_tooltip(monkeypatch
     assert "typeof candleTitle==='function'?candleTitle(r,o)" in rendered
     assert 'left:0; width:100%; top:6px' not in rendered
     assert rendered.count('<span class="wick"></span><span class="body"></span>') == 1
+
+
+def test_amount_ratio_uses_uncapped_actual_percent(monkeypatch):
+    fake_large = SimpleNamespace(_ui_safety_patch=lambda html: html)
+    monkeypatch.setattr(realtime_v2, "worker64_guarded_large", fake_large, raising=False)
+
+    candle_patch.install()
+    rendered = fake_large._ui_safety_patch(_sample_html())
+
+    assert "`${Math.round(n*100)}%`" in rendered
+    assert "10x+" not in rendered
+    assert "toFixed(n>=3?1:2)" not in rendered
 
 
 def test_horizontal_candle_contract_has_no_new_data_or_timer_path():
@@ -76,6 +89,8 @@ assert "STOCKBOARD_V2_HORIZONTAL_DAILY_CANDLE_V1" in patched
 assert "horizontalCandleOhlc" in patched
 assert "--wick-left:" in patched
 assert "--wick-width:" in patched
+assert "`${Math.round(n*100)}%`" in patched
+assert "10x+" not in patched
 assert "STOCKBOARD_V2_RESPONSIVE_MOBILE_VIEW_20260717" in patched
 assert "STOCKBOARD_V2_MOMENTUM_GRADE_ALERTS_20260717" in patched
 '''

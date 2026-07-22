@@ -5,6 +5,7 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 
+from realtime_v2 import worker_board_display_continuity_patch as continuity
 from realtime_v2 import worker_board_trading_date_guard as guard_module
 
 
@@ -16,6 +17,7 @@ def _portable_payload() -> dict:
             "low": low,
             "close": price,
             "date": "20260717",
+            "source_trading_date": "20260717",
             "source": "ka10086_AL_exact_date",
             "portable_parser_version": guard_module.PORTABLE_PARSER_VERSION,
         }
@@ -42,6 +44,7 @@ def _portable_payload() -> dict:
         "verified": True,
         "source_trading_date": "20260717",
         "trading_date": "20260717",
+        "market_phase": "holiday",
         "market_scope": "integrated_AL_regular_fallback",
         "coverage": 1.0,
         "ts": "2026-07-19T08:00:00+09:00",
@@ -189,3 +192,35 @@ def test_install_wraps_init_and_rows_without_network_or_new_loop(
     assert [row["stock_code"] for row in rows] == ["000002", "000001"]
     assert isinstance(state.portable_board_guard, guard_class)
     assert getattr(State, "_stockboard_portable_board_guard_installed", False) is True
+
+
+def test_display_fingerprint_ignores_clock_phase_and_file_timestamp():
+    first = _portable_payload()
+    second = _portable_payload()
+    second["market_phase"] = "before_market"
+    second["ts"] = "2026-07-20T08:00:59+09:00"
+
+    assert continuity._content_fingerprint(first) == continuity._content_fingerprint(second)
+
+
+def test_previous_close_hold_does_not_overwrite_current_day_live_row():
+    state = _State()
+    state._board_display_live_codes_by_date = {"20260720": {"000001"}}
+
+    applied, held, live = continuity._apply_payload(
+        guard_module,
+        state,
+        _portable_payload(),
+        source_date="20260717",
+        current_date="20260720",
+        hold_only=True,
+        generation=7,
+    )
+
+    assert state.quotes["000001"]["price"] == 999
+    assert state.quotes["000002"]["price"] == 200
+    assert state.quotes["000002"]["row_source"] == "portable_exact_close"
+    assert state.quotes["000002"]["portable_board_generation"] == 7
+    assert applied == 1
+    assert held == 1
+    assert live == 1

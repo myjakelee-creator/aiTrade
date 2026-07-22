@@ -128,7 +128,7 @@ def test_retry_backoff_is_bounded_and_status_is_explicit(monkeypatch):
         "20260717",
         "before_market",
     )
-    key = ("20260717", "before_market")
+    key = retry._key(portable, "20260717", "before_market")
     retry._wait(portable, status, payload, key, 2, "temporary 429")
 
     assert status["portable_board_refresh_status"] == "retry_wait"
@@ -138,3 +138,17 @@ def test_retry_backoff_is_bounded_and_status_is_explicit(monkeypatch):
     assert status["portable_board_requested_count"] == 2
     assert status["portable_board_next_retry_at"]
     assert retry._retry_state[key]["next_retry_mono"] > 0
+
+
+def test_retry_identity_is_stable_when_only_market_phase_changes():
+    portable_v2._install()
+
+    closed = retry._key(portable, "20260717", "closed")
+    weekend = retry._key(portable, "20260717", "weekend")
+    before_market = retry._key(portable, "20260717", "before_market")
+
+    assert closed == weekend == before_market
+    assert closed[0] == "20260717"
+    assert portable.PORTABLE_POLICY_VERSION in closed[1]
+    assert portable_v2.PORTABLE_PARSER_VERSION in closed[1]
+    assert retry.RETRY_IDENTITY_VERSION == portable_v2.RETRY_IDENTITY_VERSION

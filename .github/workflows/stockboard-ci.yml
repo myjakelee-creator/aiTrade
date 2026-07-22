@@ -6,6 +6,7 @@ on:
       - main
       - hot-priority-integrated-20260630
       - fix/restore-stable-collector-20260713
+      - fix/restore-live-metrics-rest-20260715
   push:
     branches:
       - main
@@ -64,6 +65,7 @@ jobs:
         shell: pwsh
         run: |
           python -m py_compile `
+            scripts\stockboard_v2_price_compare.py `
             realtime_v2\context_snapshot_writer_singleflight.py `
             realtime_v2\context_snapshot_writer_portable.py `
             realtime_v2\context_snapshot_writer_portable_v2.py `
@@ -75,6 +77,11 @@ jobs:
             realtime_v2\worker_momentum_accuracy_patch.py `
             realtime_v2\worker_momentum_accuracy_stage_bridge.py `
             realtime_v2\worker_board_trading_date_guard.py `
+            realtime_v2\worker_board_display_continuity_patch.py `
+            realtime_v2\worker_board_display_continuity_safety.py `
+            realtime_v2\worker_board_display_continuity_runtime_opt.py `
+            realtime_v2\worker_aux_metric_source_contract_patch.py `
+            realtime_v2\worker_trade_field_regression_guard.py `
             realtime_v2\worker_portable_cache_sync_patch.py `
             realtime_v2\worker_portable_rebuild_status_patch.py `
             realtime_v2\worker_market_metric_session_manager.py `
@@ -101,10 +108,12 @@ jobs:
             realtime_v2\html_mobile_top_status_patch.py `
             realtime_v2\html_portable_rebuild_status_patch.py `
             realtime_v2\html_horizontal_daily_candle_patch.py `
+            realtime_v2\html_last_trade_age_semantics_patch.py `
+            realtime_v2\html_build_identity_patch.py `
             realtime_v2\html_large_trade_quality_patch.py `
             realtime_v2\html_opening_render_guard_patch.py
 
-      - name: Check doctor and launcher PowerShell syntax
+      - name: Check doctor and launcher syntax
         shell: pwsh
         run: |
           $doctor = Get-Content -LiteralPath .\scripts\stockboard_execution_strength_doctor.ps1 -Raw
@@ -113,13 +122,24 @@ jobs:
           [void][scriptblock]::Create($context)
           $safe = Get-Content -LiteralPath .\scripts\stockboard_v2_large_safe.ps1 -Raw
           [void][scriptblock]::Create($safe)
-          Write-Host "doctor_context_and_single_owner_launcher_syntax_verified"
+          $consistency = Get-Content -LiteralPath .\scripts\stockboard_v2_data_consistency.ps1 -Raw
+          [void][scriptblock]::Create($consistency)
+          python .\scripts\stockboard_v2_price_compare.py --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "price doctor import/help failed" }
+          cmd.exe /d /c "call stockboard_v2_large.cmd __syntax_probe__ >nul 2>&1"
+          $batchRc = $LASTEXITCODE
+          if ($batchRc -eq 255) { throw "batch parser failed" }
+          $global:LASTEXITCODE = 0
+          Write-Host "doctor_context_single_owner_launcher_consistency_price_and_batch_syntax_verified"
 
       - name: Run StockBoard targeted tests
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force test-results | Out-Null
           python -m pytest -q `
+            tests\test_html_build_identity.py `
+            tests\test_stockboard_v2_price_compare.py `
+            tests\test_html_last_trade_age_semantics.py `
             tests\test_context_market_supply_trading_date.py `
             tests\test_context_snapshot_writer_portable.py `
             tests\test_context_snapshot_writer_portable_v2.py `
@@ -131,6 +151,10 @@ jobs:
             tests\test_worker_momentum_badge_policy.py `
             tests\test_worker_momentum_accuracy_patch.py `
             tests\test_worker_board_trading_date_guard.py `
+            tests\test_worker_board_display_continuity_safety.py `
+            tests\test_worker_board_display_continuity_runtime_opt.py `
+            tests\test_worker_aux_metric_source_contract.py `
+            tests\test_worker_trade_field_regression_guard.py `
             tests\test_worker_portable_cache_sync.py `
             tests\test_worker_portable_rebuild_status.py `
             tests\test_worker_market_metric_session_manager.py `

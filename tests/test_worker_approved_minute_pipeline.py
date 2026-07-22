@@ -137,7 +137,8 @@ def test_pipeline_source_counts_large_trades_before_latest_value_publish():
 def test_minute_trade_value_ui_is_compact_and_colored_at_100_percent():
     source = HTML_PATCH.read_text(encoding="utf-8")
     assert "label:'1분대금'" in source
-    assert "`${minuteValue.toFixed(1)} ${minutePctText}`" in source
+    assert "`${minuteValue.toFixed(1)} (${minutePctText})`" in source
+    assert "`${minuteValue.toFixed(1)} ${minutePctText}`" not in source
     assert "minutePct>=100?'plus':'minus'" in source
     assert "최근 완료 1분" in source
 

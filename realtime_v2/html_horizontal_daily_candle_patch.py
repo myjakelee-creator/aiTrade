@@ -16,6 +16,15 @@ _NEW_CSS = """    .mini-candle { position:relative; height:14px; width:76px; mar
     .mini-candle.flat .body { background:#6b7280; border-left:1px solid #374151; border-right:1px solid #374151; }
 """
 
+_OLD_RATIO_FORMATTER = (
+    "function fmtRatio(v){const n=Number(v);return Number.isFinite(n)&&n>0?"
+    "(n>=10?'10x+':`${n.toFixed(n>=3?1:2)}x`):'-';}"
+)
+_NEW_RATIO_FORMATTER = (
+    "function fmtRatio(v){const n=Number(v);return Number.isFinite(n)&&n>0?"
+    "`${Math.round(n*100)}%`:'-';}"
+)
+
 _NEW_FUNCTIONS = r"""function horizontalCandleOhlc(r){
     const source=r.ohlc||r.realtime_ohlc||r.display_ohlc||null;
     const open=numeric(source?.open??r.open??r.open_price??r.day_open);
@@ -49,11 +58,7 @@ _NEW_FUNCTIONS = r"""function horizontalCandleOhlc(r){
 
 
 def install() -> None:
-    """Install a readable horizontal OHLC candle without changing data collection.
-
-    The portable rebuild status patch is installed first so its empty-board message
-    survives the final horizontal-candle transformation.
-    """
+    """Install candle, ratio, age, and immutable build-identity display patches."""
 
     from realtime_v2.html_portable_rebuild_status_patch import (
         install as install_portable_rebuild_status,
@@ -63,25 +68,42 @@ def install() -> None:
 
     from realtime_v2 import worker64_guarded_large as large
 
-    if getattr(large, "_horizontal_daily_candle_installed", False):
-        return
+    if not getattr(large, "_horizontal_daily_candle_installed", False):
+        original_ui_safety_patch = large._ui_safety_patch
 
-    original_ui_safety_patch = large._ui_safety_patch
+        def patched_ui_safety_patch(html: str) -> str:
+            patched = original_ui_safety_patch(html)
+            if MARKER in patched:
+                return patched
+            if _OLD_CSS not in patched:
+                raise RuntimeError("horizontal daily candle CSS anchor not found")
+            patched = patched.replace(_OLD_CSS, _NEW_CSS, 1)
 
-    def patched_ui_safety_patch(html: str) -> str:
-        patched = original_ui_safety_patch(html)
-        if MARKER in patched:
-            return patched
-        if _OLD_CSS not in patched:
-            raise RuntimeError("horizontal daily candle CSS anchor not found")
-        patched = patched.replace(_OLD_CSS, _NEW_CSS, 1)
+            if _OLD_RATIO_FORMATTER in patched:
+                patched = patched.replace(
+                    _OLD_RATIO_FORMATTER,
+                    _NEW_RATIO_FORMATTER,
+                    1,
+                )
 
-        start = patched.find("function candleHtml(r){")
-        end = patched.find("function rowTitle(r){", start)
-        if start < 0 or end < 0:
-            raise RuntimeError("horizontal daily candle function anchor not found")
-        patched = patched[:start] + _NEW_FUNCTIONS + patched[end:]
-        return patched.replace("<script>", f"<script>\n  /* {MARKER} */", 1)
+            start = patched.find("function candleHtml(r){")
+            end = patched.find("function rowTitle(r){", start)
+            if start < 0 or end < 0:
+                raise RuntimeError("horizontal daily candle function anchor not found")
+            patched = patched[:start] + _NEW_FUNCTIONS + patched[end:]
+            return patched.replace("<script>", f"<script>\n  /* {MARKER} */", 1)
 
-    large._ui_safety_patch = patched_ui_safety_patch
-    large._horizontal_daily_candle_installed = True
+        large._ui_safety_patch = patched_ui_safety_patch
+        large._horizontal_daily_candle_installed = True
+
+    from realtime_v2.html_last_trade_age_semantics_patch import (
+        install as install_last_trade_age_semantics,
+    )
+
+    install_last_trade_age_semantics()
+
+    from realtime_v2.html_build_identity_patch import (
+        install as install_build_identity,
+    )
+
+    install_build_identity()

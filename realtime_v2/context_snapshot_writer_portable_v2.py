@@ -9,7 +9,9 @@ installs the resumable retry policy:
 - price/OHLC close use historical close fields, never ``cur_prc``;
 - change rate uses the exact row's official ``flu_rt`` when present;
 - historical-close calculation is retained as a diagnostic and fallback;
-- partial candidates survive transient failures and retry on the existing loop.
+- partial candidates survive transient failures and retry on the existing loop;
+- retry identity follows the target trading date and parser contract, not the
+  changing closed/weekend/holiday/premarket phase label.
 
 No QAx, realtime FID, WebSocket, worker thread, or additional periodic request is
 introduced.
@@ -20,12 +22,12 @@ from typing import Any
 from realtime_v2 import context_snapshot_writer_portable as portable
 
 PORTABLE_PARSER_VERSION = "exact_daily_row_fields_v2"
+RETRY_IDENTITY_VERSION = "target_date_policy_parser_v1"
 
 
 def _install() -> None:
     if getattr(portable, "_portable_exact_fields_v2_installed", False):
         return
-
     portable._portable_v2_original_change_rate = portable._historical_change_rate
     portable._portable_v2_original_build = portable.build_portable_snapshot
     portable._portable_v2_original_inject_status = portable._inject_context_status
@@ -143,6 +145,7 @@ def _install() -> None:
     def inject_context_status(payload):
         status = portable._portable_v2_original_inject_status(payload)
         status["portable_board_parser_version"] = PORTABLE_PARSER_VERSION
+        status["portable_board_retry_identity_version"] = RETRY_IDENTITY_VERSION
         status["context_entrypoint"] = (
             "realtime_v2.context_snapshot_writer_portable_v2"
         )
@@ -156,9 +159,17 @@ def _install() -> None:
     portable._inject_context_status = inject_context_status
     portable.sf._inject_context_status = inject_context_status
 
-    from realtime_v2.context_snapshot_retry_patch import install as install_retry
+    from realtime_v2 import context_snapshot_retry_patch as retry_patch
 
-    install_retry(portable, PORTABLE_PARSER_VERSION)
+    def stable_retry_key(_portable, target_date: str, _phase: str) -> tuple[str, str]:
+        return (
+            _portable._date_digits(target_date),
+            f"{_portable.PORTABLE_POLICY_VERSION}:{PORTABLE_PARSER_VERSION}",
+        )
+
+    retry_patch._key = stable_retry_key
+    retry_patch.RETRY_IDENTITY_VERSION = RETRY_IDENTITY_VERSION
+    retry_patch.install(portable, PORTABLE_PARSER_VERSION)
     portable._portable_exact_fields_v2_installed = True
 
 
