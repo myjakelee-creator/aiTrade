@@ -70,6 +70,7 @@ jobs:
         run: |
           python -m py_compile `
             scripts\stockboard_v2_price_compare.py `
+            scripts\stockboard_v2_price_trace.py `
             realtime_v2\context_snapshot_writer_singleflight.py `
             realtime_v2\context_snapshot_writer_portable.py `
             realtime_v2\context_snapshot_writer_portable_v2.py `
@@ -131,11 +132,13 @@ jobs:
           [void][scriptblock]::Create($consistency)
           python .\scripts\stockboard_v2_price_compare.py --help | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "price doctor import/help failed" }
+          python .\scripts\stockboard_v2_price_trace.py --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "price trace import/help failed" }
           cmd.exe /d /c "call stockboard_v2_large.cmd __syntax_probe__ >nul 2>&1"
           $batchRc = $LASTEXITCODE
           if ($batchRc -eq 255) { throw "batch parser failed" }
           $global:LASTEXITCODE = 0
-          Write-Host "doctor_context_single_owner_launcher_consistency_price_and_batch_syntax_verified"
+          Write-Host "doctor_context_single_owner_launcher_consistency_price_trace_and_batch_syntax_verified"
 
       - name: Run StockBoard targeted tests
         shell: pwsh
@@ -144,6 +147,7 @@ jobs:
           python -m pytest -q `
             tests\test_html_build_identity.py `
             tests\test_stockboard_v2_price_compare.py `
+            tests\test_stockboard_v2_price_trace.py `
             tests\test_html_last_trade_age_semantics.py `
             tests\test_context_market_supply_trading_date.py `
             tests\test_context_snapshot_writer_portable.py `
