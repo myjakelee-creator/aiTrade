@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": "SBV2-20260722.3",
-  "published_at": "2026-07-22 13:24 KST",
-  "keyword": "TRADE-VALUE-ROLLOVER",
+  "version": "SBV2-20260722.4",
+  "published_at": "2026-07-22 17:08 KST",
+  "keyword": "SOR-PRICE-PRESERVE",
   "baseline_commit": "6e48d6d"
 }
