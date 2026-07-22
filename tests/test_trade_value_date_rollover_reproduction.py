@@ -221,7 +221,7 @@ assert last["from_trade_value_date"] == "20260721"
 assert last["to_trading_date"] == "20260722"
 assert last["trade_value_reset"] is True
 assert last["cumulative_volume_reset"] is True
-assert state.status["trade_field_regression_guard_version"] == "trade_field_regression_guard_v3"
+assert state.status["trade_field_regression_guard_version"] == "trade_field_regression_guard_v4"
 '''
 
     result = subprocess.run(
