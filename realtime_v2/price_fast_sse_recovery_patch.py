@@ -3,12 +3,12 @@ from __future__ import annotations
 """Keep the browser price-only EventSource alive without touching market data paths.
 
 The price delta stream is already lightweight, but browsers can leave a closed
-EventSource object behind after a transient disconnect.  The existing UI keeps that
+EventSource object behind after a transient disconnect. The existing UI keeps that
 object in ``__sbv2PriceFastStream`` and relies only on native reconnect behavior.
 When native reconnect stops, the board silently falls back to the slower full stream.
 
 This patch adds an explicit 500 ms reconnect on ``onerror`` and reduces full scalar
-resyncs from every 2 seconds to every 10 seconds.  QAx, FIDs, Collector, Worker quote
+resyncs from every 2 seconds to every 10 seconds. QAx, FIDs, Collector, Worker quote
 acceptance, delta calculation, ranking, trade value, and full-SSE cadence are unchanged.
 """
 
@@ -78,22 +78,14 @@ def _install_ui_recovery(large: Any) -> None:
 
 def install_runtime_wrapper() -> None:
     from realtime_v2 import price_fast_sse_patch as target
-
-    if getattr(target, "_price_fast_sse_recovery_install_wrapped", False):
-        return
+    from realtime_v2 import worker64 as base
+    from realtime_v2 import worker64_guarded_large as large
 
     target.HEARTBEAT_SEC = FULL_RESYNC_SEC
-    original_install = target.install
-
-    def install_with_recovery(base, large=None) -> None:
-        original_install(base, large)
-        _install_ui_recovery(large)
-        state_class = getattr(base, "State", None)
-        if state_class is not None:
-            state_class._stockboard_price_fast_sse_recovery_version = PATCH_VERSION
-
-    target.install = install_with_recovery
-    target._price_fast_sse_recovery_install_wrapped = True
+    _install_ui_recovery(large)
+    state_class = getattr(base, "State", None)
+    if state_class is not None:
+        state_class._stockboard_price_fast_sse_recovery_version = PATCH_VERSION
 
 
 __all__ = [
