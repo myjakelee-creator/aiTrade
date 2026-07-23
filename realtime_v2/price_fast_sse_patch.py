@@ -15,7 +15,6 @@ No QAx, FID, Collector, EventSender, REST, WebSocket, ranking, trade-value,
 orderbook, or auxiliary-metric calculation is added or changed.
 """
 
-import json
 import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -235,3 +234,22 @@ def install(base, large=None) -> None:
     _install_state(base)
     _install_web_handler(base)
     _install_ui(large)
+
+
+def install_runtime_wrapper() -> None:
+    """Install after all large-worker wrappers, without editing their import chain."""
+
+    from realtime_v2 import worker_opening_burst_cache_patch as opening_module
+
+    if getattr(opening_module, "_price_fast_sse_install_wrapped", False):
+        return
+    original_install = opening_module.install
+
+    def install_after_opening_cache(base) -> None:
+        original_install(base)
+        from realtime_v2 import worker64_guarded_large as large
+
+        install(base, large)
+
+    opening_module.install = install_after_opening_cache
+    opening_module._price_fast_sse_install_wrapped = True
