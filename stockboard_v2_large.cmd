@@ -66,7 +66,7 @@ set "LARGE_TRADE_SIDECAR=%~dp0scripts\stockboard_large_trade_sidecar.ps1"
 set "EXECUTION_DOCTOR=%~dp0scripts\stockboard_execution_strength_doctor.ps1"
 set "DATA_CONSISTENCY=%~dp0scripts\stockboard_v2_data_consistency.ps1"
 set "PRICE_DOCTOR=%~dp0scripts\stockboard_v2_price_compare.py"
-set "PRICE_TRACE=%~dp0scripts\stockboard_v2_price_trace.py"
+set "PRICE_TRACE=%~dp0scripts\stockboard_v2_price_trace_browser.py"
 set "COLLECTOR_TRACE=%~dp0scripts\stockboard_v2_collector_trace_policy_fix.py"
 set "PRICE_BACKTRACE=%~dp0scripts\stockboard_v2_price_history_backtrace.py"
 
