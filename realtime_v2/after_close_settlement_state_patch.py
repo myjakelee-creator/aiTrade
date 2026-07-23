@@ -11,10 +11,11 @@ provisional close, final hold, and restart recovery.
 from datetime import datetime, time as dt_time, timedelta
 from typing import Any
 
-PATCH_VERSION = "after_close_settlement_state_v1"
+PATCH_VERSION = "after_close_settlement_state_v2_function_marker"
 QUIET_CONFIRM_SEC = 300
 HARD_CUTOFF_MIN = 30
 _CLOSED_PHASES = {"closed", "before_market", "weekend", "holiday"}
+_ROWS_MARKER = "_after_close_settlement_state_wrapper"
 _TIMESTAMP_FIELDS = (
     "last_trade_event_received_at",
     "trade_received_at",
@@ -89,8 +90,8 @@ def settlement_state(state: Any, session: Any, now: datetime) -> dict[str, Any]:
     close_at = datetime.combine(now.date(), aftermarket_end)
     hard_cutoff_at = close_at + timedelta(minutes=HARD_CUTOFF_MIN)
     quiet_sec = None
+    latest_for_compare = latest
     if latest is not None:
-        latest_for_compare = latest
         if latest.tzinfo is not None and now.tzinfo is None:
             latest_for_compare = latest.replace(tzinfo=None)
         elif latest.tzinfo is None and now.tzinfo is not None:
@@ -98,7 +99,9 @@ def settlement_state(state: Any, session: Any, now: datetime) -> dict[str, Any]:
         quiet_sec = max(0.0, (now - latest_for_compare).total_seconds())
 
     if now < hard_cutoff_at:
-        if latest is not None and (latest_for_compare >= close_at or (quiet_sec or 0.0) < QUIET_CONFIRM_SEC):
+        if latest is not None and (
+            latest_for_compare >= close_at or (quiet_sec or 0.0) < QUIET_CONFIRM_SEC
+        ):
             current_state = "late_arrival_grace"
         elif latest is None:
             current_state = "restart_recovery_wait"
@@ -118,12 +121,18 @@ def settlement_state(state: Any, session: Any, now: datetime) -> dict[str, Any]:
 
 def install(base) -> None:
     state_class = getattr(base, "State", None)
-    if state_class is None or getattr(state_class, "_after_close_settlement_state_installed", False):
+    if state_class is None:
+        return
+
+    current_rows = state_class.rows
+    if getattr(current_rows, _ROWS_MARKER, False):
         return
 
     from realtime_v2.market_session import market_session_now
 
-    original_rows = state_class.rows
+    # Class-level markers can be stale after worker64_guarded.py replaces rows.
+    # The live function marker is authoritative.
+    original_rows = current_rows
 
     def rows(self, *args, **kwargs):
         now = datetime.now().astimezone()
@@ -144,6 +153,8 @@ def install(base) -> None:
             )
         return original_rows(self, *args, **kwargs)
 
+    setattr(rows, _ROWS_MARKER, True)
+    setattr(rows, "_after_close_settlement_state_version", PATCH_VERSION)
     state_class.rows = rows
     state_class._after_close_settlement_state_installed = True
     state_class._after_close_settlement_state_version = PATCH_VERSION
