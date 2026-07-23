@@ -6,6 +6,9 @@ from __future__ import annotations
 from realtime_v2.previous_trade_value_fail_closed_patch import (
     install as install_previous_trade_value_fail_closed,
 )
+from realtime_v2.closed_metric_alias_restore_patch import (
+    install as install_closed_metric_alias_restore,
+)
 from realtime_v2.theme_average_view_layout_patch import install_runtime_wrappers
 from realtime_v2.theme_average_view_script_hotfix import install_script_hotfix
 from realtime_v2.stockboard_global_sort_patch import install as install_stockboard_global_sort
@@ -74,6 +77,8 @@ from realtime_v2.after_close_settlement_state_patch import (
 )
 
 install_previous_trade_value_fail_closed()
+# Normalize only persisted Worker metric aliases before lifecycle capture/restore.
+install_closed_metric_alias_restore()
 install_premarket_rollover_priority()
 # Price/rate follow Collector callback sequence. Source timestamps are not used for
 # price freshness because SOR callbacks can carry interleaved FID20 values.
