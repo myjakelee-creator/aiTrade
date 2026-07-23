@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": "SBV2-20260723.12",
-  "published_at": "2026-07-23 14:55 KST",
-  "keyword": "METRIC-DELTA-STABLE",
+  "version": "SBV2-20260723.13",
+  "published_at": "2026-07-23 15:29 KST",
+  "keyword": "ARRIVAL-PRICE-RESTORE",
   "baseline_commit": "6e48d6d"
 }
