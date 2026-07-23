@@ -33,9 +33,13 @@ from realtime_v2.premarket_rollover_priority_patch import (
 from realtime_v2.price_time_monotonic_patch import (
     install_runtime_wrapper as install_price_time_monotonic,
 )
+from realtime_v2.sse_latest_only_patch import (
+    install_runtime_wrapper as install_sse_latest_only,
+)
 
 install_premarket_rollover_priority()
 install_price_time_monotonic()
+install_sse_latest_only()
 install_runtime_wrappers()
 install_script_hotfix()
 install_candidate_json_eight_criteria()
