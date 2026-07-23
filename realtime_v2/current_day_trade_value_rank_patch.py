@@ -66,8 +66,10 @@ def _requested_limit(args: tuple[Any, ...], kwargs: dict[str, Any]) -> int:
 
 def install(base) -> None:
     state_class = getattr(base, "State", None)
-    if state_class is None or getattr(
-        state_class, "_stockboard_current_day_trade_value_rank_installed", False
+    if (
+        state_class is None
+        or not callable(getattr(state_class, "rows", None))
+        or getattr(state_class, "_stockboard_current_day_trade_value_rank_installed", False)
     ):
         return
 
