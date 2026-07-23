@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": "SBV2-20260723.5",
-  "published_at": "2026-07-23 12:27 KST",
-  "keyword": "RATIO-HEALTH-CLEANUP",
+  "version": "SBV2-20260723.6",
+  "published_at": "2026-07-23 12:45 KST",
+  "keyword": "PREV-VALUE-FAIL-CLOSED",
   "baseline_commit": "6e48d6d"
 }
