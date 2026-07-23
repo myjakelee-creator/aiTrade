@@ -42,6 +42,9 @@ from realtime_v2.sse_latest_only_patch import (
 from realtime_v2.price_fast_sse_patch import (
     install_runtime_wrapper as install_price_fast_sse,
 )
+from realtime_v2.price_fast_sse_recovery_patch import (
+    install_runtime_wrapper as install_price_fast_sse_recovery,
+)
 from realtime_v2.ratio_connection_cleanup_patch import (
     install_runtime_wrapper as install_ratio_connection_cleanup,
 )
@@ -51,6 +54,7 @@ install_premarket_rollover_priority()
 install_price_time_monotonic()
 install_sse_latest_only()
 install_price_fast_sse()
+install_price_fast_sse_recovery()
 install_ratio_connection_cleanup()
 install_runtime_wrappers()
 install_script_hotfix()
