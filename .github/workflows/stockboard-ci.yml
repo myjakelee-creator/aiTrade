@@ -76,8 +76,10 @@ jobs:
             scripts\stockboard_v2_collector_trace_policy_fix.py `
             scripts\stockboard_v2_price_history_backtrace.py `
             stockboard_previous_trade_value.py `
+            realtime_v2\collector32.py `
             realtime_v2\premarket_rollover_priority_patch.py `
             realtime_v2\price_time_monotonic_patch.py `
+            realtime_v2\price_sequence_guard_patch.py `
             realtime_v2\sse_latest_only_patch.py `
             realtime_v2\price_fast_sse_patch.py `
             realtime_v2\price_fast_sse_recovery_patch.py `
@@ -128,6 +130,7 @@ jobs:
             tests\test_ratio_connection_cleanup_patch.py `
             tests\test_premarket_rollover_priority_patch.py `
             tests\test_price_time_monotonic_patch.py `
+            tests\test_price_sequence_guard_patch.py `
             tests\test_sse_latest_only_patch.py `
             tests\test_price_fast_sse_patch.py `
             tests\test_price_fast_sse_recovery_patch.py `
