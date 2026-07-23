@@ -45,6 +45,9 @@ from realtime_v2.price_fast_sse_patch import (
 from realtime_v2.price_fast_sse_recovery_patch import (
     install_runtime_wrapper as install_price_fast_sse_recovery,
 )
+from realtime_v2.price_fast_flash_patch import (
+    install_runtime_wrapper as install_price_fast_flash,
+)
 from realtime_v2.full_stream_relief_patch import (
     install_runtime_wrapper as install_full_stream_relief,
 )
@@ -66,6 +69,7 @@ install_price_sequence_guard()
 install_sse_latest_only()
 install_price_fast_sse()
 install_price_fast_sse_recovery()
+install_price_fast_flash()
 install_full_stream_relief()
 install_metric_delta_stability()
 install_metric_fast_sse()
