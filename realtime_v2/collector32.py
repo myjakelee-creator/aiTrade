@@ -170,7 +170,13 @@ class EventSender(threading.Thread):
                 event_type = event.get("type")
                 code = normalize_code(event.get("stock_code"))
                 if event_type == "trade" and code:
-                    self.latest_trade_by_code[code] = event
+                    existing = self.latest_trade_by_code.get(code)
+                    existing_seq = _to_int((existing or {}).get("collector_price_seq"))
+                    incoming_seq = _to_int(event.get("collector_price_seq"))
+                    if existing is None or existing_seq is None or (
+                        incoming_seq is not None and incoming_seq > existing_seq
+                    ):
+                        self.latest_trade_by_code[code] = event
                 elif event_type == "orderbook" and code:
                     self.latest_orderbook_by_code[code] = event
                 else:
@@ -269,15 +275,29 @@ class EventSender(threading.Thread):
 class PublishingStore:
     def __init__(self, sender: EventSender):
         self.sender = sender
+        self._price_seq_lock = threading.Lock()
+        self._price_seq = 0
+        self._price_epoch = f"{os.getpid()}-{time.time_ns()}"
+
+    def _next_price_seq(self) -> int:
+        with self._price_seq_lock:
+            self._price_seq += 1
+            return self._price_seq
 
     def update_trade(self, stock_code, values=None, **kwargs):
+        collector_price_seq = self._next_price_seq()
+        event_kwargs = dict(kwargs)
+        event_kwargs["collector_price_seq"] = collector_price_seq
+        event_kwargs["collector_price_epoch"] = self._price_epoch
         self.sender.publish_trade(
             {
                 "type": "trade",
                 "ts": now_text(),
                 "stock_code": normalize_code(stock_code),
+                "collector_price_seq": collector_price_seq,
+                "collector_price_epoch": self._price_epoch,
                 "values": values if isinstance(values, dict) else {},
-                "kwargs": kwargs,
+                "kwargs": event_kwargs,
             }
         )
         return values if isinstance(values, dict) else {}
@@ -350,75 +370,71 @@ def load_codes(path_text: str, codes_text: str, limit: int, suffix: str) -> list
 
 
 def publish_collector_status(sender: EventSender, provider, extra: dict[str, Any] | None = None) -> None:
-    try:
-        provider_status = provider.status()
-    except Exception as error:
-        provider_status = {"error": str(error)}
-    sender_stats = sender.stats()
     payload = {
         "type": "collector_status",
         "ts": now_text(),
-        "status": provider_status,
-        "sender_stats": sender_stats,
-        "sender_sent_count": sender_stats.get("sent_count"),
-        "sender_last_error": sender_stats.get("last_error"),
+        "provider": provider.status() if provider is not None else {},
+        "sender": sender.stats(),
     }
     if extra:
         payload.update(extra)
     sender.publish_direct(payload)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="StockBoard v2 32-bit collector adapter")
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="StockBoard v2 32-bit collector")
     parser.add_argument("--host", default=DEFAULT_HOST)
-    parser.add_argument("--event-port", type=int, default=DEFAULT_EVENT_PORT)
+    parser.add_argument("--port", type=int, default=DEFAULT_EVENT_PORT)
     parser.add_argument("--codes-file", default=str(ROOT / "data" / "runtime" / "stockboard_v2" / "codes.txt"))
     parser.add_argument("--codes", default="")
-    parser.add_argument("--limit", type=int, default=300)
-    parser.add_argument("--suffix", default="AL")
-    parser.add_argument("--orderbook", action="store_true")
-    parser.add_argument("--flush-ms", type=int, default=int(os.getenv("STOCKBOARD_V2_COLLECTOR_FLUSH_MS", "50")))
-    args = parser.parse_args()
+    parser.add_argument("--limit", type=int, default=100)
+    parser.add_argument("--suffix", choices=("", "AL", "NX"), default="AL")
+    parser.add_argument("--flush-ms", type=int, default=50)
+    parser.add_argument("--status-sec", type=float, default=1.0)
+    return parser
 
-    if args.orderbook:
-        os.environ.setdefault("STOCKBOARD_ENABLE_ORDERBOOK_REALTIME", "1")
-        os.environ.setdefault("STOCKBOARD_ORDERBOOK_MODE", "hybrid")
-        os.environ.setdefault("STOCKBOARD_ORDERBOOK_HOT_SOURCE", "top5")
-        os.environ.setdefault("STOCKBOARD_ORDERBOOK_HOT_LIMIT", "5")
-        os.environ.setdefault("STOCKBOARD_ORDERBOOK_ROTATE_BATCH", "20")
-        os.environ.setdefault("STOCKBOARD_ORDERBOOK_ROTATE_INTERVAL_SEC", "5")
-    os.environ.setdefault("STOCKBOARD_PRICE_FAST_MODE", "1")
-    os.environ.setdefault("STOCKBOARD_REALTIME_CODE_LIMIT", str(max(1, int(args.limit or 300))))
 
-    sender = EventSender(args.host, args.event_port, flush_ms=args.flush_ms)
+def main() -> int:
+    args = _parser().parse_args()
+    codes = load_codes(args.codes_file, args.codes, args.limit, args.suffix)
+    sender = EventSender(args.host, args.port, flush_ms=args.flush_ms)
     sender.start()
     store = PublishingStore(sender)
     provider = KiwoomOpenApiRealtimeProvider(store=store)
-    codes = load_codes(args.codes_file, args.codes, args.limit, args.suffix)
-    print(f"collector codes={len(codes)} suffix={args.suffix} orderbook={args.orderbook} flush_ms={args.flush_ms}", flush=True)
-    started = provider.start()
-    print(f"provider_start={started}", flush=True)
-    if not started:
-        publish_collector_status(sender, provider, {"provider_started": False})
-        print(f"provider_status={provider.status()}", flush=True)
-        time.sleep(0.2)
-        return 1
-    registered_count = provider.register_codes(codes)
-    print(f"registered_count={registered_count}", flush=True)
-    if hide_console_after_login_if_requested():
-        print("collector_console_hidden_after_login=True", flush=True)
+    start_ok = provider.start()
+    register_count = provider.register_realtime(codes) if start_ok else 0
+    console_hidden = False
     try:
         while True:
-            publish_collector_status(sender, provider, {"provider_started": True, "registered_count": registered_count})
-            time.sleep(1.0)
+            if not console_hidden:
+                provider_status = provider.status()
+                if provider_status.get("login_state") == "connected":
+                    console_hidden = hide_console_after_login_if_requested()
+            publish_collector_status(
+                sender,
+                provider,
+                {
+                    "registered_count": register_count,
+                    "requested_code_count": len(codes),
+                    "collector_price_epoch": store._price_epoch,
+                    "collector_price_seq": store._price_seq,
+                },
+            )
+            time.sleep(max(0.2, args.status_sec))
     except KeyboardInterrupt:
-        return 0
+        pass
     finally:
-        sender.stop()
+        try:
+            provider.unregister_all()
+        except Exception:
+            pass
         try:
             provider.stop()
         except Exception:
             pass
+        sender.stop()
+        sender.join(timeout=2.0)
+    return 0
 
 
 if __name__ == "__main__":
