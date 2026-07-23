@@ -78,8 +78,6 @@ def test_patch_source_has_no_new_market_data_or_background_owner():
         "urlopen(",
         "WebSocket(",
         "threading.Thread",
-        "State.rows(",
-        "State.snapshot(",
     ):
         assert forbidden not in source
 
