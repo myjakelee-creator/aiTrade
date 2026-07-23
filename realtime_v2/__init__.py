@@ -33,9 +33,6 @@ from realtime_v2.display_order_model_reset_patch import (
 from realtime_v2.premarket_rollover_priority_patch import (
     install_runtime_wrapper as install_premarket_rollover_priority,
 )
-from realtime_v2.price_time_monotonic_patch import (
-    install_runtime_wrapper as install_price_time_monotonic,
-)
 from realtime_v2.sse_latest_only_patch import (
     install_runtime_wrapper as install_sse_latest_only,
 )
@@ -60,7 +57,8 @@ from realtime_v2.ratio_connection_cleanup_patch import (
 
 install_previous_trade_value_fail_closed()
 install_premarket_rollover_priority()
-install_price_time_monotonic()
+# Price/rate follow worker arrival order. Do not reinstall price_time_monotonic_v1:
+# its source timestamp comparison suppressed valid live SOR arrivals.
 install_sse_latest_only()
 install_price_fast_sse()
 install_price_fast_sse_recovery()
