@@ -17,29 +17,49 @@ def test_identity_config_has_required_visible_fields():
 
     assert payload == {
         "schema_version": 1,
-        "version": "SBV2-20260722.2",
-        "published_at": "2026-07-22 11:43 KST",
-        "keyword": "PUBLIC-OPS-ID",
-        "baseline_commit": "f4ce1e1",
+        "version": "SBV2-20260723.15",
+        "published_at": "2026-07-23 16:31 KST",
+        "keyword": "FAST-FLASH-RESTORE",
+        "baseline_commit": "6e48d6d",
     }
     assert "UNKNOWN" not in json.dumps(payload)
+
+
+def test_dated_version_omits_duplicate_visible_date_and_time():
+    assert identity_patch.build_badge_text() == (
+        "VER SBV2-20260723.15 · FAST-FLASH-RESTORE"
+    )
+
+
+def test_undated_version_adds_date_only_not_time():
+    text = identity_patch.build_badge_text(
+        {
+            "version": "SBV2-R4",
+            "published_at": "2026-07-23 16:31 KST",
+            "keyword": "UNDATED-CHECK",
+            "baseline_commit": "abc1234",
+        }
+    )
+    assert text == "VER SBV2-R4 · 2026-07-23 · UNDATED-CHECK"
+    assert "16:31" not in text
 
 
 def test_apply_build_identity_is_visible_and_idempotent():
     source = (
         '<!doctype html><html><head><title>StockBoard v2 Realtime</title></head>'
         '<body><div id="topbar"><span class="title">StockBoard v2 Realtime</span>'
-        '</div></body></html>'
+        "</div></body></html>"
     )
     first = identity_patch.apply_build_identity(source)
     second = identity_patch.apply_build_identity(first)
 
     assert first == second
     assert first.count('id="stockboard-build-identity"') == 1
-    assert identity_patch.build_badge_text() in first
-    assert 'data-ui-version="SBV2-20260722.2"' in first
-    assert 'data-ui-keyword="PUBLIC-OPS-ID"' in first
-    assert "baseline commit: f4ce1e1" in first
+    assert ">VER SBV2-20260723.15 · FAST-FLASH-RESTORE</span>" in first
+    assert 'data-ui-version="SBV2-20260723.15"' in first
+    assert 'data-ui-keyword="FAST-FLASH-RESTORE"' in first
+    assert "published: 2026-07-23 16:31 KST" in first
+    assert "baseline commit: 6e48d6d" in first
     assert identity_patch.MARKER in first
 
 
@@ -70,14 +90,15 @@ public = importlib.import_module("realtime_v2.public_gateway")
 html = Path("docs/stockboard_v2.html").read_text(encoding="utf-8-sig")
 private_html = large._ui_safety_patch(html)
 public_html = public.build_public_html(private_html)
-expected = identity.build_badge_text()
+expected = "VER SBV2-20260723.15 · FAST-FLASH-RESTORE"
 
 assert private_html.count('id="stockboard-build-identity"') == 1
 assert public_html.count('id="stockboard-build-identity"') == 1
-assert expected in private_html
-assert expected in public_html
-assert 'data-ui-version="SBV2-20260722.2"' in private_html
-assert 'data-ui-keyword="PUBLIC-OPS-ID"' in public_html
+assert f">{expected}</span>" in private_html
+assert f">{expected}</span>" in public_html
+assert 'data-ui-version="SBV2-20260723.15"' in private_html
+assert 'data-ui-keyword="FAST-FLASH-RESTORE"' in public_html
+assert "published: 2026-07-23 16:31 KST" in private_html
 assert "UNKNOWN" not in private_html
 assert "UNKNOWN" not in public_html
 print("private_public_build_identity_ok")

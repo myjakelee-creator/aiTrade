@@ -7,6 +7,7 @@ SSE cadence is changed. The identity file is read once when this module loads.
 """
 
 import json
+import re
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -17,10 +18,10 @@ IDENTITY_PATH = ROOT / "config" / "stockboard_ui_identity.json"
 
 _FALLBACK_IDENTITY = {
     "schema_version": 1,
-    "version": "SBV2-20260722.2",
-    "published_at": "2026-07-22 11:43 KST",
-    "keyword": "PUBLIC-OPS-ID",
-    "baseline_commit": "f4ce1e1",
+    "version": "SBV2-20260722.3",
+    "published_at": "2026-07-22 13:24 KST",
+    "keyword": "TRADE-VALUE-ROLLOVER",
+    "baseline_commit": "6e48d6d",
 }
 
 
@@ -53,9 +54,27 @@ def load_identity() -> dict[str, str]:
 IDENTITY = load_identity()
 
 
+def _version_contains_date(version: str) -> bool:
+    return re.search(r"(?<!\d)20\d{6}(?!\d)", str(version or "")) is not None
+
+
+def _published_date(published_at: str) -> str:
+    text = str(published_at or "").strip()
+    match = re.search(r"(?<!\d)(20\d{2})[-./]?(\d{2})[-./]?(\d{2})(?!\d)", text)
+    if not match:
+        return ""
+    return f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+
+
 def build_badge_text(identity: dict[str, str] | None = None) -> str:
     values = identity or IDENTITY
-    return f"VER {values['version']} · {values['published_at']} · {values['keyword']}"
+    parts = [f"VER {values['version']}"]
+    if not _version_contains_date(values["version"]):
+        date_text = _published_date(values.get("published_at", ""))
+        if date_text:
+            parts.append(date_text)
+    parts.append(values["keyword"])
+    return " · ".join(parts)
 
 
 def apply_build_identity(html: str) -> str:

@@ -34,6 +34,9 @@ echo   6 Restart fast-open
 echo   7 Doctor
 echo   8 Data consistency doctor
 echo   9 Price compare doctor
+echo  10 Price path trace 15s
+echo  11 QAx collector trace 15s
+echo  12 Historical price backtrace
 echo   0 Exit
 echo.
 set /p "CHOICE=Select: "
@@ -46,6 +49,9 @@ if "%CHOICE%"=="6" set "ACTION=restart-fast"
 if "%CHOICE%"=="7" set "ACTION=doctor"
 if "%CHOICE%"=="8" set "ACTION=data-doctor"
 if "%CHOICE%"=="9" set "ACTION=price-doctor"
+if "%CHOICE%"=="10" set "ACTION=price-trace"
+if "%CHOICE%"=="11" set "ACTION=collector-trace"
+if "%CHOICE%"=="12" set "ACTION=price-backtrace"
 if "%CHOICE%"=="0" exit /b 0
 if "%ACTION%"=="" (
   echo Invalid selection.
@@ -60,6 +66,9 @@ set "LARGE_TRADE_SIDECAR=%~dp0scripts\stockboard_large_trade_sidecar.ps1"
 set "EXECUTION_DOCTOR=%~dp0scripts\stockboard_execution_strength_doctor.ps1"
 set "DATA_CONSISTENCY=%~dp0scripts\stockboard_v2_data_consistency.ps1"
 set "PRICE_DOCTOR=%~dp0scripts\stockboard_v2_price_compare.py"
+set "PRICE_TRACE=%~dp0scripts\stockboard_v2_price_trace_browser.py"
+set "COLLECTOR_TRACE=%~dp0scripts\stockboard_v2_collector_trace_policy_fix.py"
+set "PRICE_BACKTRACE=%~dp0scripts\stockboard_v2_price_history_backtrace.py"
 
 if /I "%ACTION%"=="start" (
   set "START_ACTION=start"
@@ -84,6 +93,21 @@ if /I "%ACTION%"=="data-doctor" (
 )
 if /I "%ACTION%"=="price-doctor" (
   py -3 "%PRICE_DOCTOR%"
+  set "RC=%ERRORLEVEL%"
+  goto finish
+)
+if /I "%ACTION%"=="price-trace" (
+  py -3 "%PRICE_TRACE%" --duration-sec 15
+  set "RC=%ERRORLEVEL%"
+  goto finish
+)
+if /I "%ACTION%"=="collector-trace" (
+  py -3 "%COLLECTOR_TRACE%" --duration-sec 15
+  set "RC=%ERRORLEVEL%"
+  goto finish
+)
+if /I "%ACTION%"=="price-backtrace" (
+  py -3 "%PRICE_BACKTRACE%"
   set "RC=%ERRORLEVEL%"
   goto finish
 )

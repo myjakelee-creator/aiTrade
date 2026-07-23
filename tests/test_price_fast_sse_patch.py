@@ -1,0 +1,212 @@
+from __future__ import annotations
+
+import inspect
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+from realtime_v2 import price_fast_sse_patch as patch
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class _State:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.status = {"trade_count": 7}
+        self.quotes = {
+            "005930": {
+                "stock_code": "005930",
+                "price": 271000,
+                "trade_price": 270500,
+                "change_rate": 4.03,
+                "received_at": "2026-07-23T11:45:20.123+09:00",
+                "trade_value_eok": 12345.6,
+                "seed_rank": 2,
+                "candidate_score": 99,
+            },
+            "000660": {
+                "stock_code": "000660",
+                "trade_price": 1867000,
+                "change_rate": 2.02,
+                "received_at": "2026-07-23T11:45:20.098+09:00",
+                "trade_value_eok": 23456.7,
+                "seed_rank": 1,
+            },
+        }
+
+    def rows(self, *_args, **_kwargs):
+        raise AssertionError("price-fast SSE must not call State.rows()")
+
+    def snapshot(self, *_args, **_kwargs):
+        raise AssertionError("price-fast SSE must not call State.snapshot()")
+
+
+def test_price_snapshot_copies_only_decision_critical_scalars_in_trade_value_order():
+    payload = patch.build_price_snapshot(
+        _State(), limit=300, now_text=lambda: "2026-07-23T11:45:20.200+09:00"
+    )
+
+    assert payload["source"] == "stockboard_v2_price_fast_sse"
+    assert payload["schema_version"] == 2
+    assert payload["payload_mode"] == "full"
+    assert payload["selection_mode"] == "trade_value_top"
+    assert payload["trade_count"] == 7
+    assert payload["row_count"] == 2
+    assert payload["rows"] == [
+        {
+            "stock_code": "000660",
+            "price": 1867000,
+            "change_rate": 2.02,
+            "received_at": "2026-07-23T11:45:20.098+09:00",
+        },
+        {
+            "stock_code": "005930",
+            "price": 271000,
+            "change_rate": 4.03,
+            "received_at": "2026-07-23T11:45:20.123+09:00",
+        },
+    ]
+    assert all(
+        set(row) == {"stock_code", "price", "change_rate", "received_at"}
+        for row in payload["rows"]
+    )
+
+
+def test_price_snapshot_limit_selects_trade_value_leaders_not_lowest_codes():
+    state = _State()
+    state.quotes.update(
+        {
+            "000001": {
+                "stock_code": "000001",
+                "price": 1000,
+                "change_rate": 0.1,
+                "received_at": "2026-07-23T11:45:20.000+09:00",
+                "trade_value_eok": 1.0,
+                "seed_rank": 999,
+            },
+            "402340": {
+                "stock_code": "402340",
+                "price": 1245000,
+                "change_rate": 3.0,
+                "received_at": "2026-07-23T11:45:20.150+09:00",
+                "trade_value_eok": 20000.0,
+                "seed_rank": 3,
+            },
+        }
+    )
+
+    payload = patch.build_price_snapshot(
+        state, limit=3, now_text=lambda: "2026-07-23T11:45:20.200+09:00"
+    )
+
+    assert [row["stock_code"] for row in payload["rows"]] == [
+        "000660",
+        "402340",
+        "005930",
+    ]
+    assert "000001" not in {row["stock_code"] for row in payload["rows"]}
+
+
+def test_delta_payload_sends_only_changed_rows_after_initial_full_payload():
+    state = _State()
+    first = patch.build_price_snapshot(
+        state, limit=300, now_text=lambda: "2026-07-23T11:45:20.200+09:00"
+    )
+    initial, fingerprints = patch.build_delta_payload(first, {}, force_full=True)
+
+    assert initial["payload_mode"] == "full"
+    assert initial["row_count"] == 2
+
+    state.quotes["005930"]["price"] = 271500
+    state.quotes["005930"]["received_at"] = "2026-07-23T11:45:20.300+09:00"
+    second = patch.build_price_snapshot(
+        state, limit=300, now_text=lambda: "2026-07-23T11:45:20.400+09:00"
+    )
+    delta, next_fingerprints = patch.build_delta_payload(second, fingerprints)
+
+    assert delta["payload_mode"] == "delta"
+    assert delta["total_quote_count"] == 2
+    assert delta["row_count"] == 1
+    assert delta["rows"] == [
+        {
+            "stock_code": "005930",
+            "price": 271500,
+            "change_rate": 4.03,
+            "received_at": "2026-07-23T11:45:20.300+09:00",
+        }
+    ]
+    assert next_fingerprints["000660"] == fingerprints["000660"]
+    assert next_fingerprints["005930"] != fingerprints["005930"]
+
+
+def test_unchanged_delta_payload_is_empty_and_heartbeat_can_force_full():
+    payload = patch.build_price_snapshot(
+        _State(), limit=300, now_text=lambda: "2026-07-23T11:45:20.200+09:00"
+    )
+    _, fingerprints = patch.build_delta_payload(payload, {}, force_full=True)
+    unchanged, _ = patch.build_delta_payload(payload, fingerprints)
+    heartbeat, _ = patch.build_delta_payload(payload, fingerprints, force_full=True)
+
+    assert unchanged["payload_mode"] == "delta"
+    assert unchanged["row_count"] == 0
+    assert unchanged["rows"] == []
+    assert heartbeat["payload_mode"] == "full"
+    assert heartbeat["row_count"] == 2
+
+
+def test_patch_source_has_no_new_market_data_or_background_owner():
+    source = inspect.getsource(patch)
+    for forbidden in (
+        "QAxWidget",
+        "SetRealReg",
+        "GetCommRealData",
+        "requests.",
+        "urlopen(",
+        "WebSocket(",
+        "threading.Thread",
+    ):
+        assert forbidden not in source
+
+
+def test_production_import_installs_price_route_and_browser_fast_path():
+    script = r'''
+from pathlib import Path
+import realtime_v2.worker64_guarded_large_bidask
+import realtime_v2.worker64 as base
+import realtime_v2.worker64_guarded_large as large
+import realtime_v2.sse_latest_only_patch as full
+
+assert hasattr(base.State, "price_fast_snapshot")
+assert getattr(base.State, "_stockboard_price_fast_sse_version", None) == "price_fast_sse_delta_v4_trade_value_scope"
+assert hasattr(base.WebHandler, "_stream_price_fast")
+assert full.MAX_SEND_INTERVAL_MS == 5000
+
+html = Path("docs/stockboard_v2.html").read_text(encoding="utf-8-sig")
+rendered = large._ui_safety_patch(html)
+assert "STOCKBOARD_V2_PRICE_FAST_SSE_DELTA_20260723" in rendered
+assert "/api/v2/price-stream?limit=300&interval_ms=100" in rendered
+assert "interval_ms=5000" in rendered
+assert "__sbv2FastPatchPriceRate(payload);" in rendered
+assert "const __sbv2LatestPriceByCode = new Map();" in rendered
+assert "__sbv2RememberPriceRows(payload.rows);" in rendered
+assert "__sbv2MergeLatestPrices(lastPayload);" in rendered
+assert "__sbv2MergeLatestPrices(payload);" in rendered
+assert "__sbv2PriceReceivedMs(latest) < __sbv2PriceReceivedMs(row)" in rendered
+source = __import__("inspect").getsource(base.WebHandler._stream_price_fast)
+assert "event: price" in source
+assert "build_delta_payload" in source
+assert "trade_value_top" in source
+print("price_fast_sse_production_import_ok")
+'''
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "price_fast_sse_production_import_ok" in completed.stdout
