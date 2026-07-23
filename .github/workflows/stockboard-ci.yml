@@ -78,6 +78,7 @@ jobs:
             realtime_v2\premarket_rollover_priority_patch.py `
             realtime_v2\price_time_monotonic_patch.py `
             realtime_v2\sse_latest_only_patch.py `
+            realtime_v2\price_fast_sse_patch.py `
             realtime_v2\worker_trade_field_regression_guard.py `
             realtime_v2\worker_board_display_continuity_patch.py `
             realtime_v2\worker_board_display_continuity_runtime_opt.py `
@@ -121,6 +122,7 @@ jobs:
             tests\test_premarket_rollover_priority_patch.py `
             tests\test_price_time_monotonic_patch.py `
             tests\test_sse_latest_only_patch.py `
+            tests\test_price_fast_sse_patch.py `
             tests\test_worker_trade_field_regression_guard.py `
             tests\test_trade_value_date_rollover_reproduction.py `
             tests\test_stockboard_v2_price_compare.py `
