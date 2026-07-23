@@ -66,6 +66,9 @@ from realtime_v2.ratio_connection_cleanup_patch import (
 from realtime_v2.after_close_live_hold_patch import (
     install_runtime_wrapper as install_after_close_live_hold,
 )
+from realtime_v2.after_close_settlement_state_patch import (
+    install_runtime_wrapper as install_after_close_settlement_state,
+)
 
 install_previous_trade_value_fail_closed()
 install_premarket_rollover_priority()
@@ -83,9 +86,10 @@ install_metric_fast_sse()
 # snapshot exclusively owns rank and lane placement.
 install_closed_metric_rank_hold()
 install_ratio_connection_cleanup()
-# Install last so the close-hold wrapper sees the final PortableBoardGuard.apply
-# chain. It only changes the closed-session display decision.
+# Keep last-good rows and persist low-frequency checkpoints after close.
 install_after_close_live_hold()
+# Classify grace/provisional/final/recovery states without changing price flow.
+install_after_close_settlement_state()
 install_runtime_wrappers()
 install_script_hotfix()
 install_candidate_json_eight_criteria()
