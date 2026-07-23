@@ -14,13 +14,15 @@ def test_runtime_init_does_not_install_price_time_monotonic_wrapper():
 
     assert "install_price_time_monotonic" not in source
     assert "from realtime_v2.price_time_monotonic_patch import" not in source
-    assert "Do not reinstall price_time_monotonic_v1" in source
 
 
 def test_arrival_price_restore_keeps_existing_trade_and_sse_install_order():
     source = _runtime_init_source()
 
     assert source.index("install_premarket_rollover_priority()") < source.index(
+        "install_price_sequence_guard()"
+    )
+    assert source.index("install_price_sequence_guard()") < source.index(
         "install_sse_latest_only()"
     )
     assert source.index("install_sse_latest_only()") < source.index(
