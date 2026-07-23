@@ -10,6 +10,8 @@ misclassified as same-day SOR interleaving.
 
 The first current-day event may still be applied to a `portable_exact_close` HOLD row,
 so both realtime and verified hold rows are eligible for this one rollover check.
+The same install hook also attaches the output-only current-day ranking policy so
+previous-day HOLD amounts cannot compete with current-day cumulative trade value.
 
 No collector, QAx, FID, request, thread, timer, browser, or SSE cadence changes.
 """
@@ -155,6 +157,9 @@ def install_runtime_wrapper() -> None:
     def install(base) -> None:
         original_install(base)
         _install_state_wrapper(base, guard_module)
+        from realtime_v2.current_day_trade_value_rank_patch import install as install_rank
+
+        install_rank(base)
 
     guard_module.install = install
     guard_module._premarket_rollover_install_wrapped = True
