@@ -27,9 +27,15 @@ from realtime_v2.three_lane_display_order_patch import (
 from realtime_v2.display_order_model_reset_patch import (
     install as install_display_order_model_reset,
 )
-from realtime_v2.premarket_rollover_priority_patch import install_runtime_wrapper as install_premarket_rollover_priority
+from realtime_v2.premarket_rollover_priority_patch import (
+    install_runtime_wrapper as install_premarket_rollover_priority,
+)
+from realtime_v2.price_time_monotonic_patch import (
+    install_runtime_wrapper as install_price_time_monotonic,
+)
 
 install_premarket_rollover_priority()
+install_price_time_monotonic()
 install_runtime_wrappers()
 install_script_hotfix()
 install_candidate_json_eight_criteria()
