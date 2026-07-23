@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": "SBV2-20260723.10",
-  "published_at": "2026-07-23 14:05 KST",
-  "keyword": "METRIC-FAST-SSE",
+  "version": "SBV2-20260723.11",
+  "published_at": "2026-07-23 14:20 KST",
+  "keyword": "PRICE-RENDER-PRIORITY",
   "baseline_commit": "6e48d6d"
 }
