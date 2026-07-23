@@ -125,8 +125,6 @@ def _row_fingerprint(row: dict[str, Any]) -> tuple[Any, Any, Any]:
 
 
 def build_price_snapshot(state: Any, *, limit: int, now_text) -> dict[str, Any]:
-    """Copy only price-path scalars; deliberately never call rows()/snapshot()."""
-
     safe_limit = max(1, min(DEFAULT_ROW_LIMIT, int(limit)))
     with state.lock:
         quotes = list(getattr(state, "quotes", {}).items())
@@ -335,7 +333,17 @@ def install(base, large=None) -> None:
 
 
 def install_runtime_wrapper() -> None:
-    from realtime_v2 import worker64 as base
-    from realtime_v2 import worker64_guarded_large as large
+    from realtime_v2 import worker_opening_burst_cache_patch as opening_module
 
-    install(base, large)
+    if getattr(opening_module, "_price_fast_sse_install_wrapped", False):
+        return
+
+    original_install = opening_module.install
+
+    def install_after_opening(base) -> None:
+        original_install(base)
+        from realtime_v2 import worker64_guarded_large as large
+        install(base, large)
+
+    opening_module.install = install_after_opening
+    opening_module._price_fast_sse_install_wrapped = True
