@@ -57,6 +57,9 @@ from realtime_v2.metric_delta_stability_patch import (
 from realtime_v2.metric_fast_sse_patch import (
     install_runtime_wrapper as install_metric_fast_sse,
 )
+from realtime_v2.closed_metric_rank_hold_patch import (
+    install_runtime_wrapper as install_closed_metric_rank_hold,
+)
 from realtime_v2.ratio_connection_cleanup_patch import (
     install_runtime_wrapper as install_ratio_connection_cleanup,
 )
@@ -76,6 +79,9 @@ install_price_fast_flash()
 install_full_stream_relief()
 install_metric_delta_stability()
 install_metric_fast_sse()
+# Metric SSE may refresh active-session rank, but after close the full/checkpoint
+# snapshot exclusively owns rank and lane placement.
+install_closed_metric_rank_hold()
 install_ratio_connection_cleanup()
 # Install last so the close-hold wrapper sees the final PortableBoardGuard.apply
 # chain. It only changes the closed-session display decision.
