@@ -60,6 +60,9 @@ from realtime_v2.metric_fast_sse_patch import (
 from realtime_v2.ratio_connection_cleanup_patch import (
     install_runtime_wrapper as install_ratio_connection_cleanup,
 )
+from realtime_v2.after_close_live_hold_patch import (
+    install_runtime_wrapper as install_after_close_live_hold,
+)
 
 install_previous_trade_value_fail_closed()
 install_premarket_rollover_priority()
@@ -74,6 +77,9 @@ install_full_stream_relief()
 install_metric_delta_stability()
 install_metric_fast_sse()
 install_ratio_connection_cleanup()
+# Install last so the close-hold wrapper sees the final PortableBoardGuard.apply
+# chain. It only changes the closed-session display decision.
+install_after_close_live_hold()
 install_runtime_wrappers()
 install_script_hotfix()
 install_candidate_json_eight_criteria()
