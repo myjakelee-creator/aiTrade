@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-"""Run the operator price trace with the same 100-row payload used by the browser.
+"""Run the operator trace with the browser's 100-row snapshot boundary.
 
-The original trace predated the display-100 optimization and hard-coded a 300-row SSE
-request. During market-open load that diagnostic request could time out even while the
-actual browser stream remained active. This wrapper changes only the operator trace URL;
-it is never imported by the Worker or Collector.
+The underlying trace now opens the actual ``/api/v2/price-stream`` used for visible
+price updates.  This wrapper changes only the initial/final snapshot row limit and is
+never imported by the Worker or Collector.
 """
 
 import sys
-import time
 from pathlib import Path
-from urllib.parse import urlencode, urlparse, urlunparse
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -23,30 +20,14 @@ BROWSER_ROW_LIMIT = 100
 
 
 def _browser_stream_url(snapshot_url: str, interval_ms: int) -> str:
-    parsed = urlparse(snapshot_url)
-    return urlunparse(
-        (
-            parsed.scheme,
-            parsed.netloc,
-            "/api/v2/stream",
-            "",
-            urlencode(
-                {
-                    "limit": BROWSER_ROW_LIMIT,
-                    "interval_ms": max(50, min(2000, int(interval_ms))),
-                    "ts": int(time.time() * 1000),
-                }
-            ),
-            "",
-        )
-    )
+    """Compatibility helper; delegate to the actual price-stream URL builder."""
+    return trace._stream_url(snapshot_url, interval_ms)
 
 
 def main() -> int:
     trace.DEFAULT_SNAPSHOT_URL = (
         f"http://127.0.0.1:8765/api/v2/snapshot?limit={BROWSER_ROW_LIMIT}"
     )
-    trace._stream_url = _browser_stream_url
     return trace.main()
 
 
