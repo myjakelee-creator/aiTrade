@@ -3,6 +3,9 @@ from __future__ import annotations
 # Install lightweight wrappers before worker modules import the Theme rank and UI
 # installers. The wrappers add server-completed ranking/layout behavior without
 # adding TR, OpenAPI work, network connections, or collector load.
+from realtime_v2.previous_trade_value_fail_closed_patch import (
+    install as install_previous_trade_value_fail_closed,
+)
 from realtime_v2.theme_average_view_layout_patch import install_runtime_wrappers
 from realtime_v2.theme_average_view_script_hotfix import install_script_hotfix
 from realtime_v2.stockboard_global_sort_patch import install as install_stockboard_global_sort
@@ -43,6 +46,7 @@ from realtime_v2.ratio_connection_cleanup_patch import (
     install_runtime_wrapper as install_ratio_connection_cleanup,
 )
 
+install_previous_trade_value_fail_closed()
 install_premarket_rollover_priority()
 install_price_time_monotonic()
 install_sse_latest_only()
