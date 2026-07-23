@@ -18,7 +18,8 @@ from typing import Any
 
 PATCH_VERSION = "sse_latest_only_v1"
 DEFAULT_SEND_INTERVAL_MS = 200
-HEARTBEAT_SEC = 2.0
+HEARTBEAT_SEC = 5.0
+MAX_SEND_INTERVAL_MS = 5000
 
 
 def _query_int(query: dict[str, list[str]], key: str, default: int) -> int:
@@ -37,7 +38,7 @@ def install(base) -> None:
         requested_limit = _query_int(query, "limit", 100)
         limit = max(1, min(100, requested_limit))
         requested_interval_ms = _query_int(query, "interval_ms", 100)
-        send_interval_ms = max(DEFAULT_SEND_INTERVAL_MS, min(2000, requested_interval_ms))
+        send_interval_ms = max(DEFAULT_SEND_INTERVAL_MS, min(MAX_SEND_INTERVAL_MS, requested_interval_ms))
         send_interval_sec = send_interval_ms / 1000.0
         poll_sec = min(0.05, send_interval_sec)
 
