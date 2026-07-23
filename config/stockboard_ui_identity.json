@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": "SBV2-20260723.15",
-  "published_at": "2026-07-23 16:31 KST",
-  "keyword": "FAST-FLASH-RESTORE",
-  "baseline_commit": "6e48d6d"
+  "version": "SBV2-20260723.16",
+  "published_at": "2026-07-23 19:10 KST",
+  "keyword": "FAST-TOP300-CLOSE-HOLD",
+  "baseline_commit": "58e1a3b"
 }
