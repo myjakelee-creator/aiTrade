@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": "SBV2-20260723.4",
-  "published_at": "2026-07-23 11:50 KST",
-  "keyword": "PRICE-FAST-SSE",
+  "version": "SBV2-20260723.5",
+  "published_at": "2026-07-23 12:27 KST",
+  "keyword": "RATIO-HEALTH-CLEANUP",
   "baseline_commit": "6e48d6d"
 }
