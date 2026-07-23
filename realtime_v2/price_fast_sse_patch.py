@@ -14,7 +14,11 @@ keeps the newest price scalars in a client-side map, merges them into ``lastPayl
 and reapplies them before any metric/full render so a stale heavy payload cannot undo
 the fast price path.
 
-No QAx, FID, Collector, EventSender, REST, WebSocket, ranking, trade-value,
+The fast stream selects the same trade-value leaders that can appear on the board.
+It must not truncate by stock-code order because that can exclude visible TOP rows
+from the fast path while leaving them dependent on the slower full snapshot stream.
+
+No QAx, FID, Collector, EventSender, REST, WebSocket, trade-value calculation,
 orderbook, or auxiliary-metric calculation is added or changed.
 """
 
@@ -22,7 +26,7 @@ import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-PATCH_VERSION = "price_fast_sse_delta_v3"
+PATCH_VERSION = "price_fast_sse_delta_v4_trade_value_scope"
 DEFAULT_INTERVAL_MS = 100
 DEFAULT_ROW_LIMIT = 300
 HEARTBEAT_SEC = 2.0
@@ -120,8 +124,30 @@ def _query_int(query: dict[str, list[str]], key: str, default: int) -> int:
         return default
 
 
+def _number(value: Any) -> float | None:
+    if value in (None, "") or isinstance(value, bool):
+        return None
+    try:
+        return float(str(value).strip().replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
 def _row_fingerprint(row: dict[str, Any]) -> tuple[Any, Any, Any]:
     return row.get("price"), row.get("change_rate"), row.get("received_at")
+
+
+def _quote_priority(item: tuple[str, Any]) -> tuple[float, int, str]:
+    code, quote = item
+    if not isinstance(quote, dict):
+        return (0.0, 999999, str(code or ""))
+    trade_value = _number(quote.get("trade_value_eok")) or 0.0
+    try:
+        seed_rank = int(quote.get("seed_rank") or 999999)
+    except (TypeError, ValueError):
+        seed_rank = 999999
+    normalized_code = str(quote.get("stock_code") or code or "")
+    return (-trade_value, seed_rank, normalized_code)
 
 
 def build_price_snapshot(state: Any, *, limit: int, now_text) -> dict[str, Any]:
@@ -130,8 +156,9 @@ def build_price_snapshot(state: Any, *, limit: int, now_text) -> dict[str, Any]:
         quotes = list(getattr(state, "quotes", {}).items())
         trade_count = int(getattr(state, "status", {}).get("trade_count") or 0)
 
+    selected_quotes = sorted(quotes, key=_quote_priority)[:safe_limit]
     rows: list[dict[str, Any]] = []
-    for code, quote in quotes:
+    for code, quote in selected_quotes:
         if not isinstance(quote, dict):
             continue
         rows.append(
@@ -143,8 +170,6 @@ def build_price_snapshot(state: Any, *, limit: int, now_text) -> dict[str, Any]:
             }
         )
 
-    rows.sort(key=lambda row: row.get("stock_code") or "")
-    rows = rows[:safe_limit]
     return {
         "schema_version": 2,
         "source": "stockboard_v2_price_fast_sse",
@@ -152,6 +177,7 @@ def build_price_snapshot(state: Any, *, limit: int, now_text) -> dict[str, Any]:
         "trade_count": trade_count,
         "row_count": len(rows),
         "payload_mode": "full",
+        "selection_mode": "trade_value_top",
         "rows": rows,
     }
 
@@ -236,6 +262,7 @@ def _install_web_handler(base) -> None:
             status["price_fast_sse_version"] = PATCH_VERSION
             status["price_fast_sse_interval_ms"] = interval_ms
             status["price_fast_sse_row_limit"] = limit
+            status["price_fast_sse_selection_mode"] = "trade_value_top"
 
         try:
             while True:
