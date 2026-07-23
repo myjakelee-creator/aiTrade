@@ -139,7 +139,7 @@ import realtime_v2.worker64 as base
 import realtime_v2.worker64_guarded_large as large
 
 assert hasattr(base.State, "price_fast_snapshot")
-assert getattr(base.State, "_stockboard_price_fast_sse_version", None) == "price_fast_sse_delta_v2"
+assert getattr(base.State, "_stockboard_price_fast_sse_version", None) == "price_fast_sse_delta_v3"
 assert hasattr(base.WebHandler, "_stream_price_fast")
 
 html = Path("docs/stockboard_v2.html").read_text(encoding="utf-8-sig")
@@ -148,6 +148,11 @@ assert "STOCKBOARD_V2_PRICE_FAST_SSE_DELTA_20260723" in rendered
 assert "/api/v2/price-stream?limit=300&interval_ms=100" in rendered
 assert "/api/v2/stream?limit=100&interval_ms=5000" in rendered
 assert "__sbv2FastPatchPriceRate(payload);" in rendered
+assert "const __sbv2LatestPriceByCode = new Map();" in rendered
+assert "__sbv2RememberPriceRows(payload.rows);" in rendered
+assert "__sbv2MergeLatestPrices(lastPayload);" in rendered
+assert "__sbv2MergeLatestPrices(payload);" in rendered
+assert "__sbv2PriceReceivedMs(latest) < __sbv2PriceReceivedMs(row)" in rendered
 source = __import__("inspect").getsource(base.WebHandler._stream_price_fast)
 assert "event: price" in source
 assert "build_delta_payload" in source
