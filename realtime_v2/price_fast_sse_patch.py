@@ -164,8 +164,6 @@ def build_delta_payload(
     *,
     force_full: bool = False,
 ) -> tuple[dict[str, Any], dict[str, tuple[Any, Any, Any]]]:
-    """Return a full heartbeat/initial payload or only changed price-path rows."""
-
     rows = payload.get("rows") if isinstance(payload, dict) else None
     safe_rows = [row for row in rows or [] if isinstance(row, dict)]
     current_fingerprints: dict[str, tuple[Any, Any, Any]] = {}
@@ -203,7 +201,11 @@ def _install_state(base) -> None:
 
 def _install_web_handler(base) -> None:
     handler_class = getattr(base, "WebHandler", None)
-    if handler_class is None or getattr(handler_class, "_stockboard_price_fast_sse_installed", False):
+    if (
+        handler_class is None
+        or not callable(getattr(handler_class, "do_GET", None))
+        or getattr(handler_class, "_stockboard_price_fast_sse_installed", False)
+    ):
         return
 
     original_do_get = handler_class.do_GET
@@ -316,8 +318,6 @@ def _install_ui(large) -> None:
         if _UI_MARKER in patched or _UI_ANCHOR not in patched:
             return patched
 
-        # Full-row snapshots remain authoritative but no longer compete with the
-        # 100 ms price-only path during live bursts.
         patched = patched.replace(
             "/api/v2/stream?limit=300&interval_ms=100&ts=${Date.now()}",
             "/api/v2/stream?limit=100&interval_ms=1000&ts=${Date.now()}",
@@ -335,17 +335,7 @@ def install(base, large=None) -> None:
 
 
 def install_runtime_wrapper() -> None:
-    from realtime_v2 import sse_latest_only_patch as target
+    from realtime_v2 import worker64 as base
+    from realtime_v2 import worker64_guarded_large as large
 
-    if getattr(target, "_price_fast_sse_install_wrapped", False):
-        return
-
-    original_install = target.install
-
-    def install_after_latest_only(base) -> None:
-        original_install(base)
-        from realtime_v2 import worker64_guarded_large as large
-        install(base, large)
-
-    target.install = install_after_latest_only
-    target._price_fast_sse_install_wrapped = True
+    install(base, large)
