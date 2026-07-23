@@ -3,7 +3,7 @@ from __future__ import annotations
 """Complete server-owned display metrics only during non-live sessions.
 
 This patch does not touch Collector/QAx/FID, trade application, WebSocket/REST
-cadence, SSE cadence, sorting, or browser calculations.  It only completes
+cadence, SSE cadence, sorting, or browser calculations. It only completes
 already-validated row fields after the normal State.rows() pipeline has run.
 """
 
@@ -11,7 +11,7 @@ from typing import Any
 
 from realtime_v2.market_session import market_session_now
 
-PATCH_VERSION = "closed_server_metric_completion_v1"
+PATCH_VERSION = "closed_server_metric_completion_v2_install_chain"
 CLOSED_PHASES = {"closed", "before_market", "weekend", "holiday"}
 
 
@@ -51,7 +51,9 @@ def _complete_grade_alias(row: dict[str, Any]) -> bool:
 
 
 def _hide_unproven_one_min_zero(row: dict[str, Any]) -> bool:
-    status = str(row.get("one_min_status") or row.get("minute_trade_value_status") or "").strip().lower()
+    status = str(
+        row.get("one_min_status") or row.get("minute_trade_value_status") or ""
+    ).strip().lower()
     proven_statuses = {
         "ok",
         "new",
@@ -109,6 +111,7 @@ def install(base) -> None:
         lock = getattr(self, "lock", None)
         status = getattr(self, "status", None)
         values = {
+            "closed_server_metric_completion_installed": True,
             "closed_server_metric_completion_version": PATCH_VERSION,
             "closed_server_metric_completion_phase": phase,
             "closed_server_amount_ratio_count": amount_count,
@@ -128,17 +131,22 @@ def install(base) -> None:
 
 
 def install_runtime_wrapper() -> None:
-    """Install after the final global-sort wrapper so this never changes ordering."""
+    """Install on the Worker State construction chain.
 
-    from realtime_v2 import stockboard_global_sort_patch as global_sort
+    ``worker_opening_burst_cache_patch.install(base)`` is the shared runtime hook
+    used by the other Worker row wrappers. Unlike the HTML global-sort installer,
+    it receives the module that owns ``State``.
+    """
 
-    if getattr(global_sort, "_closed_server_metric_completion_install_wrapped", False):
+    from realtime_v2 import worker_opening_burst_cache_patch as opening_module
+
+    if getattr(opening_module, "_closed_server_metric_completion_install_wrapped", False):
         return
-    original_install = global_sort.install
+    original_install = opening_module.install
 
-    def install_after_global_sort(base) -> None:
+    def install_after_opening(base) -> None:
         original_install(base)
         install(base)
 
-    global_sort.install = install_after_global_sort
-    global_sort._closed_server_metric_completion_install_wrapped = True
+    opening_module.install = install_after_opening
+    opening_module._closed_server_metric_completion_install_wrapped = True
