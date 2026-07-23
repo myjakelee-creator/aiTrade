@@ -7,8 +7,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_verified_new_day_rollover_outranks_fid20_time_wrap():
-    script = r'''
+def _run(script: str) -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+
+
+def test_verified_new_day_rollover_accepts_first_event_on_exact_close_hold():
+    _run(
+        r'''
 import sys, threading
 from types import ModuleType
 
@@ -36,7 +48,8 @@ class State:
         self.quotes = {
             "000660": {
                 "stock_code": "000660",
-                "row_source": "realtime",
+                "row_source": "portable_exact_close",
+                "source_trading_date": "20260722",
                 "price": 1_850_000.0,
                 "change_rate": 0.0,
                 "trade_value_eok": 153_991.28,
@@ -60,6 +73,7 @@ class State:
         if values.get("price") not in (None, ""):
             quote["price"] = abs(float(values["price"]))
             quote["change_rate"] = float(values.get("change_rate") or 0)
+            quote["row_source"] = "realtime"
         quote["trade_time"] = str(values.get("trade_time"))
         quote["_trade_time_seconds"] = incoming_time
         if values.get("trade_value_eok") not in (None, ""):
@@ -68,6 +82,9 @@ class State:
         if values.get("cumulative_volume") not in (None, ""):
             quote["cumulative_volume"] = int(values["cumulative_volume"])
         self.status["trade_count"] += 1
+
+    def rows(self, limit=300):
+        return [dict(value) for value in self.quotes.values()][:limit]
 
 
 class Base:
@@ -93,6 +110,7 @@ state._apply_trade({
     },
 })
 quote = state.quotes["000660"]
+assert quote["row_source"] == "realtime"
 assert quote["price"] == 1_879_000.0
 assert quote["trade_value_eok"] == 3159.74
 assert quote["trade_value_trading_date"] == "20260723"
@@ -104,12 +122,74 @@ assert quote["amount_ratio"] == round(3159.74 / 1950.0, 6)
 assert state.status["daily_cumulative_reset_accepted_count"] == 1
 assert state.status["premarket_rollover_time_wrap_accepted_count"] == 1
 assert state.status["trade_field_regression_guard_version"] == "trade_field_regression_guard_v5"
+assert getattr(Base.State, "_stockboard_current_day_trade_value_rank_installed", False) is True
 '''
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
     )
-    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+
+
+def test_current_day_ranking_excludes_previous_day_hold_amounts():
+    _run(
+        r'''
+import threading
+from realtime_v2.current_day_trade_value_rank_patch import install
+
+
+class State:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.status = {"market_trading_date": "20260723"}
+        self.payload = [
+            {
+                "stock_code": "003230",
+                "stock_name": "삼양식품",
+                "rank": 1,
+                "row_source": "portable_exact_close",
+                "source_trading_date": "20260722",
+                "trade_value_trading_date": "20260722",
+                "trade_value_eok": 620.63,
+                "amount_ratio": 0.65,
+                "prev_rank": 8,
+            },
+            {
+                "stock_code": "005930",
+                "stock_name": "삼성전자",
+                "rank": 2,
+                "row_source": "realtime",
+                "source_trading_date": "20260722",
+                "trade_value_trading_date": "20260723",
+                "trade_value_eok": 5506.18,
+                "amount_ratio": 0.051,
+            },
+            {
+                "stock_code": "000660",
+                "stock_name": "SK하이닉스",
+                "rank": 3,
+                "row_source": "realtime",
+                "source_trading_date": "20260722",
+                "trade_value_trading_date": "20260723",
+                "trade_value_eok": 8893.22,
+                "amount_ratio": 0.3,
+            },
+        ]
+
+    def rows(self, limit=300):
+        return [dict(row) for row in self.payload][:limit]
+
+
+class Base:
+    State = State
+
+
+install(Base)
+state = State()
+rows = state.rows(3)
+assert [row["stock_code"] for row in rows] == ["000660", "005930", "003230"]
+assert [row["rank"] for row in rows[:2]] == [1, 2]
+assert rows[2]["rank"] is None
+assert rows[2]["trade_value_eok"] is None
+assert rows[2]["held_trade_value_eok"] == 620.63
+assert rows[2]["amount_ratio"] is None
+assert state.status["current_day_trade_value_rank_eligible_count"] == 2
+assert state.status["current_day_trade_value_rank_held_count"] == 1
+'''
+    )
