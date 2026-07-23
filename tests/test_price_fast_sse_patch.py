@@ -146,7 +146,7 @@ html = Path("docs/stockboard_v2.html").read_text(encoding="utf-8-sig")
 rendered = large._ui_safety_patch(html)
 assert "STOCKBOARD_V2_PRICE_FAST_SSE_DELTA_20260723" in rendered
 assert "/api/v2/price-stream?limit=300&interval_ms=100" in rendered
-assert "/api/v2/stream?limit=100&interval_ms=1000" in rendered
+assert "/api/v2/stream?limit=100&interval_ms=5000" in rendered
 assert "__sbv2FastPatchPriceRate(payload);" in rendered
 source = __import__("inspect").getsource(base.WebHandler._stream_price_fast)
 assert "event: price" in source
