@@ -5,8 +5,11 @@ import time
 from typing import Any
 
 
+STATUS_COMPAT_VERSION = "collector_status_compat_alias_v1"
+
+
 def install(base) -> None:
-    """Keep collector->worker delivery alive after one bad event or drain error."""
+    """Keep collector delivery alive and expose one stable status schema."""
 
     sender_class = base.EventSender
     if getattr(sender_class, "_stockboard_sender_resilience_installed", False):
@@ -14,6 +17,7 @@ def install(base) -> None:
 
     original_init = sender_class.__init__
     original_stats = sender_class.stats
+    original_publish_collector_status = base.publish_collector_status
 
     def init(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
@@ -140,8 +144,22 @@ def install(base) -> None:
         )
         return result
 
+    def publish_collector_status(sender, provider, extra=None) -> None:
+        provider_status = provider.status() if provider is not None else {}
+        sender_status = sender.stats()
+        compatibility = dict(extra or {})
+        compatibility.update(
+            {
+                "status": provider_status,
+                "sender_stats": sender_status,
+                "collector_status_compat_version": STATUS_COMPAT_VERSION,
+            }
+        )
+        original_publish_collector_status(sender, provider, compatibility)
+
     sender_class.__init__ = init
     sender_class._send_batch = send_batch
     sender_class.run = run
     sender_class.stats = stats
+    base.publish_collector_status = publish_collector_status
     sender_class._stockboard_sender_resilience_installed = True
