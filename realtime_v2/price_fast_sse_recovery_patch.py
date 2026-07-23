@@ -78,14 +78,22 @@ def _install_ui_recovery(large: Any) -> None:
 
 def install_runtime_wrapper() -> None:
     from realtime_v2 import price_fast_sse_patch as target
-    from realtime_v2 import worker64 as base
-    from realtime_v2 import worker64_guarded_large as large
+
+    if getattr(target, "_price_fast_sse_recovery_install_wrapped", False):
+        return
 
     target.HEARTBEAT_SEC = FULL_RESYNC_SEC
-    _install_ui_recovery(large)
-    state_class = getattr(base, "State", None)
-    if state_class is not None:
-        state_class._stockboard_price_fast_sse_recovery_version = PATCH_VERSION
+    original_install = target.install
+
+    def install_with_recovery(base, large=None) -> None:
+        original_install(base, large)
+        _install_ui_recovery(large)
+        state_class = getattr(base, "State", None)
+        if state_class is not None:
+            state_class._stockboard_price_fast_sse_recovery_version = PATCH_VERSION
+
+    target.install = install_with_recovery
+    target._price_fast_sse_recovery_install_wrapped = True
 
 
 __all__ = [
