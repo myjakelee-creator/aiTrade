@@ -23,6 +23,7 @@ class _State:
                 "change_rate": 4.03,
                 "received_at": "2026-07-23T11:45:20.123+09:00",
                 "trade_value_eok": 12345.6,
+                "seed_rank": 2,
                 "candidate_score": 99,
             },
             "000660": {
@@ -30,6 +31,8 @@ class _State:
                 "trade_price": 1867000,
                 "change_rate": 2.02,
                 "received_at": "2026-07-23T11:45:20.098+09:00",
+                "trade_value_eok": 23456.7,
+                "seed_rank": 1,
             },
         }
 
@@ -40,7 +43,7 @@ class _State:
         raise AssertionError("price-fast SSE must not call State.snapshot()")
 
 
-def test_price_snapshot_copies_only_decision_critical_scalars():
+def test_price_snapshot_copies_only_decision_critical_scalars_in_trade_value_order():
     payload = patch.build_price_snapshot(
         _State(), limit=300, now_text=lambda: "2026-07-23T11:45:20.200+09:00"
     )
@@ -48,6 +51,7 @@ def test_price_snapshot_copies_only_decision_critical_scalars():
     assert payload["source"] == "stockboard_v2_price_fast_sse"
     assert payload["schema_version"] == 2
     assert payload["payload_mode"] == "full"
+    assert payload["selection_mode"] == "trade_value_top"
     assert payload["trade_count"] == 7
     assert payload["row_count"] == 2
     assert payload["rows"] == [
@@ -68,6 +72,41 @@ def test_price_snapshot_copies_only_decision_critical_scalars():
         set(row) == {"stock_code", "price", "change_rate", "received_at"}
         for row in payload["rows"]
     )
+
+
+def test_price_snapshot_limit_selects_trade_value_leaders_not_lowest_codes():
+    state = _State()
+    state.quotes.update(
+        {
+            "000001": {
+                "stock_code": "000001",
+                "price": 1000,
+                "change_rate": 0.1,
+                "received_at": "2026-07-23T11:45:20.000+09:00",
+                "trade_value_eok": 1.0,
+                "seed_rank": 999,
+            },
+            "402340": {
+                "stock_code": "402340",
+                "price": 1245000,
+                "change_rate": 3.0,
+                "received_at": "2026-07-23T11:45:20.150+09:00",
+                "trade_value_eok": 20000.0,
+                "seed_rank": 3,
+            },
+        }
+    )
+
+    payload = patch.build_price_snapshot(
+        state, limit=3, now_text=lambda: "2026-07-23T11:45:20.200+09:00"
+    )
+
+    assert [row["stock_code"] for row in payload["rows"]] == [
+        "000660",
+        "402340",
+        "005930",
+    ]
+    assert "000001" not in {row["stock_code"] for row in payload["rows"]}
 
 
 def test_delta_payload_sends_only_changed_rows_after_initial_full_payload():
@@ -140,7 +179,7 @@ import realtime_v2.worker64_guarded_large as large
 import realtime_v2.sse_latest_only_patch as full
 
 assert hasattr(base.State, "price_fast_snapshot")
-assert getattr(base.State, "_stockboard_price_fast_sse_version", None) == "price_fast_sse_delta_v3"
+assert getattr(base.State, "_stockboard_price_fast_sse_version", None) == "price_fast_sse_delta_v4_trade_value_scope"
 assert hasattr(base.WebHandler, "_stream_price_fast")
 assert full.MAX_SEND_INTERVAL_MS == 5000
 
@@ -158,6 +197,7 @@ assert "__sbv2PriceReceivedMs(latest) < __sbv2PriceReceivedMs(row)" in rendered
 source = __import__("inspect").getsource(base.WebHandler._stream_price_fast)
 assert "event: price" in source
 assert "build_delta_payload" in source
+assert "trade_value_top" in source
 print("price_fast_sse_production_import_ok")
 '''
     completed = subprocess.run(
