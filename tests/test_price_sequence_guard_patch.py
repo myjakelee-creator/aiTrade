@@ -115,6 +115,20 @@ def test_older_sequence_restores_price_but_allows_cumulative_fields():
     assert state.status["price_sequence_guard_version"] == "price_sequence_guard_v1"
 
 
+def test_duplicate_sequence_cannot_overwrite_price():
+    base = _base()
+    patch._install_state_wrapper(base)
+    state = base.State()
+
+    state._apply_trade(_event("epoch-a", 12, 271000, 100.0, 1000, "2026-07-23T15:30:12+09:00"))
+    state._apply_trade(_event("epoch-a", 12, 268000, 101.0, 1010, "2026-07-23T15:30:13+09:00"))
+
+    quote = state.quotes["005930"]
+    assert quote["price"] == 271000
+    assert quote["trade_value_eok"] == 101.0
+    assert state.status["price_sequence_suppressed_count"] == 1
+
+
 def test_new_epoch_accepts_sequence_restart():
     base = _base()
     patch._install_state_wrapper(base)
