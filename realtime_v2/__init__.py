@@ -66,6 +66,9 @@ from realtime_v2.ratio_connection_cleanup_patch import (
 from realtime_v2.after_close_live_hold_patch import (
     install_runtime_wrapper as install_after_close_live_hold,
 )
+from realtime_v2.after_close_metric_source_guard_patch import (
+    install_runtime_wrapper as install_after_close_metric_source_guard,
+)
 from realtime_v2.after_close_settlement_state_patch import (
     install_runtime_wrapper as install_after_close_settlement_state,
 )
@@ -86,6 +89,8 @@ install_metric_fast_sse()
 # snapshot exclusively owns rank and lane placement.
 install_closed_metric_rank_hold()
 install_ratio_connection_cleanup()
+# Sanitize checkpoint-only metric provenance before the close-hold wrapper is used.
+install_after_close_metric_source_guard()
 # Keep last-good rows and persist low-frequency checkpoints after close.
 install_after_close_live_hold()
 # Classify grace/provisional/final/recovery states without changing price flow.
