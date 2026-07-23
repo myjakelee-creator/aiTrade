@@ -324,6 +324,24 @@ def _install_tr_singleflight_fail_open() -> None:
         _write_patch_error("tr_singleflight_patch_error.txt", error)
 
 
+def _install_closed_server_metric_completion_fail_open() -> None:
+    try:
+        from realtime_v2.closed_server_metric_completion_patch import install
+
+        install(base)
+    except Exception as error:
+        _write_patch_error("closed_server_metric_completion_patch_error.txt", error)
+
+
+def _install_after_close_settlement_state_fail_open() -> None:
+    try:
+        from realtime_v2.after_close_settlement_state_patch import install
+
+        install(base)
+    except Exception as error:
+        _write_patch_error("after_close_settlement_state_patch_error.txt", error)
+
+
 def _install_opening_burst_cache_fail_open() -> None:
     try:
         from realtime_v2.worker_opening_burst_cache_patch import (
@@ -350,6 +368,10 @@ _install_shared_board_shell_fail_open()
 _install_board_data_hub_fail_open()
 _install_theme_selected_detail_fail_open()
 _install_tr_singleflight_fail_open()
+# Direct installs must run on the actual guarded worker entry after it has assigned
+# its final State.rows/snapshot methods and before opening-burst captures them.
+_install_closed_server_metric_completion_fail_open()
+_install_after_close_settlement_state_fail_open()
 # Install last so it caches the final ranking/display/hold/hub snapshot implementation.
 _install_opening_burst_cache_fail_open()
 
