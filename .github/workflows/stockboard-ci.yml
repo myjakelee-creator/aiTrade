@@ -75,10 +75,12 @@ jobs:
             scripts\stockboard_v2_collector_trace.py `
             scripts\stockboard_v2_collector_trace_policy_fix.py `
             scripts\stockboard_v2_price_history_backtrace.py `
+            stockboard_previous_trade_value.py `
             realtime_v2\premarket_rollover_priority_patch.py `
             realtime_v2\price_time_monotonic_patch.py `
             realtime_v2\sse_latest_only_patch.py `
             realtime_v2\price_fast_sse_patch.py `
+            realtime_v2\ratio_connection_cleanup_patch.py `
             realtime_v2\worker_trade_field_regression_guard.py `
             realtime_v2\worker_board_display_continuity_patch.py `
             realtime_v2\worker_board_display_continuity_runtime_opt.py `
@@ -119,6 +121,8 @@ jobs:
           New-Item -ItemType Directory -Force test-results | Out-Null
           python -m pytest -q `
             tests\test_html_build_identity.py `
+            tests\test_previous_trade_value_crosscheck.py `
+            tests\test_ratio_connection_cleanup_patch.py `
             tests\test_premarket_rollover_priority_patch.py `
             tests\test_price_time_monotonic_patch.py `
             tests\test_sse_latest_only_patch.py `
