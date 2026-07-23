@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": "SBV2-20260723.22",
-  "published_at": "2026-07-23 22:10 KST",
-  "keyword": "FAST-TOP300-CLOSE-METRIC-SOURCE",
+  "version": "SBV2-20260723.23",
+  "published_at": "2026-07-23 22:15 KST",
+  "keyword": "FAST-TOP300-CLOSE-METRIC-LIFECYCLE",
   "baseline_commit": "58e1a3b"
 }
