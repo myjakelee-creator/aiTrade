@@ -8,12 +8,16 @@ from a verified newer trading date. This wrapper leaves the existing v4 guard in
 charge of all field filtering and only prevents that verified day rollover from being
 misclassified as same-day SOR interleaving.
 
+The first current-day event may still be applied to a `portable_exact_close` HOLD row,
+so both realtime and verified hold rows are eligible for this one rollover check.
+
 No collector, QAx, FID, request, thread, timer, browser, or SSE cadence changes.
 """
 
 from typing import Any
 
 PATCH_VERSION = "trade_field_regression_guard_v5"
+_ELIGIBLE_ROW_SOURCES = {"realtime", "portable_exact_close"}
 
 
 def _install_state_wrapper(base, guard_module) -> None:
@@ -71,7 +75,7 @@ def _install_state_wrapper(base, guard_module) -> None:
 
         with self.lock:
             quote = self.quotes.get(code)
-            if not isinstance(quote, dict) or quote.get("row_source") != "realtime":
+            if not isinstance(quote, dict) or str(quote.get("row_source") or "") not in _ELIGIBLE_ROW_SOURCES:
                 return guarded_apply(self, event)
 
             previous_value = guard_module.to_number(quote.get("trade_value_eok"))
