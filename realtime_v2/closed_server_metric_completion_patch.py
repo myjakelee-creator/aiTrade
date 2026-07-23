@@ -11,8 +11,9 @@ from typing import Any
 
 from realtime_v2.market_session import market_session_now
 
-PATCH_VERSION = "closed_server_metric_completion_v2_install_chain"
+PATCH_VERSION = "closed_server_metric_completion_v3_function_marker"
 CLOSED_PHASES = {"closed", "before_market", "weekend", "holiday"}
+_ROWS_MARKER = "_stockboard_closed_server_metric_completion_wrapper"
 
 
 def _number(value: Any) -> float | None:
@@ -84,12 +85,16 @@ def _hide_unproven_one_min_zero(row: dict[str, Any]) -> bool:
 
 def install(base) -> None:
     state_class = getattr(base, "State", None)
-    if state_class is None or getattr(
-        state_class, "_stockboard_closed_server_metric_completion_installed", False
-    ):
+    if state_class is None:
         return
 
-    original_rows = state_class.rows
+    current_rows = state_class.rows
+    if getattr(current_rows, _ROWS_MARKER, False):
+        return
+
+    # A previous wrapper may have left the class-level marker behind and then been
+    # replaced by worker64_guarded.py. The live function marker is authoritative.
+    original_rows = current_rows
 
     def rows(self, *args, **kwargs):
         result = original_rows(self, *args, **kwargs)
@@ -125,18 +130,15 @@ def install(base) -> None:
             status.update(values)
         return result
 
+    setattr(rows, _ROWS_MARKER, True)
+    setattr(rows, "_stockboard_closed_server_metric_completion_version", PATCH_VERSION)
     state_class.rows = rows
     state_class._stockboard_closed_server_metric_completion_installed = True
     state_class._stockboard_closed_server_metric_completion_version = PATCH_VERSION
 
 
 def install_runtime_wrapper() -> None:
-    """Install on the Worker State construction chain.
-
-    ``worker_opening_burst_cache_patch.install(base)`` is the shared runtime hook
-    used by the other Worker row wrappers. Unlike the HTML global-sort installer,
-    it receives the module that owns ``State``.
-    """
+    """Install on the Worker State construction chain."""
 
     from realtime_v2 import worker_opening_burst_cache_patch as opening_module
 
