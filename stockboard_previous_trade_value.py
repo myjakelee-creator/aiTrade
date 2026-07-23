@@ -20,6 +20,9 @@ KST = timezone(timedelta(hours=9))
 KRW_PER_EOK = Decimal("100000000")
 MILLION_KRW_PER_EOK = Decimal("100")
 CACHE_SCHEMA_VERSION = 1
+PREVIOUS_VALUE_CONVERSION_VERSION = "previous_trade_value_crosscheck_v2"
+_EXPLICIT_FALLBACK_MIN_RATIO = Decimal("0.5")
+_EXPLICIT_FALLBACK_MAX_RATIO = Decimal("2.0")
 _CACHE_LOCK = RLock()
 
 
@@ -49,9 +52,9 @@ def _number_or_none(value: Any) -> float | None:
 
 
 def _date_from_daily_row(row: dict[str, Any] | None) -> str:
-    value = _first(row, "date", "dt", "일자")
+    value = _first(row, "date", "dt", "일자", "trd_dd", "bas_dt", "stck_bsop_date")
     digits = "".join(character for character in str(value or "") if character.isdigit())
-    return digits if len(digits) == 8 else ""
+    return digits[:8] if len(digits) >= 8 else ""
 
 
 def _runtime_dir() -> Path:
@@ -109,43 +112,95 @@ def _decimal_from_value(value: Any) -> Decimal | None:
     return number
 
 
+def _calculated_value_eok(previous_row: dict[str, Any]) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
+    close_price = _decimal_from_value(_first(previous_row, "close_pric", "close", "cur_prc"))
+    trade_quantity = _decimal_from_value(
+        _first(previous_row, "trde_qty", "trade_quantity", "volume")
+    )
+    if close_price is None or close_price == 0 or trade_quantity is None or trade_quantity <= 0:
+        return None, close_price, trade_quantity
+    return abs(close_price) * trade_quantity / KRW_PER_EOK, close_price, trade_quantity
+
+
 def previous_trade_value_from_daily_row(previous_row: dict[str, Any] | None) -> dict[str, Any]:
-    """Return previous trade value in eok units from a ka10086 daily row."""
+    """Return a cross-checked previous trade value in eok units.
+
+    Kiwoom documents the daily trade-value field in KRW millions. Some response
+    variants also expose similarly named amount fields whose meaning is not the same.
+    The explicit value is therefore checked against close × volume when both are
+    available. A severe unit mismatch fails over to the independently calculated value.
+    """
     if not isinstance(previous_row, dict):
-        return {"prev_trade_value_eok": None, "prev_trade_value_status": "missing"}
+        return {
+            "prev_trade_value_eok": None,
+            "prev_trade_value_status": "missing",
+            "prev_trade_value_conversion_version": PREVIOUS_VALUE_CONVERSION_VERSION,
+        }
 
     previous_date = _date_from_daily_row(previous_row)
     amount_million = _decimal_from_value(
-        _first(previous_row, "amt_mn", "trade_value_mn", "trde_prica", "trade_value")
+        _first(previous_row, "trde_prica", "trade_value_mn", "trade_value", "amt_mn")
     )
-    if amount_million is not None and amount_million > 0:
-        value_eok = amount_million / MILLION_KRW_PER_EOK
+    explicit_eok = (
+        amount_million / MILLION_KRW_PER_EOK
+        if amount_million is not None and amount_million > 0
+        else None
+    )
+    calculated_eok, close_price, trade_quantity = _calculated_value_eok(previous_row)
+
+    common = {
+        "prev_trade_value_date": previous_date,
+        "prev_trade_value_conversion_version": PREVIOUS_VALUE_CONVERSION_VERSION,
+    }
+
+    if explicit_eok is not None and calculated_eok is not None and calculated_eok > 0:
+        crosscheck_ratio = explicit_eok / calculated_eok
+        if _EXPLICIT_FALLBACK_MIN_RATIO <= crosscheck_ratio <= _EXPLICIT_FALLBACK_MAX_RATIO:
+            return {
+                **common,
+                "prev_trade_value_eok": float(explicit_eok),
+                "prev_trade_value_source": "ka10086_trade_value_million_crosschecked",
+                "prev_trade_value_status": "ok",
+                "prev_trade_value_raw_million": float(amount_million),
+                "prev_trade_value_crosscheck_eok": float(calculated_eok),
+                "prev_trade_value_crosscheck_ratio": float(crosscheck_ratio),
+            }
         return {
-            "prev_trade_value_eok": float(value_eok),
-            "prev_trade_value_source": "ka10086_amt_mn",
-            "prev_trade_value_status": "ok",
-            "prev_trade_value_date": previous_date,
+            **common,
+            "prev_trade_value_eok": float(calculated_eok),
+            "prev_trade_value_source": "prev_close_x_prev_volume_unit_mismatch_fallback",
+            "prev_trade_value_status": "calculated_crosscheck_fallback",
+            "prev_trade_value_raw_million": float(amount_million),
+            "prev_trade_value_explicit_eok": float(explicit_eok),
+            "prev_trade_value_crosscheck_ratio": float(crosscheck_ratio),
+            "prev_close_price": float(abs(close_price)),
+            "prev_trade_quantity": float(trade_quantity),
+        }
+
+    if explicit_eok is not None:
+        return {
+            **common,
+            "prev_trade_value_eok": float(explicit_eok),
+            "prev_trade_value_source": "ka10086_trade_value_million",
+            "prev_trade_value_status": "ok_no_crosscheck",
             "prev_trade_value_raw_million": float(amount_million),
         }
 
-    close_price = _decimal_from_value(_first(previous_row, "close_pric", "close"))
-    trade_quantity = _decimal_from_value(_first(previous_row, "trde_qty", "trade_quantity"))
-    if close_price is not None and close_price > 0 and trade_quantity is not None and trade_quantity > 0:
-        value_eok = abs(close_price) * trade_quantity / KRW_PER_EOK
+    if calculated_eok is not None and calculated_eok > 0:
         return {
-            "prev_trade_value_eok": float(value_eok),
+            **common,
+            "prev_trade_value_eok": float(calculated_eok),
             "prev_trade_value_source": "prev_close_x_prev_volume",
             "prev_trade_value_status": "calculated",
-            "prev_trade_value_date": previous_date,
             "prev_close_price": float(abs(close_price)),
             "prev_trade_quantity": float(trade_quantity),
         }
 
     return {
+        **common,
         "prev_trade_value_eok": None,
         "prev_trade_value_source": "unavailable",
         "prev_trade_value_status": "unavailable",
-        "prev_trade_value_date": previous_date,
     }
 
 
@@ -160,7 +215,11 @@ def _copy_prev_trade_value_to_row(row: dict[str, Any], value_data: dict[str, Any
         "prev_trade_value_source",
         "prev_trade_value_status",
         "prev_trade_value_date",
+        "prev_trade_value_conversion_version",
         "prev_trade_value_raw_million",
+        "prev_trade_value_explicit_eok",
+        "prev_trade_value_crosscheck_eok",
+        "prev_trade_value_crosscheck_ratio",
         "prev_close_price",
         "prev_trade_quantity",
     ):
@@ -178,6 +237,7 @@ def _entry_from_row(row: dict[str, Any]) -> dict[str, Any] | None:
         "prev_trade_value_source": row.get("prev_trade_value_source"),
         "prev_trade_value_status": row.get("prev_trade_value_status"),
         "prev_trade_value_date": row.get("prev_trade_value_date"),
+        "prev_trade_value_conversion_version": row.get("prev_trade_value_conversion_version"),
         "stock_code": row.get("stock_code"),
         "updated_at": datetime.now(KST).isoformat(timespec="seconds"),
     }
@@ -204,6 +264,9 @@ def install_previous_trade_value_patch() -> None:
                     "prev_trade_value_source": value_data.get("prev_trade_value_source"),
                     "prev_trade_value_status": value_data.get("prev_trade_value_status"),
                     "prev_trade_value_date": value_data.get("prev_trade_value_date"),
+                    "prev_trade_value_conversion_version": value_data.get(
+                        "prev_trade_value_conversion_version"
+                    ),
                 }
             )
         return ohlc, sample
@@ -231,7 +294,18 @@ def install_previous_trade_value_patch() -> None:
                 attached += 1
                 continue
             entry = entries.get(stock_code) if stock_code else None
-            if isinstance(entry, dict) and _copy_prev_trade_value_to_row(row, {**entry, "prev_trade_value_status": "cached"}):
+            cache_version = (
+                entry.get("prev_trade_value_conversion_version")
+                if isinstance(entry, dict)
+                else None
+            )
+            if (
+                isinstance(entry, dict)
+                and cache_version == PREVIOUS_VALUE_CONVERSION_VERSION
+                and _copy_prev_trade_value_to_row(
+                    row, {**entry, "prev_trade_value_status": "cached_crosschecked"}
+                )
+            ):
                 cached += 1
                 continue
             row.setdefault("prev_trade_value_source", "unavailable")
@@ -239,6 +313,7 @@ def install_previous_trade_value_patch() -> None:
             row.setdefault("prev_trade_value_fallback_score", 60)
             fallback += 1
         cache_payload["schema_version"] = CACHE_SCHEMA_VERSION
+        cache_payload["conversion_version"] = PREVIOUS_VALUE_CONVERSION_VERSION
         cache_payload["query_date"] = query_date
         cache_payload["updated_at"] = datetime.now(KST).isoformat(timespec="seconds")
         cache_payload.setdefault("source", "ka10086_previous_daily_row")
@@ -251,6 +326,7 @@ def install_previous_trade_value_patch() -> None:
                 "cached_count": cached,
                 "fallback_count": fallback,
                 "cache_file": str(cache_file),
+                "conversion_version": PREVIOUS_VALUE_CONVERSION_VERSION,
             }
         return result
 
