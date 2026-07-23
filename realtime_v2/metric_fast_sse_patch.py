@@ -5,10 +5,11 @@ from __future__ import annotations
 The candidate/grade snapshot is intentionally expensive and may take many seconds.
 This transport never calls State.rows()/snapshot(); it copies already-approved scalar
 values from State.quotes, computes only the current-day cumulative trade-value rank,
-and sends changed rows every 500 ms.  The browser merges those scalars into the last
+and sends changed rows every 500 ms. The browser merges those scalars into the last
 full payload and re-renders at most once per second.
 """
 
+import re
 import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -19,6 +20,9 @@ DEFAULT_ROW_LIMIT = 300
 HEARTBEAT_SEC = 10.0
 _UI_MARKER = "STOCKBOARD_V2_METRIC_FAST_SSE_20260723"
 _UI_ANCHOR = "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});loadCandidateModels();loadContext();markSortHeaders();connectStream();"
+_FULL_STREAM_URL_PATTERN = re.compile(
+    r"/api/v2/stream\?limit=\d+&interval_ms=\d+&ts=\$\{Date\.now\(\)\}"
+)
 
 _METRIC_FIELDS = (
     "trade_value_eok",
@@ -193,7 +197,11 @@ def _install_state(base) -> None:
 
 def _install_web_handler(base) -> None:
     handler_class = getattr(base, "WebHandler", None)
-    if handler_class is None or getattr(handler_class, "_stockboard_metric_fast_sse_installed", False):
+    if (
+        handler_class is None
+        or not callable(getattr(handler_class, "do_GET", None))
+        or getattr(handler_class, "_stockboard_metric_fast_sse_installed", False)
+    ):
         return
     original_do_get = handler_class.do_GET
 
@@ -269,9 +277,10 @@ def _install_ui(large) -> None:
         patched = original_ui_safety_patch(html)
         if _UI_MARKER in patched or _UI_ANCHOR not in patched:
             return patched
-        patched = patched.replace(
-            "/api/v2/stream?limit=100&interval_ms=1000&ts=${Date.now()}",
+        patched = _FULL_STREAM_URL_PATTERN.sub(
             "/api/v2/stream?limit=100&interval_ms=5000&ts=${Date.now()}",
+            patched,
+            count=1,
         )
         return patched.replace(_UI_ANCHOR, f"{_UI_PATCH}\n{_UI_ANCHOR}", 1)
 
