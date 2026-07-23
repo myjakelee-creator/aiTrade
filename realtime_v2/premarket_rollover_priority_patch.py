@@ -73,6 +73,7 @@ def _install_state_wrapper(base, guard_module) -> None:
         incoming_time = guarded._time_seconds(incoming_time_raw)
         temporary_time_applied = False
         previous_time = None
+        previous_row_source = None
         before_trade_count = 0
 
         with self.lock:
@@ -111,7 +112,9 @@ def _install_state_wrapper(base, guard_module) -> None:
             )
             if older_time and (value_rollover or volume_rollover):
                 before_trade_count = int(self.status.get("trade_count") or 0)
+                previous_row_source = quote.get("row_source")
                 quote["_trade_time_seconds"] = incoming_time
+                quote["row_source"] = "realtime"
                 temporary_time_applied = True
 
         try:
@@ -122,6 +125,7 @@ def _install_state_wrapper(base, guard_module) -> None:
                     quote = self.quotes.get(code)
                     if isinstance(quote, dict):
                         quote["_trade_time_seconds"] = previous_time
+                        quote["row_source"] = previous_row_source
             raise
 
         with self.lock:
@@ -130,7 +134,9 @@ def _install_state_wrapper(base, guard_module) -> None:
             if temporary_time_applied and isinstance(quote, dict):
                 if after_trade_count <= before_trade_count:
                     quote["_trade_time_seconds"] = previous_time
+                    quote["row_source"] = previous_row_source
                 else:
+                    quote["row_source"] = "realtime"
                     self.status["premarket_rollover_time_wrap_accepted_count"] = int(
                         self.status.get("premarket_rollover_time_wrap_accepted_count") or 0
                     ) + 1
@@ -138,6 +144,7 @@ def _install_state_wrapper(base, guard_module) -> None:
                         "stock_code": code,
                         "from_trade_time_seconds": previous_time,
                         "to_trade_time_seconds": incoming_time,
+                        "from_row_source": previous_row_source,
                         "to_trading_date": current_date,
                     }
                     self.status["trade_field_regression_guard_version"] = PATCH_VERSION
