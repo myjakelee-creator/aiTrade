@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": "SBV2-20260723.3",
-  "published_at": "2026-07-23 10:55 KST",
-  "keyword": "SSE-LATEST-ONLY",
+  "version": "SBV2-20260723.4",
+  "published_at": "2026-07-23 11:50 KST",
+  "keyword": "PRICE-FAST-SSE",
   "baseline_commit": "6e48d6d"
 }
