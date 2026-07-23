@@ -8,8 +8,9 @@ board, but it is too heavy to be the transport for every price tick during a bur
 
 This patch adds ``/api/v2/price-stream``. It reads only scalar quote fields already
 accepted by the Worker and never calls ``State.rows()`` or ``State.snapshot()``.
-The browser applies these rows through the existing price/rate DOM fast-patch while
-the full stream continues at a slower cadence for ranking and auxiliary metrics.
+The first event and heartbeats contain the full scalar set; ordinary 100 ms events
+contain only rows whose price-path fields changed since the prior send. The browser
+applies both payload forms through the existing price/rate DOM fast-patch.
 
 No QAx, FID, Collector, EventSender, REST, WebSocket, ranking, trade-value,
 orderbook, or auxiliary-metric calculation is added or changed.
@@ -19,18 +20,18 @@ import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-PATCH_VERSION = "price_fast_sse_v1"
+PATCH_VERSION = "price_fast_sse_delta_v2"
 DEFAULT_INTERVAL_MS = 100
 DEFAULT_ROW_LIMIT = 300
 HEARTBEAT_SEC = 2.0
-_UI_MARKER = "STOCKBOARD_V2_PRICE_FAST_SSE_20260723"
+_UI_MARKER = "STOCKBOARD_V2_PRICE_FAST_SSE_DELTA_20260723"
 _UI_ANCHOR = (
     "clockEl.textContent=new Date().toLocaleTimeString('ko-KR',{hour12:false});"
     "loadCandidateModels();loadContext();markSortHeaders();connectStream();"
 )
 
 _UI_PATCH = r"""
-  /* STOCKBOARD_V2_PRICE_FAST_SSE_20260723 */
+  /* STOCKBOARD_V2_PRICE_FAST_SSE_DELTA_20260723 */
   let __sbv2PriceFastStream = null;
   let __sbv2PriceFastLagMs = null;
   let __sbv2FullStreamLagMs = null;
@@ -78,6 +79,10 @@ def _query_int(query: dict[str, list[str]], key: str, default: int) -> int:
         return default
 
 
+def _row_fingerprint(row: dict[str, Any]) -> tuple[Any, Any, Any]:
+    return row.get("price"), row.get("change_rate"), row.get("received_at")
+
+
 def build_price_snapshot(state: Any, *, limit: int, now_text) -> dict[str, Any]:
     """Copy only price-path scalars; deliberately never call rows()/snapshot()."""
 
@@ -102,13 +107,44 @@ def build_price_snapshot(state: Any, *, limit: int, now_text) -> dict[str, Any]:
     rows.sort(key=lambda row: row.get("stock_code") or "")
     rows = rows[:safe_limit]
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "source": "stockboard_v2_price_fast_sse",
         "ts": now_text(),
         "trade_count": trade_count,
         "row_count": len(rows),
+        "payload_mode": "full",
         "rows": rows,
     }
+
+
+def build_delta_payload(
+    payload: dict[str, Any],
+    previous_fingerprints: dict[str, tuple[Any, Any, Any]],
+    *,
+    force_full: bool = False,
+) -> tuple[dict[str, Any], dict[str, tuple[Any, Any, Any]]]:
+    """Return a full heartbeat/initial payload or only changed price-path rows."""
+
+    rows = payload.get("rows") if isinstance(payload, dict) else None
+    safe_rows = [row for row in rows or [] if isinstance(row, dict)]
+    current_fingerprints: dict[str, tuple[Any, Any, Any]] = {}
+    changed_rows: list[dict[str, Any]] = []
+
+    for row in safe_rows:
+        code = str(row.get("stock_code") or "")
+        if not code:
+            continue
+        fingerprint = _row_fingerprint(row)
+        current_fingerprints[code] = fingerprint
+        if force_full or previous_fingerprints.get(code) != fingerprint:
+            changed_rows.append(row)
+
+    outgoing = dict(payload)
+    outgoing["payload_mode"] = "full" if force_full else "delta"
+    outgoing["rows"] = safe_rows if force_full else changed_rows
+    outgoing["row_count"] = len(outgoing["rows"])
+    outgoing["total_quote_count"] = len(safe_rows)
+    return outgoing, current_fingerprints
 
 
 def _install_state(base) -> None:
@@ -149,6 +185,9 @@ def _install_web_handler(base) -> None:
         last_sent_at = 0.0
         sent_count = 0
         coalesced_count = 0
+        delta_row_count = 0
+        full_row_count = 0
+        fingerprints: dict[str, tuple[Any, Any, Any]] = {}
 
         with self.server.state.lock:
             status = self.server.state.status
@@ -168,19 +207,37 @@ def _install_web_handler(base) -> None:
                 heartbeat_due = (now - last_sent_at) >= HEARTBEAT_SEC
 
                 if send_due or heartbeat_due:
-                    payload = self.server.state.price_fast_snapshot(limit=limit)
-                    body = base.safe_json_dumps(payload)
-                    self.wfile.write(f"event: price\ndata: {body}\n\n".encode("utf-8"))
-                    self.wfile.flush()
-                    last_trade_count = payload.get("trade_count", trade_count)
-                    last_sent_at = time.monotonic()
-                    sent_count += 1
-                    with self.server.state.lock:
-                        status = self.server.state.status
-                        status["price_fast_sse_sent_count"] = sent_count
-                        status["price_fast_sse_coalesced_count"] = coalesced_count
-                        status["price_fast_sse_last_sent_at"] = base.now_text()
-                        status["price_fast_sse_last_row_count"] = payload.get("row_count")
+                    full_payload = self.server.state.price_fast_snapshot(limit=limit)
+                    force_full = not fingerprints or heartbeat_due
+                    payload, current_fingerprints = build_delta_payload(
+                        full_payload,
+                        fingerprints,
+                        force_full=force_full,
+                    )
+                    last_trade_count = full_payload.get("trade_count", trade_count)
+                    fingerprints = current_fingerprints
+
+                    if payload.get("row_count") or force_full:
+                        body = base.safe_json_dumps(payload)
+                        self.wfile.write(f"event: price\ndata: {body}\n\n".encode("utf-8"))
+                        self.wfile.flush()
+                        last_sent_at = time.monotonic()
+                        sent_count += 1
+                        if force_full:
+                            full_row_count += int(payload.get("row_count") or 0)
+                        else:
+                            delta_row_count += int(payload.get("row_count") or 0)
+                        with self.server.state.lock:
+                            status = self.server.state.status
+                            status["price_fast_sse_sent_count"] = sent_count
+                            status["price_fast_sse_coalesced_count"] = coalesced_count
+                            status["price_fast_sse_last_sent_at"] = base.now_text()
+                            status["price_fast_sse_last_row_count"] = payload.get("row_count")
+                            status["price_fast_sse_last_payload_mode"] = payload.get("payload_mode")
+                            status["price_fast_sse_delta_row_count"] = delta_row_count
+                            status["price_fast_sse_full_row_count"] = full_row_count
+                    elif changed:
+                        coalesced_count += 1
                 elif changed:
                     coalesced_count += 1
 
