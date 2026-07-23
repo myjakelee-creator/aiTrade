@@ -11,7 +11,7 @@ from typing import Any
 
 from realtime_v2.market_session import market_session_now
 
-PATCH_VERSION = "closed_server_metric_completion_v3_function_marker"
+PATCH_VERSION = "closed_server_metric_completion_v4_close_hold_chain"
 CLOSED_PHASES = {"closed", "before_market", "weekend", "holiday"}
 _ROWS_MARKER = "_stockboard_closed_server_metric_completion_wrapper"
 
@@ -84,6 +84,13 @@ def _hide_unproven_one_min_zero(row: dict[str, Any]) -> bool:
 
 
 def install(base) -> None:
+    # This function is called directly by the actual guarded-large-bidask worker
+    # entry. Install the close hold first so every later wrapper and cache sees the
+    # preserved 20:00 board instead of an empty/fallback state.
+    from realtime_v2.after_close_live_hold_patch import install as install_close_hold
+
+    install_close_hold(base)
+
     state_class = getattr(base, "State", None)
     if state_class is None:
         return
