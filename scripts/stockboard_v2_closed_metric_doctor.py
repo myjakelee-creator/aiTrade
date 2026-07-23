@@ -62,6 +62,7 @@ def _text(item: dict[str, Any], *keys: str) -> str:
 
 def build_report(payload: dict[str, Any], limit: int) -> dict[str, Any]:
     rows = _items(payload)
+    status = payload.get("status") if isinstance(payload.get("status"), dict) else {}
     prev_status = Counter()
     prev_source = Counter()
     amount_status = Counter()
@@ -84,6 +85,10 @@ def build_report(payload: dict[str, Any], limit: int) -> dict[str, Any]:
         counts["amount_ratio_valid"] += int(ratio is not None and ratio > 0)
         counts["prev_rank_valid"] += int(_number(row.get("prev_rank")) is not None)
         counts["grade_present"] += int(row.get("grade") not in (None, "", "-"))
+        counts["candidate_grade_present"] += int(
+            row.get("candidate_grade") not in (None, "", "-")
+            or row.get("candidate_grade_text") not in (None, "", "-")
+        )
         counts["one_min_positive"] += int(one_min is not None and one_min > 0)
         counts["one_min_zero"] += int(one_min == 0)
         counts["bid_ask_ratio_valid"] += int((_number(row.get("bid_ask_ratio")) or 0) > 0)
@@ -110,6 +115,7 @@ def build_report(payload: dict[str, Any], limit: int) -> dict[str, Any]:
                     "amount_ratio_status": _text(row, "amount_ratio_status"),
                     "prev_rank": row.get("prev_rank"),
                     "grade": row.get("grade"),
+                    "candidate_grade": row.get("candidate_grade") or row.get("candidate_grade_text"),
                     "one_min_trade_value_eok": one_min,
                     "one_min_status": _text(
                         row, "one_min_status", "minute_trade_value_status"
@@ -122,9 +128,29 @@ def build_report(payload: dict[str, Any], limit: int) -> dict[str, Any]:
                 }
             )
 
+    install_status = {
+        "market_phase": status.get("market_phase"),
+        "market_phase_label": status.get("market_phase_label"),
+        "after_close_settlement_state": status.get("after_close_settlement_state"),
+        "closed_server_metric_completion_version": status.get(
+            "closed_server_metric_completion_version"
+        ),
+        "closed_server_metric_completion_phase": status.get(
+            "closed_server_metric_completion_phase"
+        ),
+        "closed_server_amount_ratio_count": status.get(
+            "closed_server_amount_ratio_count"
+        ),
+        "closed_server_grade_alias_count": status.get("closed_server_grade_alias_count"),
+        "closed_server_one_min_hidden_count": status.get(
+            "closed_server_one_min_hidden_count"
+        ),
+    }
+
     return {
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "operator_only_no_production_path_change": True,
+        "install_status": install_status,
         "counts": dict(counts),
         "prev_trade_value_status_counts": dict(prev_status),
         "prev_trade_value_source_counts": dict(prev_source),
@@ -154,20 +180,23 @@ def main() -> int:
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print("=== StockBoard closed metric doctor ===")
+    for key, value in report["install_status"].items():
+        print(f"{key:40}: {value}")
     for key, value in report["counts"].items():
-        print(f"{key:32}: {value}")
+        print(f"{key:40}: {value}")
     print("prev_trade_value_status_counts :", report["prev_trade_value_status_counts"])
     print("prev_trade_value_source_counts :", report["prev_trade_value_source_counts"])
     print("amount_ratio_status_counts     :", report["amount_ratio_status_counts"])
     print("one_min_status_counts          :", report["one_min_status_counts"])
-    print("\nCode   Name                 Current    Previous  Ratio  PrevRank Grade OneMin PrevStatus")
-    print("------ -------------------- ---------- --------- ------ -------- ----- ------ ------------------------------")
+    print("\nCode   Name                 Current    Previous  Ratio  PrevRank Grade CandGrade OneMin PrevStatus")
+    print("------ -------------------- ---------- --------- ------ -------- ----- --------- ------ ------------------------------")
     for item in report["samples"]:
         print(
             f"{item['stock_code']:<6} {item['stock_name'][:20]:<20} "
             f"{str(item['trade_value_eok']):>10} {str(item['prev_trade_value_eok']):>9} "
             f"{str(item['amount_ratio']):>6} {str(item['prev_rank']):>8} "
-            f"{str(item['grade']):>5} {str(item['one_min_trade_value_eok']):>6} "
+            f"{str(item['grade']):>5} {str(item['candidate_grade']):>9} "
+            f"{str(item['one_min_trade_value_eok']):>6} "
             f"{item['prev_trade_value_status']}"
         )
     print(f"\nJSON_REPORT={output}")
