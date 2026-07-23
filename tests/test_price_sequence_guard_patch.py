@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 from realtime_v2.collector32 import EventSender, PublishingStore
 from realtime_v2 import price_sequence_guard_patch as patch
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class CapturingSender:
@@ -141,11 +146,30 @@ def test_missing_sequence_is_accepted_for_compatibility():
 
 
 def test_runtime_init_installs_sequence_guard_without_monotonic_guard():
-    from pathlib import Path
-
     source = Path(patch.__file__).with_name("__init__.py").read_text(encoding="utf-8")
     assert "install_price_sequence_guard()" in source
     assert "install_price_time_monotonic" not in source
     assert source.index("install_premarket_rollover_priority()") < source.index(
         "install_price_sequence_guard()"
     ) < source.index("install_sse_latest_only()")
+
+
+def test_production_worker_import_has_sequence_guard_installed():
+    script = r'''
+import realtime_v2.worker64_guarded_large_bidask
+import realtime_v2.worker64 as base
+
+assert getattr(base.State, "_stockboard_price_sequence_guard_installed", False) is True
+assert getattr(base.State, "_stockboard_price_sequence_guard_version", None) == "price_sequence_guard_v1"
+print("price_sequence_guard_production_import_ok")
+'''
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "price_sequence_guard_production_import_ok" in completed.stdout
