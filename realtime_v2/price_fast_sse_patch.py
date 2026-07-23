@@ -10,7 +10,9 @@ This patch adds ``/api/v2/price-stream``. It reads only scalar quote fields alre
 accepted by the Worker and never calls ``State.rows()`` or ``State.snapshot()``.
 The first event and heartbeats contain the full scalar set; ordinary 100 ms events
 contain only rows whose price-path fields changed since the prior send. The browser
-applies both payload forms through the existing price/rate DOM fast-patch.
+keeps the newest price scalars in a client-side map, merges them into ``lastPayload``,
+and reapplies them before any metric/full render so a stale heavy payload cannot undo
+the fast price path.
 
 No QAx, FID, Collector, EventSender, REST, WebSocket, ranking, trade-value,
 orderbook, or auxiliary-metric calculation is added or changed.
@@ -20,7 +22,7 @@ import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-PATCH_VERSION = "price_fast_sse_delta_v2"
+PATCH_VERSION = "price_fast_sse_delta_v3"
 DEFAULT_INTERVAL_MS = 100
 DEFAULT_ROW_LIMIT = 300
 HEARTBEAT_SEC = 2.0
@@ -35,6 +37,42 @@ _UI_PATCH = r"""
   let __sbv2PriceFastStream = null;
   let __sbv2PriceFastLagMs = null;
   let __sbv2FullStreamLagMs = null;
+  const __sbv2LatestPriceByCode = new Map();
+
+  function __sbv2PriceReceivedMs(row){
+    const value = Date.parse(row && row.received_at ? row.received_at : '');
+    return Number.isFinite(value) ? value : -1;
+  }
+
+  function __sbv2RememberPriceRows(rows){
+    if(!Array.isArray(rows)) return;
+    rows.forEach(update => {
+      const code = String(update && update.stock_code || '');
+      if(!code) return;
+      const existing = __sbv2LatestPriceByCode.get(code);
+      if(existing && __sbv2PriceReceivedMs(existing) > __sbv2PriceReceivedMs(update)) return;
+      __sbv2LatestPriceByCode.set(code, {
+        stock_code: code,
+        price: update.price,
+        change_rate: update.change_rate,
+        received_at: update.received_at
+      });
+    });
+  }
+
+  function __sbv2MergeLatestPrices(payload){
+    if(!payload || !Array.isArray(payload.rows)) return payload;
+    payload.rows.forEach(row => {
+      const latest = __sbv2LatestPriceByCode.get(String(row.stock_code || ''));
+      if(!latest) return;
+      if(__sbv2PriceReceivedMs(latest) < __sbv2PriceReceivedMs(row)) return;
+      row.price = latest.price;
+      row.trade_price = latest.price;
+      row.change_rate = latest.change_rate;
+      row.received_at = latest.received_at;
+    });
+    return payload;
+  }
 
   function __sbv2UpdateTransportLabel(){
     const priceText = __sbv2PriceFastLagMs === null ? '-' : `${Math.round(__sbv2PriceFastLagMs)} ms`;
@@ -45,6 +83,7 @@ _UI_PATCH = r"""
   const __sbv2PriceFastOriginalRender = render;
   render = function(payload, mode='stream', opt={}){
     __sbv2FullStreamLagMs = payloadLagMs(payload);
+    __sbv2MergeLatestPrices(payload);
     const result = __sbv2PriceFastOriginalRender(payload, mode, opt);
     __sbv2UpdateTransportLabel();
     return result;
@@ -57,6 +96,8 @@ _UI_PATCH = r"""
       try{
         const payload = JSON.parse(event.data);
         __sbv2PriceFastLagMs = payloadLagMs(payload);
+        __sbv2RememberPriceRows(payload.rows);
+        __sbv2MergeLatestPrices(lastPayload);
         __sbv2FastPatchPriceRate(payload);
         __sbv2UpdateTransportLabel();
       }catch(error){
@@ -278,7 +319,7 @@ def _install_ui(large) -> None:
         # Full-row snapshots remain authoritative but no longer compete with the
         # 100 ms price-only path during live bursts.
         patched = patched.replace(
-            "/api/v2/stream?limit=100&interval_ms=100&ts=${Date.now()}",
+            "/api/v2/stream?limit=300&interval_ms=100&ts=${Date.now()}",
             "/api/v2/stream?limit=100&interval_ms=1000&ts=${Date.now()}",
         )
         return patched.replace(_UI_ANCHOR, f"{_UI_PATCH}\n{_UI_ANCHOR}", 1)
@@ -294,19 +335,17 @@ def install(base, large=None) -> None:
 
 
 def install_runtime_wrapper() -> None:
-    """Install after all large-worker wrappers, without editing their import chain."""
+    from realtime_v2 import sse_latest_only_patch as target
 
-    from realtime_v2 import worker_opening_burst_cache_patch as opening_module
-
-    if getattr(opening_module, "_price_fast_sse_install_wrapped", False):
+    if getattr(target, "_price_fast_sse_install_wrapped", False):
         return
-    original_install = opening_module.install
 
-    def install_after_opening_cache(base) -> None:
+    original_install = target.install
+
+    def install_after_latest_only(base) -> None:
         original_install(base)
         from realtime_v2 import worker64_guarded_large as large
-
         install(base, large)
 
-    opening_module.install = install_after_opening_cache
-    opening_module._price_fast_sse_install_wrapped = True
+    target.install = install_after_latest_only
+    target._price_fast_sse_install_wrapped = True
