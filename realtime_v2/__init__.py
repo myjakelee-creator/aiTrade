@@ -12,6 +12,9 @@ from realtime_v2.closed_metric_alias_restore_patch import (
 from realtime_v2.closed_server_metric_completion_patch import (
     install_runtime_wrapper as install_closed_server_metric_completion,
 )
+from realtime_v2.final_closed_snapshot_projection_runtime_patch import (
+    install_runtime_wrapper as install_final_closed_snapshot_projection,
+)
 from realtime_v2.theme_average_view_layout_patch import install_runtime_wrappers
 from realtime_v2.theme_average_view_script_hotfix import install_script_hotfix
 from realtime_v2.stockboard_global_sort_patch import install as install_stockboard_global_sort
@@ -84,6 +87,8 @@ install_previous_trade_value_fail_closed()
 install_closed_metric_alias_restore()
 # Complete only final closed-session row fields after the existing sort pipeline.
 install_closed_server_metric_completion()
+# Opening-burst replaces State.snapshot; project closed fields after that final cache.
+install_final_closed_snapshot_projection()
 install_premarket_rollover_priority()
 # Price/rate follow Collector callback sequence. Source timestamps are not used for
 # price freshness because SOR callbacks can carry interleaved FID20 values.
