@@ -66,6 +66,9 @@ from realtime_v2.metric_delta_stability_patch import (
 from realtime_v2.metric_fast_sse_patch import (
     install_runtime_wrapper as install_metric_fast_sse,
 )
+from realtime_v2.metric_fast_one_min_tombstone_patch import (
+    install_runtime_wrapper as install_metric_fast_one_min_tombstone,
+)
 from realtime_v2.closed_metric_rank_hold_patch import (
     install_runtime_wrapper as install_closed_metric_rank_hold,
 )
@@ -100,6 +103,8 @@ install_price_fast_flash()
 install_full_stream_relief()
 install_metric_delta_stability()
 install_metric_fast_sse()
+# Metric SSE merges into browser rows; explicit nulls are required to clear stale 0s.
+install_metric_fast_one_min_tombstone()
 # Metric SSE may refresh active-session rank, but after close the full/checkpoint
 # snapshot exclusively owns rank and lane placement.
 install_closed_metric_rank_hold()
