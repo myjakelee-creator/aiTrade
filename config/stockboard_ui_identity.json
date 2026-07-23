@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": "SBV2-20260723.27",
-  "published_at": "2026-07-23 23:02 KST",
-  "keyword": "FAST-TOP300-CLOSE-WRAPPER-REINSTALL",
+  "version": "SBV2-20260723.28",
+  "published_at": "2026-07-23 23:18 KST",
+  "keyword": "FAST-TOP300-CLOSE-PRESERVE-OVER-FALLBACK",
   "baseline_commit": "58e1a3b"
 }
