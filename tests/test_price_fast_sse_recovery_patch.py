@@ -18,7 +18,7 @@ def test_recovery_contract_constants_are_conservative():
     assert relief.PATCH_VERSION == "full_stream_relief_v1"
     assert relief.HEAVY_INTERVAL_MS == 1500
     assert relief.HEAVY_MAX_AGE_MS == 4000
-    assert metric.PATCH_VERSION == "metric_fast_sse_v1"
+    assert metric.PATCH_VERSION == "metric_fast_sse_v2"
     assert metric.DEFAULT_INTERVAL_MS == 500
 
 
