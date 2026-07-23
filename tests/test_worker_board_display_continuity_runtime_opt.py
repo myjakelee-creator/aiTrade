@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 from realtime_v2 import worker_board_display_continuity_patch as continuity
@@ -60,6 +61,26 @@ class _Guard:
     def _load(self, force=False):
         self.load_count += 1
         return json.loads(self.snapshot_path.read_text(encoding="utf-8"))
+
+
+class _HoldState:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.seed_rank_by_code = {"000001": 1, "000002": 2}
+        self.prev_trade_value_by_code = {}
+        self.prev_rank_by_code = {}
+        self._board_display_live_codes_by_date = {"20260721": {"000002"}}
+        self.quotes = {
+            "000001": {"stock_code": "000001", "price": 999.0},
+            "000002": {
+                "stock_code": "000002",
+                "price": 222.0,
+                "received_at": "2026-07-21T08:00:01+09:00",
+            },
+        }
+
+    def _quote(self, code: str) -> dict:
+        return self.quotes.setdefault(code, {"stock_code": code})
 
 
 def test_active_payload_reads_and_hashes_only_on_first_lookup(tmp_path: Path):
@@ -124,3 +145,31 @@ def test_regular_session_uses_long_retry_but_premarket_stays_fast():
     assert runtime_opt._retry_sec_for_phase("opening_call") == 5.0
     assert runtime_opt._retry_sec_for_phase("regular") == 300.0
     assert runtime_opt._retry_sec_for_phase("opening_burst") == 300.0
+
+
+def test_close_hold_keeps_non_live_stock_and_preserves_first_new_day_live_stock():
+    payload = _payload()
+    payload["board_values"]["000002"] = {
+        **_row("000002"),
+        "price": 130.0,
+        "trade_value_eok": 20.0,
+    }
+    state = _HoldState()
+
+    applied, held, live = continuity._apply_payload(
+        guard_module,
+        state,
+        payload,
+        source_date="20260720",
+        current_date="20260721",
+        hold_only=True,
+        generation=1,
+    )
+
+    assert applied == held == 1
+    assert live == 1
+    assert state.quotes["000001"]["price"] == 120.0
+    assert state.quotes["000001"]["row_source"] == "portable_exact_close"
+    assert state.quotes["000001"]["trade_value_eok"] == 25.0
+    assert state.quotes["000002"]["price"] == 222.0
+    assert state.quotes["000002"]["received_at"] == "2026-07-21T08:00:01+09:00"
