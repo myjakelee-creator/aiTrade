@@ -40,6 +40,7 @@ def test_closed_rows_complete_ratio_alias_grade_and_hide_unproven_zero(monkeypat
     assert row["grade"] == "A99"
     assert "one_min_trade_value_eok" not in row
     assert row["one_min_status"] == "unavailable_after_restart_without_completed_bucket"
+    assert state.status["closed_server_metric_completion_installed"] is True
 
 
 def test_active_session_is_unchanged(monkeypatch):
@@ -66,3 +67,40 @@ def test_active_session_is_unchanged(monkeypatch):
     row = ActiveState().rows(300)[0]
     assert "amount_ratio" not in row
     assert row["one_min_trade_value_eok"] == 0.0
+
+
+def test_runtime_wrapper_installs_on_worker_state_chain(monkeypatch):
+    from realtime_v2 import worker_opening_burst_cache_patch as opening
+
+    class RuntimeState:
+        def __init__(self):
+            self.lock = __import__("threading").RLock()
+            self.status = {}
+
+        def rows(self, _limit=300):
+            return [{"trade_value_eok": 20.0, "prev_trade_value_eok": 10.0}]
+
+    base = SimpleNamespace(State=RuntimeState)
+    calls = []
+
+    def original_install(received_base):
+        calls.append(received_base)
+
+    monkeypatch.setattr(opening, "install", original_install)
+    monkeypatch.delattr(
+        opening,
+        "_closed_server_metric_completion_install_wrapped",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        patch,
+        "market_session_now",
+        lambda: SimpleNamespace(phase="closed"),
+    )
+
+    patch.install_runtime_wrapper()
+    opening.install(base)
+
+    assert calls == [base]
+    row = RuntimeState().rows(300)[0]
+    assert row["amount_ratio"] == 2.0
