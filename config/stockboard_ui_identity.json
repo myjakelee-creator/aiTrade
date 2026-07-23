@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": "SBV2-20260723.13",
-  "published_at": "2026-07-23 15:29 KST",
-  "keyword": "ARRIVAL-PRICE-RESTORE",
+  "version": "SBV2-20260723.14",
+  "published_at": "2026-07-23 15:55 KST",
+  "keyword": "PRICE-SEQUENCE-GUARD",
   "baseline_commit": "6e48d6d"
 }
