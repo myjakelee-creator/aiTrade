@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": "SBV2-20260723.16",
-  "published_at": "2026-07-23 19:10 KST",
-  "keyword": "FAST-TOP300-CLOSE-HOLD",
+  "version": "SBV2-20260723.17",
+  "published_at": "2026-07-23 19:45 KST",
+  "keyword": "FAST-TOP300-CLOSE-HOLD-STATUS",
   "baseline_commit": "58e1a3b"
 }
