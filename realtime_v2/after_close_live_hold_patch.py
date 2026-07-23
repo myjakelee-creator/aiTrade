@@ -13,7 +13,8 @@ Policy:
   next low-frequency board request refreshes the checkpoint;
 - restart/new connection restores the local last-good checkpoint first;
 - the existing verified portable exact-close path is used only when no matching
-  local checkpoint and no accepted in-memory values exist.
+  local checkpoint and no accepted in-memory values exist;
+- a verified newer-day quote is never overwritten by the previous close hold.
 """
 
 import json
@@ -23,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-PATCH_VERSION = "after_close_live_hold_v2_checkpoint"
+PATCH_VERSION = "after_close_live_hold_v3_function_marker"
 CHECKPOINT_VERSION = "after_close_live_checkpoint_v1"
 CHECKPOINT_FILENAME = "after_close_live_checkpoint.json"
 CHECKPOINT_INTERVAL_SEC = 10.0
@@ -45,6 +46,8 @@ _DATE_FIELDS = (
     "price_trading_date",
     "trade_value_trading_date",
 )
+_APPLY_MARKER = "_stockboard_after_close_live_hold_apply_wrapper"
+_ROWS_MARKER = "_stockboard_after_close_live_hold_rows_wrapper"
 
 
 def _date_digits(value: Any) -> str:
@@ -98,6 +101,13 @@ def _valid_quote_for_date(quote: Any, target_date: str) -> bool:
     if price is None or price <= 0 or trade_value is None or trade_value < 0:
         return False
     return any(_date_digits(quote.get(key)) == target_date for key in _DATE_FIELDS)
+
+
+def _quote_has_newer_date(quote: Any, target_date: str) -> bool:
+    if not isinstance(quote, dict) or not target_date:
+        return False
+    dates = [_date_digits(quote.get(key)) for key in _DATE_FIELDS]
+    return any(value and value > target_date for value in dates)
 
 
 def _current_day_live_count(state, target_date: str) -> int:
@@ -197,6 +207,7 @@ def _restore_checkpoint(base, state, target_date: str, phase: str) -> int:
         return 0
 
     restored = 0
+    skipped_newer = 0
     with state.lock:
         for raw_code, raw_quote in rows.items():
             code = str(raw_code or "")
@@ -204,19 +215,24 @@ def _restore_checkpoint(base, state, target_date: str, phase: str) -> int:
                 continue
             if not _valid_quote_for_date(raw_quote, target_date):
                 continue
+            existing = getattr(state, "quotes", {}).get(code)
+            if _quote_has_newer_date(existing, target_date):
+                skipped_newer += 1
+                continue
             quote = state._quote(code)
             quote.clear()
             quote.update(deepcopy(raw_quote))
             quote["row_source"] = "after_close_live_checkpoint"
             quote["after_close_checkpoint_restored"] = True
             restored += 1
-        if restored:
+        if restored or skipped_newer:
             state.status.update(
                 {
                     "after_close_checkpoint_version": CHECKPOINT_VERSION,
-                    "after_close_checkpoint_restored": True,
+                    "after_close_checkpoint_restored": bool(restored),
                     "after_close_checkpoint_trading_date": target_date,
                     "after_close_checkpoint_row_count": restored,
+                    "after_close_checkpoint_newer_day_skipped_count": skipped_newer,
                     "after_close_checkpoint_saved_at": payload.get("saved_at"),
                     "board_display_basis": "after_close_live_checkpoint",
                 }
@@ -229,88 +245,108 @@ def install(base) -> None:
     from realtime_v2.market_session import last_completed_trading_date, market_session_now
 
     guard_class = guard_module.PortableBoardGuard
-    if getattr(guard_class, "_stockboard_after_close_live_hold_installed", False):
-        return
+    current_apply = guard_class.apply
+    if not getattr(current_apply, _APPLY_MARKER, False):
+        original_apply = current_apply
 
-    original_apply = guard_class.apply
+        def apply(self, state, now: datetime | None = None):
+            current = now or datetime.now()
+            target_date, phase, active = guard_module.board_target_context(current)
+            if not active:
+                _restore_checkpoint(base, state, target_date, phase)
+                live_ready, live_count = _has_accepted_current_day_trades(state, target_date)
+                checkpoint_count = _current_day_live_count(state, target_date)
+                if live_ready or checkpoint_count > 0:
+                    with state.lock:
+                        state.status.update(
+                            {
+                                "after_close_live_hold_version": PATCH_VERSION,
+                                "after_close_live_hold_active": True,
+                                "after_close_live_hold_target_date": target_date or None,
+                                "after_close_live_hold_phase": phase,
+                                "after_close_live_hold_row_count": max(live_count, checkpoint_count),
+                                "after_close_live_hold_basis": (
+                                    "accepted_worker_trades"
+                                    if live_ready
+                                    else "local_checkpoint"
+                                ),
+                                "board_display_basis": (
+                                    "in_memory_after_close_live_hold"
+                                    if live_ready
+                                    else "after_close_live_checkpoint"
+                                ),
+                                "board_expected_trading_date": target_date or None,
+                                "board_market_phase": phase,
+                            }
+                        )
+                    self._applied_result = True
+                    return True
 
-    def apply(self, state, now: datetime | None = None):
-        current = now or datetime.now()
-        target_date, phase, active = guard_module.board_target_context(current)
-        if not active:
-            _restore_checkpoint(base, state, target_date, phase)
-            live_ready, live_count = _has_accepted_current_day_trades(state, target_date)
-            checkpoint_count = _current_day_live_count(state, target_date)
-            if live_ready or checkpoint_count > 0:
-                with state.lock:
-                    state.status.update(
-                        {
-                            "after_close_live_hold_version": PATCH_VERSION,
-                            "after_close_live_hold_active": True,
-                            "after_close_live_hold_target_date": target_date or None,
-                            "after_close_live_hold_phase": phase,
-                            "after_close_live_hold_row_count": max(live_count, checkpoint_count),
-                            "after_close_live_hold_basis": (
-                                "accepted_worker_trades"
-                                if live_ready
-                                else "local_checkpoint"
-                            ),
-                            "board_display_basis": (
-                                "in_memory_after_close_live_hold"
-                                if live_ready
-                                else "after_close_live_checkpoint"
-                            ),
-                            "board_expected_trading_date": target_date or None,
-                            "board_market_phase": phase,
-                        }
-                    )
-                self._applied_result = True
-                return True
+            result = original_apply(self, state, current)
+            with state.lock:
+                state.status.update(
+                    {
+                        "after_close_live_hold_version": PATCH_VERSION,
+                        "after_close_live_hold_active": False,
+                        "after_close_live_hold_target_date": target_date or None,
+                        "after_close_live_hold_phase": phase,
+                        "after_close_live_hold_row_count": 0,
+                        "after_close_live_hold_basis": (
+                            "active_session" if active else "portable_exact_fallback"
+                        ),
+                    }
+                )
+            return result
 
-        result = original_apply(self, state, current)
-        with state.lock:
-            state.status.update(
-                {
-                    "after_close_live_hold_version": PATCH_VERSION,
-                    "after_close_live_hold_active": False,
-                    "after_close_live_hold_target_date": target_date or None,
-                    "after_close_live_hold_phase": phase,
-                    "after_close_live_hold_row_count": 0,
-                    "after_close_live_hold_basis": (
-                        "active_session" if active else "portable_exact_fallback"
-                    ),
-                }
-            )
-        return result
+        setattr(apply, _APPLY_MARKER, True)
+        setattr(apply, "_stockboard_after_close_live_hold_version", PATCH_VERSION)
+        guard_class.apply = apply
 
-    guard_class.apply = apply
     guard_class._stockboard_after_close_live_hold_installed = True
     guard_class._stockboard_after_close_live_hold_version = PATCH_VERSION
 
     state_class = getattr(base, "State", None)
     if state_class is not None:
-        original_rows = state_class.rows
+        current_rows = state_class.rows
+        if not getattr(current_rows, _ROWS_MARKER, False):
+            original_rows = current_rows
 
-        def rows(self, *args, **kwargs):
-            session = market_session_now()
-            completed_date = str(last_completed_trading_date() or "")
-            target_date = (
-                str(session.trading_date or "")
-                if session.phase in _SAVE_PHASES
-                else completed_date
-            )
-            if session.phase in _RESTORE_PHASES:
-                _restore_checkpoint(base, self, target_date, session.phase)
-            if session.phase in _SAVE_PHASES:
-                _save_checkpoint_if_due(
-                    base,
-                    self,
-                    str(session.trading_date or target_date),
-                    session.phase,
+            def rows(self, *args, **kwargs):
+                session = market_session_now()
+                completed_date = str(last_completed_trading_date() or "")
+                target_date = (
+                    str(session.trading_date or "")
+                    if session.phase in _SAVE_PHASES
+                    else completed_date
                 )
-            return original_rows(self, *args, **kwargs)
+                if session.phase in _RESTORE_PHASES:
+                    _restore_checkpoint(base, self, target_date, session.phase)
+                if session.phase in _SAVE_PHASES:
+                    _save_checkpoint_if_due(
+                        base,
+                        self,
+                        str(session.trading_date or target_date),
+                        session.phase,
+                    )
+                result = original_rows(self, *args, **kwargs)
+                status = getattr(self, "status", None)
+                lock = getattr(self, "lock", None)
+                values = {
+                    "after_close_live_hold_rows_wrapper_installed": True,
+                    "after_close_live_hold_rows_wrapper_version": PATCH_VERSION,
+                    "after_close_live_hold_rows_wrapper_phase": str(session.phase or ""),
+                }
+                if lock is not None and isinstance(status, dict):
+                    with lock:
+                        status.update(values)
+                elif isinstance(status, dict):
+                    status.update(values)
+                return result
 
-        state_class.rows = rows
+            setattr(rows, _ROWS_MARKER, True)
+            setattr(rows, "_stockboard_after_close_live_hold_version", PATCH_VERSION)
+            state_class.rows = rows
+
         state_class._stockboard_after_close_live_hold_installed = True
         state_class._stockboard_after_close_live_hold_version = PATCH_VERSION
 
