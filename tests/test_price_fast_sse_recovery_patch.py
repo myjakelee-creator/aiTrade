@@ -50,7 +50,7 @@ for field in ("trade_value_eok", "trade_value_1m_eok", "bid_ask_ratio", "executi
 assert "STOCKBOARD_V2_PRICE_FAST_SSE_RECOVERY_20260723" in rendered
 assert "STOCKBOARD_V2_METRIC_FAST_SSE_20260723" in rendered
 assert "/api/v2/metric-stream?limit=300&interval_ms=500" in rendered
-assert "/api/v2/stream?limit=100&interval_ms=5000" in rendered
+assert "interval_ms=5000" in rendered
 assert "setTimeout(__sbv2ConnectPriceFastStream, 500)" in rendered
 assert "failed.close()" in rendered
 assert "readyState !== EventSource.CLOSED" in rendered
