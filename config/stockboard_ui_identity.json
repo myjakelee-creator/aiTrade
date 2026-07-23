@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": "SBV2-20260723.14",
-  "published_at": "2026-07-23 15:55 KST",
-  "keyword": "PRICE-SEQUENCE-GUARD",
+  "version": "SBV2-20260723.15",
+  "published_at": "2026-07-23 16:31 KST",
+  "keyword": "FAST-FLASH-RESTORE",
   "baseline_commit": "6e48d6d"
 }
